@@ -1,0 +1,45 @@
+Calling WhatsApp create-device API for number: 919179388646
+WhatsApp info-devices API HTTP Status: 200
+Error creating WhatsApp device: PostgresError: column "number" of relation "whatsapp_devices" does not exist
+    at ErrorResponse (file:///home/runner/workspace/node_modules/postgres/src/connection.js:794:26)
+    at handle (file:///home/runner/workspace/node_modules/postgres/src/connection.js:480:6)
+    at TLSSocket.data (file:///home/runner/workspace/node_modules/postgres/src/connection.js:315:9)
+    at TLSSocket.emit (node:events:524:28)
+    at addChunk (node:internal/streams/readable:561:12)
+    at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)
+    at Readable.push (node:internal/streams/readable:392:5)
+    at TLSWrap.onStreamRead (node:internal/stream_base_commons:191:23)
+    at cachedError (file:///home/runner/workspace/node_modules/postgres/src/query.js:170:23)
+    at new Query (file:///home/runner/workspace/node_modules/postgres/src/query.js:36:24)
+    at sql (file:///home/runner/workspace/node_modules/postgres/src/index.js:112:11)
+    at SimpleStorage.createWhatsAppDevice (/home/runner/workspace/server/simple-storage.ts:8333:33) {
+  severity_local: 'ERROR',
+  severity: 'ERROR',
+  code: '42703',
+  position: '62',
+  file: 'parse_target.c',
+  line: '1066',
+  routine: 'checkInsertTargets'
+}
+Error adding WhatsApp device: PostgresError: column "number" of relation "whatsapp_devices" does not exist
+    at ErrorResponse (file:///home/runner/workspace/node_modules/postgres/src/connection.js:794:26)
+    at handle (file:///home/runner/workspace/node_modules/postgres/src/connection.js:480:6)
+    at TLSSocket.data (file:///home/runner/workspace/node_modules/postgres/src/connection.js:315:9)
+    at TLSSocket.emit (node:events:524:28)
+    at addChunk (node:internal/streams/readable:561:12)
+    at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)
+    at Readable.push (node:internal/streams/readable:392:5)
+    at TLSWrap.onStreamRead (node:internal/stream_base_commons:191:23)
+    at cachedError (file:///home/runner/workspace/node_modules/postgres/src/query.js:170:23)
+    at new Query (file:///home/runner/workspace/node_modules/postgres/src/query.js:36:24)
+    at sql (file:///home/runner/workspace/node_modules/postgres/src/index.js:112:11)
+    at SimpleStorage.createWhatsAppDevice (/home/runner/workspace/server/simple-storage.ts:8333:33) {
+  severity_local: 'ERROR',
+  severity: 'ERROR',
+  code: '42703',
+  position: '62',
+  file: 'parse_target.c',
+  line: '1066',
+  routine: 'checkInsertTargets'
+}
+3:52:58 PM [express] POST /api/whatsapp-devices 500 in 3785ms :: {"error":"column \"number\" of rela…

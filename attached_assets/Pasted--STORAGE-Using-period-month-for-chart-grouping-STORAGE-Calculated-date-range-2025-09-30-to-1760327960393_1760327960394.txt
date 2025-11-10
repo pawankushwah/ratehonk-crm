@@ -1,0 +1,35 @@
+📊 STORAGE: Using period="month" for chart grouping
+📊 STORAGE: Calculated date range: 2025-09-30 to 2025-10-31
+❌ STORAGE: Error getting chart data: Error: UNDEFINED_VALUE: Undefined values are not allowed
+    at handleValue (file:///home/runner/workspace/node_modules/postgres/src/types.js:83:20)
+    at stringifyValue (file:///home/runner/workspace/node_modules/postgres/src/types.js:113:5)
+    at stringify (file:///home/runner/workspace/node_modules/postgres/src/types.js:100:16)
+    at build (file:///home/runner/workspace/node_modules/postgres/src/connection.js:223:20)
+    at Object.execute (file:///home/runner/workspace/node_modules/postgres/src/connection.js:167:7)
+    at go (file:///home/runner/workspace/node_modules/postgres/src/index.js:345:14)
+    at Query.handler (file:///home/runner/workspace/node_modules/postgres/src/index.js:334:14)
+    at Query.handle (file:///home/runner/workspace/node_modules/postgres/src/query.js:140:65)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at cachedError (file:///home/runner/workspace/node_modules/postgres/src/query.js:170:23)
+    at new Query (file:///home/runner/workspace/node_modules/postgres/src/query.js:36:24)
+    at sql (file:///home/runner/workspace/node_modules/postgres/src/index.js:112:11)
+    at SimpleStorage.getChartData (/home/runner/workspace/server/simple-storage.ts:7627:31) {
+  code: 'UNDEFINED_VALUE'
+}
+Chart data error: Error: UNDEFINED_VALUE: Undefined values are not allowed
+    at handleValue (file:///home/runner/workspace/node_modules/postgres/src/types.js:83:20)
+    at stringifyValue (file:///home/runner/workspace/node_modules/postgres/src/types.js:113:5)
+    at stringify (file:///home/runner/workspace/node_modules/postgres/src/types.js:100:16)
+    at build (file:///home/runner/workspace/node_modules/postgres/src/connection.js:223:20)
+    at Object.execute (file:///home/runner/workspace/node_modules/postgres/src/connection.js:167:7)
+    at go (file:///home/runner/workspace/node_modules/postgres/src/index.js:345:14)
+    at Query.handler (file:///home/runner/workspace/node_modules/postgres/src/index.js:334:14)
+    at Query.handle (file:///home/runner/workspace/node_modules/postgres/src/query.js:140:65)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at cachedError (file:///home/runner/workspace/node_modules/postgres/src/query.js:170:23)
+    at new Query (file:///home/runner/workspace/node_modules/postgres/src/query.js:36:24)
+    at sql (file:///home/runner/workspace/node_modules/postgres/src/index.js:112:11)
+    at SimpleStorage.getChartData (/home/runner/workspace/server/simple-storage.ts:7627:31) {
+  code: 'UNDEFINED_VALUE'
+}
+3:58:18 AM [express] GET /api/dashboard/chart-data 500 in 77ms :: {"message":"Internal server error"}

@@ -1,0 +1,4 @@
+workflows:
+  - name: "Start application"
+    command: "npm run dev"
+    description: "Starts the development server with both frontend and backend"

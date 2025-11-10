@@ -1,0 +1,24 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "@assets/*": ["../attached_assets/*"]
+    },
+    "types": ["vite/client"]
+  },
+  "include": [
+    "src/**/*",
+    "../shared/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "../client_*",
+    "../client_bckp",
+    "../server_*", 
+    "../server_bckp",
+    "../shared_*",
+    "../shared_bckp"
+  ]
+}

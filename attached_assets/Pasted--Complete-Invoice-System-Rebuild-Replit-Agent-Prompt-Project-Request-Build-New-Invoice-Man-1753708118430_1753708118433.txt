@@ -1,0 +1,169 @@
+# Complete Invoice System Rebuild - CRM Agent Prompt
+
+## Project Request: Build New Invoice Management System
+
+I want to create a completely new invoice management system in my travel CRM application. Please build this as a new page with full CRUD operations and advanced import/export capabilities.
+
+### Core Requirements
+
+#### 1. New Invoice Page Structure
+- Create a new page at `/invoices-new` (separate from existing buggy invoices page)
+- Modern, clean UI with data table for invoice listing
+- Modal/drawer for creating and editing invoices
+- Proper error handling and loading states
+- Responsive design that works on all devices
+
+#### 2. Complete CRUD Operations
+**Create Invoice:**
+- Form with all necessary fields (invoice number, customer, dates, amounts, etc.)
+- Auto-generate invoice numbers (format: INV-YYYY-NNNN)
+- Customer dropdown with search functionality
+- Line items support (description, quantity, rate, amount)
+- Tax calculation and total computation
+- Status management (draft, sent, paid, overdue, cancelled)
+
+**Read/List Invoices:**
+- Paginated data table with sorting and filtering
+- Search by invoice number, customer name, amount range
+- Filter by status, date range, customer
+- Quick view modal for invoice details
+- Export individual invoices to PDF
+
+**Update Invoice:**
+- Edit all invoice fields
+- Track status changes with timestamps
+- Handle partial payments
+- Update due dates and terms
+
+**Delete Invoice:**
+- Soft delete with confirmation dialog
+- Restore deleted invoices option
+- Bulk delete functionality
+
+#### 3. Advanced Import System
+Support multiple file formats with intelligent parsing:
+
+**Excel (.xlsx/.xls) Import:**
+- Handle various column layouts automatically
+- Map columns: Invoice Number, Customer Name, Date, Amount, Status, Description
+- Preview imported data before confirmation
+- Show validation errors and warnings
+- Customer matching (create new if not found)
+
+**CSV Import:**
+- Flexible delimiter detection (comma, semicolon, tab)
+- Header row detection
+- Handle different date formats automatically
+- Bulk import with progress indicator
+
+**XML Import:**
+- Parse common invoice XML schemas
+- Support nested data structures
+- Extract line items if present
+- Validate XML structure before processing
+
+**Import Features:**
+- Drag & drop file upload
+- File format validation
+- Duplicate detection and handling
+- Preview table with edit capabilities
+- Import summary with success/error counts
+- Undo last import functionality
+
+#### 4. Export System
+**Individual Export:**
+- PDF invoice generation with professional template
+- Excel export with formatting
+- JSON export for API integration
+
+**Bulk Export:**
+- Export filtered/selected invoices
+- Multiple format support
+- Date range exports
+- Custom templates for different purposes
+
+**Export Templates:**
+- Professional invoice PDF template
+- Financial summary reports
+- Customer statement exports
+- Tax reporting formats
+
+### Technical Implementation
+
+#### Database Schema
+```sql
+-- Use existing schema but ensure these fields exist:
+invoices table:
+- id, tenant_id, customer_id
+- invoice_number, status, invoice_date, due_date
+- subtotal, tax_amount, total_amount
+- notes, created_at, updated_at
+
+invoice_items table (if line items needed):
+- id, invoice_id, description, quantity, rate, amount
+```
+
+#### API Endpoints Structure
+```
+GET    /api/invoices-v2              # List with pagination/filtering
+POST   /api/invoices-v2              # Create new invoice  
+GET    /api/invoices-v2/:id          # Get single invoice
+PUT    /api/invoices-v2/:id          # Update invoice
+DELETE /api/invoices-v2/:id          # Delete invoice
+
+POST   /api/invoices-v2/import       # File upload and parsing
+POST   /api/invoices-v2/import/preview # Preview parsed data
+POST   /api/invoices-v2/import/confirm # Confirm and create invoices
+
+GET    /api/invoices-v2/export       # Export invoices (filtered)
+GET    /api/invoices-v2/:id/pdf      # Generate PDF for single invoice
+```
+
+#### Frontend Technology Stack
+- Use React with TypeScript
+- Tailwind CSS for styling
+- React Hook Form for form management
+- React Query/TanStack Query for data fetching
+- Lucide React for icons
+- React Table for data tables
+- File upload with drag & drop support
+
+### Sample Data Integration
+I have an Excel file with 1055 invoice records with this structure:
+- Date, Type, No., Customer, Memo, Amount, Status
+- Real customer names like "ALKA PAL", "jagdev singh Tiwana", "Pooja Pratisha prasad"
+- Various amounts and status values
+- Use this as test data for the import functionality
+
+### Key Features to Implement
+
+1. **Smart Customer Matching**: When importing, match customer names with existing customers in the database
+2. **Invoice Number Generation**: Auto-generate unique invoice numbers with customizable format
+3. **Status Workflow**: Draft → Sent → Paid/Overdue with automatic status updates
+4. **Payment Tracking**: Support partial payments and payment history
+5. **Due Date Management**: Automatic overdue detection and notifications
+6. **Validation**: Comprehensive form validation and data integrity checks
+7. **Error Handling**: User-friendly error messages and recovery options
+8. **Performance**: Efficient pagination and lazy loading for large datasets
+
+### Success Criteria
+
+The system should be able to:
+- [ ] Create, edit, and delete invoices seamlessly
+- [ ] Import my 1055-record Excel file without errors
+- [ ] Display customer names correctly in all views
+- [ ] Export invoices in multiple formats
+- [ ] Handle large datasets efficiently
+- [ ] Provide excellent user experience with proper loading states
+- [ ] Work reliably without the routing issues of the old system
+
+### Development Approach
+1. Start with the basic CRUD operations and get them working perfectly
+2. Add the import functionality with comprehensive file parsing
+3. Implement export features with professional PDF generation
+4. Add advanced features like bulk operations and reporting
+5. Test thoroughly with the provided sample data
+
+Please build this system step by step, ensuring each component works perfectly before moving to the next. Focus on clean, maintainable code and excellent user experience.
+
+**Important**: Keep this completely separate from the existing invoice system to avoid any conflicts with the current buggy implementation.

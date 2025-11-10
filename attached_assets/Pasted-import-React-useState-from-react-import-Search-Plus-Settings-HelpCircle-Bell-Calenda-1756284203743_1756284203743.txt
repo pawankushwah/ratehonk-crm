@@ -1,0 +1,292 @@
+import React, { useState } from 'react';
+import { Search, Plus, Settings, HelpCircle, Bell, Calendar, ChevronDown, Eye, MoreHorizontal, Filter, FileText } from 'lucide-react';
+
+const CustomerManagement = () => {
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedFilter, setSelectedFilter] = useState('View all');
+  const [dateRange, setDateRange] = useState('18 Oct - 18 Nov');
+
+  const customers = [
+    {
+      id: 1,
+      name: 'Harsh Vani',
+      email: 'Harshvani09@gmail.com',
+      phone: '+91 78981-64395',
+      status: 'New',
+      notes: 'Lorem ipsum dolor sit ameli...',
+      dateAdded: '12 Oct 2024',
+      avatar: '/api/placeholder/40/40'
+    },
+    {
+      id: 2,
+      name: 'Harsh Vani',
+      email: 'Harshvani09@gmail.com',
+      phone: '+91 78981-64395',
+      status: 'Previous',
+      notes: 'Lorem ipsum dolor sit ameli...',
+      dateAdded: '12 Oct 2024',
+      avatar: '/api/placeholder/40/40'
+    },
+    {
+      id: 3,
+      name: 'Harsh Vani',
+      email: 'Harshvani09@gmail.com',
+      phone: '+91 78981-64395',
+      status: 'New',
+      notes: 'Lorem ipsum dolor sit ameli...',
+      dateAdded: '12 Oct 2024',
+      avatar: '/api/placeholder/40/40'
+    },
+    {
+      id: 4,
+      name: 'Harsh Vani',
+      email: 'Harshvani09@gmail.com',
+      phone: '+91 78981-64395',
+      status: 'Old',
+      notes: 'Lorem ipsum dolor sit ameli...',
+      dateAdded: '12 Oct 2024',
+      avatar: '/api/placeholder/40/40'
+    },
+    {
+      id: 5,
+      name: 'Harsh Vani',
+      email: 'Harshvani09@gmail.com',
+      phone: '+91 78981-64395',
+      status: 'Pending',
+      notes: 'Lorem ipsum dolor sit ameli...',
+      dateAdded: '12 Oct 2024',
+      avatar: '/api/placeholder/40/40'
+    },
+    {
+      id: 6,
+      name: 'Harsh Vani',
+      email: 'Harshvani09@gmail.com',
+      phone: '+91 78981-64395',
+      status: 'Old',
+      notes: 'Lorem ipsum dolor sit ameli...',
+      dateAdded: '12 Oct 2024',
+      avatar: '/api/placeholder/40/40'
+    },
+    {
+      id: 7,
+      name: 'Harsh Vani',
+      email: 'Harshvani09@gmail.com',
+      phone: '+91 78981-64395',
+      status: 'New',
+      notes: 'Lorem ipsum dolor sit ameli...',
+      dateAdded: '12 Oct 2024',
+      avatar: '/api/placeholder/40/40'
+    },
+    {
+      id: 8,
+      name: 'Harsh Vani',
+      email: 'Harshvani09@gmail.com',
+      phone: '+91 78981-64395',
+      status: 'Pending',
+      notes: 'Lorem ipsum dolor sit ameli...',
+      dateAdded: '12 Oct 2024',
+      avatar: '/api/placeholder/40/40'
+    }
+  ];
+
+  const getStatusBadge = (status) => {
+    const baseClasses = "inline-flex items-center px-3 py-1 rounded-full text-sm font-medium";
+    
+    switch (status) {
+      case 'New':
+        return `${baseClasses} bg-blue-50 text-blue-700`;
+      case 'Previous':
+        return `${baseClasses} bg-yellow-50 text-yellow-700`;
+      case 'Old':
+        return `${baseClasses} bg-yellow-50 text-yellow-700`;
+      case 'Pending':
+        return `${baseClasses} bg-indigo-50 text-indigo-700`;
+      default:
+        return `${baseClasses} bg-gray-50 text-gray-700`;
+    }
+  };
+
+  const getStatusDot = (status) => {
+    switch (status) {
+      case 'New':
+        return 'bg-blue-500';
+      case 'Previous':
+        return 'bg-yellow-500';
+      case 'Old':
+        return 'bg-yellow-500';
+      case 'Pending':
+        return 'bg-indigo-500';
+      default:
+        return 'bg-gray-500';
+    }
+  };
+
+  const filterOptions = ['View all', 'New', 'Pending', 'Previous'];
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <div className="bg-white border-b border-gray-200 shadow-sm">
+        <div className="flex items-center justify-between px-6 py-4">
+          <h1 className="text-xl font-medium text-gray-900">Customer Management</h1>
+          <div className="flex items-center space-x-3">
+            <button className="p-2 bg-white border border-gray-200 rounded-md hover:bg-gray-50">
+              <Settings className="w-5 h-5 text-gray-600" />
+            </button>
+            <button className="p-2 bg-white border border-gray-200 rounded-md hover:bg-gray-50">
+              <HelpCircle className="w-5 h-5 text-gray-600" />
+            </button>
+            <button className="p-2 bg-white border border-gray-200 rounded-md hover:bg-gray-50">
+              <Bell className="w-5 h-5 text-gray-600" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <div className="p-6">
+        <div className="bg-gray-100 rounded-2xl shadow-sm p-0 overflow-hidden">
+          {/* Navigation */}
+          <div className="bg-white border-b border-gray-200 p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-1">
+                <div className="flex items-center space-x-2">
+                  <FileText className="w-5 h-5 text-gray-600" />
+                  <span className="text-gray-600 font-medium">Customer Management</span>
+                </div>
+                <ChevronDown className="w-4 h-4 text-gray-400" />
+                <div className="flex items-center space-x-2 px-3 py-1 bg-blue-50 border border-blue-200 rounded-md">
+                  <Filter className="w-4 h-4 text-gray-900" />
+                  <span className="text-gray-900 font-medium text-sm">Customers</span>
+                </div>
+              </div>
+              <button className="flex items-center space-x-2 bg-blue-600 text-white px-5 py-2 rounded-md hover:bg-blue-700 transition-colors">
+                <Plus className="w-5 h-5" />
+                <span className="font-semibold">Add Customer</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Filters and Controls */}
+          <div className="bg-white px-6 py-4">
+            <div className="flex items-center justify-between space-x-4">
+              {/* Search */}
+              <div className="relative flex-1 max-w-sm">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search Customers"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+
+              <div className="flex items-center space-x-4">
+                {/* Date Range */}
+                <div className="flex items-center space-x-2 border border-gray-200 rounded-md px-3 py-2 bg-white">
+                  <Calendar className="w-5 h-5 text-gray-600" />
+                  <span className="text-gray-600 font-medium text-sm">{dateRange}</span>
+                </div>
+
+                {/* Filter Buttons */}
+                <div className="flex bg-gray-50 border border-gray-200 rounded-md">
+                  {filterOptions.map((option, index) => (
+                    <button
+                      key={option}
+                      onClick={() => setSelectedFilter(option)}
+                      className={`px-3 py-2 text-sm font-medium transition-colors ${
+                        selectedFilter === option
+                          ? 'bg-gray-200 border border-gray-300 text-gray-900'
+                          : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                      } ${
+                        index === 0 ? 'rounded-l-md' : ''
+                      } ${
+                        index === filterOptions.length - 1 ? 'rounded-r-md' : 'border-r border-gray-200'
+                      }`}
+                    >
+                      {option}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Table */}
+          <div className="bg-white mx-6 rounded-2xl overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="text-left px-6 py-3 text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      <div className="flex items-center space-x-1">
+                        <span>Customer Name</span>
+                        <ChevronDown className="w-4 h-4" />
+                      </div>
+                    </th>
+                    <th className="text-left px-6 py-3 text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Phone
+                    </th>
+                    <th className="text-left px-6 py-3 text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Status
+                    </th>
+                    <th className="text-left px-6 py-3 text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Notes
+                    </th>
+                    <th className="text-left px-6 py-3 text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Date Added
+                    </th>
+                    <th className="text-left px-6 py-3 text-xs font-medium text-gray-600 uppercase tracking-wider">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                  {customers.map((customer) => (
+                    <tr key={customer.id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center space-x-3">
+                          <div className="w-10 h-10 bg-gradient-to-br from-blue-400 to-blue-600 rounded-full flex items-center justify-center">
+                            <span className="text-white font-medium text-sm">
+                              {customer.name.split(' ').map(n => n[0]).join('')}
+                            </span>
+                          </div>
+                          <div>
+                            <div className="font-medium text-gray-900">{customer.name}</div>
+                            <div className="text-gray-500 text-sm">{customer.email}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-gray-900">{customer.phone}</td>
+                      <td className="px-6 py-4">
+                        <span className={getStatusBadge(customer.status)}>
+                          <div className={`w-2 h-2 rounded-full mr-2 ${getStatusDot(customer.status)}`}></div>
+                          {customer.status}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-gray-900 max-w-xs truncate">{customer.notes}</td>
+                      <td className="px-6 py-4 text-gray-900">{customer.dateAdded}</td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center space-x-2">
+                          <button className="p-1 hover:bg-gray-100 rounded">
+                            <Eye className="w-4 h-4 text-gray-600" />
+                          </button>
+                          <button className="p-1 hover:bg-gray-100 rounded">
+                            <MoreHorizontal className="w-4 h-4 text-gray-600" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default CustomerManagement;

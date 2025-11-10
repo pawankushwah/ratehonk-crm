@@ -1,0 +1,95 @@
+Send Media API
+Api Docs Sending Media Messages
+Method : POST | GET
+
+Endpoint: https://whatsappbusiness.ratehonk.com/send-media
+
+Request Body : (JSON If POST)
+
+Parameter	Type	Required	Description
+api_key	string	Yes	API Key
+sender	string	Yes	Number of your device
+number	string	Yes	Recipient number ex 72888xxxx | 62888xxxx
+media_type	string	Yes	Allow: image, video, audio, document
+caption	string	No	Caption/message
+footer	string	No	Footer under message
+url	string	Yes	Direct URL of media (not Google Drive, Dropbox, etc.)
+msgid	string	No	Quoted message ID to reply to
+full	number	No	Show full response from WhatsApp
+Note: Make sure the url is a direct link, not a shared link from cloud storage.
+
+
+Example Without full
+JSON Request
+
+{
+    "api_key": "1234567890",
+    "sender": "62888xxxx",
+    "number": "62888xxxx",
+    "media_type": "image",
+    "caption": "Hello World",
+    "footer": "Sent via mpwa",
+    "url": "https://example.com/image.jpg"
+}
+URL Request
+
+https://whatsappbusiness.ratehonk.com/send-media?api_key=1234567890&sender=62888xxxx&number=62888xxxx&media_type=image&caption=Hello World&footer=Sent via mpwa&url=https://example.com/image.jpg
+JSON Response
+
+{
+    "status": true,
+    "msg": "Message sent successfully!"
+}
+Example With msgid (reply)
+JSON Request
+
+{
+    "api_key": "1234567890",
+    "sender": "62888xxxx",
+    "number": "62888xxxx",
+    "media_type": "image",
+    "caption": "Hello World",
+    "footer": "Sent via mpwa",
+    "url": "https://example.com/image.jpg",
+    "msgid": "3EB031F83D74BF480052B9"
+}
+URL Request
+
+https://whatsappbusiness.ratehonk.com/send-media?api_key=1234567890&sender=62888xxxx&number=62888xxxx&media_type=image&caption=Hello World&footer=Sent via mpwa&url=https://example.com/image.jpg&msgid=3EB031F83D74BF480052B9
+Example With full
+JSON Request
+
+{
+    "api_key": "1234567890",
+    "sender": "62888xxxx",
+    "number": "62888xxxx",
+    "media_type": "image",
+    "caption": "Hello World",
+    "footer": "Sent via mpwa",
+    "url": "https://example.com/image.jpg",
+    "full": 1
+}
+URL Request
+
+https://whatsappbusiness.ratehonk.com/send-media?api_key=1234567890&sender=62888xxxx&number=62888xxxx&media_type=image&caption=Hello World&footer=Sent via mpwa&url=https://example.com/image.jpg&full=1
+JSON Response
+
+{
+  "status": true,
+  "data": {
+    "key": {
+      "remoteJid": "62888xxxx@c.us",
+      "fromMe": true,
+      "id": "3EB0C373B04BXXXXXXXXXXX"
+    },
+    "message": {
+      "imageMessage": {
+        "url": "https://mmg.whatsapp.net/o1/v/t24/f2/m269/AQOKz_WB7dPWFfryJk1K8Cg09KW81xBjZq-eCQkPli773uWKhUfXiQMvyAEoJupyQ6_1FZ2bdm8Bf9Fye3OhSo9Gfh5XXXXXXXXXXX...",
+        "mimetype": "image/jpeg",
+        "caption": "Hello World",
+        "viewOnce": false
+      }
+    },
+    "messageTimestamp": "1755628853"
+  }
+}

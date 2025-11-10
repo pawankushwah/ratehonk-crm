@@ -1,0 +1,191 @@
+🌐 Overview — What is a Zoom Marketplace App?
+
+The Zoom App Marketplace is where developers build and register apps that integrate with Zoom — e.g., to:
+
+Use Zoom APIs (meetings, users, phone, etc.)
+
+Embed Zoom SDKs (Meetings SDK, Video SDK)
+
+Add OAuth-based authorization (so users can connect their Zoom account to your CRM)
+
+Publish your app so others can install it
+
+Zoom apps come in types:
+
+App Type	Purpose	When to Use
+Server-to-Server OAuth	Backend-to-Zoom API without user consent flow	For internal automation or backend integration
+OAuth (User-level)	Requires each user to connect via Zoom login	For CRM integrations where users connect their own Zoom accounts
+Meeting SDK / Video SDK	Embeds Zoom meetings or custom video inside your web/app	For “Join meeting” from web or “Zoom inside CRM”
+Webhook-only	Receives events (meeting started, call ended, etc.)	For real-time updates
+Chatbot / Zoom App (In-Client)	Runs inside Zoom client	For custom Zoom apps
+🧩 Step 1: Create a Zoom Developer Account
+
+Go to 👉 https://marketplace.zoom.us/
+
+Sign in with your Zoom account (must be owner or admin to create apps).
+
+Click Develop > Build App (top-right corner).
+
+Choose your app type — here are the common options:
+
+Server-to-Server OAuth — for backend calls like fetching phone logs or user data.
+
+OAuth (User-level) — for apps your CRM users can connect individually.
+
+🛠️ Step 2: Build a “Server-to-Server OAuth” App (for backend CRM integration)
+
+If your CRM backend will call Zoom APIs (e.g., to log calls, fetch users, etc.), do this:
+
+In Zoom Marketplace → Build App → Choose Server-to-Server OAuth → Create.
+
+Give your app a name (e.g., “CRM Zoom Integration”).
+
+Fill in basic info:
+
+App name, company name, developer contact email.
+
+Information → Fill developer info (this won’t be public if private app).
+
+Feature: Choose if you need webhook events (optional).
+
+Activation:
+
+When finished, you’ll get:
+
+account_id
+
+client_id
+
+client_secret
+
+Save and Activate your app.
+
+🔐 These credentials let you get a token:
+
+You’ll use this REST call from your backend to get access tokens (like earlier):
+
+POST https://zoom.us/oauth/token?grant_type=account_credentials&account_id=YOUR_ACCOUNT_ID
+Authorization: Basic base64(CLIENT_ID:CLIENT_SECRET)
+
+
+This gives you:
+
+{
+  "access_token": "eyJhbGciOi...",
+  "token_type": "bearer",
+  "expires_in": 3600
+}
+
+
+Use access_token in Authorization: Bearer <token> for all Zoom API requests.
+
+🙋 Step 3: Build an OAuth (User-level) App (if each user connects their Zoom)
+
+If your CRM users must click “Connect Zoom” (so your app can act on their behalf):
+
+Build App → OAuth → Create.
+
+Under App Credentials, Zoom will give you:
+
+Client ID
+
+Client Secret
+
+Set your Redirect URL for OAuth (e.g., https://yourcrm.com/integrations/zoom/callback)
+
+Zoom’s OAuth flow works like this:
+
+a. Your CRM redirects the user to Zoom for login:
+
+https://zoom.us/oauth/authorize?response_type=code&client_id=YOUR_CLIENT_ID&redirect_uri=YOUR_REDIRECT_URL
+
+
+b. User signs in and Zoom redirects back to your redirect URL with a code.
+
+c. Your server exchanges code for tokens:
+
+POST https://zoom.us/oauth/token
+Authorization: Basic base64(CLIENT_ID:CLIENT_SECRET)
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=authorization_code&code=CODE&redirect_uri=YOUR_REDIRECT_URL
+
+
+d. Response includes access_token and refresh_token.
+
+e. Store tokens securely and use them in your CRM to call Zoom APIs for that user.
+
+🔔 Step 4: (Optional) Subscribe to Zoom Webhooks
+
+If you want to receive real-time updates like:
+
+Call ended / started
+
+Meeting started / ended
+
+User joined / left
+
+Then:
+
+In your app’s Feature > Event Subscriptions section, enable event subscriptions.
+
+Add a Webhook endpoint URL (e.g., https://yourcrm.com/api/zoom/webhook).
+
+Select the events you need (e.g. “Phone call started”, “Meeting ended”).
+
+Zoom will send JSON payloads to your webhook when those events happen.
+
+⚙️ Step 5: Test Locally (before publishing)
+
+You can test your Zoom app without publishing:
+
+Use private mode for internal apps (only visible to your Zoom account).
+
+Use tools like ngrok to expose your localhost backend during development.
+Example:
+
+ngrok http 4000
+
+
+Then use your https://xxxxx.ngrok.io/zoom/callback as redirect URL.
+
+🚀 Step 6: Publish (optional)
+
+If you want others (external users) to install your CRM integration from Zoom Marketplace:
+
+Go to your app → Submit tab.
+
+Fill in all required fields:
+
+Privacy policy
+
+Terms of service
+
+App description & screenshots
+
+Test accounts for Zoom review team
+
+Submit for review.
+
+After Zoom approval, it appears on marketplace.zoom.us
+.
+
+🧠 Step 7: Using your Zoom App inside your CRM
+
+Once the app is active:
+
+From your CRM backend, use access_token to call Zoom APIs (Phone, Users, Meetings, etc.)
+
+From your CRM frontend, integrate Zoom SDK (Meeting SDK or Smart Embed) if you want to embed Zoom meetings or phone UI.
+
+Store relevant Zoom data (e.g., call logs, meeting history) in your CRM database.
+
+✅ Example Use Case
+
+Goal: Make “Call with Zoom” button in your CRM.
+
+Build Server-to-Server OAuth app → get access token.
+
+Embed Zoom Phone Smart Embed or click-to-dial URI in your React frontend.
+
+Use Zoom Phone APIs to pull call logs after calls end and display them in CRM contact history.

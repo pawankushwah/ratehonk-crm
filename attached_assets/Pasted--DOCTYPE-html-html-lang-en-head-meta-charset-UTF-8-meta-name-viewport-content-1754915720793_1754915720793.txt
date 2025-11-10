@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Facebook Business Suite Complete Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .test-section { 
+            border: 1px solid #ddd; 
+            padding: 20px; 
+            margin: 20px 0; 
+            border-radius: 8px; 
+            background: white;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .success { background-color: #d4edda; border-color: #c3e6cb; }
+        .error { background-color: #f8d7da; border-color: #f5c6cb; }
+        .warning { background-color: #fff3cd; border-color: #ffeaa7; }
+        .info { background-color: #d1ecf1; border-color: #bee5eb; }
+        button { 
+            padding: 10px 15px; 
+            margin: 5px; 
+            border: none; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            font-weight: bold;
+        }
+        .btn-primary { background-color: #1877f2; color: white; }
+        .btn-success { background-color: #28a745; color: white; }
+        .btn-warning { background-color: #ffc107; color: black; }
+        .btn-danger { background-color: #dc3545; color: white; }
+        .credentials-form { background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 10px 0; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .endpoint-test { 
+            border-left: 4px solid #1877f2; 
+            padding: 15px; 
+            margin: 10px 0; 
+            background: #f8f9ff;
+        }
+        pre { 
+            background: #f4f4f4; 
+            padding: 10px; 
+            border-radius: 4px; 
+            overflow-x: auto; 
+            font-size: 12px;
+        }
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        .status-success { background-color: #28a745; }
+        .status-error { background-color: #dc3545; }
+        .status-pending { background-color: #ffc107; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Facebook Business Suite Complete Integration Test</h1>
+        
+        <div class="test-section info">
+            <h3>📋 Test Overview</h3>
+            <p><strong>App ID:</strong> 1449283782943493</p>
+            <p><strong>App Secret:</strong> 4151640f8e36527dc32037aa1a7d868a</p>
+            <p><strong>Testing Scope:</strong> Complete Facebook Business Suite API integration</p>
+            <p><strong>Tenant ID:</strong> 12 (Demo tenant)</p>
+        </div>
+
+        <div class="test-section">
+            <h3>⚙️ Step 1: Configure Facebook Credentials</h3>
+            <button class="btn-primary" onclick="configureFacebookCredentials()">Configure Facebook App</button>
+            <div id="configResults"></div>
+        </div>
+
+        <div class="grid">
+            <div class="test-section">
+                <h3>🔗 Step 2: Facebook API Endpoints</h3>
+                <div class="endpoint-test">
+                    <h4><span class="status-indicator status-pending" id="status-status"></span>Connection Status</h4>
+                    <button class="btn-success" onclick="testEndpoint('status')">Test Status</button>
+                    <div id="result-status"></div>
+                </div>
+                
+                <div class="endpoint-test">
+                    <h4><span class="status-indicator status-pending" id="status-pages"></span>Pages Management</h4>
+                    <button class="btn-success" onclick="testEndpoint('pages')">Test Pages</button>
+                    <div id="result-pages"></div>
+                </div>
+                
+                <div class="endpoint-test">
+                    <h4><span class="status-indicator status-pending" id="status-insights"></span>Analytics & Insights</h4>
+                    <button class="btn-success" onclick="testEndpoint('insights')">Test Insights</button>
+                    <div id="result-insights"></div>
+                </div>
+                
+                <div class="endpoint-test">
+                    <h4><span class="status-indicator status-pending" id="status-leads"></span>Lead Management</h4>
+                    <button class="btn-success" onclick="testEndpoint('leads')">Test Leads</button>
+                    <div id="result-leads"></div>
+                </div>
+            </div>
+
+            <div class="test-section">
+                <h3>📊 Step 3: Advanced Features</h3>
+                <div class="endpoint-test">
+                    <h4><span class="status-indicator status-pending" id="status-sync"></span>Data Synchronization</h4>
+                    <button class="btn-warning" onclick="testEndpoint('sync')">Test Sync</button>
+                    <div id="result-sync"></div>
+                </div>
+                
+                <div class="endpoint-test">
+                    <h4><span class="status-indicator status-pending" id="status-oauth"></span>OAuth Flow</h4>
+                    <button class="btn-primary" onclick="testOAuthFlow()">Test OAuth</button>
+                    <div id="result-oauth"></div>
+                </div>
+
+                <div class="endpoint-test">
+                    <h4><span class="status-indicator status-pending" id="status-unified"></span>Unified Social Dashboard</h4>
+                    <button class="btn-success" onclick="testUnifiedSocial()">Test Unified API</button>
+                    <div id="result-unified"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h3>📈 Test Results Summary</h3>
+            <div id="summaryResults"></div>
+            <button class="btn-success" onclick="runAllTests()">🚀 Run Complete Test Suite</button>
+        </div>
+
+        <div class="test-section">
+            <h3>📝 Test Logs</h3>
+            <div id="testLogs" style="max-height: 400px; overflow-y: auto; background: #f8f9fa; padding: 15px; border-radius: 5px;"></div>
+        </div>
+    </div>
+
+    <script>
+        const tenantId = 12;
+        const testResults = {};
+        
+        function log(message, type = 'info') {
+            const logs = document.getElementById('testLogs');
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = `<div class="log-entry"><strong>[${timestamp}]</strong> ${message}</div>`;
+            logs.innerHTML += logEntry;
+            logs.scrollTop = logs.scrollHeight;
+            console.log(`[${timestamp}] ${message}`);
+        }
+
+        function updateStatus(testName, status) {
+            const indicator = document.getElementById(`status-${testName}`);
+            if (indicator) {
+                indicator.className = `status-indicator status-${status}`;
+            }
+            testResults[testName] = status;
+            updateSummary();
+        }
+
+        function updateSummary() {
+            const summary = document.getElementById('summaryResults');
+            const total = Object.keys(testResults).length;
+            const passed = Object.values(testResults).filter(s => s === 'success').length;
+            const failed = Object.values(testResults).filter(s => s === 'error').length;
+            const pending = total - passed - failed;
+            
+            summary.innerHTML = `
+                <div class="grid">
+                    <div><strong>Total Tests:</strong> ${total}</div>
+                    <div style="color: #28a745;"><strong>Passed:</strong> ${passed}</div>
+                    <div style="color: #dc3545;"><strong>Failed:</strong> ${failed}</div>
+                    <div style="color: #ffc107;"><strong>Pending:</strong> ${pending}</div>
+                </div>
+            `;
+        }
+
+        async function configureFacebookCredentials() {
+            try {
+                log('🔧 Configuring Facebook Business Suite credentials...', 'info');
+                
+                const configData = {
+                    appId: '1449283782943493',
+                    appSecret: '4151640f8e36527dc32037aa1a7d868a',
+                    enabled: true
+                };
+
+                const response = await fetch(`/api/tenants/${tenantId}/facebook/configure`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer test-token'
+                    },
+                    body: JSON.stringify(configData)
+                });
+
+                const result = await response.json();
+                
+                if (response.ok) {
+                    log('✅ Facebook credentials configured successfully!', 'success');
+                    document.getElementById('configResults').innerHTML = 
+                        `<div class="success">✅ Configuration Success!<br>App ID: ${configData.appId}<br>Status: Enabled</div>`;
+                    return true;
+                } else {
+                    log(`❌ Configuration failed: ${result.message || result.error}`, 'error');
+                    document.getElementById('configResults').innerHTML = 
+                        `<div class="error">❌ Configuration Failed<br>Error: ${result.message || result.error}</div>`;
+                    return false;
+                }
+            } catch (error) {
+                log(`❌ Configuration error: ${error.message}`, 'error');
+                document.getElementById('configResults').innerHTML = 
+                    `<div class="error">❌ Network Error: ${error.message}</div>`;
+                return false;
+            }
+        }
+
+        async function testEndpoint(endpoint) {
+            try {
+                log(`🔄 Testing ${endpoint} endpoint...`, 'info');
+                updateStatus(endpoint, 'pending');
+                
+                const response = await fetch(`/api/tenants/${tenantId}/facebook/${endpoint}`, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': 'Bearer test-token'
+                    }
+                });
+
+                const result = await response.json();
+                const resultDiv = document.getElementById(`result-${endpoint}`);
+                
+                if (response.ok) {
+                    log(`✅ ${endpoint} endpoint working successfully!`, 'success');
+                    updateStatus(endpoint, 'success');
+                    resultDiv.innerHTML = `
+                        <div class="success">
+                            ✅ Success! 
+                            <details>
+                                <summary>View Response</summary>
+                                <pre>${JSON.stringify(result, null, 2)}</pre>
+                            </details>
+                        </div>
+                    `;
+                } else {
+                    log(`❌ ${endpoint} endpoint failed: ${result.message}`, 'error');
+                    updateStatus(endpoint, 'error');
+                    resultDiv.innerHTML = `
+                        <div class="error">
+                            ❌ Error: ${result.message || result.error}
+                            <details>
+                                <summary>View Response</summary>
+                                <pre>${JSON.stringify(result, null, 2)}</pre>
+                            </details>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                log(`❌ ${endpoint} test error: ${error.message}`, 'error');
+                updateStatus(endpoint, 'error');
+                document.getElementById(`result-${endpoint}`).innerHTML = 
+                    `<div class="error">❌ Network Error: ${error.message}</div>`;
+            }
+        }
+
+        async function testOAuthFlow() {
+            try {
+                log('🔄 Testing Facebook OAuth flow...', 'info');
+                updateStatus('oauth', 'pending');
+                
+                // Test OAuth URL generation
+                const response = await fetch(`/api/tenants/${tenantId}/facebook/oauth`, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': 'Bearer test-token'
+                    }
+                });
+
+                const result = await response.json();
+                
+                if (response.ok && result.authUrl) {
+                    log('✅ OAuth URL generated successfully!', 'success');
+                    updateStatus('oauth', 'success');
+                    document.getElementById('result-oauth').innerHTML = `
+                        <div class="success">
+                            ✅ OAuth URL Generated!
+                            <br><a href="${result.authUrl}" target="_blank" class="btn-primary" style="margin-top: 10px;">Open OAuth Flow</a>
+                            <details>
+                                <summary>View OAuth URL</summary>
+                                <pre>${result.authUrl}</pre>
+                            </details>
+                        </div>
+                    `;
+                } else {
+                    log(`❌ OAuth test failed: ${result.message}`, 'error');
+                    updateStatus('oauth', 'error');
+                    document.getElementById('result-oauth').innerHTML = 
+                        `<div class="error">❌ OAuth Error: ${result.message || result.error}</div>`;
+                }
+            } catch (error) {
+                log(`❌ OAuth test error: ${error.message}`, 'error');
+                updateStatus('oauth', 'error');
+                document.getElementById('result-oauth').innerHTML = 
+                    `<div class="error">❌ Network Error: ${error.message}</div>`;
+            }
+        }
+
+        async function testUnifiedSocial() {
+            try {
+                log('🔄 Testing Unified Social Dashboard...', 'info');
+                updateStatus('unified', 'pending');
+                
+                // Test unified connected platforms
+                const response = await fetch(`/api/tenants/${tenantId}/social/connected-platforms`, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': 'Bearer test-token'
+                    }
+                });
+
+                const result = await response.json();
+                
+                if (response.ok) {
+                    log('✅ Unified social dashboard working!', 'success');
+                    updateStatus('unified', 'success');
+                    document.getElementById('result-unified').innerHTML = `
+                        <div class="success">
+                            ✅ Unified Dashboard Success!
+                            <details>
+                                <summary>Connected Platforms</summary>
+                                <pre>${JSON.stringify(result, null, 2)}</pre>
+                            </details>
+                        </div>
+                    `;
+                } else {
+                    log(`❌ Unified dashboard failed: ${result.message}`, 'error');
+                    updateStatus('unified', 'error');
+                    document.getElementById('result-unified').innerHTML = 
+                        `<div class="error">❌ Error: ${result.message || result.error}</div>`;
+                }
+            } catch (error) {
+                log(`❌ Unified dashboard error: ${error.message}`, 'error');
+                updateStatus('unified', 'error');
+                document.getElementById('result-unified').innerHTML = 
+                    `<div class="error">❌ Network Error: ${error.message}</div>`;
+            }
+        }
+
+        async function runAllTests() {
+            log('🚀 Starting complete Facebook Business Suite test...', 'info');
+            
+            // Step 1: Configure credentials
+            const configured = await configureFacebookCredentials();
+            if (!configured) {
+                log('❌ Cannot proceed without valid configuration', 'error');
+                return;
+            }
+            
+            // Wait a moment for configuration to settle
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            // Step 2: Test all endpoints
+            const endpoints = ['status', 'pages', 'insights', 'leads', 'sync'];
+            for (const endpoint of endpoints) {
+                await testEndpoint(endpoint);
+                await new Promise(resolve => setTimeout(resolve, 500)); // Small delay between tests
+            }
+            
+            // Step 3: Test advanced features
+            await testOAuthFlow();
+            await new Promise(resolve => setTimeout(resolve, 500));
+            await testUnifiedSocial();
+            
+            log('🎉 Complete test suite finished!', 'success');
+        }
+
+        // Initialize page
+        window.onload = function() {
+            log('🚀 Facebook Business Suite test page loaded', 'info');
+            log('📝 Ready to test with App ID: 1449283782943493', 'info');
+            updateSummary();
+        };
+    </script>
+</body>
+</html>
