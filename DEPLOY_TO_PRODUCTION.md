@@ -63,6 +63,21 @@ Use FileZilla, WinSCP, or similar:
 
 ---
 
+### ⚠️ Important: Build Process Requirements
+
+**You MUST install ALL dependencies (including devDependencies) for the build to work.**
+
+The build process needs:
+- `vite` - Frontend build tool
+- `esbuild` - Backend bundler
+- `typescript` - TypeScript compiler
+- `@vitejs/plugin-react` - React plugin for Vite
+- And other devDependencies
+
+**Do NOT use `npm install --production`** - it will skip devDependencies and cause build failures!
+
+---
+
 ### Step 2: Connect to Your Server
 
 ```bash
@@ -102,10 +117,10 @@ pm2 --version
 
 ```bash
 cd /home/your-user/crm-ratehonk
-npm install --production
+npm install
 ```
 
-This installs all dependencies from `package.json`.
+**Important:** Install ALL dependencies (including devDependencies) because the build process needs them (`vite`, `esbuild`, `typescript`, etc.). The `--production` flag skips devDependencies which will cause build failures.
 
 ---
 
@@ -188,6 +203,11 @@ mkdir -p logs
 
 ```bash
 pm2 start ecosystem.config.js --env production
+```
+
+**Note:** If you get an error about ES modules, the config file has been updated to use ES module syntax. If you still have issues, you can use the `.cjs` file instead:
+```bash
+pm2 start ecosystem.config.cjs --env production
 ```
 
 **Check status:**
@@ -278,8 +298,8 @@ If you already uploaded the project to the server:
 
 3. **Then on server:**
    ```bash
-   npm install --production  # Update dependencies if package.json changed
-   npm run build             # Rebuild
+   npm install              # Update ALL dependencies (including devDependencies)
+   npm run build            # Rebuild
    pm2 restart ratehonk-crm # Restart application
    ```
 

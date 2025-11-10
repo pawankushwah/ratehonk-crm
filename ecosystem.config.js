@@ -1,4 +1,4 @@
-module.exports = {
+export default {
   apps: [{
     name: 'ratehonk-crm',
     script: 'dist/index.js',
