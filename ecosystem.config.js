@@ -13,11 +13,11 @@ export default {
     restart_delay: 4000,
     env: {
       NODE_ENV: 'production',
-      PORT: 3000
+      PORT: 5000
     },
     env_production: {
       NODE_ENV: 'production',
-      PORT: 3000
+      PORT: 5000
     },
     error_file: './logs/err.log',
     out_file: './logs/out.log',

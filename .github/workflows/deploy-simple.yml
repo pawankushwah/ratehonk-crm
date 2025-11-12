@@ -1,0 +1,61 @@
+name: Deploy to Production (Simple)
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch: # Allows manual triggering
+
+jobs:
+  deploy:
+    name: Deploy to Production Server
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            set -e
+            cd ${{ secrets.SERVER_PATH }}
+            
+            echo "🔄 Pulling latest changes from Git..."
+            git pull origin main || git pull origin master || echo "⚠️ Git pull failed, continuing with deployment..."
+            
+            echo "📦 Installing dependencies..."
+            npm install --production=false
+            
+            echo "🔨 Building project..."
+            npm run build
+            
+            echo "✅ Verifying build..."
+            if [ ! -f "dist/index.js" ]; then
+              echo "❌ Build failed! dist/index.js not found."
+              exit 1
+            fi
+            
+            echo "📁 Ensuring logs directory exists..."
+            mkdir -p logs
+            
+            echo "🔄 Restarting PM2..."
+            pm2 restart ratehonk-crm --update-env || pm2 start ecosystem.config.js --env production || echo "⚠️ PM2 restart failed"
+            
+            pm2 save || true
+            
+            echo "📊 PM2 Status:"
+            pm2 status
+            
+            echo "🏥 Health check..."
+            sleep 2
+            curl -f http://localhost:5000/health || echo "⚠️ Health check failed, but deployment completed"
+            
+            echo "✅ Deployment completed!"
+

@@ -136,10 +136,11 @@ export function ZoomPhoneEmbed({
           <iframe
             src="https://applications.zoom.us/integration/phone/embeddablephone/home"
             className="w-full h-full border-0"
-            allow="microphone; camera"
+            allow="microphone; camera; autoplay"
             title="Zoom Phone"
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-top-navigation allow-storage-access-by-user-activation"
             data-testid="zoom-phone-iframe"
+            referrerPolicy="no-referrer-when-downgrade"
           />
         </div>
 

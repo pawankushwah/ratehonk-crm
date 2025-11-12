@@ -15,6 +15,13 @@ build/
 .env.test.local
 .env.production.local
 
+# SSL Certificates (local development only)
+certs/
+*.pem
+*.key
+*.crt
+*.pfx
+
 # Logs
 *.log
 app.log

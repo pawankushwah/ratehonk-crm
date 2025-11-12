@@ -4,6 +4,10 @@ dotenv.config();
 
 import express, { type Request, Response, NextFunction } from "express";
 import cors from "cors";
+import https from "https";
+import http from "http";
+import fs from "fs";
+import path from "path";
 import { registerSimpleRoutes } from "./simple-routes";
 import { registerSubscriptionRoutes } from "./subscription-routes";
 import { setupVite, serveStatic, log } from "./vite";
@@ -467,22 +471,69 @@ app.use((req, res, next) => {
   // Add health check endpoint BEFORE Vite setup
   app.get('/health', (_, res) => res.status(200).send('ok'));
   
-  // Start HTTP server immediately to ensure it binds to port
+  // Start HTTP/HTTPS server immediately to ensure it binds to port
   const port = process.env.PORT || config.server.port || 5000;
-  server.listen(port, "0.0.0.0", () => {
-    console.log(`✅ Server listening on http://localhost:${port}`);
-    console.log(`🏥 Health check: http://localhost:${port}/health`);
-  });
-
+  const useHttps = process.env.USE_HTTPS === 'true';
+  
+  // Check for SSL certificates
+  const certsDir = path.join(process.cwd(), 'certs');
+  const keyPath = path.join(certsDir, 'localhost-key.pem');
+  const certPath = path.join(certsDir, 'localhost.pem');
+  const hasCertificates = fs.existsSync(keyPath) && fs.existsSync(certPath);
+  
   // Setup Vite in development or serve static files in production (non-blocking)
   console.log(`🔧 NODE_ENV: ${config.server.nodeEnv} - Using ${config.server.nodeEnv === "development" ? 'Vite dev server' : 'static files'}`);
   
-  if (config.server.nodeEnv === "development") {
-    setupVite(app, server).catch((error) => {
-      console.error('❌ Vite setup failed:', error);
+  if (useHttps && hasCertificates) {
+    // Create HTTPS server
+    const httpsOptions = {
+      key: fs.readFileSync(keyPath),
+      cert: fs.readFileSync(certPath),
+    };
+    
+    const httpsServer = https.createServer(httpsOptions, app);
+    
+    // Setup Vite with HTTPS server if in development
+    if (config.server.nodeEnv === "development") {
+      setupVite(app, httpsServer).catch((error) => {
+        console.error('❌ Vite setup failed:', error);
+      });
+    } else {
+      serveStatic(app);
+    }
+    
+    httpsServer.listen(port, "0.0.0.0", () => {
+      console.log(`✅ HTTPS Server listening on https://localhost:${port}`);
+      console.log(`🏥 Health check: https://localhost:${port}/health`);
+      console.log(`🔒 Using SSL certificates from: ${certsDir}`);
+    });
+    
+    // Also start HTTP server on port + 1 for redirect (optional)
+    const httpPort = port + 1;
+    http.createServer((req, res) => {
+      res.writeHead(301, { Location: `https://${req.headers.host?.replace(`:${httpPort}`, `:${port}`)}${req.url}` });
+      res.end();
+    }).listen(httpPort, () => {
+      console.log(`ℹ️  HTTP redirect server on http://localhost:${httpPort} (redirects to HTTPS)`);
     });
   } else {
-    serveStatic(app);
+    // Start HTTP server
+    if (config.server.nodeEnv === "development") {
+      setupVite(app, server).catch((error) => {
+        console.error('❌ Vite setup failed:', error);
+      });
+    } else {
+      serveStatic(app);
+    }
+    
+    server.listen(port, "0.0.0.0", () => {
+      const protocol = useHttps && !hasCertificates ? 'https (certificates missing)' : 'http';
+      console.log(`✅ Server listening on ${protocol}://localhost:${port}`);
+      console.log(`🏥 Health check: ${protocol}://localhost:${port}/health`);
+      if (useHttps && !hasCertificates) {
+        console.log(`⚠️  HTTPS requested but certificates not found. Run: npm run generate-cert`);
+      }
+    });
   }
 
   // Add catch-all for unhandled API routes (MUST be after all route registration)
