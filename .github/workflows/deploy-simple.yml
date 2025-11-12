@@ -30,6 +30,10 @@ jobs:
             echo "🔄 Pulling latest changes from Git..."
             git pull origin main || git pull origin master || echo "⚠️ Git pull failed, continuing with deployment..."
             
+            echo "📦 Checking Node.js version..."
+            node -v
+            npm -v
+            
             echo "📦 Installing dependencies..."
             npm install --production=false
             

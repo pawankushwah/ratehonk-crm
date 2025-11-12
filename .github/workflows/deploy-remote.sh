@@ -21,6 +21,11 @@ if [ -d "dist" ]; then
     cp -r dist dist.backup.$(date +%Y%m%d_%H%M%S) || true
 fi
 
+# Check Node.js version
+echo "📦 Checking Node.js version..."
+node -v
+npm -v
+
 # Install/update dependencies
 echo "📦 Installing dependencies..."
 npm install --production=false  # Install all deps including devDependencies for build
