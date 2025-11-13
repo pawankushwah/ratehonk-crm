@@ -288,7 +288,9 @@ jobs:
           scp package.json package-lock.json ecosystem.config.js ecosystem.config.cjs ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:$TEMP_DIR/
           scp -r server shared ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:$TEMP_DIR/
           scp drizzle.config.ts tsconfig.json vite.config.ts tailwind.config.ts postcss.config.js ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:$TEMP_DIR/ 2>/dev/null || true
-          scp scripts/deploy.sh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:$TEMP_DIR/scripts/ 2>/dev/null || true
+          # Ensure scripts directory exists and transfer deploy.sh
+          ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "mkdir -p $TEMP_DIR/scripts"
+          scp scripts/deploy.sh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:$TEMP_DIR/scripts/deploy.sh
           
           # Move files from temp to final location and fix permissions
           ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "
@@ -300,12 +302,28 @@ jobs:
             mv $TEMP_DIR/.* . 2>/dev/null || true
             # Clean up temp directory
             rm -rf $TEMP_DIR
+            # Ensure scripts directory exists
+            mkdir -p scripts
             # Fix permissions
             chmod -R 755 . 2>/dev/null || true
             find . -type f -exec chmod 644 {} \; 2>/dev/null || true
             find . -type d -exec chmod 755 {} \; 2>/dev/null || true
             # Make deploy script executable
-            chmod +x scripts/deploy.sh 2>/dev/null || true
+            if [ -f 'scripts/deploy.sh' ]; then
+              chmod +x scripts/deploy.sh
+              echo '✅ deploy.sh script found and made executable'
+            else
+              echo '⚠️  deploy.sh not found in scripts/, checking root...'
+              if [ -f 'deploy.sh' ]; then
+                mv deploy.sh scripts/deploy.sh
+                chmod +x scripts/deploy.sh
+                echo '✅ deploy.sh moved to scripts/ and made executable'
+              else
+                echo '❌ deploy.sh not found anywhere!'
+                ls -la scripts/ 2>/dev/null || echo 'scripts/ directory does not exist'
+                ls -la | grep deploy || echo 'No deploy.sh in root'
+              fi
+            fi
           "
           
           # Execute deployment script
@@ -313,10 +331,20 @@ jobs:
             export DEPLOY_PATH='${{ secrets.DEPLOY_PATH || '/home/ratehonk-crm/htdocs/crm.ratehonk.com/crm-ratehonk' }}'
             export GITHUB_REF='${{ github.ref }}'
             cd \"\$DEPLOY_PATH\" || exit 1
+            echo '🔍 Checking for deploy.sh script...'
             if [ -f 'scripts/deploy.sh' ]; then
+              echo '✅ Found scripts/deploy.sh, executing...'
               bash scripts/deploy.sh
+            elif [ -f 'deploy.sh' ]; then
+              echo '✅ Found deploy.sh in root, executing...'
+              bash deploy.sh
             else
               echo '❌ deploy.sh script not found!'
+              echo 'Current directory: '\$(pwd)
+              echo 'Files in current directory:'
+              ls -la
+              echo 'Files in scripts/ directory:'
+              ls -la scripts/ 2>/dev/null || echo 'scripts/ directory does not exist'
               exit 1
             fi
           "
