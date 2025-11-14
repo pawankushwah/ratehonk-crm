@@ -2,13 +2,30 @@ import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
-    const text = (await res.text()) || res.statusText;
-    console.error("🔍 API Request - Error response:", text);
+    let errorMessage = res.statusText;
+    try {
+      const text = await res.text();
+      if (text) {
+        // Try to parse as JSON to get the actual error message
+        try {
+          const json = JSON.parse(text);
+          errorMessage = json.message || json.error || text;
+        } catch {
+          // If not JSON, use the text as is
+          errorMessage = text;
+        }
+      }
+    } catch {
+      // If reading fails, use status text
+      errorMessage = res.statusText;
+    }
+    
+    console.error("🔍 API Request - Error response:", errorMessage);
     
     // Handle 401 unauthorized errors specifically
     if (res.status === 401) {
       // Check if it's an invalid/expired token error
-      if (text.includes("Invalid or expired token")) {
+      if (errorMessage.includes("Invalid or expired token")) {
         // Clear local storage and redirect to login
         localStorage.removeItem("auth_token");
         localStorage.removeItem("token");
@@ -19,7 +36,12 @@ async function throwIfResNotOk(res: Response) {
       }
     }
     
-    throw new Error(`${res.status}: ${text}`);
+    // For 403 (activation required), throw the actual message
+    if (res.status === 403) {
+      throw new Error(errorMessage);
+    }
+    
+    throw new Error(`${res.status}: ${errorMessage}`);
   }
 }
 

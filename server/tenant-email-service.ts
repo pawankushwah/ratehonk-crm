@@ -180,7 +180,23 @@ class TenantEmailService {
             
             <p><strong>Important:</strong> Please change your password after your first login for security purposes.</p>
             
-            <p>You can access the system at: <a href="${process.env.APP_URL || "https://your-app-url.com"}">Login Here</a></p>
+            <p>You can access the system at: <a href="${(() => {
+              let url = process.env.APP_URL || process.env.FRONTEND_URL || "http://localhost:5000";
+              url = url.replace(/\/$/, "");
+              const isDevelopment = process.env.NODE_ENV !== "production";
+              
+              // In development, allow localhost
+              if (isDevelopment && (url.includes("localhost") || url.includes("127.0.0.1"))) {
+                if (!url.startsWith("http")) url = `http://${url}`;
+                return url;
+              }
+              
+              // Production validation
+              if (url.includes("your-app-url.com") || url.includes("ww25")) url = "https://crm.ratehonk.com";
+              if (!url.startsWith("http")) url = `https://${url}`;
+              if (!isDevelopment && !url.includes("crm.ratehonk.com")) url = "https://crm.ratehonk.com";
+              return url;
+            })()}">Login Here</a></p>
             
             <p>If you have any questions, please contact your system administrator.</p>
             
@@ -246,7 +262,44 @@ class TenantEmailService {
         throw new Error("No email configuration available");
       }
 
-      const resetUrl = `${process.env.APP_URL || "https://your-app-url.com"}/reset-password?token=${data.resetToken}`;
+      // Helper function to get correct base URL (same logic as email-service.ts)
+      const getBaseUrl = () => {
+        let url = process.env.APP_URL || process.env.FRONTEND_URL || "http://localhost:5000";
+        url = url.replace(/\/$/, "");
+        
+        // Check if we're in development mode
+        const isDevelopment = process.env.NODE_ENV !== "production";
+        
+        // In development, allow localhost and 127.0.0.1
+        if (isDevelopment) {
+          if (url.includes("localhost") || url.includes("127.0.0.1") || url.includes("0.0.0.0")) {
+            if (!url.startsWith("http")) url = `http://${url}`;
+            console.log("🔧 Development mode - Using local URL:", url);
+            return url;
+          }
+        }
+        
+        // Force correct domain in production - reject any wrong domains
+        if (url.includes("your-app-url.com") || url.includes("ww25")) {
+          url = "https://crm.ratehonk.com";
+        }
+        
+        // Ensure URL is absolute
+        if (!url.startsWith("http")) {
+          const protocol = isDevelopment ? "http" : "https";
+          url = `${protocol}://${url}`;
+        }
+        
+        // In production, ensure it ends with the correct domain
+        if (!isDevelopment && !url.includes("crm.ratehonk.com")) {
+          url = "https://crm.ratehonk.com";
+        }
+        
+        return url;
+      };
+      
+      const baseUrl = getBaseUrl();
+      const resetUrl = `${baseUrl}/reset-password?token=${data.resetToken}`;
 
       const mailOptions = {
         from: fromEmail,

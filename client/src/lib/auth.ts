@@ -28,14 +28,62 @@ export interface AuthData {
 }
 
 export const auth = {
-  async login(email: string, password: string): Promise<AuthData> {
-    const response = await apiRequest("POST", "/api/auth/login", { email, password });
+  async login(email: string, password: string): Promise<AuthData | { requiresVerification: true; userId: number; message: string }> {
+    try {
+      const response = await apiRequest("POST", "/api/auth/login", { email, password });
+      const data = await response.json();
+      
+      // Check if verification is required
+      if (data.requiresVerification) {
+        return {
+          requiresVerification: true,
+          userId: data.userId,
+          message: data.message,
+        };
+      }
+      
+      // Store token and cache authentication data (use both keys for compatibility)
+      localStorage.setItem("auth_token", data.token);
+      localStorage.setItem("token", data.token);
+      localStorage.setItem("cached_auth_data", JSON.stringify(data));
+      
+      return data;
+    } catch (error: any) {
+      // Check if it's an activation error (403 status)
+      if (error.message?.includes("403") || error.message?.includes("activate your account") || error.message?.includes("requiresActivation")) {
+        // Extract the actual error message from the response
+        const errorMessage = error.message.includes(":") 
+          ? error.message.split(":")[1]?.trim() || "Please activate your account by clicking the activation link sent to your email before logging in."
+          : "Please activate your account by clicking the activation link sent to your email before logging in.";
+        throw new Error(errorMessage);
+      }
+      throw error;
+    }
+  },
+
+  async verifyLoginCode(userId: number, code: string): Promise<AuthData> {
+    const response = await apiRequest("POST", "/api/auth/verify-login-code", { userId, code });
     const data = await response.json();
     
-    // Store token and cache authentication data (use both keys for compatibility)
+    if (!response.ok) {
+      throw new Error(data.message || "Invalid verification code");
+    }
+    
+    // Store token and cache authentication data
     localStorage.setItem("auth_token", data.token);
     localStorage.setItem("token", data.token);
     localStorage.setItem("cached_auth_data", JSON.stringify(data));
+    
+    return data;
+  },
+
+  async resendVerificationCode(userId: number): Promise<{ success: boolean; message: string }> {
+    const response = await apiRequest("POST", "/api/auth/resend-verification-code", { userId });
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.message || "Failed to resend verification code");
+    }
     
     return data;
   },

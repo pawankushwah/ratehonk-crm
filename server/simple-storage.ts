@@ -25,6 +25,7 @@ export class SimpleStorage {
       const user = users[0];
       if (user) {
         console.log("🔍 User found with id:", user.id);
+        console.log("🔍 User is_email_verified:", user.is_email_verified);
       } else {
         console.log("🔍 No user found with this email");
       }
@@ -282,6 +283,166 @@ export class SimpleStorage {
       `;
     } catch (error) {
       console.error("Error cleaning up expired tokens:", error);
+      throw error;
+    }
+  }
+
+  // Email activation token management
+  async createActivationToken(
+    userId: number,
+    token: string,
+    expiresAt: Date,
+  ) {
+    try {
+      console.log(
+        "🔐 Creating activation token for user:",
+        userId,
+        "expires:",
+        expiresAt.toISOString(),
+      );
+      const expiresAtString = expiresAt.toISOString();
+      const [activationToken] = await sql`
+        INSERT INTO email_activation_tokens (user_id, token, expires_at)
+        VALUES (${userId}, ${token}, ${expiresAtString})
+        RETURNING *
+      `;
+      console.log("✅ Activation token created successfully");
+      return activationToken;
+    } catch (error) {
+      console.error("❌ Error creating activation token:", error);
+      throw error;
+    }
+  }
+
+  async getActivationToken(token: string) {
+    try {
+      const [activationToken] = await sql`
+        SELECT eat.*, u.email, u.first_name, u.last_name, u.id as user_id, u.is_email_verified
+        FROM email_activation_tokens eat
+        JOIN users u ON eat.user_id = u.id
+        WHERE eat.token = ${token} 
+        AND eat.used_at IS NULL 
+        AND eat.expires_at > NOW()
+      `;
+      return activationToken;
+    } catch (error) {
+      console.error("Error getting activation token:", error);
+      throw error;
+    }
+  }
+
+  async markActivationTokenAsUsed(tokenId: number) {
+    try {
+      await sql`
+        UPDATE email_activation_tokens 
+        SET used_at = NOW() 
+        WHERE id = ${tokenId}
+      `;
+    } catch (error) {
+      console.error("Error marking activation token as used:", error);
+      throw error;
+    }
+  }
+
+  async activateUser(userId: number) {
+    try {
+      await sql`
+        UPDATE users 
+        SET is_email_verified = true
+        WHERE id = ${userId}
+      `;
+    } catch (error) {
+      console.error("Error activating user:", error);
+      throw error;
+    }
+  }
+
+  // Login verification code management
+  async createLoginVerificationCode(
+    userId: number,
+    email: string,
+    code: string,
+    expiresAt: Date,
+  ) {
+    try {
+      console.log(
+        "🔐 Creating login verification code for user:",
+        userId,
+        "expires:",
+        expiresAt.toISOString(),
+      );
+      const expiresAtString = expiresAt.toISOString();
+      // Delete any existing codes for this user first
+      await sql`
+        DELETE FROM login_verification_codes 
+        WHERE user_id = ${userId} AND used_at IS NULL
+      `;
+      
+      const [verificationCode] = await sql`
+        INSERT INTO login_verification_codes (user_id, email, code, expires_at)
+        VALUES (${userId}, ${email}, ${code}, ${expiresAtString})
+        RETURNING *
+      `;
+      console.log("✅ Login verification code created successfully");
+      return verificationCode;
+    } catch (error) {
+      console.error("❌ Error creating login verification code:", error);
+      throw error;
+    }
+  }
+
+  async getLoginVerificationCode(userId: number, code: string) {
+    try {
+      const [verificationCode] = await sql`
+        SELECT lvc.*, u.email, u.first_name, u.last_name, u.id as user_id
+        FROM login_verification_codes lvc
+        JOIN users u ON lvc.user_id = u.id
+        WHERE lvc.user_id = ${userId}
+        AND lvc.code = ${code}
+        AND lvc.used_at IS NULL 
+        AND lvc.expires_at > NOW()
+      `;
+      return verificationCode;
+    } catch (error) {
+      console.error("Error getting login verification code:", error);
+      throw error;
+    }
+  }
+
+  async incrementVerificationAttempts(codeId: number) {
+    try {
+      await sql`
+        UPDATE login_verification_codes 
+        SET attempts = attempts + 1
+        WHERE id = ${codeId}
+      `;
+    } catch (error) {
+      console.error("Error incrementing verification attempts:", error);
+      throw error;
+    }
+  }
+
+  async markVerificationCodeAsUsed(codeId: number) {
+    try {
+      await sql`
+        UPDATE login_verification_codes 
+        SET used_at = NOW() 
+        WHERE id = ${codeId}
+      `;
+    } catch (error) {
+      console.error("Error marking verification code as used:", error);
+      throw error;
+    }
+  }
+
+  async cleanupExpiredVerificationCodes() {
+    try {
+      await sql`
+        DELETE FROM login_verification_codes 
+        WHERE expires_at < NOW() OR attempts >= 5
+      `;
+    } catch (error) {
+      console.error("Error cleaning up expired verification codes:", error);
       throw error;
     }
   }

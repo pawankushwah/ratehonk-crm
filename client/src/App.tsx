@@ -12,6 +12,7 @@ import NotFound from "@/pages/not-found";
 // Temporarily using a simple login component
 import Login from "@/pages/auth/login";
 import Register from "@/pages/auth/register";
+import Activate from "@/pages/auth/activate";
 
 // Core page imports
 import Welcome from "@/pages/welcome";
@@ -148,6 +149,12 @@ function Router() {
         <Route path="/register">
           <PublicRoute>
             <Register />
+          </PublicRoute>
+        </Route>
+
+        <Route path="/activate">
+          <PublicRoute>
+            <Activate />
           </PublicRoute>
         </Route>
 
