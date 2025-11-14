@@ -86,6 +86,7 @@ import CustomerActivityModal from "@/CustomerModal/CustomerActivityModal";
 import CustomerCallModal from "@/CustomerModal/CustomerCallModal";
 import CustomerEmailModal from "@/CustomerModal/CustomerEmailModal";
 import FilesDocumentsTable from "@/customerTable/FilesDocumentsTable";
+import { ActivityDataPopup } from "@/components/ActivityDataPopup";
 import { EnhancedTable, TableColumn } from "@/components/ui/enhanced-table";
 import { TravelBookingForm } from "@/components/booking/travel-booking-form";
 import { useToast } from "@/hooks/use-toast";
@@ -108,6 +109,11 @@ export default function CustomerDetail() {
   const [isActivityModalOpen, setIsActivityModalOpen] = useState(false);
   const [isCallModalOpen, setIsCallModalOpen] = useState(false);
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
+  const [activityPopupOpen, setActivityPopupOpen] = useState(false);
+  const [selectedActivityTable, setSelectedActivityTable] = useState<{
+    tableName: string | null;
+    tableId: number | null;
+  }>({ tableName: null, tableId: null });
   const [isCreateBookingOpen, setIsCreateBookingOpen] = useState(false);
   const [isViewBookingOpen, setIsViewBookingOpen] = useState(false);
   const [isEditBookingOpen, setIsEditBookingOpen] = useState(false);
@@ -1186,7 +1192,31 @@ export default function CustomerDetail() {
                   )}
                 </div>
 
-                <div className="flex-1 bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
+                <div 
+                  className={`flex-1 bg-white rounded-lg border border-gray-200 p-4 shadow-sm ${
+                    activity.activityTableId && activity.activityTableName
+                      ? "cursor-pointer hover:border-blue-300 hover:shadow-md transition-all"
+                      : ""
+                  }`}
+                  onClick={() => {
+                    console.log("🔍 Activity clicked:", {
+                      activityId: activity.id,
+                      activityTableId: activity.activityTableId,
+                      activityTableName: activity.activityTableName,
+                      hasTableData: !!(activity.activityTableId && activity.activityTableName),
+                    });
+                    if (activity.activityTableId && activity.activityTableName) {
+                      setSelectedActivityTable({
+                        tableName: activity.activityTableName,
+                        tableId: activity.activityTableId,
+                      });
+                      setActivityPopupOpen(true);
+                      console.log("✅ Popup should open now");
+                    } else {
+                      console.log("⚠️ Activity has no table data, popup not opening");
+                    }
+                  }}
+                >
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex items-center gap-3">
                       <div
@@ -1197,6 +1227,11 @@ export default function CustomerDetail() {
                       <span className="text-xs text-gray-500">
                         {getActivityTypeLabel(activity.activityType)}
                       </span>
+                      {activity.activityTableId && activity.activityTableName && (
+                        <span className="text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
+                          View Details
+                        </span>
+                      )}
                     </div>
                     <div className="text-right">
                       <span className="text-sm text-gray-500">
@@ -2122,6 +2157,18 @@ export default function CustomerDetail() {
         customerPhone={customer.phone}
         customerName={displayName}
         customerId={parseInt(customerId || "0")}
+      />
+
+      {/* Activity Data Popup */}
+      <ActivityDataPopup
+        isOpen={activityPopupOpen}
+        onClose={() => {
+          setActivityPopupOpen(false);
+          setSelectedActivityTable({ tableName: null, tableId: null });
+        }}
+        tableName={selectedActivityTable.tableName}
+        tableId={selectedActivityTable.tableId}
+        tenantId={tenant?.id}
       />
     </Layout>
   );

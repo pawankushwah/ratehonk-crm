@@ -1148,7 +1148,17 @@ export class SimpleStorage {
       if (typeSpecificFilters) {
         try {
           const filters = JSON.parse(typeSpecificFilters);
-          console.log("🔍 Applying type-specific filters:", filters);
+          console.log("🔍 Applying type-specific filters:", JSON.stringify(filters, null, 2));
+
+          // Group date range filters (travelDate_from, travelDate_to)
+          const dateRangeFields = new Set<string>();
+          Object.keys(filters).forEach((key) => {
+            if (key.endsWith("_from") || key.endsWith("_to")) {
+              const baseField = key.replace(/_from$|_to$/, "");
+              dateRangeFields.add(baseField);
+            }
+          });
+          console.log("🔍 Date range fields detected:", Array.from(dateRangeFields));
 
           Object.entries(filters).forEach(([fieldName, fieldValue]) => {
             if (
@@ -1156,9 +1166,51 @@ export class SimpleStorage {
               fieldValue !== null &&
               fieldValue !== undefined
             ) {
-              // Use PostgreSQL JSON ->> operator to query JSON fields
-              whereClauses = sql`${whereClauses} AND l.type_specific_data->>${fieldName} = ${String(fieldValue)}`;
-              console.log(`🔍 Filter applied: ${fieldName} = ${fieldValue}`);
+              // Check if this is part of a date range
+              if (fieldName.endsWith("_from")) {
+                const baseField = fieldName.replace(/_from$/, "");
+                const toValue = filters[`${baseField}_to`];
+                
+                if (toValue && toValue !== "" && toValue !== null && toValue !== undefined) {
+                  // Date range: BETWEEN from AND to
+                  // Handle NULL values and ensure the field exists in JSON
+                  // Extract date from ISO timestamp string (e.g., "2025-11-29T18:30:00.000Z" -> "2025-11-29")
+                  whereClauses = sql`${whereClauses} AND (
+                    l.type_specific_data->>${baseField} IS NOT NULL 
+                    AND l.type_specific_data->>${baseField} != ''
+                    AND DATE(l.type_specific_data->>${baseField}) >= ${String(fieldValue)}::date 
+                    AND DATE(l.type_specific_data->>${baseField}) <= ${String(toValue)}::date
+                  )`;
+                  console.log(`🔍 Date range filter applied: ${baseField} BETWEEN ${fieldValue} AND ${toValue}`);
+                } else {
+                  // Only from date: >= from
+                  // Extract date from ISO timestamp string
+                  whereClauses = sql`${whereClauses} AND (
+                    l.type_specific_data->>${baseField} IS NOT NULL 
+                    AND l.type_specific_data->>${baseField} != ''
+                    AND DATE(l.type_specific_data->>${baseField}) >= ${String(fieldValue)}::date
+                  )`;
+                  console.log(`🔍 Date from filter applied: ${baseField} >= ${fieldValue}`);
+                }
+              } else if (fieldName.endsWith("_to")) {
+                // Only process _to if _from doesn't exist (to avoid duplicate processing)
+                const baseField = fieldName.replace(/_to$/, "");
+                if (!filters[`${baseField}_from`] || filters[`${baseField}_from`] === "" || filters[`${baseField}_from`] === null || filters[`${baseField}_from`] === undefined) {
+                  // Only to date: <= to
+                  // Extract date from ISO timestamp string
+                  whereClauses = sql`${whereClauses} AND (
+                    l.type_specific_data->>${baseField} IS NOT NULL 
+                    AND l.type_specific_data->>${baseField} != ''
+                    AND DATE(l.type_specific_data->>${baseField}) <= ${String(fieldValue)}::date
+                  )`;
+                  console.log(`🔍 Date to filter applied: ${baseField} <= ${fieldValue}`);
+                }
+              } else if (!dateRangeFields.has(fieldName)) {
+                // Regular field (not part of a date range): exact match
+                // Use PostgreSQL JSON ->> operator to query JSON fields
+                whereClauses = sql`${whereClauses} AND l.type_specific_data->>${fieldName} = ${String(fieldValue)}`;
+                console.log(`🔍 Filter applied: ${fieldName} = ${fieldValue}`);
+              }
             }
           });
         } catch (error) {
@@ -1178,6 +1230,9 @@ export class SimpleStorage {
         : "created_at";
       const order = sortOrder.toLowerCase() === "asc" ? sql`ASC` : sql`DESC`;
 
+      // Log the final WHERE clause for debugging
+      console.log("🔍 Final WHERE clause constructed, executing query...");
+      
       const leadResults = await sql`
         SELECT 
           l.*,
@@ -1191,6 +1246,8 @@ export class SimpleStorage {
         ORDER BY ${sql(sortColumn)} ${order}
         LIMIT ${limit} OFFSET ${offset}
       `;
+      
+      console.log(`🔍 Query returned ${leadResults.length} leads`);
 
       // Transform leads with default fields
       const transformedLeads = leadResults.map((lead: any) => ({
@@ -1413,6 +1470,8 @@ export class SimpleStorage {
         activity_title,
         activity_description,
         activity_status,
+        activity_table_id,
+        activity_table_name,
       } = activityData;
 
       if (!tenant_id) throw new Error("tenantId is required");
@@ -1426,6 +1485,8 @@ export class SimpleStorage {
           activity_title,
           activity_description,
           activity_status,
+          activity_table_id,
+          activity_table_name,
           activity_date,
           created_at,
           updated_at
@@ -1438,6 +1499,8 @@ export class SimpleStorage {
           ${activity_title},
           ${activity_description || null},
           ${activity_status},
+          ${activity_table_id || null},
+          ${activity_table_name || null},
           ${new Date().toISOString()},
           NOW(),
           NOW()
@@ -7381,6 +7444,8 @@ export class SimpleStorage {
           la.activity_description as "activityDescription",
           la.activity_status as "activityStatus",
           la.activity_date as "activityDate",
+          la.activity_table_id as "activityTableId",
+          la.activity_table_name as "activityTableName",
           la.created_at as "createdAt",
           la.updated_at as "updatedAt",
           u.email as "userEmail",
@@ -7809,6 +7874,8 @@ export class SimpleStorage {
           activity_description as "activityDescription",
           activity_status as "activityStatus",
           activity_date as "activityDate",
+          activity_table_id as "activityTableId",
+          activity_table_name as "activityTableName",
           created_at as "createdAt",
           updated_at as "updatedAt"
         FROM customer_activities 
@@ -7827,11 +7894,14 @@ export class SimpleStorage {
       const [activity] = await sql`
         INSERT INTO customer_activities (
           tenant_id, customer_id, user_id, activity_type, 
-          activity_title, activity_description, activity_status, activity_date
+          activity_title, activity_description, activity_status, 
+          activity_table_id, activity_table_name, activity_date
         ) VALUES (
           ${data.tenantId}, ${data.customerId}, ${data.userId}, 
           ${data.activityType}, ${data.activityTitle}, ${data.activityDescription || null},
-          ${data.activityStatus || 1}, ${data.activityDate || sql`NOW()`}
+          ${data.activityStatus || 1}, 
+          ${data.activityTableId || null}, ${data.activityTableName || null},
+          ${data.activityDate || sql`NOW()`}
         )
         RETURNING 
           id,
@@ -7842,6 +7912,8 @@ export class SimpleStorage {
           activity_title as "activityTitle",
           activity_description as "activityDescription",
           activity_status as "activityStatus",
+          activity_table_id as "activityTableId",
+          activity_table_name as "activityTableName",
           activity_date as "activityDate",
           created_at as "createdAt",
           updated_at as "updatedAt"
@@ -7867,6 +7939,8 @@ export class SimpleStorage {
           activity_title = ${data.activityTitle},
           activity_description = ${data.activityDescription || null},
           activity_status = ${data.activityStatus || 1},
+          activity_table_id = ${data.activityTableId || null},
+          activity_table_name = ${data.activityTableName || null},
           activity_date = ${data.activityDate || sql`NOW()`},
           updated_at = NOW()
         WHERE id = ${id} AND tenant_id = ${tenantId} AND customer_id = ${customerId}
@@ -7944,11 +8018,12 @@ export class SimpleStorage {
       const [email] = await sql`
         INSERT INTO email_logs (
           tenant_id, customer_id, campaign_id, subscriber_id, email, subject, body, 
-          status, sent_at, from_email
+          status, sent_at, from_email, attachments
         ) VALUES (
           ${data.tenantId}, ${data.customerId}, ${data.campaignId || null}, ${data.subscriberId || null}, 
           ${data.email}, ${data.subject}, ${data.body},
-          ${data.status || "sent"}, ${data.sentAt || sql`NOW()`}, ${data.fromEmail || null}
+          ${data.status || "sent"}, ${data.sentAt || sql`NOW()`}, ${data.fromEmail || null},
+          ${data.attachments ? JSON.stringify(data.attachments) : null}
         )
         RETURNING 
           id,
@@ -7966,8 +8041,10 @@ export class SimpleStorage {
           clicked_at as "clickedAt",
           error_message as "errorMessage",
           lead_id as "leadId",
-          from_email as "fromEmail"
+          from_email as "fromEmail",
+          attachments
       `;
+      // Create activity linked to the email_logs record
       this.createCustomerActivity({
         tenantId: data.tenantId,
         customerId: data.customerId,
@@ -7976,7 +8053,10 @@ export class SimpleStorage {
         activityTitle: data.subject,
         activityDescription: data.body,
         activityStatus: 1,
+        activityTableId: email.id,
+        activityTableName: "email_logs",
       });
+      return email;
     } catch (error) {
       console.error("❌ Error creating customer email:", error);
       throw error;
@@ -8094,12 +8174,13 @@ export class SimpleStorage {
           "followUpDateTime",
           "followUpRequired"
       `;
+      // Create activity linked to the call_logs record
       this.createCustomerActivity({
         tenantId: data.tenantId,
         customerId: data.customerId,
         userId: data.userId,
         activityType: 3,
-        activityTitle: data.callType,
+        activityTitle: data.callType || "Call Made",
         activityDescription:
           "Mobile Number " +
           data.phoneNumber +
@@ -8118,6 +8199,8 @@ export class SimpleStorage {
           " Follow Up Status " +
           data.followUpRequired,
         activityStatus: 1,
+        activityTableId: call.id,
+        activityTableName: "call_logs",
       });
       return call;
     } catch (error) {

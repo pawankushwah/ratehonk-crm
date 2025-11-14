@@ -4,6 +4,7 @@ import { authenticate } from "./simple-routes";
 import type { InsertWhatsappConfig } from "@shared/schema";
 import { spawn } from "child_process";
 import { z } from "zod";
+import { sql } from "./db";
 
 // WhatsApp Business API base URL
 const WHATSAPP_API_BASE = "https://whatsappbusiness.ratehonk.com";
@@ -1728,7 +1729,7 @@ export function registerWhatsAppRoutes(app: Express) {
             customerId = customer.id;
             customerName = customer.name;
             
-            // Log activity for customer
+            // Log activity for customer (will be linked to message after it's saved)
             if (req.user?.id) {
               await storage.createCustomerActivity({
                 tenantId,
@@ -1739,6 +1740,7 @@ export function registerWhatsAppRoutes(app: Express) {
                 activityDescription: `Media type: ${media_type}${caption ? `, Caption: "${caption.substring(0, 100)}${caption.length > 100 ? '...' : ''}"` : ''}`,
                 activityStatus: 1, // 1 = Completed
                 activityDate: new Date().toISOString(),
+                // Note: activityTableId and activityTableName will be set after message is saved
               });
               console.log(`✅ Customer activity logged for customer ${customer.id}`);
             }
@@ -1749,8 +1751,9 @@ export function registerWhatsAppRoutes(app: Express) {
         }
 
         // Save message to database
+        let savedMessage = null;
         try {
-          await storage.createWhatsAppMessage({
+          savedMessage = await storage.createWhatsAppMessage({
             tenantId,
             deviceId: device.id,
             customerId,
@@ -1768,6 +1771,34 @@ export function registerWhatsAppRoutes(app: Express) {
         } catch (dbError) {
           // Don't fail the whole operation if database logging fails
           console.error("⚠️ Failed to save WhatsApp message to database:", dbError);
+        }
+
+        // Update activity to link to the WhatsApp message
+        if (savedMessage && customerId && req.user?.id) {
+          try {
+            // Find the most recent activity for this customer with activityType 5
+            const recentActivity = await sql`
+              SELECT id FROM customer_activities 
+              WHERE customer_id = ${customerId} 
+                AND tenant_id = ${tenantId}
+                AND activity_type = 5
+                AND user_id = ${req.user.id}
+              ORDER BY created_at DESC
+              LIMIT 1
+            `;
+            
+            if (recentActivity && recentActivity.length > 0) {
+              await sql`
+                UPDATE customer_activities 
+                SET activity_table_id = ${savedMessage.id},
+                    activity_table_name = 'whatsapp_messages'
+                WHERE id = ${recentActivity[0].id}
+              `;
+              console.log(`✅ Linked WhatsApp activity to message ${savedMessage.id}`);
+            }
+          } catch (activityError) {
+            console.error("⚠️ Failed to link WhatsApp activity to message:", activityError);
+          }
         }
 
         res.json({
@@ -1903,8 +1934,9 @@ export function registerWhatsAppRoutes(app: Express) {
           }
 
           // Save message to database
+          let savedMessage = null;
           try {
-            await storage.createWhatsAppMessage({
+            savedMessage = await storage.createWhatsAppMessage({
               tenantId,
               deviceId: senderDevice.id,
               customerId,
@@ -1920,6 +1952,34 @@ export function registerWhatsAppRoutes(app: Express) {
           } catch (dbError) {
             // Don't fail the whole operation if database logging fails
             console.error("⚠️ Failed to save WhatsApp message to database:", dbError);
+          }
+
+          // Update activity to link to the WhatsApp message
+          if (savedMessage && customerId && req.user?.id) {
+            try {
+              // Find the most recent activity for this customer with activityType 5
+              const recentActivity = await sql`
+                SELECT id FROM customer_activities 
+                WHERE customer_id = ${customerId} 
+                  AND tenant_id = ${tenantId}
+                  AND activity_type = 5
+                  AND user_id = ${req.user.id}
+                ORDER BY created_at DESC
+                LIMIT 1
+              `;
+              
+              if (recentActivity && recentActivity.length > 0) {
+                await sql`
+                  UPDATE customer_activities 
+                  SET activity_table_id = ${savedMessage.id},
+                      activity_table_name = 'whatsapp_messages'
+                  WHERE id = ${recentActivity[0].id}
+                `;
+                console.log(`✅ Linked WhatsApp activity to message ${savedMessage.id}`);
+              }
+            } catch (activityError) {
+              console.error("⚠️ Failed to link WhatsApp activity to message:", activityError);
+            }
           }
 
           res.json({

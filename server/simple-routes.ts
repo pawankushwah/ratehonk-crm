@@ -33,6 +33,8 @@ import * as XLSX from "xlsx";
 // import pdfParse from "pdf-parse"; // Temporarily disabled
 import Tesseract from "tesseract.js";
 import { c } from "node_modules/vite/dist/node/types.d-aGj9QkWt.js";
+import fs from "fs";
+import path from "path";
 
 // Gmail OAuth handling function - COMPLETELY REWRITTEN to avoid googleapis imports
 async function handleGmailCallback(
@@ -16829,10 +16831,9 @@ Please improve this email.`;
     },
   });
 
-  // Serve uploaded email attachments from local filesystem
+  // Serve uploaded files from local filesystem
+  // Handle both /uploads/email-attachments/ and /uploads/ paths
   app.get("/uploads/email-attachments/:filename", (req, res) => {
-    const fs = require("fs");
-    const path = require("path");
     const filename = req.params.filename;
     
     // Security: prevent path traversal - only allow alphanumeric, dash, underscore, and dot
@@ -16850,6 +16851,51 @@ Please improve this email.`;
     }
     
     if (fs.existsSync(safePath) && fs.statSync(safePath).isFile()) {
+      res.sendFile(safePath);
+    } else {
+      res.status(404).json({ message: "File not found" });
+    }
+  });
+
+  // Serve uploaded files from /uploads/ directory (for customer files and other uploads)
+  app.get("/uploads/:filename", (req, res) => {
+    let filename = decodeURIComponent(req.params.filename); // Decode URL-encoded filename
+    
+    // Security: prevent path traversal - allow alphanumeric, dash, underscore, dot, and timezone offset (+/-)
+    // But sanitize to prevent directory traversal by removing any path separators
+    filename = filename.replace(/[\/\\]/g, ''); // Remove any path separators
+    // Allow timestamp, timezone offset (like +0530 or -0500), dashes, underscores, dots, and alphanumeric
+    if (!/^[0-9]+[+-][0-9]{4}-[a-zA-Z0-9._-]+$/.test(filename)) {
+      // Also allow older format without timezone for backward compatibility
+      if (!/^[0-9]+-[a-zA-Z0-9._-]+$/.test(filename) && !/^[a-zA-Z0-9._-]+$/.test(filename)) {
+        return res.status(403).json({ message: "Invalid filename" });
+      }
+    }
+    
+    const filePath = path.join(process.cwd(), "uploads", filename);
+    
+    // Security: ensure the resolved path is within the uploads directory
+    const safePath = path.normalize(filePath);
+    const uploadsDir = path.join(process.cwd(), "uploads");
+    if (!safePath.startsWith(path.normalize(uploadsDir))) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+    
+    if (fs.existsSync(safePath) && fs.statSync(safePath).isFile()) {
+      // Set appropriate content type based on file extension
+      const ext = path.extname(filename).toLowerCase();
+      const contentTypes: Record<string, string> = {
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.pdf': 'application/pdf',
+        '.txt': 'text/plain',
+        '.csv': 'text/csv',
+      };
+      const contentType = contentTypes[ext] || 'application/octet-stream';
+      res.setHeader('Content-Type', contentType);
       res.sendFile(safePath);
     } else {
       res.status(404).json({ message: "File not found" });
@@ -17455,87 +17501,139 @@ Please improve this email.`;
   };
 
   // Handle raw binary PUT requests from Uppy (AwsS3 plugin sends file as raw body)
+  // express.raw() middleware already parses the body into req.body as a Buffer
   const handleRawFileUpload = async (req: any, res: any) => {
     try {
-      console.log("📁 Raw file upload (PUT) received");
+      console.log("📁 ========== Raw file upload (PUT) handler called ==========");
       console.log("📁 Content-Type:", req.headers["content-type"]);
       console.log("📁 Content-Length:", req.headers["content-length"]);
+      console.log("📁 Query params:", req.query);
+      console.log("📁 Request body type:", typeof req.body);
+      console.log("📁 Request body is Buffer:", Buffer.isBuffer(req.body));
+      console.log("📁 Request body length:", req.body?.length || 0);
       
-      // Uppy sends the file as raw binary in the request body
-      // We need to read it as a buffer
-      const chunks: Buffer[] = [];
+      // express.raw() should parse the body into req.body as a Buffer
+      // But if express.json() ran first, req.body might be an object or string
+      let fileBuffer: Buffer;
       
-      req.on("data", (chunk: Buffer) => {
-        chunks.push(chunk);
-      });
-      
-      req.on("end", async () => {
-        try {
-          const fileBuffer = Buffer.concat(chunks);
-          
-          if (fileBuffer.length === 0) {
-            return res.status(400).json({
-              success: false,
-              message: "No file data received",
-            });
-          }
-
-          // Get filename from query parameter or use a default
-          const filename = (req.query.filename as string) || `file-${Date.now()}`;
-          const contentType = req.headers["content-type"] || "application/octet-stream";
-
-          // Generate a unique object path
-          const timestamp = Date.now();
-          const randomSuffix = Math.random().toString(36).substring(2, 8);
-          const objectPath = `uploads/${timestamp}-${randomSuffix}-${filename}`;
-          const publicUrl = `/uploads/${timestamp}-${randomSuffix}-${filename}`;
-
-          // Save file to local filesystem (or upload to object storage)
-          const fs = await import("fs");
-          const path = await import("path");
-          const uploadsDir = path.default.join(process.cwd(), "uploads");
-          
-          if (!fs.default.existsSync(uploadsDir)) {
-            fs.default.mkdirSync(uploadsDir, { recursive: true });
-          }
-          
-          const filePath = path.default.join(uploadsDir, `${timestamp}-${randomSuffix}-${filename}`);
-          fs.default.writeFileSync(filePath, fileBuffer);
-
-          console.log("📁 File saved to:", filePath);
-          console.log("📁 Public URL:", publicUrl);
-
-          res.json({
-            success: true,
-            objectPath,
-            publicUrl,
-            fileName: filename,
-            mimeType: contentType,
-            fileSize: fileBuffer.length,
-          });
-        } catch (error: any) {
-          console.error("❌ Error processing raw file upload:", error);
-          res.status(500).json({
-            success: false,
-            message: "Failed to store file",
-            error: error.message,
-          });
-        }
-      });
-
-      req.on("error", (error: any) => {
-        console.error("❌ Request stream error:", error);
-        res.status(500).json({
+      if (Buffer.isBuffer(req.body)) {
+        // Good - body is already a Buffer
+        fileBuffer = req.body;
+      } else if (typeof req.body === 'string') {
+        // Body was parsed as string, convert to Buffer
+        console.log("⚠️ Body was parsed as string, converting to Buffer");
+        fileBuffer = Buffer.from(req.body, 'binary');
+      } else if (req.body && typeof req.body === 'object') {
+        // Body was parsed as JSON, this shouldn't happen but handle it
+        console.error("❌ Body was parsed as JSON object - this shouldn't happen for binary uploads");
+        return res.status(400).json({
           success: false,
-          message: "Error reading file data",
-          error: error.message,
+          message: "Request body was parsed as JSON instead of binary data. Check middleware order.",
         });
+      } else {
+        // No body at all
+        console.error("❌ No request body found");
+        return res.status(400).json({
+          success: false,
+          message: "No file data received",
+        });
+      }
+      
+      if (!fileBuffer || fileBuffer.length === 0) {
+        console.error("❌ File buffer is empty");
+        return res.status(400).json({
+          success: false,
+          message: "No file data received",
+        });
+      }
+
+      console.log("📁 File buffer size:", fileBuffer.length, "bytes");
+
+      // Get filename from query parameter or use a default
+      let originalFilename = (req.query.filename as string) || `file-${Date.now()}`;
+      const contentType = req.headers["content-type"] || "application/octet-stream";
+
+      console.log("📁 Original filename:", originalFilename);
+      console.log("📁 Content-Type:", contentType);
+
+      // Sanitize filename: remove path separators and special characters, keep only safe characters
+      const sanitizeFilename = (name: string): string => {
+        // Get file extension
+        const ext = path.extname(name);
+        // Get base name without extension
+        const baseName = path.basename(name, ext);
+        // Sanitize: remove special characters, keep alphanumeric, spaces, dashes, underscores, dots
+        const sanitized = baseName
+          .replace(/[^a-zA-Z0-9._\s-]/g, '') // Remove special chars
+          .replace(/\s+/g, '_') // Replace spaces with underscores
+          .replace(/_{2,}/g, '_') // Replace multiple underscores with single
+          .substring(0, 100); // Limit length
+        return `${sanitized}${ext}`;
+      };
+
+      const sanitizedFilename = sanitizeFilename(originalFilename);
+
+      // Generate timestamp with timezone offset
+      const now = new Date();
+      const timestamp = now.getTime();
+      const timezoneOffset = -now.getTimezoneOffset(); // Offset in minutes
+      const timezoneOffsetHours = Math.floor(Math.abs(timezoneOffset) / 60);
+      const timezoneOffsetMinutes = Math.abs(timezoneOffset) % 60;
+      const timezoneSign = timezoneOffset >= 0 ? '+' : '-';
+      const timezoneString = `${timezoneSign}${String(timezoneOffsetHours).padStart(2, '0')}${String(timezoneOffsetMinutes).padStart(2, '0')}`;
+      
+      // Format: timestamp-timezone-sanitized-filename
+      // Example: 1763110450418+0530-Screenshot_2.png
+      const finalFilename = `${timestamp}${timezoneString}-${sanitizedFilename}`;
+      const objectPath = `uploads/${finalFilename}`;
+      const publicUrl = `/uploads/${finalFilename}`;
+
+      // Save file to local filesystem (or upload to object storage)
+      const uploadsDir = path.join(process.cwd(), "uploads");
+      
+      console.log("📁 Uploads directory:", uploadsDir);
+      
+      if (!fs.existsSync(uploadsDir)) {
+        console.log("📁 Creating uploads directory:", uploadsDir);
+        fs.mkdirSync(uploadsDir, { recursive: true });
+      }
+      
+      const filePath = path.join(uploadsDir, finalFilename);
+      
+      console.log("📁 Saving file to:", filePath);
+      console.log("📁 Final filename:", finalFilename);
+      fs.writeFileSync(filePath, fileBuffer);
+      
+      // Verify file was saved
+      if (fs.existsSync(filePath)) {
+        const stats = fs.statSync(filePath);
+        console.log("✅ File saved successfully!");
+        console.log("📁 File size on disk:", stats.size, "bytes");
+        console.log("📁 File path:", filePath);
+        console.log("📁 Public URL:", publicUrl);
+      } else {
+        console.error("❌ File was not saved - file does not exist after write");
+        return res.status(500).json({
+          success: false,
+          message: "File was not saved to disk",
+        });
+      }
+
+      res.json({
+        success: true,
+        objectPath,
+        publicUrl,
+        fileName: sanitizedFilename,
+        originalFileName: originalFilename,
+        mimeType: contentType,
+        fileSize: fileBuffer.length,
       });
     } catch (error: any) {
-      console.error("❌ Raw file upload error:", error);
+      console.error("❌ Error processing raw file upload:", error);
+      console.error("❌ Error stack:", error.stack);
       res.status(500).json({
         success: false,
-        message: "Failed to process file upload",
+        message: "Failed to store file",
         error: error.message,
       });
     }
@@ -17549,13 +17647,166 @@ Please improve this email.`;
   );
 
   // PUT endpoint handles raw binary uploads from Uppy
-  // Use express.raw() to handle binary data without consuming the stream
+  // express.raw() parses the body into req.body as a Buffer
+  // IMPORTANT: This must be registered BEFORE any JSON body parsers that might consume the stream
   app.put(
     "/api/objects/store",
+    (req, res, next) => {
+      console.log("🔵 PUT /api/objects/store - Request received");
+      console.log("🔵 Method:", req.method);
+      console.log("🔵 URL:", req.url);
+      console.log("🔵 Headers:", {
+        "content-type": req.headers["content-type"],
+        "content-length": req.headers["content-length"],
+        "authorization": req.headers["authorization"] ? "Present" : "Missing"
+      });
+      next();
+    },
     authenticateToken,
     express.raw({ type: "*/*", limit: "50mb" }), // Handle any content type, up to 50MB
     handleRawFileUpload
   );
+
+  // Get data from any table by table name and ID (for activity popups)
+  app.get("/api/activity-table-data", authenticateToken, async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const { tableName, tableId, tenantId } = req.query;
+
+      if (!tableName || !tableId) {
+        return res.status(400).json({
+          success: false,
+          message: "tableName and tableId are required",
+        });
+      }
+
+      const finalTenantId = tenantId ? parseInt(tenantId as string) : user.tenantId;
+
+      // Sanitize table name to prevent SQL injection
+      const allowedTables = [
+        "invoices",
+        "bookings",
+        "estimates",
+        "leads",
+        "customers",
+        "expenses",
+        "packages",
+        "email_logs",
+        "call_logs",
+        "whatsapp_messages",
+      ];
+      
+      const sanitizedTableName = tableName as string;
+      if (!allowedTables.includes(sanitizedTableName)) {
+        return res.status(400).json({
+          success: false,
+          message: `Table "${sanitizedTableName}" is not allowed`,
+        });
+      }
+
+      const tableIdNum = parseInt(tableId as string);
+      if (isNaN(tableIdNum)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid tableId",
+        });
+      }
+
+      // Fetch data from the specified table using a switch to prevent SQL injection
+      let result: any[] = [];
+      
+      switch (sanitizedTableName) {
+        case "invoices":
+          result = await sql`
+            SELECT * FROM invoices 
+            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
+          `;
+          break;
+        case "bookings":
+          result = await sql`
+            SELECT * FROM bookings 
+            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
+          `;
+          break;
+        case "estimates":
+          result = await sql`
+            SELECT * FROM estimates 
+            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
+          `;
+          break;
+        case "leads":
+          result = await sql`
+            SELECT * FROM leads 
+            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
+          `;
+          break;
+        case "customers":
+          result = await sql`
+            SELECT * FROM customers 
+            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
+          `;
+          break;
+        case "expenses":
+          result = await sql`
+            SELECT * FROM expenses 
+            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
+          `;
+          break;
+        case "packages":
+          result = await sql`
+            SELECT * FROM packages 
+            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
+          `;
+          break;
+        case "email_logs":
+          // Select all columns that exist in email_logs table
+          // Note: Some columns may not exist in all databases, so we use a safe approach
+          result = await sql`
+            SELECT *
+            FROM email_logs 
+            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
+          `;
+          break;
+        case "call_logs":
+          result = await sql`
+            SELECT * FROM call_logs 
+            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
+          `;
+          break;
+        case "whatsapp_messages":
+          result = await sql`
+            SELECT * FROM whatsapp_messages 
+            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
+          `;
+          break;
+        default:
+          return res.status(400).json({
+            success: false,
+            message: `Table "${sanitizedTableName}" is not supported`,
+          });
+      }
+
+      if (!result || result.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: `Record not found in ${sanitizedTableName}`,
+        });
+      }
+
+      res.json({
+        success: true,
+        data: result[0],
+        tableName: sanitizedTableName,
+      });
+    } catch (error: any) {
+      console.error("❌ Error fetching activity table data:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to fetch data",
+        error: error.message,
+      });
+    }
+  });
 
   // Get customer files
   app.get("/api/customer-files", authenticateToken, async (req, res) => {

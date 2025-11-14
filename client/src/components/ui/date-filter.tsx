@@ -7,6 +7,20 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Calendar as DatePickerCalendar } from "@/components/ui/calendar";
 import { CalendarDays } from "lucide-react";
 
+// Helper function to parse date string to Date object in local timezone
+function parseDateString(dateStr: string | null | undefined): Date | undefined {
+  if (!dateStr) return undefined;
+  // If it's already a Date object, return it
+  if (dateStr instanceof Date) return dateStr;
+  // Parse YYYY-MM-DD format in local timezone
+  if (typeof dateStr === 'string' && /^\d{4}-\d{2}-\d{2}/.test(dateStr)) {
+    const [year, month, day] = dateStr.split("-").map(Number);
+    return new Date(year, month - 1, day);
+  }
+  // Fallback to Date constructor
+  return new Date(dateStr);
+}
+
 interface DateFilterProps {
   dateFilter: string;
   setDateFilter: (value: string) => void;
@@ -63,7 +77,16 @@ export function DateFilter({
               <DatePickerCalendar 
                 mode="single" 
                 selected={customDateFrom ?? undefined} 
-                onSelect={(d) => { setCustomDateFrom(d ?? null); setDateFilter("custom"); }} 
+                onSelect={(d) => {
+                  if (d) {
+                    // Create a new date in local timezone to avoid timezone conversion
+                    const localDate = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+                    setCustomDateFrom(localDate);
+                    setDateFilter("custom");
+                  } else {
+                    setCustomDateFrom(null);
+                  }
+                }} 
                 initialFocus 
               />
             </PopoverContent>
@@ -87,7 +110,16 @@ export function DateFilter({
               <DatePickerCalendar 
                 mode="single" 
                 selected={customDateTo ?? undefined} 
-                onSelect={(d) => { setCustomDateTo(d ?? null); setDateFilter("custom"); }} 
+                onSelect={(d) => {
+                  if (d) {
+                    // Create a new date in local timezone to avoid timezone conversion
+                    const localDate = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+                    setCustomDateTo(localDate);
+                    setDateFilter("custom");
+                  } else {
+                    setCustomDateTo(null);
+                  }
+                }} 
                 initialFocus 
               />
             </PopoverContent>

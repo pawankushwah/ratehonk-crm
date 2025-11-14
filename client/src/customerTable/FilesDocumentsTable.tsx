@@ -132,7 +132,14 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
     const data = await response.json();
     
     // Include filename in URL as query parameter for PUT handler
-    const uploadUrl = data.uploadURL || data.uploadUrl || "/api/objects/store";
+    // Uppy's AwsS3 plugin requires an absolute URL, so convert relative paths to absolute
+    let uploadUrl = data.uploadURL || data.uploadUrl || "/api/objects/store";
+    
+    // Convert relative URL to absolute URL if needed
+    if (uploadUrl.startsWith("/")) {
+      uploadUrl = `${window.location.origin}${uploadUrl}`;
+    }
+    
     const urlWithFilename = `${uploadUrl}?filename=${encodeURIComponent(file.name)}`;
     
     return {
@@ -158,19 +165,42 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
       else if (file.type.startsWith("video/")) fileType = "video";
       else if (file.type.includes("pdf") || file.type.includes("document") || file.type.includes("text")) fileType = "document";
 
+      // Debug: Log the full upload result to understand the response structure
+      console.log("📁 Upload result:", result);
+      console.log("📁 Uploaded file:", uploadedFile);
+      console.log("📁 Uploaded file response:", (uploadedFile as any).response);
+      console.log("📁 Uploaded file uploadURL:", (uploadedFile as any).uploadURL);
+      console.log("📁 Uploaded file meta:", (uploadedFile as any).meta);
+
       // Get the object path from the upload response
-      // The ObjectUploader should return the response from /api/objects/store
-      const objectPath = (uploadedFile as any).response?.objectPath || 
-                        (uploadedFile as any).response?.publicUrl ||
-                        (uploadedFile as any).uploadURL ||
-                        uploadedFile.id ||
-                        `/uploads/${Date.now()}-${file.name}`;
+      // Uppy's AwsS3 plugin stores the response in uploadedFile.response
+      // The response should be the JSON from /api/objects/store
+      let objectPath: string;
+      
+      if ((uploadedFile as any).response) {
+        // Try to parse if it's a string
+        let responseData = (uploadedFile as any).response;
+        if (typeof responseData === 'string') {
+          try {
+            responseData = JSON.parse(responseData);
+          } catch (e) {
+            console.warn("Could not parse response as JSON:", e);
+          }
+        }
+        objectPath = responseData?.objectPath || responseData?.publicUrl || `/uploads/${Date.now()}-${file.name}`;
+      } else {
+        // Fallback to other possible locations
+        objectPath = (uploadedFile as any).uploadURL || 
+                    (uploadedFile as any).id || 
+                    `/uploads/${Date.now()}-${file.name}`;
+      }
 
       console.log("📁 Upload complete, saving file metadata:", {
         fileName: file.name,
         fileSize: file.size,
         fileType,
         objectPath,
+        response: (uploadedFile as any).response,
       });
 
       try {

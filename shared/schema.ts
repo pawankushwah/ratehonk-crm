@@ -1463,6 +1463,8 @@ export const leadActivities = pgTable("lead_activities", {
   activityDescription: text("activity_description"),
   activityStatus: integer("activity_status").notNull(), // 1: Active/Completed, 0: Inactive/Pending
   activityDate: timestamp("activity_date").defaultNow().notNull(),
+  activityTableId: integer("activity_table_id"), // ID of the primary table record (e.g., invoice_id, booking_id)
+  activityTableName: text("activity_table_name"), // Name of the primary table (e.g., "invoices", "bookings", "estimates")
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -1528,6 +1530,8 @@ export const customerActivities = pgTable("customer_activities", {
   activityDescription: text("activity_description"),
   activityStatus: integer("activity_status").notNull(), // 1: Active/Completed, 0: Inactive/Pending
   activityDate: timestamp("activity_date").defaultNow().notNull(),
+  activityTableId: integer("activity_table_id"), // ID of the primary table record (e.g., invoice_id, booking_id)
+  activityTableName: text("activity_table_name"), // Name of the primary table (e.g., "invoices", "bookings", "estimates")
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

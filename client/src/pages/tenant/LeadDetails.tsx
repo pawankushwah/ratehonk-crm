@@ -15,6 +15,7 @@ import ActivityModal, { ActivityItem } from "@/LeadsModal/ActivityModal";
 import EmailModalNew from "@/LeadsModal/EmailModalNew";
 import { useAuth } from "@/components/auth/auth-provider";
 import { WhatsAppMessageDialog } from "@/components/customer/whatsapp-message-dialog";
+import { ActivityDataPopup } from "@/components/ActivityDataPopup";
 
 interface LeadDetailsProps {
   lead: Lead | null;
@@ -26,6 +27,11 @@ export default function LeadDetails({ lead, open, setOpen }: LeadDetailsProps) {
   const [tab, setTab] = useState("notes");
   const queryClient = useQueryClient();
   const { user, tenant } = useAuth();
+  const [activityPopupOpen, setActivityPopupOpen] = useState(false);
+  const [selectedActivityTable, setSelectedActivityTable] = useState<{
+    tableName: string | null;
+    tableId: number | null;
+  }>({ tableName: null, tableId: null });
 
   // Helper functions for activity display
   const getActivityIcon = (activityType: number) => {
@@ -355,7 +361,31 @@ export default function LeadDetails({ lead, open, setOpen }: LeadDetailsProps) {
                 </div>
 
                 {/* Right side - Activity Card */}
-                <div className="flex-1 bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
+                <div 
+                  className={`flex-1 bg-white rounded-lg border border-gray-200 p-4 shadow-sm ${
+                    activity.activityTableId && activity.activityTableName
+                      ? "cursor-pointer hover:border-blue-300 hover:shadow-md transition-all"
+                      : ""
+                  }`}
+                  onClick={() => {
+                    console.log("🔍 Lead Activity clicked:", {
+                      activityId: activity.id,
+                      activityTableId: activity.activityTableId,
+                      activityTableName: activity.activityTableName,
+                      hasTableData: !!(activity.activityTableId && activity.activityTableName),
+                    });
+                    if (activity.activityTableId && activity.activityTableName) {
+                      setSelectedActivityTable({
+                        tableName: activity.activityTableName,
+                        tableId: activity.activityTableId,
+                      });
+                      setActivityPopupOpen(true);
+                      console.log("✅ Popup should open now");
+                    } else {
+                      console.log("⚠️ Activity has no table data, popup not opening");
+                    }
+                  }}
+                >
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex items-center gap-3">
                       {/* Activity Type Icon (smaller) */}
@@ -370,6 +400,11 @@ export default function LeadDetails({ lead, open, setOpen }: LeadDetailsProps) {
                           <span className={`px-2 py-1 rounded-full text-xs font-medium border ${statusColor}`}>
                             {statusLabel}
                           </span>
+                          {activity.activityTableId && activity.activityTableName && (
+                            <span className="text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
+                              View Details
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -1239,6 +1274,18 @@ export default function LeadDetails({ lead, open, setOpen }: LeadDetailsProps) {
           }}
         />
       )}
+
+      {/* Activity Data Popup */}
+      <ActivityDataPopup
+        isOpen={activityPopupOpen}
+        onClose={() => {
+          setActivityPopupOpen(false);
+          setSelectedActivityTable({ tableName: null, tableId: null });
+        }}
+        tableName={selectedActivityTable.tableName}
+        tableId={selectedActivityTable.tableId}
+        tenantId={tenant?.id}
+      />
     </>
   );
 }

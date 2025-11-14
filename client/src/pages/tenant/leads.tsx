@@ -1176,37 +1176,146 @@ export default function Leads() {
                       </Select>
                     );
                   } else if (field.fieldType === "date") {
-                    return (
-                      <Popover key={field.id}>
-                        <PopoverTrigger asChild>
-                          <Button
-                            variant="outline"
-                            className={cn(
-                              "w-[180px] justify-start text-left font-normal",
-                              !fieldValue && "text-muted-foreground",
-                            )}
-                          >
-                            <CalendarDays className="mr-2 h-4 w-4" />
-                            {fieldValue
-                              ? format(new Date(fieldValue), "LLL dd, y")
-                              : field.fieldLabel}
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0" align="start">
-                          <DatePickerCalendar
-                            mode="single"
-                            selected={fieldValue ? new Date(fieldValue) : undefined}
-                            onSelect={(d) => {
-                              setDynamicFilters((prev) => ({
-                                ...prev,
-                                [field.fieldName]: d ? d.toISOString().split("T")[0] : "",
-                              }));
-                            }}
-                            initialFocus
-                          />
-                        </PopoverContent>
-                      </Popover>
-                    );
+                    // Support date range for travel-related date fields (travelDate, departureDate, returnDate, checkInDate, checkOutDate)
+                    const dateRangeFields = ["travelDate", "departureDate", "returnDate", "checkInDate", "checkOutDate"];
+                    const isDateRange = dateRangeFields.includes(field.fieldName);
+                    const dateFrom = isDateRange 
+                      ? (dynamicFilters[`${field.fieldName}_from`] || dynamicFilters[field.fieldName] || "")
+                      : (fieldValue || "");
+                    const dateTo = isDateRange 
+                      ? (dynamicFilters[`${field.fieldName}_to`] || "")
+                      : "";
+
+                    // Helper function to format date in local timezone (YYYY-MM-DD)
+                    const formatLocalDate = (date: Date): string => {
+                      const year = date.getFullYear();
+                      const month = String(date.getMonth() + 1).padStart(2, "0");
+                      const day = String(date.getDate()).padStart(2, "0");
+                      return `${year}-${month}-${day}`;
+                    };
+
+                    // Helper function to parse date string to Date object
+                    const parseDateString = (dateStr: string): Date | undefined => {
+                      if (!dateStr) return undefined;
+                      // Parse YYYY-MM-DD format in local timezone
+                      const [year, month, day] = dateStr.split("-").map(Number);
+                      return new Date(year, month - 1, day);
+                    };
+
+                    // Helper to create date range object for calendar
+                    const getDateRange = (): { from?: Date; to?: Date } | undefined => {
+                      if (!isDateRange) return undefined;
+                      const from = dateFrom ? parseDateString(dateFrom) : undefined;
+                      const to = dateTo ? parseDateString(dateTo) : undefined;
+                      if (!from && !to) return undefined;
+                      return { from, to };
+                    };
+
+                    // Helper to format date range for display
+                    const formatDateRangeDisplay = (): string => {
+                      if (!isDateRange) return fieldValue ? format(parseDateString(fieldValue) || new Date(), "LLL dd, y") : field.fieldLabel;
+                      if (dateFrom && dateTo) {
+                        const fromDate = parseDateString(dateFrom);
+                        const toDate = parseDateString(dateTo);
+                        return `${format(fromDate || new Date(), "LLL dd, y")} - ${format(toDate || new Date(), "LLL dd, y")}`;
+                      } else if (dateFrom) {
+                        const fromDate = parseDateString(dateFrom);
+                        return `${format(fromDate || new Date(), "LLL dd, y")} - ...`;
+                      }
+                      return field.fieldLabel;
+                    };
+
+                    if (isDateRange) {
+                      return (
+                        <Popover key={field.id}>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              className={cn(
+                                "w-[240px] justify-start text-left font-normal",
+                                !dateFrom && !dateTo && "text-muted-foreground",
+                              )}
+                            >
+                              <CalendarDays className="mr-2 h-4 w-4" />
+                              {formatDateRangeDisplay()}
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto p-0" align="start">
+                            <DatePickerCalendar
+                              mode="range"
+                              selected={getDateRange()}
+                              onSelect={(range) => {
+                                if (range?.from) {
+                                  const fromDate = formatLocalDate(range.from);
+                                  if (range.to) {
+                                    // Both dates selected - full range
+                                    const toDate = formatLocalDate(range.to);
+                                    setDynamicFilters((prev) => ({
+                                      ...prev,
+                                      [`${field.fieldName}_from`]: fromDate,
+                                      [`${field.fieldName}_to`]: toDate,
+                                      // Clear single date if range is used
+                                      [field.fieldName]: "",
+                                    }));
+                                  } else {
+                                    // Only from date selected - wait for to date
+                                    setDynamicFilters((prev) => ({
+                                      ...prev,
+                                      [`${field.fieldName}_from`]: fromDate,
+                                      [`${field.fieldName}_to`]: "",
+                                      // Clear single date if range is used
+                                      [field.fieldName]: "",
+                                    }));
+                                  }
+                                } else {
+                                  // Range cleared
+                                  setDynamicFilters((prev) => ({
+                                    ...prev,
+                                    [`${field.fieldName}_from`]: "",
+                                    [`${field.fieldName}_to`]: "",
+                                    [field.fieldName]: "",
+                                  }));
+                                }
+                              }}
+                              numberOfMonths={2}
+                              initialFocus
+                            />
+                          </PopoverContent>
+                        </Popover>
+                      );
+                    } else {
+                      return (
+                        <Popover key={field.id}>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              className={cn(
+                                "w-[180px] justify-start text-left font-normal",
+                                !fieldValue && "text-muted-foreground",
+                              )}
+                            >
+                              <CalendarDays className="mr-2 h-4 w-4" />
+                              {fieldValue
+                                ? format(parseDateString(fieldValue) || new Date(), "LLL dd, y")
+                                : field.fieldLabel}
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto p-0" align="start">
+                            <DatePickerCalendar
+                              mode="single"
+                              selected={fieldValue ? parseDateString(fieldValue) : undefined}
+                              onSelect={(d) => {
+                                setDynamicFilters((prev) => ({
+                                  ...prev,
+                                  [field.fieldName]: d ? formatLocalDate(d) : "",
+                                }));
+                              }}
+                              initialFocus
+                            />
+                          </PopoverContent>
+                        </Popover>
+                      );
+                    }
                   } else if (field.fieldType === "boolean") {
                     return (
                       <Select
@@ -1374,18 +1483,18 @@ export default function Leads() {
                     <TableHead
                       className="
               px-[20px] pr-[8px] py-[12px]
-              text-left
+              text-center
               text-sm font-medium text-[#121926]
               first:rounded-tl-lg first:rounded-bl-lg"
                     >
-                      <div className="flex h-10 items-center justify-between rounded-md border px-3 py-2 text-sm ring-offset-background data-[placeholder]:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1 w-[160px] bg-transparent border-gray-300">
+                      <div className="flex h-10 items-center justify-center rounded-md border px-3 py-2 text-sm ring-offset-background data-[placeholder]:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1 w-[160px] bg-transparent border-gray-300">
                         Score
                       </div>
                     </TableHead>
                     <TableHead
                       className="
               px-[20px] pr-[8px] py-[12px]
-              text-left
+              text-center
               text-sm font-medium text-[#121926]
               first:rounded-tl-lg first:rounded-bl-lg
           "
@@ -1412,7 +1521,7 @@ export default function Leads() {
                     <TableHead
                       className="
                       px-[20px] pr-[8px] py-[12px]
-                      text-left
+                      text-center
                       text-sm font-medium text-[#121926]
                       first:rounded-tl-lg first:rounded-bl-lg
                       "
@@ -1453,13 +1562,13 @@ export default function Leads() {
                     <TableHead
                       className="
               px-[20px] pr-[8px] py-[12px]
-              text-left
+              text-center
               text-sm font-medium text-[#121926]
-              first:rounded-tl-lg first:rounded-bl-lg
+              last:rounded-tr-lg last:rounded-br-lg
 
             "
                     >
-                      <div className="flex h-10 items-center justify-between rounded-md border px-3 py-2 text-sm ring-offset-background data-[placeholder]:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1 w-[160px] bg-transparent border-gray-300">
+                      <div className="flex h-10 items-center justify-center rounded-md border px-3 py-2 text-sm ring-offset-background data-[placeholder]:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1 w-[160px] bg-transparent border-gray-300">
                         Actions
                       </div>
                     </TableHead>
@@ -1510,13 +1619,13 @@ export default function Leads() {
                               </div>
                             </div>
                           </TableCell>
-                          <TableCell className="text-gray-600">
+                          <TableCell className="text-gray-600 text-left">
                             {lead.phone || "Unknown"}
                           </TableCell>
-                          <TableCell className="text-gray-600">
+                          <TableCell className="text-gray-600 text-left">
                             {lead.source || "Unknown"}
                           </TableCell>
-                          <TableCell className="text-gray-600">
+                          <TableCell className="text-gray-600 text-left">
                             <TooltipProvider delayDuration={200}>
                               <Tooltip>
                                 <TooltipTrigger asChild>
@@ -1594,20 +1703,20 @@ export default function Leads() {
                               </Tooltip>
                             </TooltipProvider>
                           </TableCell>
-                          <TableCell className="text-gray-600">
+                          <TableCell className="text-gray-600 text-center">
                             {(lead as any).score || "Unknown"}
                           </TableCell>
-                          <TableCell className="text-gray-600">
+                          <TableCell className="text-gray-600 text-center">
                             {(lead as any).priority || "Unknown"}
                           </TableCell>
-                          <TableCell>
+                          <TableCell className="text-center">
                             <Select
                               value={lead.status}
                               onValueChange={(newStatus: string) =>
                                 handleStatusChange(Number(lead.id), newStatus)
                               }
                             >
-                              <SelectTrigger className="w-24 h-8 border-0 bg-transparent p-0">
+                              <SelectTrigger className="w-24 h-8 border-0 bg-transparent p-0 mx-auto">
                                 <Badge
                                   className={`${statusConfig.color} text-xs font-medium border`}
                                 >
@@ -1630,11 +1739,13 @@ export default function Leads() {
                               </SelectContent>
                             </Select>
                           </TableCell>
-                          <TableCell className="text-gray-600">
-                            {new Date(lead.created_at).toLocaleDateString()}
+                          <TableCell className="text-gray-600 text-left">
+                            {lead.created_at
+                              ? format(new Date(lead.created_at), "dd MMM yyyy")
+                              : "N/A"}
                           </TableCell>
-                          <TableCell>
-                            <div className="flex items-center space-x-2">
+                          <TableCell className="text-center">
+                            <div className="flex items-center justify-center space-x-2">
                               <Button
                                 variant="outline"
                                 size="sm"
