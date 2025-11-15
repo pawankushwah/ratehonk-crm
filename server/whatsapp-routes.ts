@@ -1636,6 +1636,7 @@ export function registerWhatsAppRoutes(app: Express) {
           footer,
           msgid,
           full,
+          customerId,
         } = req.body;
 
         // Validate required fields
@@ -1678,13 +1679,47 @@ export function registerWhatsAppRoutes(app: Express) {
         }
 
         // Prepare API request
-        const apiUrl = "https://whatsappbusiness.ratehonk.com/send-media";
+        const apiUrl = `${WHATSAPP_API_BASE}/send-media`;
+        
+        // Convert relative URL to absolute URL if needed
+        let mediaUrl = url;
+        if (url && !url.startsWith('http://') && !url.startsWith('https://')) {
+          // If it's a relative path, convert to absolute URL
+          // Use the request's host to build the absolute URL
+          const protocol = req.protocol || 'http';
+          let host = req.get('host') || process.env.FRONTEND_URL?.replace(/^https?:\/\//, '') || process.env.APP_URL?.replace(/^https?:\/\//, '') || 'localhost:5000';
+          
+          // Check if host is localhost - external APIs can't access localhost
+          if (host.includes('localhost') || host.includes('127.0.0.1')) {
+            console.warn(`⚠️ WARNING: Host is localhost (${host}). WhatsApp API cannot access localhost URLs.`);
+            console.warn(`⚠️ Please set FRONTEND_URL or APP_URL environment variable to your public domain.`);
+            // Still proceed but log the warning
+          }
+          
+          const baseUrl = `${protocol}://${host}`;
+          mediaUrl = url.startsWith('/') ? `${baseUrl}${url}` : `${baseUrl}/${url}`;
+          console.log(`🔗 Converted relative URL to absolute: ${url} → ${mediaUrl}`);
+        }
+        
+        // URL encode the media URL to handle special characters (like parentheses)
+        // But keep the base URL structure intact
+        try {
+          const urlObj = new URL(mediaUrl);
+          // Reconstruct URL with encoded pathname to handle special characters
+          mediaUrl = `${urlObj.protocol}//${urlObj.host}${encodeURI(urlObj.pathname)}${urlObj.search}${urlObj.hash}`;
+          console.log(`🔗 URL encoded media URL: ${mediaUrl}`);
+        } catch (urlError) {
+          // If URL parsing fails, just encode the whole thing
+          console.warn(`⚠️ Failed to parse URL, encoding entire string: ${urlError}`);
+          mediaUrl = encodeURI(mediaUrl);
+        }
+        
         const payload: any = {
           api_key: config.apiKey,
           sender,
           number,
           media_type,
-          url,
+          url: mediaUrl,
         };
 
         // Add optional fields
@@ -1693,19 +1728,56 @@ export function registerWhatsAppRoutes(app: Express) {
         if (msgid) payload.msgid = msgid;
         if (full) payload.full = full;
 
-        // Make API call
-        const response = await fetch(apiUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(payload),
+        console.log("📤 Sending WhatsApp media message:", {
+          apiUrl,
+          sender,
+          number,
+          media_type,
+          originalUrl: url.substring(0, 100) + (url.length > 100 ? '...' : ''),
+          finalUrl: mediaUrl.substring(0, 100) + (mediaUrl.length > 100 ? '...' : ''),
+          hasCaption: !!caption,
+          payloadKeys: Object.keys(payload),
         });
+        
+        // Log full payload (without sensitive data)
+        console.log("📤 Full payload:", JSON.stringify({
+          ...payload,
+          api_key: payload.api_key ? `${payload.api_key.substring(0, 10)}...` : 'missing',
+        }, null, 2));
 
-        const data = await response.json();
+        // Make API call
+        let response: Response;
+        let data: any;
+        
+        try {
+          response = await fetch(apiUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+          });
 
-        if (!response.ok) {
-          return res.status(response.status).json({
+          data = await response.json();
+          console.log("📥 WhatsApp API response:", {
+            status: response.status,
+            ok: response.ok,
+            dataStatus: data.status,
+            msg: data.msg,
+          });
+        } catch (fetchError: any) {
+          console.error("❌ Error calling WhatsApp API:", fetchError);
+          return res.status(500).json({
+            error: "Failed to connect to WhatsApp service",
+            details: {
+              message: fetchError.message || "Network error",
+            },
+          });
+        }
+
+        // Check if API returned an error (even with 200 status)
+        if (!response.ok || data.status === false) {
+          return res.status(response.ok ? 400 : response.status).json({
             error: data.msg || data.error || "Failed to send media message",
             details: data,
           });
@@ -1714,36 +1786,62 @@ export function registerWhatsAppRoutes(app: Express) {
         // Increment message count for the device
         await storage.incrementDeviceMessageCount(device.id);
 
-        // Try to find customer by phone number
-        let customerId: number | undefined;
+        // Get customer ID and name - use provided customerId or find by phone number
+        let finalCustomerId: number | undefined = customerId ? parseInt(String(customerId)) : undefined;
         let customerName: string | undefined;
+        
         try {
-          const result = await storage.getCustomersByTenant(tenantId, { limit: 1000 });
-          const customers = result && typeof result === "object" && "data" in result ? result.data : result;
-          // Normalize phone numbers for comparison (remove ALL non-digits)
-          const normalizePhone = (phone: string) => phone?.replace(/\D/g, '') || '';
-          const normalizedNumber = normalizePhone(number);
-          const customer = customers.find((c: any) => normalizePhone(c.phone) === normalizedNumber);
-          
-          if (customer) {
-            customerId = customer.id;
-            customerName = customer.name;
+          if (finalCustomerId) {
+            // If customerId is provided, fetch customer details directly
+            const result = await storage.getCustomersByTenant({
+              tenantId,
+              limit: 1000,
+            });
+            const customers = result && typeof result === "object" && "data" in result ? result.data : result;
+            const customer = customers.find((c: any) => c.id === finalCustomerId);
             
-            // Log activity for customer (will be linked to message after it's saved)
-            if (req.user?.id) {
-              await storage.createCustomerActivity({
-                tenantId,
-                customerId: customer.id,
-                userId: req.user.id,
-                activityType: 5, // 5 = WhatsApp message sent
-                activityTitle: `WhatsApp Media Sent (${media_type})`,
-                activityDescription: `Media type: ${media_type}${caption ? `, Caption: "${caption.substring(0, 100)}${caption.length > 100 ? '...' : ''}"` : ''}`,
-                activityStatus: 1, // 1 = Completed
-                activityDate: new Date().toISOString(),
-                // Note: activityTableId and activityTableName will be set after message is saved
-              });
-              console.log(`✅ Customer activity logged for customer ${customer.id}`);
+            if (customer) {
+              customerName = customer.name || `${customer.firstName || ''} ${customer.lastName || ''}`.trim();
+              console.log(`✅ Found customer by ID: ${finalCustomerId}, name: ${customerName}`);
+            } else {
+              console.warn(`⚠️ Customer ID ${finalCustomerId} not found, will try phone number lookup`);
+              finalCustomerId = undefined; // Reset to try phone lookup
             }
+          }
+          
+          // If customerId not provided or not found, try to find by phone number
+          if (!finalCustomerId) {
+            const result = await storage.getCustomersByTenant({
+              tenantId,
+              limit: 1000,
+            });
+            const customers = result && typeof result === "object" && "data" in result ? result.data : result;
+            // Normalize phone numbers for comparison (remove ALL non-digits)
+            const normalizePhone = (phone: string) => phone?.replace(/\D/g, '') || '';
+            const normalizedNumber = normalizePhone(number);
+            const customer = customers.find((c: any) => normalizePhone(c.phone) === normalizedNumber);
+            
+            if (customer) {
+              finalCustomerId = customer.id;
+              customerName = customer.name || `${customer.firstName || ''} ${customer.lastName || ''}`.trim();
+              console.log(`✅ Found customer by phone number: ${finalCustomerId}, name: ${customerName}`);
+            }
+          }
+          
+          // Log activity for customer if we have a customerId
+          if (finalCustomerId && req.user?.id) {
+            await storage.createCustomerActivity({
+              tenantId,
+              customerId: finalCustomerId,
+              userId: req.user.id,
+              activityType: 5, // 5 = WhatsApp message sent
+              activityTitle: `WhatsApp Media Sent (${media_type})`,
+              activityDescription: `Media type: ${media_type}${caption ? `, Caption: "${caption.substring(0, 100)}${caption.length > 100 ? '...' : ''}"` : ''}`,
+              activityStatus: 1, // 1 = Completed
+              activityDate: new Date().toISOString(),
+              // Note: activityTableId and activityTableName will be set after message is saved
+            });
+            console.log(`✅ Customer activity logged for customer ${finalCustomerId}`);
           }
         } catch (activityError) {
           // Don't fail the whole operation if activity logging fails
@@ -1756,7 +1854,7 @@ export function registerWhatsAppRoutes(app: Express) {
           savedMessage = await storage.createWhatsAppMessage({
             tenantId,
             deviceId: device.id,
-            customerId,
+            customerId: finalCustomerId,
             recipientNumber: number,
             recipientName: customerName,
             messageType: 'media',
@@ -1767,19 +1865,19 @@ export function registerWhatsAppRoutes(app: Express) {
             externalMessageId: data?.msgid || data?.id,
             sentBy: req.user?.id,
           });
-          console.log(`✅ WhatsApp media message saved to database`);
+          console.log(`✅ WhatsApp media message saved to database with customerId: ${finalCustomerId || 'none'}`);
         } catch (dbError) {
           // Don't fail the whole operation if database logging fails
           console.error("⚠️ Failed to save WhatsApp message to database:", dbError);
         }
 
         // Update activity to link to the WhatsApp message
-        if (savedMessage && customerId && req.user?.id) {
+        if (savedMessage && finalCustomerId && req.user?.id) {
           try {
             // Find the most recent activity for this customer with activityType 5
             const recentActivity = await sql`
               SELECT id FROM customer_activities 
-              WHERE customer_id = ${customerId} 
+              WHERE customer_id = ${finalCustomerId} 
                 AND tenant_id = ${tenantId}
                 AND activity_type = 5
                 AND user_id = ${req.user.id}
@@ -1822,7 +1920,7 @@ export function registerWhatsAppRoutes(app: Express) {
     async (req: any, res) => {
       try {
         const tenantId = req.user.tenantId;
-        const { sender, number, message, footer, msgid, full } = req.body;
+        const { sender, number, message, footer, msgid, full, customerId } = req.body;
 
         // Validate required fields
         if (!sender) {
@@ -1898,35 +1996,61 @@ export function registerWhatsAppRoutes(app: Express) {
           // Update message count for the device
           await storage.incrementDeviceMessageCount(senderDevice.id);
 
-          // Try to find customer by phone number
-          let customerId: number | undefined;
+          // Get customer ID and name - use provided customerId or find by phone number
+          let finalCustomerId: number | undefined = customerId ? parseInt(String(customerId)) : undefined;
           let customerName: string | undefined;
+          
           try {
-            const result = await storage.getCustomersByTenant(tenantId, { limit: 1000 });
-            const customers = result && typeof result === "object" && "data" in result ? result.data : result;
-            // Normalize phone numbers for comparison (remove ALL non-digits)
-            const normalizePhone = (phone: string) => phone?.replace(/\D/g, '') || '';
-            const normalizedNumber = normalizePhone(number);
-            const customer = customers.find((c: any) => normalizePhone(c.phone) === normalizedNumber);
-            
-            if (customer) {
-              customerId = customer.id;
-              customerName = customer.name;
+            if (finalCustomerId) {
+              // If customerId is provided, fetch customer details directly
+              const result = await storage.getCustomersByTenant({
+                tenantId,
+                limit: 1000,
+              });
+              const customers = result && typeof result === "object" && "data" in result ? result.data : result;
+              const customer = customers.find((c: any) => c.id === finalCustomerId);
               
-              // Log activity for customer
-              if (req.user?.id) {
-                await storage.createCustomerActivity({
-                  tenantId,
-                  customerId: customer.id,
-                  userId: req.user.id,
-                  activityType: 5, // 5 = WhatsApp message sent
-                  activityTitle: "WhatsApp Message Sent",
-                  activityDescription: `Message: "${message.substring(0, 100)}${message.length > 100 ? '...' : ''}"`,
-                  activityStatus: 1, // 1 = Completed
-                  activityDate: new Date().toISOString(),
-                });
-                console.log(`✅ Customer activity logged for customer ${customer.id}`);
+              if (customer) {
+                customerName = customer.name || `${customer.firstName || ''} ${customer.lastName || ''}`.trim();
+                console.log(`✅ Found customer by ID: ${finalCustomerId}, name: ${customerName}`);
+              } else {
+                console.warn(`⚠️ Customer ID ${finalCustomerId} not found, will try phone number lookup`);
+                finalCustomerId = undefined; // Reset to try phone lookup
               }
+            }
+            
+            // If customerId not provided or not found, try to find by phone number
+            if (!finalCustomerId) {
+              const result = await storage.getCustomersByTenant({
+                tenantId,
+                limit: 1000,
+              });
+              const customers = result && typeof result === "object" && "data" in result ? result.data : result;
+              // Normalize phone numbers for comparison (remove ALL non-digits)
+              const normalizePhone = (phone: string) => phone?.replace(/\D/g, '') || '';
+              const normalizedNumber = normalizePhone(number);
+              const customer = customers.find((c: any) => normalizePhone(c.phone) === normalizedNumber);
+              
+              if (customer) {
+                finalCustomerId = customer.id;
+                customerName = customer.name || `${customer.firstName || ''} ${customer.lastName || ''}`.trim();
+                console.log(`✅ Found customer by phone number: ${finalCustomerId}, name: ${customerName}`);
+              }
+            }
+            
+            // Log activity for customer if we have a customerId
+            if (finalCustomerId && req.user?.id) {
+              await storage.createCustomerActivity({
+                tenantId,
+                customerId: finalCustomerId,
+                userId: req.user.id,
+                activityType: 5, // 5 = WhatsApp message sent
+                activityTitle: "WhatsApp Message Sent",
+                activityDescription: `Message: "${message.substring(0, 100)}${message.length > 100 ? '...' : ''}"`,
+                activityStatus: 1, // 1 = Completed
+                activityDate: new Date().toISOString(),
+              });
+              console.log(`✅ Customer activity logged for customer ${finalCustomerId}`);
             }
           } catch (activityError) {
             // Don't fail the whole operation if activity logging fails
@@ -1939,7 +2063,7 @@ export function registerWhatsAppRoutes(app: Express) {
             savedMessage = await storage.createWhatsAppMessage({
               tenantId,
               deviceId: senderDevice.id,
-              customerId,
+              customerId: finalCustomerId,
               recipientNumber: number,
               recipientName: customerName,
               messageType: 'text',
@@ -1948,19 +2072,19 @@ export function registerWhatsAppRoutes(app: Express) {
               externalMessageId: responseData.data?.msgid || responseData.data?.id,
               sentBy: req.user?.id,
             });
-            console.log(`✅ WhatsApp text message saved to database`);
+            console.log(`✅ WhatsApp text message saved to database with customerId: ${finalCustomerId || 'none'}`);
           } catch (dbError) {
             // Don't fail the whole operation if database logging fails
             console.error("⚠️ Failed to save WhatsApp message to database:", dbError);
           }
 
           // Update activity to link to the WhatsApp message
-          if (savedMessage && customerId && req.user?.id) {
+          if (savedMessage && finalCustomerId && req.user?.id) {
             try {
               // Find the most recent activity for this customer with activityType 5
               const recentActivity = await sql`
                 SELECT id FROM customer_activities 
-                WHERE customer_id = ${customerId} 
+                WHERE customer_id = ${finalCustomerId} 
                   AND tenant_id = ${tenantId}
                   AND activity_type = 5
                   AND user_id = ${req.user.id}

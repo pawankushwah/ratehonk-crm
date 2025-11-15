@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { X, Loader2, Mail, Phone, FileText, Calendar, Clock, User, Download, ExternalLink, MessageCircle, Image, Video, Music, File } from "lucide-react";
+import { X, Loader2, Mail, Phone, FileText, Calendar, Clock, User, Download, ExternalLink, MessageCircle, Image, Video, Music, File, StickyNote, Paperclip } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import {
   Dialog,
@@ -626,6 +626,136 @@ export function ActivityDataPopup({
     );
   };
 
+  const renderCustomerNoteDetails = () => {
+    if (!data) return null;
+
+    const attachmentPath = data.attachment;
+    const isImage = attachmentPath && /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(attachmentPath);
+    const fileName = attachmentPath ? (attachmentPath.split('/').pop() || attachmentPath) : null;
+    const attachmentUrl = attachmentPath 
+      ? (attachmentPath.startsWith('http') 
+          ? attachmentPath 
+          : attachmentPath.startsWith('/') 
+            ? `${window.location.origin}${attachmentPath}`
+            : `${window.location.origin}/${attachmentPath}`)
+      : null;
+
+    return (
+      <div className="space-y-6">
+        {/* Note Header */}
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <div className="flex items-start gap-4 mb-4">
+            <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center">
+              <StickyNote className="w-6 h-6 text-blue-600" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-lg font-semibold text-gray-900 mb-1">
+                {data.title || data.noteTitle || "Untitled Note"}
+              </h3>
+              <div className="flex items-center gap-2 flex-wrap">
+                {data.note_type && (
+                  <Badge className="bg-gray-100 text-gray-800 border-gray-200 capitalize">
+                    {data.note_type}
+                  </Badge>
+                )}
+                <span className="text-sm text-gray-500">
+                  {formatDate(data.created_at)}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Note Info Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-4 border-t border-gray-200">
+            {data.details || data.noteContent ? (
+              <div className="md:col-span-2">
+                <label className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2 block">
+                  Note Content
+                </label>
+                <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-900 whitespace-pre-wrap break-words">
+                  {data.details || data.noteContent}
+                </div>
+              </div>
+            ) : null}
+            {data.reminder && (
+              <div>
+                <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                  Reminder
+                </label>
+                <div className="text-sm text-gray-900 mt-1">
+                  {data.reminderDate ? formatDate(data.reminderDate) : "Set"}
+                </div>
+              </div>
+            )}
+            {data.reminder_email && (
+              <div>
+                <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                  Reminder Email
+                </label>
+                <div className="text-sm text-gray-900 mt-1">{data.reminder_email}</div>
+              </div>
+            )}
+          </div>
+
+          {/* Attachment */}
+          {attachmentPath && (
+            <div className="mt-6 pt-6 border-t border-gray-200">
+              <label className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3 block">
+                Attachment
+              </label>
+              <div className="space-y-2">
+                {isImage ? (
+                  <div className="space-y-2">
+                    <img
+                      src={attachmentUrl || ''}
+                      alt={fileName || 'Attachment'}
+                      className="max-w-xs max-h-48 rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90 transition-opacity"
+                      onClick={() => attachmentUrl && window.open(attachmentUrl, '_blank')}
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none';
+                        const parent = (e.target as HTMLImageElement).parentElement;
+                        if (parent && attachmentUrl) {
+                          parent.innerHTML = `
+                            <a href="${attachmentUrl}" target="_blank" rel="noopener noreferrer" class="text-sm text-blue-600 hover:underline">
+                              ${fileName}
+                            </a>
+                          `;
+                        }
+                      }}
+                    />
+                    {attachmentUrl && (
+                      <a
+                        href={attachmentUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800"
+                      >
+                        <Download className="w-4 h-4" />
+                        {fileName}
+                      </a>
+                    )}
+                  </div>
+                ) : (
+                  attachmentUrl && (
+                    <a
+                      href={attachmentUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800"
+                    >
+                      <File className="w-4 h-4" />
+                      {fileName}
+                    </a>
+                  )
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   const renderGenericDetails = () => {
     if (!data) return null;
 
@@ -688,6 +818,8 @@ export function ActivityDataPopup({
     if (tableName === "email_logs") return "Email Details";
     if (tableName === "call_logs") return "Call Details";
     if (tableName === "whatsapp_messages") return "WhatsApp Message Details";
+    if (tableName === "customer_files") return "File Details";
+    if (tableName === "customer_notes") return "Note Details";
     return tableName ? `${tableName.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase())} Details` : "Activity Details";
   };
 
@@ -724,14 +856,15 @@ export function ActivityDataPopup({
             </div>
           )}
 
-          {!loading && !error && data && (
-            <>
-              {tableName === "email_logs" && renderEmailDetails()}
-              {tableName === "call_logs" && renderCallLogDetails()}
-              {tableName === "whatsapp_messages" && renderWhatsAppMessageDetails()}
-              {tableName !== "email_logs" && tableName !== "call_logs" && tableName !== "whatsapp_messages" && renderGenericDetails()}
-            </>
-          )}
+              {!loading && !error && data && (
+                <>
+                  {tableName === "email_logs" && renderEmailDetails()}
+                  {tableName === "call_logs" && renderCallLogDetails()}
+                  {tableName === "whatsapp_messages" && renderWhatsAppMessageDetails()}
+                  {tableName === "customer_notes" && renderCustomerNoteDetails()}
+                  {tableName !== "email_logs" && tableName !== "call_logs" && tableName !== "whatsapp_messages" && tableName !== "customer_notes" && renderGenericDetails()}
+                </>
+              )}
 
           {!loading && !error && !data && (
             <div className="text-center py-8 text-gray-500">

@@ -16730,11 +16730,16 @@ Please improve this email.`;
     }
   });
 
-  app.post("/api/tenants/:tenantId/leads/:leadId/notes", async (req, res) => {
+  app.post("/api/tenants/:tenantId/leads/:leadId/notes", authenticateToken, async (req, res) => {
     try {
       const leadId = parseInt(req.params.leadId);
       const tenantId = parseInt(req.params.tenantId);
-      const userId = 64; // Using valid user ID for tenant 22 (shashivani01@gmail.com)
+      const user = (req as any).user;
+
+      // Tenant access validation
+      if (user.tenantId !== tenantId) {
+        return res.status(403).json({ message: "Access denied" });
+      }
 
       console.log("🔍 API: Creating lead note for leadId:", leadId);
       console.log("🔍 API: Request body:", req.body);
@@ -16743,11 +16748,31 @@ Please improve this email.`;
         ...req.body,
         leadId,
         tenantId,
-        userId,
+        userId: user.id,
       };
 
       console.log("🔍 API: Final noteData being sent to storage:", noteData);
       const note = await simpleStorage.createLeadNote(noteData);
+
+      // Create activity for note creation
+      try {
+        await simpleStorage.createLeadActivity({
+          tenantId: tenantId,
+          leadId: leadId,
+          userId: user.id,
+          activityType: 7, // 7 = Note Created
+          activityTitle: `Note Created: ${noteData.noteTitle || note.noteTitle || 'Untitled Note'}`,
+          activityDescription: noteData.noteContent || note.noteContent || `Note type: ${noteData.noteType || 'general'}`,
+          activityStatus: 1, // 1 = Completed
+          activityDate: new Date().toISOString(),
+          activityTableId: note.id,
+          activityTableName: "lead_notes",
+        });
+        console.log(`✅ Lead activity logged for note creation: ${note.id}`);
+      } catch (activityError) {
+        // Don't fail the whole operation if activity logging fails
+        console.error("⚠️ Failed to log note creation activity:", activityError);
+      }
 
       res.json({
         success: true,
@@ -16821,47 +16846,61 @@ Please improve this email.`;
   });
 
   // POST /api/tenants/:tenantId/leads/:leadId/emails - Send email for a lead
-  app.post("/api/tenants/:tenantId/leads/:leadId/emails", async (req, res) => {
+  app.post("/api/tenants/:tenantId/leads/:leadId/emails", authenticateToken, async (req, res) => {
     try {
       const leadId = parseInt(req.params.leadId);
       const tenantId = parseInt(req.params.tenantId);
-      const { email, subject, body, fromEmail } = req.body;
+      const user = (req as any).user;
 
-      console.log("🔍 API: Sending email for leadId:", leadId);
-      console.log("🔍 API: Email data:", { email, subject, fromEmail });
+      if (!tenantId) {
+        return res.status(403).json({ message: "Access denied - no tenant" });
+      }
 
-      // Insert into email_logs table
-      const result = await sql`
-        INSERT INTO email_logs (
-          tenant_id, lead_id, email, subject, body, from_email, status, sent_at
-        ) VALUES (${tenantId}, ${leadId}, ${email}, ${subject}, ${body}, ${fromEmail}, 'sent', NOW()) 
-        RETURNING id, lead_id, email, subject, body, from_email, status, sent_at
-      `;
+      // First, try to send the actual email
+      let emailStatus = "failed";
+      let errorMessage = null;
 
-      const newEmail = result[0];
-      console.log("✅ API: Email logged successfully with ID:", newEmail.id);
+      try {
+        const { tenantEmailService } = await import(
+          "./tenant-email-service.js"
+        );
+        await tenantEmailService.sendCustomerEmail({
+          to: req.body.email,
+          subject: req.body.subject,
+          body: req.body.body,
+          htmlBody: req.body.htmlBody,
+          tenantId: tenantId,
+          attachments: req.body.attachments,
+        });
+        emailStatus = req.body.status || "sent";
+        console.log(`✅ Email sent successfully to ${req.body.email}`);
+      } catch (emailError: any) {
+        console.error(
+          `❌ Failed to send email to ${req.body.email}:`,
+          emailError,
+        );
+        emailStatus = "failed";
+        errorMessage = emailError.message;
+      }
 
-      res.json({
-        success: true,
-        message: "Email sent successfully",
-        email: {
-          id: newEmail.id,
-          leadId: newEmail.lead_id,
-          email: newEmail.email,
-          subject: newEmail.subject,
-          body: newEmail.body,
-          fromEmail: newEmail.from_email,
-          status: newEmail.status,
-          sentAt: newEmail.sent_at,
-        },
-      });
-    } catch (error) {
-      console.error("❌ API: Error sending lead email:", error);
-      res.status(500).json({
-        success: false,
-        message: "Failed to send email",
-        error: error.message,
-      });
+      // Save to database with status
+      const emailData = {
+        ...req.body,
+        tenantId: tenantId,
+        leadId: leadId,
+        userId: user?.id,
+        status: emailStatus,
+        errorMessage: errorMessage,
+        sentAt: new Date().toISOString(),
+      };
+
+      const email = await simpleStorage.createLeadEmail(emailData);
+      res.status(201).json(email);
+    } catch (error: any) {
+      console.error("❌ Error creating lead email:", error);
+      res
+        .status(500)
+        .json({ message: "Internal server error", error: error.message });
     }
   });
 
@@ -16915,22 +16954,21 @@ Please improve this email.`;
   });
 
   // POST /api/tenants/:tenantId/leads/:leadId/calls - Create new call log
-  app.post("/api/tenants/:tenantId/leads/:leadId/calls", async (req, res) => {
+  app.post("/api/tenants/:tenantId/leads/:leadId/calls", authenticateToken, async (req, res) => {
     try {
       const { tenantId, leadId } = req.params;
-      const { callType, status, duration, notes } = req.body;
+      const { callType, status, duration, notes, phoneNumber, followUpDateTime, followUpRequired } = req.body;
+      const user = (req as any).user;
+
+      // Tenant access validation
+      if (user.tenantId !== parseInt(tenantId)) {
+        return res.status(403).json({ message: "Access denied" });
+      }
 
       console.log(
         `📞 SIMPLE ROUTES: Creating call log for tenant ${tenantId}, lead ${leadId}`,
       );
       console.log("📞 Call data:", req.body);
-
-      // Get a valid user ID for this tenant
-      const userData = await sql`
-        SELECT id FROM users WHERE tenant_id = ${tenantId} LIMIT 1
-      `;
-
-      const userId = userData[0]?.id || null;
 
       // Check if lead has been converted to customer
       const leadData = await sql`
@@ -16949,16 +16987,22 @@ Please improve this email.`;
           status, 
           duration, 
           notes,
+          caller_number,
+          "followUpDateTime",
+          "followUpRequired",
           started_at
         ) VALUES (
           ${tenantId}, 
           ${leadId}, 
           ${customerId},
-          ${userId},
+          ${user.id},
           ${callType || "outbound"}, 
           ${status || "completed"}, 
           ${duration ? parseInt(duration) : null}, 
           ${notes || ""},
+          ${phoneNumber || null},
+          ${followUpDateTime || null},
+          ${followUpRequired || false},
           NOW()
         ) RETURNING 
           id,
@@ -16967,12 +17011,35 @@ Please improve this email.`;
           status,
           duration,
           notes,
+          caller_number as "phoneNumber",
+          "followUpDateTime",
+          "followUpRequired",
           started_at as "startedAt",
           created_at as "createdAt"
       `;
 
       const newCall = result[0];
       console.log(`📞 SIMPLE ROUTES: Created call log with ID ${newCall.id}`);
+
+      // Create activity for call log creation
+      try {
+        await simpleStorage.createLeadActivity({
+          tenantId: parseInt(tenantId),
+          leadId: parseInt(leadId),
+          userId: user.id,
+          activityType: 3, // 3 = Call Made
+          activityTitle: callType || "Call Made",
+          activityDescription: `Mobile Number ${phoneNumber || "N/A"} Status ${status || "completed"} Minutes ${duration || 0} Notes ${notes || ""} Date ${new Date().toISOString()}${followUpDateTime ? ` Follow Up ${followUpDateTime}` : ""}${followUpRequired ? ` Follow Up Status ${followUpRequired}` : ""}`,
+          activityStatus: 1, // 1 = Completed
+          activityDate: new Date().toISOString(),
+          activityTableId: newCall.id,
+          activityTableName: "call_logs",
+        });
+        console.log(`✅ Lead activity logged for call creation: ${newCall.id}`);
+      } catch (activityError) {
+        // Don't fail the whole operation if activity logging fails
+        console.error("⚠️ Failed to log call creation activity:", activityError);
+      }
 
       return res.status(201).json({
         success: true,
@@ -17079,6 +17146,27 @@ Please improve this email.`;
         };
 
         const note = await simpleStorage.createCustomerNote(noteData);
+
+        // Create activity for note creation
+        try {
+          await simpleStorage.createCustomerActivity({
+            tenantId: parseInt(tenantId),
+            customerId: parseInt(customerId),
+            userId: user.id,
+            activityType: 7, // 7 = Note Created
+            activityTitle: `Note Created: ${noteData.noteTitle || note.noteTitle || 'Untitled Note'}`,
+            activityDescription: noteData.noteContent || note.noteContent || `Note type: ${noteData.noteType || 'general'}`,
+            activityStatus: 1, // 1 = Completed
+            activityDate: new Date().toISOString(),
+            activityTableId: note.id,
+            activityTableName: "customer_notes",
+          });
+          console.log(`✅ Customer activity logged for note creation: ${note.id}`);
+        } catch (activityError) {
+          // Don't fail the whole operation if activity logging fails
+          console.error("⚠️ Failed to log note creation activity:", activityError);
+        }
+
         res.status(201).json(note);
       } catch (error: any) {
         console.error("❌ Error creating customer note:", error);
@@ -17207,13 +17295,13 @@ Please improve this email.`;
   app.get("/uploads/:filename", (req, res) => {
     let filename = decodeURIComponent(req.params.filename); // Decode URL-encoded filename
     
-    // Security: prevent path traversal - allow alphanumeric, dash, underscore, dot, and timezone offset (+/-)
+    // Security: prevent path traversal - allow alphanumeric, dash, underscore, dot, parentheses, and timezone offset (+/-)
     // But sanitize to prevent directory traversal by removing any path separators
     filename = filename.replace(/[\/\\]/g, ''); // Remove any path separators
-    // Allow timestamp, timezone offset (like +0530 or -0500), dashes, underscores, dots, and alphanumeric
-    if (!/^[0-9]+[+-][0-9]{4}-[a-zA-Z0-9._-]+$/.test(filename)) {
+    // Allow timestamp, timezone offset (like +0530 or -0500), dashes, underscores, dots, parentheses, and alphanumeric
+    if (!/^[0-9]+[+-][0-9]{4}-[a-zA-Z0-9._()\s-]+$/.test(filename)) {
       // Also allow older format without timezone for backward compatibility
-      if (!/^[0-9]+-[a-zA-Z0-9._-]+$/.test(filename) && !/^[a-zA-Z0-9._-]+$/.test(filename)) {
+      if (!/^[0-9]+-[a-zA-Z0-9._()\s-]+$/.test(filename) && !/^[a-zA-Z0-9._()\s-]+$/.test(filename)) {
         return res.status(403).json({ message: "Invalid filename" });
       }
     }
@@ -17265,7 +17353,25 @@ Please improve this email.`;
         const uploadedFiles = [];
 
         for (const file of req.files) {
-          const fileName = `email-attachments/${Date.now()}-${file.originalname}`;
+          // Sanitize filename to prevent issues with spaces and special characters
+          const sanitizeFilename = (name: string): string => {
+            const ext = path.extname(name);
+            const baseName = path.basename(name, ext);
+            // Keep alphanumeric, spaces, dashes, underscores, dots, and parentheses
+            const sanitized = baseName
+              .replace(/[^a-zA-Z0-9._\s()-]/g, '') // Remove dangerous chars but keep parentheses
+              .replace(/\s+/g, ' ') // Normalize spaces
+              .trim()
+              .substring(0, 100); // Limit length
+            return `${sanitized}${ext}`;
+          };
+
+          const sanitizedOriginalName = sanitizeFilename(file.originalname);
+          const file_ext = path.extname(file.originalname);
+          const timestamp = Date.now();
+          const randomSuffix = Math.random().toString(36).substring(2, 8);
+          const safeFileName = `file_${randomSuffix}${file_ext}`;
+          const fileName = `email-attachments/${safeFileName}`;
 
           try {
             const url = await objectStorage.uploadFile(
@@ -17275,8 +17381,8 @@ Please improve this email.`;
             );
 
             uploadedFiles.push({
-              filename: file.originalname,
-              path: url,
+              filename: file.originalname, // Keep original for display
+              path: url, // This will be the sanitized path
               size: file.size,
               mimetype: file.mimetype,
             });
@@ -17585,14 +17691,18 @@ Please improve this email.`;
         );
 
         // Get customer's bookings and related data
-        const [customerBookings, customerInvoices, allCustomers] =
+        const [customerBookings, customerInvoices, customersResult] =
           await Promise.all([
             simpleStorage.getBookingsByTenant(parseInt(tenantId)),
             simpleStorage.getInvoicesByTenant(parseInt(tenantId)),
             simpleStorage.getCustomersByTenant({
               tenantId: parseInt(tenantId),
+              limit: 10000, // Get all customers for analytics
             }),
           ]);
+
+        // Extract the data array from the customers result
+        const allCustomers = customersResult.data || [];
 
         // Filter data for this specific customer
         const customerSpecificBookings = customerBookings.filter(
@@ -18040,6 +18150,8 @@ Please improve this email.`;
         "email_logs",
         "call_logs",
         "whatsapp_messages",
+        "customer_files",
+        "customer_notes",
       ];
       
       const sanitizedTableName = tableName as string;
@@ -18122,6 +18234,18 @@ Please improve this email.`;
         case "whatsapp_messages":
           result = await sql`
             SELECT * FROM whatsapp_messages 
+            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
+          `;
+          break;
+        case "customer_files":
+          result = await sql`
+            SELECT * FROM customer_files 
+            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
+          `;
+          break;
+        case "customer_notes":
+          result = await sql`
+            SELECT * FROM customer_notes 
             WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
           `;
           break;
@@ -18245,9 +18369,30 @@ Please improve this email.`;
         uploadedBy: user.id,
         tags: req.body.tags || [],
         isPublic: req.body.isPublic || false,
+        description: req.body.description || null,
       };
 
       const file = await simpleStorage.createCustomerFile(fileData);
+
+      // Create activity for file upload
+      try {
+        await simpleStorage.createCustomerActivity({
+          tenantId: finalTenantId,
+          customerId: parseInt(customerId),
+          userId: user.id,
+          activityType: 6, // 6 = File Uploaded
+          activityTitle: `File Uploaded: ${fileData.fileName}`,
+          activityDescription: fileData.description || `File type: ${fileType}, Size: ${(fileSize / 1024).toFixed(2)} KB`,
+          activityStatus: 1, // 1 = Completed
+          activityDate: new Date().toISOString(),
+          activityTableId: file.id,
+          activityTableName: "customer_files",
+        });
+        console.log(`✅ Customer activity logged for file upload: ${file.id}`);
+      } catch (activityError) {
+        // Don't fail the whole operation if activity logging fails
+        console.error("⚠️ Failed to log file upload activity:", activityError);
+      }
 
       res.json({ success: true, file });
     } catch (error) {

@@ -76,11 +76,19 @@ export async function apiRequest(
   console.log("🔍 API Request - Full URL:", fullUrl);
   console.log("🔍 API Request - Headers:", headers);
 
+  // Add cache-busting headers for GET requests to prevent 304 responses
+  if (method === "GET") {
+    headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
+    headers["Pragma"] = "no-cache";
+    headers["Expires"] = "0";
+  }
+
   const res = await fetch(fullUrl, {
     method,
     headers,
     body: data ? JSON.stringify(data) : undefined,
     credentials: "include",
+    cache: method === "GET" ? "no-store" : "default", // Prevent browser caching for GET requests
   });
 
   console.log("🔍 API Request - Response status:", res.status);

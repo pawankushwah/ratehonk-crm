@@ -194,7 +194,7 @@ export class ObjectStorageService {
       const cleanFileName = path.basename(fileName);
       const timestamp = Date.now();
       const randomSuffix = Math.random().toString(36).substring(2, 8);
-      const safeFileName = `${timestamp}-${randomSuffix}-${cleanFileName}`;
+      const safeFileName = `${cleanFileName}`;
       const filePath = path.join(uploadsDir, safeFileName);
 
       // Write file to local filesystem

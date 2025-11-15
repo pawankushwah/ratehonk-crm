@@ -4,6 +4,15 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -43,13 +52,14 @@ import {
   FileText,
   Upload,
   Folder,
+  Edit,
+  Save,
+  X,
 } from "lucide-react";
 import { useAuth } from "@/components/auth/auth-provider";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { formatDistanceToNow } from "date-fns";
-import { ObjectUploader } from "@/components/ObjectUploader";
-import type { UploadResult } from "@uppy/core";
 import type { CustomerFile } from "@shared/schema";
 
 interface FilesDocumentsTableProps {
@@ -84,6 +94,11 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
   const queryClient = useQueryClient();
   const [searchTerm, setSearchTerm] = useState("");
   const [fileTypeFilter, setFileTypeFilter] = useState("all");
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState<Array<{file: File; fileName: string; description: string}>>([]);
+  const [editingFile, setEditingFile] = useState<{id: number; fileName: string; description: string} | null>(null);
 
   // Query to fetch customer files
   const { data: filesData, isLoading } = useQuery({
@@ -100,6 +115,36 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
   });
 
   const files = filesData || [];
+
+  // Update file mutation
+  const updateFileMutation = useMutation({
+    mutationFn: async ({ fileId, fileName, description }: { fileId: number; fileName: string; description: string }) => {
+      await apiRequest(
+        "PUT",
+        `/api/customer-files/${fileId}`,
+        {
+          tenantId: tenant?.id,
+          fileName,
+          description: description || null,
+        }
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["customer-files", customerId, tenant?.id] });
+      setEditingFile(null);
+      toast({
+        title: "Success",
+        description: "File updated successfully",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to update file",
+        variant: "destructive",
+      });
+    },
+  });
 
   // Delete file mutation
   const deleteFileMutation = useMutation({
@@ -125,114 +170,138 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
     },
   });
 
-  // Upload file handlers
-  const handleGetUploadParameters = async (file: { name: string; type: string; size: number }) => {
-    const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
-    const response = await apiRequest("POST", "/api/objects/upload");
-    const data = await response.json();
-    
-    // Include filename in URL as query parameter for PUT handler
-    // Uppy's AwsS3 plugin requires an absolute URL, so convert relative paths to absolute
-    let uploadUrl = data.uploadURL || data.uploadUrl || "/api/objects/store";
-    
-    // Convert relative URL to absolute URL if needed
-    if (uploadUrl.startsWith("/")) {
-      uploadUrl = `${window.location.origin}${uploadUrl}`;
+  // Handle file selection - open dialog for name/description
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) {
+      console.log("📎 No files selected");
+      return;
     }
+
+    // Create pending files with default names
+    const newPendingFiles = Array.from(files).map(file => ({
+      file,
+      fileName: file.name.replace(/\.[^/.]+$/, ""), // Remove extension for display name
+      description: "",
+    }));
+
+    setPendingFiles(newPendingFiles);
+    setUploadDialogOpen(true);
     
-    const urlWithFilename = `${uploadUrl}?filename=${encodeURIComponent(file.name)}`;
-    
-    return {
-      method: "PUT" as const,
-      url: urlWithFilename,
-      headers: token ? {
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": file.type || "application/octet-stream",
-      } : {
-        "Content-Type": file.type || "application/octet-stream",
-      },
-    };
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
-  const handleUploadComplete = async (result: UploadResult<Record<string, unknown>, Record<string, unknown>>) => {
-    if (result.successful.length > 0) {
-      const uploadedFile = result.successful[0];
-      const file = uploadedFile.data as File;
-      
-      // Determine file type based on MIME type
-      let fileType = "file";
-      if (file.type.startsWith("image/")) fileType = "image";
-      else if (file.type.startsWith("video/")) fileType = "video";
-      else if (file.type.includes("pdf") || file.type.includes("document") || file.type.includes("text")) fileType = "document";
+  // Upload file handler using the same flow as email attachments
+  const handleFileUpload = async () => {
+    if (pendingFiles.length === 0) {
+      return;
+    }
 
-      // Debug: Log the full upload result to understand the response structure
-      console.log("📁 Upload result:", result);
-      console.log("📁 Uploaded file:", uploadedFile);
-      console.log("📁 Uploaded file response:", (uploadedFile as any).response);
-      console.log("📁 Uploaded file uploadURL:", (uploadedFile as any).uploadURL);
-      console.log("📁 Uploaded file meta:", (uploadedFile as any).meta);
-
-      // Get the object path from the upload response
-      // Uppy's AwsS3 plugin stores the response in uploadedFile.response
-      // The response should be the JSON from /api/objects/store
-      let objectPath: string;
-      
-      if ((uploadedFile as any).response) {
-        // Try to parse if it's a string
-        let responseData = (uploadedFile as any).response;
-        if (typeof responseData === 'string') {
-          try {
-            responseData = JSON.parse(responseData);
-          } catch (e) {
-            console.warn("Could not parse response as JSON:", e);
-          }
-        }
-        objectPath = responseData?.objectPath || responseData?.publicUrl || `/uploads/${Date.now()}-${file.name}`;
-      } else {
-        // Fallback to other possible locations
-        objectPath = (uploadedFile as any).uploadURL || 
-                    (uploadedFile as any).id || 
-                    `/uploads/${Date.now()}-${file.name}`;
-      }
-
-      console.log("📁 Upload complete, saving file metadata:", {
-        fileName: file.name,
-        fileSize: file.size,
-        fileType,
-        objectPath,
-        response: (uploadedFile as any).response,
+    console.log(`📎 Uploading ${pendingFiles.length} file(s)...`);
+    setIsUploading(true);
+    setUploadDialogOpen(false);
+    
+    try {
+      const formData = new FormData();
+      pendingFiles.forEach((pendingFile) => {
+        formData.append('attachments', pendingFile.file);
       });
 
-      try {
-        await apiRequest(
-          "POST",
-          "/api/customer-files",
-          {
-            customerId: parseInt(customerId),
-            tenantId: tenant?.id,
-            fileName: file.name,
-            fileType,
-            mimeType: file.type,
-            fileSize: file.size,
-            objectPath: objectPath,
-            uploadedBy: user?.id,
-            isPublic: false,
-          }
-        );
-
-        queryClient.invalidateQueries({ queryKey: ["customer-files", customerId, tenant?.id] });
-        toast({
-          title: "Success",
-          description: "File uploaded successfully",
-        });
-      } catch (error) {
-        console.error("Error saving file metadata:", error);
-        toast({
-          title: "Error",
-          description: "Failed to save file metadata",
-          variant: "destructive",
-        });
+      const token = localStorage.getItem("token") || localStorage.getItem("auth_token");
+      if (!token) {
+        throw new Error("Authentication token not found. Please log in again.");
       }
+      
+      const response = await fetch('/api/email-attachments/upload', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          // Don't set Content-Type - let browser set it with boundary for FormData
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ message: 'Failed to upload files' }));
+        throw new Error(errorData.message || 'Failed to upload files');
+      }
+
+      const result = await response.json();
+      const uploadedFiles = result.files || [];
+      
+      if (uploadedFiles.length === 0) {
+        throw new Error('No files were uploaded');
+      }
+      
+      console.log(`✅ Successfully uploaded ${uploadedFiles.length} file(s):`, uploadedFiles.map(f => f.filename));
+      
+      // Save each uploaded file to customer-files
+      for (let i = 0; i < uploadedFiles.length; i++) {
+        const uploadedFile = uploadedFiles[i];
+        const pendingFile = pendingFiles[i];
+        // Determine file type based on MIME type or filename
+        let fileType = "file";
+        const mimeType = uploadedFile.mimetype || '';
+        const filename = uploadedFile.filename || '';
+        
+        if (mimeType.startsWith("image/") || /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(filename)) {
+          fileType = "image";
+        } else if (mimeType.startsWith("video/") || /\.(mp4|avi|mov|wmv|flv|webm)$/i.test(filename)) {
+          fileType = "video";
+        } else if (mimeType.includes("pdf") || mimeType.includes("document") || mimeType.includes("text") || 
+                   /\.(pdf|doc|docx|txt|csv)$/i.test(filename)) {
+          fileType = "document";
+        }
+
+        try {
+          await apiRequest(
+            "POST",
+            "/api/customer-files",
+            {
+              customerId: parseInt(customerId),
+              tenantId: tenant?.id,
+              fileName: pendingFile?.fileName || uploadedFile.filename, // Use custom name if provided
+              fileType,
+              mimeType: uploadedFile.mimetype || 'application/octet-stream',
+              fileSize: uploadedFile.size || 0,
+              objectPath: uploadedFile.path,
+              uploadedBy: user?.id,
+              isPublic: false,
+              description: pendingFile?.description || null,
+            }
+          );
+        } catch (error: any) {
+          console.error(`Error saving file metadata for ${uploadedFile.filename}:`, error);
+          toast({
+            title: "Warning",
+            description: `File ${uploadedFile.filename} uploaded but failed to save metadata: ${error.message}`,
+            variant: "destructive",
+          });
+        }
+      }
+
+      // Clear pending files
+      setPendingFiles([]);
+
+      // Also invalidate customer activities to show the new file upload activity
+      queryClient.invalidateQueries({ queryKey: ["customer-activities", customerId, tenant?.id] });
+      queryClient.invalidateQueries({ queryKey: ["customer-files", customerId, tenant?.id] });
+      toast({
+        title: "Success",
+        description: `${uploadedFiles.length} file(s) uploaded successfully`,
+      });
+    } catch (error: any) {
+      console.error("Error uploading files:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to upload files",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -256,7 +325,26 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
   // Handle file download
   const handleDownload = async (file: CustomerFile) => {
     try {
-      window.open(file.objectPath, "_blank");
+      // Ensure the path is properly formatted - if it's relative, make it absolute
+      let fileUrl = file.objectPath;
+      if (fileUrl && !fileUrl.startsWith('http://') && !fileUrl.startsWith('https://')) {
+        // If it's a relative path, convert to absolute URL
+        if (fileUrl.startsWith('/')) {
+          fileUrl = `${window.location.origin}${fileUrl}`;
+        } else {
+          fileUrl = `${window.location.origin}/${fileUrl}`;
+        }
+      }
+      // URL encode the path properly if it contains special characters
+      try {
+        const url = new URL(fileUrl);
+        // Reconstruct with properly encoded pathname
+        fileUrl = `${url.protocol}//${url.host}${encodeURI(url.pathname)}${url.search}${url.hash}`;
+      } catch (e) {
+        // If URL parsing fails, just encode the whole thing
+        fileUrl = encodeURI(fileUrl);
+      }
+      window.open(fileUrl, "_blank");
     } catch (error) {
       toast({
         title: "Error",
@@ -269,7 +357,26 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
   // Handle file preview
   const handlePreview = async (file: CustomerFile) => {
     try {
-      window.open(file.objectPath, "_blank");
+      // Ensure the path is properly formatted - if it's relative, make it absolute
+      let fileUrl = file.objectPath;
+      if (fileUrl && !fileUrl.startsWith('http://') && !fileUrl.startsWith('https://')) {
+        // If it's a relative path, convert to absolute URL
+        if (fileUrl.startsWith('/')) {
+          fileUrl = `${window.location.origin}${fileUrl}`;
+        } else {
+          fileUrl = `${window.location.origin}/${fileUrl}`;
+        }
+      }
+      // URL encode the path properly if it contains special characters
+      try {
+        const url = new URL(fileUrl);
+        // Reconstruct with properly encoded pathname
+        fileUrl = `${url.protocol}//${url.host}${encodeURI(url.pathname)}${url.search}${url.hash}`;
+      } catch (e) {
+        // If URL parsing fails, just encode the whole thing
+        fileUrl = encodeURI(fileUrl);
+      }
+      window.open(fileUrl, "_blank");
     } catch (error) {
       toast({
         title: "Error",
@@ -335,16 +442,25 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
             </DropdownMenu>
 
             {/* Upload Button */}
-            <ObjectUploader
-              maxNumberOfFiles={10}
-              maxFileSize={50 * 1024 * 1024} // 50MB
-              onGetUploadParameters={handleGetUploadParameters}
-              onComplete={handleUploadComplete}
-              buttonClassName="bg-cyan-600 hover:bg-cyan-700 text-white"
-            >
-              <Upload className="h-4 w-4 mr-2" />
-              Upload Files
-            </ObjectUploader>
+            <div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                onChange={handleFileSelect}
+                className="hidden"
+                accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip,.jpg,.jpeg,.png,.gif,.webp,.mp4,.avi,.mov"
+                disabled={isUploading}
+              />
+              <Button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploading}
+                className="bg-cyan-600 hover:bg-cyan-700 text-white"
+              >
+                <Upload className="h-4 w-4 mr-2" />
+                {isUploading ? "Uploading..." : "Upload Files"}
+              </Button>
+            </div>
           </div>
         </div>
       </CardHeader>
@@ -358,16 +474,16 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
                 ? "No files found matching your criteria" 
                 : "No files uploaded for this customer"}
             </p>
-            <ObjectUploader
-              maxNumberOfFiles={10}
-              maxFileSize={50 * 1024 * 1024}
-              onGetUploadParameters={handleGetUploadParameters}
-              onComplete={handleUploadComplete}
-              buttonClassName="bg-cyan-600 hover:bg-cyan-700 text-white"
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              Upload First File
-            </ObjectUploader>
+            <div>
+              <Button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploading}
+                className="bg-cyan-600 hover:bg-cyan-700 text-white"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                {isUploading ? "Uploading..." : "Upload First File"}
+              </Button>
+            </div>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -388,15 +504,24 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
                   return (
                     <TableRow key={file.id}>
                       <TableCell>
-                        <div className="flex items-center space-x-3">
-                          <Icon className="h-5 w-5 text-gray-500" />
-                          <div>
-                            <p className="font-medium text-gray-900 dark:text-gray-100">
-                              {file.fileName}
-                            </p>
-                            <p className="text-sm text-gray-500">{file.mimeType}</p>
+                        {editingFile?.id === file.id ? (
+                          <Input
+                            value={editingFile.fileName}
+                            onChange={(e) => setEditingFile({ ...editingFile, fileName: e.target.value })}
+                            className="w-full"
+                            autoFocus
+                          />
+                        ) : (
+                          <div className="flex items-center space-x-3">
+                            <Icon className="h-5 w-5 text-gray-500" />
+                            <div>
+                              <p className="font-medium text-gray-900 dark:text-gray-100">
+                                {file.fileName}
+                              </p>
+                              <p className="text-sm text-gray-500">{file.mimeType}</p>
+                            </div>
                           </div>
-                        </div>
+                        )}
                       </TableCell>
                       <TableCell>
                         <Badge className={fileTypeColors[file.fileType as keyof typeof fileTypeColors]}>
@@ -409,8 +534,17 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
                       <TableCell className="text-sm text-gray-500">
                         {formatDistanceToNow(new Date(file.createdAt), { addSuffix: true })}
                       </TableCell>
-                      <TableCell className="text-sm text-gray-500 max-w-xs truncate">
-                        {file.description || "-"}
+                      <TableCell className="text-sm text-gray-500 max-w-xs">
+                        {editingFile?.id === file.id ? (
+                          <Textarea
+                            value={editingFile.description}
+                            onChange={(e) => setEditingFile({ ...editingFile, description: e.target.value })}
+                            className="w-full min-h-[60px]"
+                            placeholder="Add description..."
+                          />
+                        ) : (
+                          <span className="truncate block">{file.description || "-"}</span>
+                        )}
                       </TableCell>
                       <TableCell className="text-right">
                         <DropdownMenu>
@@ -420,14 +554,45 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => handlePreview(file)}>
-                              <Eye className="h-4 w-4 mr-2" />
-                              Preview
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => handleDownload(file)}>
-                              <Download className="h-4 w-4 mr-2" />
-                              Download
-                            </DropdownMenuItem>
+                            {editingFile?.id === file.id ? (
+                              <>
+                                <DropdownMenuItem
+                                  onClick={() => {
+                                    if (editingFile) {
+                                      updateFileMutation.mutate({
+                                        fileId: editingFile.id,
+                                        fileName: editingFile.fileName,
+                                        description: editingFile.description,
+                                      });
+                                    }
+                                  }}
+                                >
+                                  <Save className="h-4 w-4 mr-2" />
+                                  Save
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={() => setEditingFile(null)}
+                                >
+                                  <X className="h-4 w-4 mr-2" />
+                                  Cancel
+                                </DropdownMenuItem>
+                              </>
+                            ) : (
+                              <>
+                                <DropdownMenuItem onClick={() => setEditingFile({ id: file.id, fileName: file.fileName, description: file.description || "" })}>
+                                  <Edit className="h-4 w-4 mr-2" />
+                                  Edit
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => handlePreview(file)}>
+                                  <Eye className="h-4 w-4 mr-2" />
+                                  Preview
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => handleDownload(file)}>
+                                  <Download className="h-4 w-4 mr-2" />
+                                  Download
+                                </DropdownMenuItem>
+                              </>
+                            )}
                             <AlertDialog>
                               <AlertDialogTrigger asChild>
                                 <DropdownMenuItem
@@ -467,6 +632,73 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
           </div>
         )}
       </CardContent>
+
+      {/* Upload Dialog */}
+      <Dialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Upload Files</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 mt-4">
+            {pendingFiles.map((pendingFile, index) => (
+              <div key={index} className="border rounded-lg p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <File className="h-5 w-5 text-gray-500" />
+                  <span className="text-sm text-gray-600">{pendingFile.file.name}</span>
+                  <span className="text-xs text-gray-400">
+                    ({(pendingFile.file.size / 1024).toFixed(2)} KB)
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor={`fileName-${index}`}>File Name *</Label>
+                  <Input
+                    id={`fileName-${index}`}
+                    value={pendingFile.fileName}
+                    onChange={(e) => {
+                      const newPendingFiles = [...pendingFiles];
+                      newPendingFiles[index].fileName = e.target.value;
+                      setPendingFiles(newPendingFiles);
+                    }}
+                    placeholder="e.g., Aadhar Card, PAN Card"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor={`description-${index}`}>Description (Optional)</Label>
+                  <Textarea
+                    id={`description-${index}`}
+                    value={pendingFile.description}
+                    onChange={(e) => {
+                      const newPendingFiles = [...pendingFiles];
+                      newPendingFiles[index].description = e.target.value;
+                      setPendingFiles(newPendingFiles);
+                    }}
+                    placeholder="Add a description for this file..."
+                    rows={2}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setUploadDialogOpen(false);
+                setPendingFiles([]);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleFileUpload}
+              disabled={isUploading || pendingFiles.some(pf => !pf.fileName.trim())}
+              className="bg-cyan-600 hover:bg-cyan-700"
+            >
+              {isUploading ? "Uploading..." : "Upload Files"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

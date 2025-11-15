@@ -28,8 +28,6 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { WhatsappDevice } from "@shared/schema";
-import { ObjectUploader } from "@/components/ObjectUploader";
-import type { UploadResult } from "@uppy/core";
 import EmojiPicker from "emoji-picker-react";
 
 interface WhatsAppMessageDialogProps {
@@ -38,6 +36,7 @@ interface WhatsAppMessageDialogProps {
   customerPhone: string;
   customerName: string;
   customerId: number;
+  tenantId?: number;
 }
 
 export function WhatsAppMessageDialog({
@@ -46,6 +45,7 @@ export function WhatsAppMessageDialog({
   customerPhone,
   customerName,
   customerId,
+  tenantId,
 }: WhatsAppMessageDialogProps) {
   const [activeTab, setActiveTab] = useState("text");
   const { toast } = useToast();
@@ -61,6 +61,8 @@ export function WhatsAppMessageDialog({
   const [mediaType, setMediaType] = useState<string>("image");
   const [mediaUrl, setMediaUrl] = useState("");
   const [mediaCaption, setMediaCaption] = useState("");
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Fetch connected devices
   const { data: devices = [] } = useQuery<WhatsappDevice[]>({
@@ -78,6 +80,7 @@ export function WhatsAppMessageDialog({
         sender: selectedDevice.number,
         number: customerPhone,
         message: textMessage,
+        customerId: customerId,
       });
     },
     onSuccess: () => {
@@ -86,6 +89,13 @@ export function WhatsAppMessageDialog({
         description: `WhatsApp message sent to ${customerName}`,
       });
       setTextMessage("");
+      // Invalidate WhatsApp messages query to refresh the list
+      if (tenantId) {
+        queryClient.invalidateQueries({
+          queryKey: [`/api/tenants/${tenantId}/customers/${customerId}/whatsapp-messages`],
+        });
+      }
+      // Also invalidate general customer queries
       queryClient.invalidateQueries({
         queryKey: ["/api/customers", customerId],
       });
@@ -111,8 +121,9 @@ export function WhatsAppMessageDialog({
         sender: selectedDevice.number,
         number: customerPhone,
         media_type: mediaType,
-        media_url: mediaUrl,
+        url: mediaUrl,
         caption: mediaCaption || undefined,
+        customerId: customerId,
       });
     },
     onSuccess: () => {
@@ -122,6 +133,16 @@ export function WhatsAppMessageDialog({
       });
       setMediaUrl("");
       setMediaCaption("");
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+      // Invalidate WhatsApp messages query to refresh the list
+      if (tenantId) {
+        queryClient.invalidateQueries({
+          queryKey: [`/api/tenants/${tenantId}/customers/${customerId}/whatsapp-messages`],
+        });
+      }
+      // Also invalidate general customer queries
       queryClient.invalidateQueries({
         queryKey: ["/api/customers", customerId],
       });
@@ -155,17 +176,74 @@ export function WhatsAppMessageDialog({
     setShowEmojiPicker(false);
   };
 
-  const handleMediaUploadComplete = (result: UploadResult) => {
-    if (result.successful && result.successful.length > 0) {
-      const uploadedFile = result.successful[0];
-      const publicUrl = uploadedFile.response?.body?.url;
-      if (publicUrl) {
-        setMediaUrl(publicUrl);
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) {
+      console.log("📎 No files selected");
+      return;
+    }
+
+    const file = files[0]; // WhatsApp only supports single file
+    console.log(`📎 Uploading file: ${file.name}...`);
+    setIsUploading(true);
+    
+    try {
+      const formData = new FormData();
+      formData.append('attachments', file);
+
+      const token = localStorage.getItem("token") || localStorage.getItem("auth_token");
+      if (!token) {
+        throw new Error("Authentication token not found. Please log in again.");
+      }
+      
+      const response = await fetch('/api/email-attachments/upload', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          // Don't set Content-Type - let browser set it with boundary for FormData
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ message: 'Failed to upload file' }));
+        throw new Error(errorData.message || 'Failed to upload file');
+      }
+
+      const result = await response.json();
+      const uploadedFiles = result.files || [];
+      
+      if (uploadedFiles.length === 0) {
+        throw new Error('No file was uploaded');
+      }
+      
+      // Use the first uploaded file's path as the media URL
+      const uploadedFile = uploadedFiles[0];
+      if (uploadedFile.path) {
+        setMediaUrl(uploadedFile.path);
+        console.log(`✅ Successfully uploaded file: ${uploadedFile.filename}, path: ${uploadedFile.path}`);
+        
         toast({
-          title: "Upload Complete",
+          title: "Success",
           description: "File uploaded successfully",
         });
+      } else {
+        throw new Error('Uploaded file missing path');
       }
+      
+      // Reset file input to allow selecting the same file again
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    } catch (error: any) {
+      console.error("Error uploading file:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to upload file",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -209,8 +287,24 @@ export function WhatsAppMessageDialog({
     sendMediaMutation.mutate();
   };
 
+  // Reset form when dialog closes
+  const handleDialogClose = (open: boolean) => {
+    if (!open) {
+      // Reset all form state when closing
+      setTextMessage("");
+      setMediaUrl("");
+      setMediaCaption("");
+      setTextDevice("");
+      setMediaDevice("");
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+    onOpenChange(open);
+  };
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleDialogClose}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -360,19 +454,54 @@ export function WhatsAppMessageDialog({
 
             <div className="space-y-2">
               <Label>Upload Media File</Label>
-              <ObjectUploader
-                onUploadComplete={handleMediaUploadComplete}
-                maxFiles={1}
-                allowedFileTypes={
-                  mediaType === "image"
-                    ? ["image/*"]
-                    : mediaType === "video"
-                      ? ["video/*"]
-                      : mediaType === "audio"
-                        ? ["audio/*"]
-                        : ["application/*", ".pdf", ".doc", ".docx"]
-                }
-              />
+              <div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                  accept={
+                    mediaType === "image"
+                      ? "image/*"
+                      : mediaType === "video"
+                        ? "video/*"
+                        : mediaType === "audio"
+                          ? "audio/*"
+                          : ".pdf,.doc,.docx,.txt"
+                  }
+                  disabled={isUploading}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={isUploading}
+                  className="flex items-center gap-2"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Upload className="w-4 h-4" />
+                  {isUploading ? "Uploading..." : "Choose File"}
+                </Button>
+                {mediaUrl && (
+                  <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded text-sm text-green-800 flex items-center justify-between">
+                    <span>✓ File uploaded: {mediaUrl.split('/').pop()}</span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setMediaUrl("");
+                        if (fileInputRef.current) {
+                          fileInputRef.current.value = '';
+                        }
+                      }}
+                      className="h-6 px-2 text-red-600 hover:text-red-700 hover:bg-red-50"
+                    >
+                      <X className="w-3 h-3" />
+                    </Button>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="space-y-2">

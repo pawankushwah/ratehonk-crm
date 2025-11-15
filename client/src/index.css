@@ -319,3 +319,11 @@
   --tw-text-opacity: 1;
   color: white !important;
 }
+
+/* Override shadow-2xl to remove box-shadow line */
+@layer utilities {
+  .shadow-2xl {
+    --tw-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.25);
+    --tw-shadow-colored: 0 25px 50px -12px var(--tw-shadow-color);
+  }
+}

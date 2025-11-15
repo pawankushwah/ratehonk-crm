@@ -695,6 +695,8 @@ export default function CustomerDetail() {
     },
     onSuccess: () => {
       refetchNotes();
+      // Also invalidate customer activities to show the new note activity
+      queryClient.invalidateQueries({ queryKey: ["customer-activities", customerId, tenant?.id] });
       setIsNotesModalOpen(false);
       setEditableItem(null);
       toast({
@@ -1111,11 +1113,66 @@ export default function CustomerDetail() {
 
                 {note.attachment && (
                   <div className="mt-3 pt-2 border-t border-gray-100">
-                    <div className="flex items-center gap-2">
-                      <Paperclip className="w-4 h-4 text-gray-500" />
-                      <span className="text-sm text-blue-600 hover:underline cursor-pointer">
-                        {note.attachment}
-                      </span>
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Paperclip className="w-4 h-4 text-gray-500" />
+                        <span className="text-sm text-gray-600">Attachment:</span>
+                      </div>
+                      {(() => {
+                        const attachmentPath = note.attachment;
+                        const isImage = /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(attachmentPath);
+                        const fileName = attachmentPath.split('/').pop() || attachmentPath;
+                        const attachmentUrl = attachmentPath.startsWith('http') 
+                          ? attachmentPath 
+                          : attachmentPath.startsWith('/') 
+                            ? `${window.location.origin}${attachmentPath}`
+                            : `${window.location.origin}/${attachmentPath}`;
+                        
+                        return (
+                          <div className="ml-6">
+                            {isImage ? (
+                              <div className="space-y-2">
+                                <img
+                                  src={attachmentUrl}
+                                  alt={fileName}
+                                  className="max-w-xs max-h-48 rounded-lg border border-gray-200 object-contain cursor-pointer hover:opacity-90 transition-opacity"
+                                  onClick={() => window.open(attachmentUrl, '_blank')}
+                                  onError={(e) => {
+                                    // If image fails to load, show file link instead
+                                    (e.target as HTMLImageElement).style.display = 'none';
+                                    const parent = (e.target as HTMLImageElement).parentElement;
+                                    if (parent) {
+                                      parent.innerHTML = `
+                                        <a href="${attachmentUrl}" target="_blank" rel="noopener noreferrer" class="text-sm text-blue-600 hover:underline">
+                                          ${fileName}
+                                        </a>
+                                      `;
+                                    }
+                                  }}
+                                />
+                                <a
+                                  href={attachmentUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-xs text-blue-600 hover:underline block"
+                                >
+                                  {fileName}
+                                </a>
+                              </div>
+                            ) : (
+                              <a
+                                href={attachmentUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-sm text-blue-600 hover:underline flex items-center gap-1"
+                              >
+                                <File className="w-4 h-4" />
+                                {fileName}
+                              </a>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                 )}
@@ -2157,6 +2214,7 @@ export default function CustomerDetail() {
         customerPhone={customer.phone}
         customerName={displayName}
         customerId={parseInt(customerId || "0")}
+        tenantId={tenant?.id}
       />
 
       {/* Activity Data Popup */}

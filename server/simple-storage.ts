@@ -7638,11 +7638,13 @@ export class SimpleStorage {
       const [activity] = await sql`
         INSERT INTO lead_activities (
           tenant_id, lead_id, user_id, activity_type, 
-          activity_title, activity_description, activity_status, activity_date
+          activity_title, activity_description, activity_status, 
+          activity_table_id, activity_table_name, activity_date
         ) VALUES (
           ${activityData.tenantId}, ${activityData.leadId}, ${activityData.userId}, 
           ${activityData.activityType || 1}, ${activityData.activityTitle}, 
           ${activityData.activityDescription}, ${activityData.activityStatus || 1}, 
+          ${activityData.activityTableId || null}, ${activityData.activityTableName || null},
           ${activityData.activityDate || new Date().toISOString()}
         )
         RETURNING 
@@ -7654,6 +7656,8 @@ export class SimpleStorage {
           activity_title as "activityTitle",
           activity_description as "activityDescription",
           activity_status as "activityStatus",
+          activity_table_id as "activityTableId",
+          activity_table_name as "activityTableName",
           activity_date as "activityDate",
           created_at as "createdAt",
           updated_at as "updatedAt"
@@ -8220,6 +8224,58 @@ export class SimpleStorage {
       return email;
     } catch (error) {
       console.error("❌ Error creating customer email:", error);
+      throw error;
+    }
+  }
+
+  async createLeadEmail(data: any) {
+    try {
+      const [email] = await sql`
+        INSERT INTO email_logs (
+          tenant_id, lead_id, campaign_id, subscriber_id, email, subject, body, 
+          status, sent_at, from_email, attachments
+        ) VALUES (
+          ${data.tenantId}, ${data.leadId}, ${data.campaignId || null}, ${data.subscriberId || null}, 
+          ${data.email}, ${data.subject}, ${data.body},
+          ${data.status || "sent"}, ${data.sentAt || sql`NOW()`}, ${data.fromEmail || null},
+          ${data.attachments ? JSON.stringify(data.attachments) : null}
+        )
+        RETURNING 
+          id,
+          tenant_id as "tenantId",
+          customer_id as "customerId",
+          campaign_id as "campaignId",
+          subscriber_id as "subscriberId",
+          email,
+          subject,
+          body,
+          status,
+          sent_at as "sentAt",
+          delivered_at as "deliveredAt",
+          opened_at as "openedAt",
+          clicked_at as "clickedAt",
+          error_message as "errorMessage",
+          lead_id as "leadId",
+          from_email as "fromEmail",
+          attachments
+      `;
+      // Create activity linked to the email_logs record
+      if (data.userId) {
+        this.createLeadActivity({
+          tenantId: data.tenantId,
+          leadId: data.leadId,
+          userId: data.userId,
+          activityType: 2,
+          activityTitle: data.subject,
+          activityDescription: data.body,
+          activityStatus: 1,
+          activityTableId: email.id,
+          activityTableName: "email_logs",
+        });
+      }
+      return email;
+    } catch (error) {
+      console.error("❌ Error creating lead email:", error);
       throw error;
     }
   }
@@ -9905,7 +9961,7 @@ export class SimpleStorage {
         SELECT 
           wm.*,
           wd.number as device_number,
-          u.name as sent_by_name
+          (u.first_name || ' ' || u.last_name) as sent_by_name
         FROM whatsapp_messages wm
         LEFT JOIN whatsapp_devices wd ON wm.device_id = wd.id
         LEFT JOIN users u ON wm.sent_by = u.id
@@ -9948,7 +10004,7 @@ export class SimpleStorage {
         SELECT 
           wm.*,
           wd.number as device_number,
-          u.name as sent_by_name
+          (u.first_name || ' ' || u.last_name) as sent_by_name
         FROM whatsapp_messages wm
         LEFT JOIN whatsapp_devices wd ON wm.device_id = wd.id
         LEFT JOIN users u ON wm.sent_by = u.id
