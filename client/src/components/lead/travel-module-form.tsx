@@ -42,7 +42,20 @@ export function TravelModuleForm({
   typeSpecificData,
 }: TravelModuleFormProps) {
   const { tenant } = useAuth();
-  const [isRoundTrip, setIsRoundTrip] = useState(false);
+  
+  // Watch the flightType from form to update isRoundTrip state
+  const flightType = form.watch("typeSpecificData.flightType");
+  const [isRoundTrip, setIsRoundTrip] = useState(
+    selectedCategory === "flight" && flightType === "round-trip"
+  );
+  
+  useEffect(() => {
+    if (selectedCategory === "flight") {
+      setIsRoundTrip(flightType === "round-trip");
+    } else {
+      setIsRoundTrip(false);
+    }
+  }, [flightType, selectedCategory]);
 
   const { data: packages = [], isLoading: packagesLoading } = useQuery<
     TravelPackage[]

@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from "react";
-import { X, StickyNote, FileText, AlertCircle, Star, Paperclip, Clock, Mail } from "lucide-react";
+import React, { useState, useEffect, useRef } from "react";
+import { X, StickyNote, FileText, AlertCircle, Star, Paperclip, Clock, Mail, Upload, Loader2 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -61,6 +62,9 @@ const CustomerNotesModal: React.FC<CustomerNotesModalProps> = ({
   isLoading = false 
 }) => {
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadedFilePath, setUploadedFilePath] = useState<string>("");
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
   
   const form = useForm<NoteFormData>({
     resolver: zodResolver(noteFormSchema),
@@ -94,6 +98,9 @@ const CustomerNotesModal: React.FC<CustomerNotesModalProps> = ({
         reminderEmail: editableNote.reminderEmail || "",
         reminderDate: editableNote.reminderDate ? new Date(editableNote.reminderDate).toISOString().slice(0, 16) : "",
       });
+      if (editableNote.attachment) {
+        setUploadedFilePath(editableNote.attachment);
+      }
     } else {
       form.reset({
         noteTitle: "",
@@ -106,6 +113,11 @@ const CustomerNotesModal: React.FC<CustomerNotesModalProps> = ({
         reminderEmail: "",
         reminderDate: "",
       });
+      setUploadedFile(null);
+      setUploadedFilePath("");
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     }
   }, [editableNote, form]);
 
@@ -113,11 +125,68 @@ const CustomerNotesModal: React.FC<CustomerNotesModalProps> = ({
     onSave(data, editableNote ? "edit" : "create");
   };
 
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const { toast } = useToast();
+
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (file) {
-      setUploadedFile(file);
-      form.setValue("attachment", file.name);
+    if (!file) {
+      return;
+    }
+
+    setUploadedFile(file);
+    setIsUploading(true);
+    
+    try {
+      const formData = new FormData();
+      formData.append('attachments', file);
+
+      const token = localStorage.getItem("token") || localStorage.getItem("auth_token");
+      if (!token) {
+        throw new Error("Authentication token not found. Please log in again.");
+      }
+      
+      const response = await fetch('/api/email-attachments/upload', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ message: 'Failed to upload file' }));
+        throw new Error(errorData.message || 'Failed to upload file');
+      }
+
+      const result = await response.json();
+      const uploadedFiles = result.files || [];
+      
+      if (uploadedFiles.length === 0) {
+        throw new Error('No file was uploaded');
+      }
+      
+      const uploadedFile = uploadedFiles[0];
+      if (uploadedFile.path) {
+        setUploadedFilePath(uploadedFile.path);
+        form.setValue("attachment", uploadedFile.path); // Store the path, not just filename
+        toast({
+          title: "Success",
+          description: "File uploaded successfully",
+        });
+      } else {
+        throw new Error('Uploaded file missing path');
+      }
+    } catch (error: any) {
+      console.error("Error uploading file:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to upload file",
+        variant: "destructive",
+      });
+      setUploadedFile(null);
+      form.setValue("attachment", "");
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -232,23 +301,61 @@ const CustomerNotesModal: React.FC<CustomerNotesModalProps> = ({
             <div className="space-y-2">
               <label className="text-sm font-medium text-gray-900">File Attachment</label>
               <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center hover:border-gray-400 transition-colors">
-                <Paperclip className="w-6 h-6 text-gray-400 mx-auto mb-2" />
-                <p className="text-sm text-gray-600 mb-2">Upload a file attachment</p>
                 <input
+                  ref={fileInputRef}
                   type="file"
                   onChange={handleFileChange}
                   className="hidden"
                   id="note-file-upload"
                   accept="image/*,.pdf,.doc,.docx,.txt"
+                  disabled={isUploading}
                 />
-                <label
-                  htmlFor="note-file-upload"
-                  className="text-blue-600 hover:text-blue-800 cursor-pointer text-sm font-medium"
-                >
-                  Choose File
-                </label>
-                {uploadedFile && (
-                  <p className="text-xs text-green-600 mt-1">Selected: {uploadedFile.name}</p>
+                {isUploading ? (
+                  <div className="flex items-center justify-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+                    <p className="text-sm text-gray-600">Uploading...</p>
+                  </div>
+                ) : uploadedFile && uploadedFilePath ? (
+                  <div className="space-y-2">
+                    <Paperclip className="w-6 h-6 text-green-600 mx-auto" />
+                    <p className="text-xs text-green-600 font-medium">✓ {uploadedFile.name}</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUploadedFile(null);
+                        setUploadedFilePath("");
+                        form.setValue("attachment", "");
+                        if (fileInputRef.current) {
+                          fileInputRef.current.value = '';
+                        }
+                      }}
+                      className="text-xs text-red-600 hover:text-red-800"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ) : editableNote?.attachment ? (
+                  <div className="space-y-2">
+                    <Paperclip className="w-6 h-6 text-blue-600 mx-auto" />
+                    <p className="text-xs text-gray-600">{editableNote.attachment.split('/').pop()}</p>
+                    <label
+                      htmlFor="note-file-upload"
+                      className="text-blue-600 hover:text-blue-800 cursor-pointer text-xs font-medium"
+                    >
+                      Change File
+                    </label>
+                  </div>
+                ) : (
+                  <>
+                    <Paperclip className="w-6 h-6 text-gray-400 mx-auto mb-2" />
+                    <p className="text-sm text-gray-600 mb-2">Upload a file attachment</p>
+                    <label
+                      htmlFor="note-file-upload"
+                      className="text-blue-600 hover:text-blue-800 cursor-pointer text-sm font-medium"
+                    >
+                      Choose File
+                    </label>
+                  </>
                 )}
               </div>
             </div>

@@ -102,15 +102,15 @@ export default function Register() {
       const result = await auth.register(formData);
       console.log('✅ Registration successful:', result);
       
-      // Success notification with trial information
+      // Success notification with activation information
       toast({
-        title: "Welcome to RateHonk CRM!",
-        description: "Account created successfully! Your 14-day free trial has started. You can now access all premium features.",
+        title: "Registration Successful!",
+        description: "Please check your email and click the activation link to activate your account.",
       });
       
-      // Slight delay for user to see success message
+      // Redirect to login page with success message
       setTimeout(() => {
-        setLocation("/dashboard");
+        setLocation("/login?success=registered");
       }, 1000);
       
     } catch (error: any) {

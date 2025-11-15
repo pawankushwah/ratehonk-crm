@@ -25,6 +25,7 @@ export class SimpleStorage {
       const user = users[0];
       if (user) {
         console.log("🔍 User found with id:", user.id);
+        console.log("🔍 User is_email_verified:", user.is_email_verified);
       } else {
         console.log("🔍 No user found with this email");
       }
@@ -282,6 +283,166 @@ export class SimpleStorage {
       `;
     } catch (error) {
       console.error("Error cleaning up expired tokens:", error);
+      throw error;
+    }
+  }
+
+  // Email activation token management
+  async createActivationToken(
+    userId: number,
+    token: string,
+    expiresAt: Date,
+  ) {
+    try {
+      console.log(
+        "🔐 Creating activation token for user:",
+        userId,
+        "expires:",
+        expiresAt.toISOString(),
+      );
+      const expiresAtString = expiresAt.toISOString();
+      const [activationToken] = await sql`
+        INSERT INTO email_activation_tokens (user_id, token, expires_at)
+        VALUES (${userId}, ${token}, ${expiresAtString})
+        RETURNING *
+      `;
+      console.log("✅ Activation token created successfully");
+      return activationToken;
+    } catch (error) {
+      console.error("❌ Error creating activation token:", error);
+      throw error;
+    }
+  }
+
+  async getActivationToken(token: string) {
+    try {
+      const [activationToken] = await sql`
+        SELECT eat.*, u.email, u.first_name, u.last_name, u.id as user_id, u.is_email_verified
+        FROM email_activation_tokens eat
+        JOIN users u ON eat.user_id = u.id
+        WHERE eat.token = ${token} 
+        AND eat.used_at IS NULL 
+        AND eat.expires_at > NOW()
+      `;
+      return activationToken;
+    } catch (error) {
+      console.error("Error getting activation token:", error);
+      throw error;
+    }
+  }
+
+  async markActivationTokenAsUsed(tokenId: number) {
+    try {
+      await sql`
+        UPDATE email_activation_tokens 
+        SET used_at = NOW() 
+        WHERE id = ${tokenId}
+      `;
+    } catch (error) {
+      console.error("Error marking activation token as used:", error);
+      throw error;
+    }
+  }
+
+  async activateUser(userId: number) {
+    try {
+      await sql`
+        UPDATE users 
+        SET is_email_verified = true
+        WHERE id = ${userId}
+      `;
+    } catch (error) {
+      console.error("Error activating user:", error);
+      throw error;
+    }
+  }
+
+  // Login verification code management
+  async createLoginVerificationCode(
+    userId: number,
+    email: string,
+    code: string,
+    expiresAt: Date,
+  ) {
+    try {
+      console.log(
+        "🔐 Creating login verification code for user:",
+        userId,
+        "expires:",
+        expiresAt.toISOString(),
+      );
+      const expiresAtString = expiresAt.toISOString();
+      // Delete any existing codes for this user first
+      await sql`
+        DELETE FROM login_verification_codes 
+        WHERE user_id = ${userId} AND used_at IS NULL
+      `;
+      
+      const [verificationCode] = await sql`
+        INSERT INTO login_verification_codes (user_id, email, code, expires_at)
+        VALUES (${userId}, ${email}, ${code}, ${expiresAtString})
+        RETURNING *
+      `;
+      console.log("✅ Login verification code created successfully");
+      return verificationCode;
+    } catch (error) {
+      console.error("❌ Error creating login verification code:", error);
+      throw error;
+    }
+  }
+
+  async getLoginVerificationCode(userId: number, code: string) {
+    try {
+      const [verificationCode] = await sql`
+        SELECT lvc.*, u.email, u.first_name, u.last_name, u.id as user_id
+        FROM login_verification_codes lvc
+        JOIN users u ON lvc.user_id = u.id
+        WHERE lvc.user_id = ${userId}
+        AND lvc.code = ${code}
+        AND lvc.used_at IS NULL 
+        AND lvc.expires_at > NOW()
+      `;
+      return verificationCode;
+    } catch (error) {
+      console.error("Error getting login verification code:", error);
+      throw error;
+    }
+  }
+
+  async incrementVerificationAttempts(codeId: number) {
+    try {
+      await sql`
+        UPDATE login_verification_codes 
+        SET attempts = attempts + 1
+        WHERE id = ${codeId}
+      `;
+    } catch (error) {
+      console.error("Error incrementing verification attempts:", error);
+      throw error;
+    }
+  }
+
+  async markVerificationCodeAsUsed(codeId: number) {
+    try {
+      await sql`
+        UPDATE login_verification_codes 
+        SET used_at = NOW() 
+        WHERE id = ${codeId}
+      `;
+    } catch (error) {
+      console.error("Error marking verification code as used:", error);
+      throw error;
+    }
+  }
+
+  async cleanupExpiredVerificationCodes() {
+    try {
+      await sql`
+        DELETE FROM login_verification_codes 
+        WHERE expires_at < NOW() OR attempts >= 5
+      `;
+    } catch (error) {
+      console.error("Error cleaning up expired verification codes:", error);
       throw error;
     }
   }
@@ -7477,11 +7638,13 @@ export class SimpleStorage {
       const [activity] = await sql`
         INSERT INTO lead_activities (
           tenant_id, lead_id, user_id, activity_type, 
-          activity_title, activity_description, activity_status, activity_date
+          activity_title, activity_description, activity_status, 
+          activity_table_id, activity_table_name, activity_date
         ) VALUES (
           ${activityData.tenantId}, ${activityData.leadId}, ${activityData.userId}, 
           ${activityData.activityType || 1}, ${activityData.activityTitle}, 
           ${activityData.activityDescription}, ${activityData.activityStatus || 1}, 
+          ${activityData.activityTableId || null}, ${activityData.activityTableName || null},
           ${activityData.activityDate || new Date().toISOString()}
         )
         RETURNING 
@@ -7493,6 +7656,8 @@ export class SimpleStorage {
           activity_title as "activityTitle",
           activity_description as "activityDescription",
           activity_status as "activityStatus",
+          activity_table_id as "activityTableId",
+          activity_table_name as "activityTableName",
           activity_date as "activityDate",
           created_at as "createdAt",
           updated_at as "updatedAt"
@@ -8059,6 +8224,58 @@ export class SimpleStorage {
       return email;
     } catch (error) {
       console.error("❌ Error creating customer email:", error);
+      throw error;
+    }
+  }
+
+  async createLeadEmail(data: any) {
+    try {
+      const [email] = await sql`
+        INSERT INTO email_logs (
+          tenant_id, lead_id, campaign_id, subscriber_id, email, subject, body, 
+          status, sent_at, from_email, attachments
+        ) VALUES (
+          ${data.tenantId}, ${data.leadId}, ${data.campaignId || null}, ${data.subscriberId || null}, 
+          ${data.email}, ${data.subject}, ${data.body},
+          ${data.status || "sent"}, ${data.sentAt || sql`NOW()`}, ${data.fromEmail || null},
+          ${data.attachments ? JSON.stringify(data.attachments) : null}
+        )
+        RETURNING 
+          id,
+          tenant_id as "tenantId",
+          customer_id as "customerId",
+          campaign_id as "campaignId",
+          subscriber_id as "subscriberId",
+          email,
+          subject,
+          body,
+          status,
+          sent_at as "sentAt",
+          delivered_at as "deliveredAt",
+          opened_at as "openedAt",
+          clicked_at as "clickedAt",
+          error_message as "errorMessage",
+          lead_id as "leadId",
+          from_email as "fromEmail",
+          attachments
+      `;
+      // Create activity linked to the email_logs record
+      if (data.userId) {
+        this.createLeadActivity({
+          tenantId: data.tenantId,
+          leadId: data.leadId,
+          userId: data.userId,
+          activityType: 2,
+          activityTitle: data.subject,
+          activityDescription: data.body,
+          activityStatus: 1,
+          activityTableId: email.id,
+          activityTableName: "email_logs",
+        });
+      }
+      return email;
+    } catch (error) {
+      console.error("❌ Error creating lead email:", error);
       throw error;
     }
   }
@@ -9744,7 +9961,7 @@ export class SimpleStorage {
         SELECT 
           wm.*,
           wd.number as device_number,
-          u.name as sent_by_name
+          (u.first_name || ' ' || u.last_name) as sent_by_name
         FROM whatsapp_messages wm
         LEFT JOIN whatsapp_devices wd ON wm.device_id = wd.id
         LEFT JOIN users u ON wm.sent_by = u.id
@@ -9787,7 +10004,7 @@ export class SimpleStorage {
         SELECT 
           wm.*,
           wd.number as device_number,
-          u.name as sent_by_name
+          (u.first_name || ' ' || u.last_name) as sent_by_name
         FROM whatsapp_messages wm
         LEFT JOIN whatsapp_devices wd ON wm.device_id = wd.id
         LEFT JOIN users u ON wm.sent_by = u.id

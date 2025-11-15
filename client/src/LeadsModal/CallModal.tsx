@@ -1,312 +1,402 @@
 import React, { useState, useEffect } from "react";
+import { X, PhoneCall, Clock, User } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import {
-  X,
-  Phone,
-  ChevronDown,
-  ChevronUp,
-  Pencil,
-  Trash2,
-  PhoneCall,
-  Loader2,
-  AlertCircle,
-  CheckCircle,
-  Clock,
-} from "lucide-react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
-import { useAuth } from "@/components/auth/auth-provider";
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+// Call Types to match lead call modal
+const CALL_TYPES = [
+  { value: "incoming", label: "Incoming" },
+  { value: "outgoing", label: "Outgoing" },
+  { value: "missed", label: "Missed" },
+];
+
+// Call Status to match lead call modal
+const CALL_STATUS = [
+  { value: "completed", label: "Completed" },
+  { value: "missed", label: "Missed" },
+  { value: "no_answer", label: "No answer" },
+  { value: "left_voicemail", label: "Left Voicemail" },
+  { value: "busy", label: "Busy" },
+  { value: "failed", label: "Failed" },
+];
+
+// Validation schema to match database columns and lead form
+const callFormSchema = z.object({
+  callType: z.string().min(1, "Call type is required"),
+  status: z.string().min(1, "Call status is required"),
+  phoneNumber: z.string().optional(),
+  duration: z.number().min(0, "Duration must be positive").optional(),
+  notes: z.string().optional(),
+  startedAt: z.string().min(1, "Call date is required"),
+  followUpRequired: z.boolean().optional(),
+  followUpDateTime: z.string().optional(),
+});
+
+type CallFormData = z.infer<typeof callFormSchema>;
+
+export interface CallItem {
+  id?: number;
+  callType: string;
+  status: string;
+  phoneNumber?: string;
+  duration?: number;
+  notes?: string;
+  startedAt: string;
+  endedAt?: string;
+  followUpRequired?: boolean;
+  followUpDateTime?: string;
+}
 
 interface CallModalProps {
   isOpen: boolean;
   onClose: () => void;
-  leadId: number;
-  editableCall?: any;
+  onSave: (data: CallFormData, mode: string) => void;
+  editableCall?: CallItem;
+  leadId?: number;
+  isLoading?: boolean;
 }
 
-const CallModal = ({ isOpen, onClose, leadId, editableCall }: CallModalProps) => {
-  const [detail, setDetail] = useState("");
-  const [type, setType] = useState("");
-  const [duration, setDuration] = useState("");
-  const [phoneNumber, setPhoneNumber] = useState("");
-  const [outcome, setOutcome] = useState("");
-  const [followUpRequired, setFollowUpRequired] = useState(false);
-  const [followUpDate, setFollowUpDate] = useState("");
-  const [showSuccess, setShowSuccess] = useState(false);
-  
-  const { user, tenant } = useAuth();
-  const queryClient = useQueryClient();
-
-  // ✅ Populate fields if editing a call
-  useEffect(() => {
-    if (editableCall) {
-      setDetail(editableCall.detail || "");
-      setType(editableCall.type || "");
-      setDuration(editableCall.duration || "");
-      setPhoneNumber(editableCall.phoneNumber || "");
-      setOutcome(editableCall.outcome || "");
-      setFollowUpRequired(editableCall.followUpRequired || false);
-      setFollowUpDate(editableCall.followUpDate || "");
-    } else {
-      setDetail("");
-      setType("");
-      setDuration("");
-      setPhoneNumber("");
-      setOutcome("");
-      setFollowUpRequired(false);
-      setFollowUpDate("");
-    }
-  }, [editableCall]);
-
-  // Create call log mutation
-  const saveCallMutation = useMutation({
-    mutationFn: async (callData: {
-      callType: string;
-      status: string;
-      duration?: number;
-      notes: string;
-    }) => {
-      const url = `/api/tenants/${tenant?.id}/leads/${leadId}/calls`;
-      console.log("📞 CallModal: Making API request to:", url);
-      console.log("📞 CallModal: Call data:", callData);
-      
-      return apiRequest("POST", url, callData);
-    },
-    onSuccess: () => {
-      // Invalidate and refetch calls
-      queryClient.invalidateQueries({
-        queryKey: [`/api/tenants/${tenant?.id}/leads/${leadId}/calls`],
-      });
-      setShowSuccess(true);
-      // Clear form
-      setDetail("");
-      setType("");
-      setDuration("");
-      setOutcome("");
-      setTimeout(() => {
-        setShowSuccess(false);
-        onClose();
-      }, 2000);
+const CallModal: React.FC<CallModalProps> = ({ 
+  isOpen, 
+  onClose, 
+  onSave, 
+  editableCall,
+  leadId,
+  isLoading = false 
+}) => {
+  const form = useForm<CallFormData>({
+    resolver: zodResolver(callFormSchema),
+    defaultValues: {
+      callType: "outgoing",
+      status: "completed",
+      phoneNumber: "",
+      duration: 0,
+      notes: "",
+      startedAt: new Date().toISOString().slice(0, 16),
+      followUpRequired: false,
+      followUpDateTime: "",
     },
   });
 
-  const getCurrentDateTime = () => {
-    const now = new Date();
-    const offset = now.getTimezoneOffset();
-    const localDate = new Date(now.getTime() - offset * 60000);
-    return localDate.toISOString().slice(0, 16);
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!detail.trim() || !type) {
-      return;
+  // Update form when editing
+  useEffect(() => {
+    if (editableCall) {
+      form.reset({
+        callType: editableCall.callType || "outgoing",
+        status: editableCall.status || "completed",
+        phoneNumber: editableCall.phoneNumber || "",
+        duration: editableCall.duration || 0,
+        notes: editableCall.notes || "",
+        startedAt: editableCall.startedAt 
+          ? new Date(editableCall.startedAt).toISOString().slice(0, 16)
+          : new Date().toISOString().slice(0, 16),
+        followUpRequired: editableCall.followUpRequired || false,
+        followUpDateTime: editableCall.followUpDateTime || "",
+      });
+    } else {
+      form.reset({
+        callType: "outgoing",
+        status: "completed",
+        phoneNumber: "",
+        duration: 0,
+        notes: "",
+        startedAt: new Date().toISOString().slice(0, 16),
+        followUpRequired: false,
+        followUpDateTime: "",
+      });
     }
+  }, [editableCall, form]);
 
-    // Map form fields to API format
-    const callData = {
-      callType: type, // inbound/outbound/missed
-      status: outcome || 'completed', // Use outcome as status
-      duration: duration ? parseInt(duration) : undefined,
-      notes: detail.trim(),
-    };
-
-    saveCallMutation.mutate(callData);
-  };
-
-  const handleFollowUpChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const checked = e.target.checked;
-    setFollowUpRequired(checked);
-    setFollowUpDate(checked ? getCurrentDateTime() : "");
+  const onSubmit = (data: CallFormData) => {
+    onSave(data, editableCall ? "edit" : "create");
   };
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-      <div className="bg-white w-full max-w-lg rounded-2xl shadow-lg p-6 relative">
-        {/* Close Button */}
-        <button
-          className="absolute top-3 right-3 text-gray-600 hover:text-black"
-          onClick={onClose}
-        >
-          <X size={22} />
-        </button>
-
-        <h2 className="text-xl font-semibold text-black mb-4">
-          {editableCall ? "Edit Call" : "Add Call"}
-        </h2>
-
-        {/* Success Message */}
-        {showSuccess && (
-          <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2 text-green-700">
-            <CheckCircle className="w-4 h-4" />
-            <span className="text-sm">Call log saved successfully!</span>
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Detail */}
-          <div>
-            <label className="block text-sm font-medium text-black">Call Notes</label>
-            <textarea
-              className="mt-1 w-full border border-gray-300 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-green-500"
-              rows={3}
-              placeholder="Enter call notes or summary"
-              value={detail}
-              onChange={(e) => setDetail(e.target.value)}
-              required
-            ></textarea>
-          </div>
-
-          {/* Type */}
-          <div>
-            <label className="block text-sm font-medium text-black">Call Type</label>
-            <select
-              className="mt-1 w-full border border-gray-300 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-green-500"
-              value={type}
-              onChange={(e) => setType(e.target.value)}
-              required
-            >
-              <option value="">Select Type</option>
-              <option value="incoming">Incoming</option>
-              <option value="outgoing">Outgoing</option>
-              <option value="missed">Missed</option>
-            </select>
-          </div>
-
-          {/* Phone Number */}
-          <div>
-            <label className="block text-sm font-medium text-black">Phone Number</label>
-            <input
-              type="tel"
-              className="mt-1 w-full border border-gray-300 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-green-500"
-              placeholder="Enter phone number"
-              value={phoneNumber}
-              onChange={(e) => setPhoneNumber(e.target.value)}
-            />
-          </div>
-
-          {/* Duration */}
-          <div>
-            <label className="block text-sm font-medium text-black">Duration (minutes)</label>
-            <input
-              type="number"
-              min="0"
-              className="mt-1 w-full border border-gray-300 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-green-500"
-              placeholder="Call duration in minutes"
-              value={duration}
-              onChange={(e) => setDuration(e.target.value)}
-            />
-          </div>
-
-          {/* Call Status */}
-          <div>
-            <label className="block text-sm font-medium text-black">Call Status</label>
-            <select
-              className="mt-1 w-full border border-gray-300 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-green-500"
-              value={outcome}
-              onChange={(e) => setOutcome(e.target.value)}
-            >
-              <option value="">Select Status</option>
-              <option value="completed">Completed</option>
-              <option value="missed">Missed</option>
-              <option value="no-answer">No Answer</option>
-              <option value="voicemail">Left Voicemail</option>
-              <option value="busy">Busy</option>
-              <option value="failed">Failed</option>
-            </select>
-          </div>
-
-          {/* Follow-up Required */}
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="followUp"
-              className="w-4 h-4"
-              checked={followUpRequired}
-              onChange={handleFollowUpChange}
-            />
-            <label htmlFor="followUp" className="text-black text-sm">
-              Follow-up Required
-            </label>
-          </div>
-
-          {followUpRequired && (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        {/* Header */}
+        <div className="flex items-center justify-between p-6 border-b border-gray-200 bg-gradient-to-r from-purple-50 to-violet-50">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
+              <PhoneCall className="w-5 h-5 text-purple-600" />
+            </div>
             <div>
-              <label className="block text-sm font-medium text-black">
-                Follow-up Date & Time
-              </label>
-              <input
-                type="datetime-local"
-                className="mt-1 w-full border border-gray-300 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-green-500"
-                value={followUpDate}
-                onChange={(e) => setFollowUpDate(e.target.value)}
+              <h2 className="text-xl font-semibold text-gray-900">
+                {editableCall ? "Edit Lead Call Log" : "Add Lead Call Log"}
+              </h2>
+              <p className="text-sm text-gray-600">
+                Record lead call details and notes
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 bg-white rounded-lg shadow-sm flex items-center justify-center hover:bg-gray-50 transition-colors"
+          >
+            <X className="w-4 h-4 text-gray-600" />
+          </button>
+        </div>
+
+        {/* Form */}
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="p-6 space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Call Type */}
+              <FormField
+                control={form.control}
+                name="callType"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-medium text-gray-900">Call Type *</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select call type" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {CALL_TYPES.map((type) => (
+                          <SelectItem key={type.value} value={type.value}>
+                            {type.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              {/* Call Status */}
+              <FormField
+                control={form.control}
+                name="status"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-medium text-gray-900">Call Status *</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select call status" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {CALL_STATUS.map((status) => (
+                          <SelectItem key={status.value} value={status.value}>
+                            {status.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
               />
             </div>
-          )}
 
-          {/* Error Message */}
-          {saveCallMutation.isError && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2 text-red-700">
-              <AlertCircle className="w-4 h-4" />
-              <span className="text-sm">
-                Failed to save call log. Please try again.
-              </span>
+            {/* Phone Number */}
+            <FormField
+              control={form.control}
+              name="phoneNumber"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="text-sm font-medium text-gray-900">Phone Number</FormLabel>
+                  <FormControl>
+                    <Input 
+                      type="tel"
+                      placeholder="Enter phone number"
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Call Duration */}
+              <FormField
+                control={form.control}
+                name="duration"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-medium text-gray-900">Duration (minutes)</FormLabel>
+                    <FormControl>
+                      <Input 
+                        type="number"
+                        min="0"
+                        placeholder="Enter call duration"
+                        {...field}
+                        onChange={(e) => field.onChange(parseInt(e.target.value) || 0)}
+                        value={field.value || ""}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              {/* Call Date */}
+              <FormField
+                control={form.control}
+                name="startedAt"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-medium text-gray-900">Call Date & Time *</FormLabel>
+                    <FormControl>
+                      <input
+                        type="datetime-local"
+                        {...field}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
             </div>
-          )}
 
-          {/* Buttons */}
-          <div className="flex justify-end gap-3 mt-4">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300"
-              disabled={saveCallMutation.isPending}
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={saveCallMutation.isPending || !detail.trim() || !type}
-            >
-              {saveCallMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
-              {editableCall ? "Update Call" : "Save Call"}
-            </button>
-          </div>
-        </form>
+            {/* Call Notes */}
+            <FormField
+              control={form.control}
+              name="notes"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="text-sm font-medium text-gray-900">Call Notes</FormLabel>
+                  <FormControl>
+                    <Textarea 
+                      placeholder="Enter call notes, outcomes, and follow-up actions"
+                      rows={4}
+                      {...field}
+                      className="w-full resize-none"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            {/* Follow-up Required */}
+            <FormField
+              control={form.control}
+              name="followUpRequired"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-start space-x-3 space-y-0">
+                  <FormControl>
+                    <Checkbox
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                      data-testid="checkbox-follow-up-required"
+                    />
+                  </FormControl>
+                  <div className="space-y-1 leading-none">
+                    <FormLabel className="text-sm font-medium text-gray-900">
+                      Follow-up Required
+                    </FormLabel>
+                  </div>
+                </FormItem>
+              )}
+            />
+
+            {/* Follow-up Date & Time - Show only if follow-up is required */}
+            {form.watch("followUpRequired") && (
+              <FormField
+                control={form.control}
+                name="followUpDateTime"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm font-medium text-gray-900">Follow-up Date & Time</FormLabel>
+                    <FormControl>
+                      <input
+                        type="datetime-local"
+                        {...field}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        data-testid="input-follow-up-datetime"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+
+            {/* Form Actions */}
+            <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onClose}
+                disabled={isLoading}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={isLoading}
+                className="bg-purple-600 hover:bg-purple-700"
+              >
+                {isLoading ? "Saving..." : editableCall ? "Update Call Log" : "Save Call Log"}
+              </Button>
+            </div>
+          </form>
+        </Form>
       </div>
     </div>
   );
 };
 
-interface CallItemProps {
+// Call Item component for displaying call logs
+export const CallItem = ({ 
+  call, 
+  isOpen, 
+  onToggle, 
+  onEdit, 
+  onDelete 
+}: {
   call: any;
   isOpen: boolean;
   onToggle: () => void;
-  onEdit: (call: any) => void;
-  onDelete: (id: any) => void;
-}
-
-/* ✅ CallItem Component with Edit & Delete */
-export const CallItem = ({ call, isOpen, onToggle, onEdit, onDelete }: CallItemProps) => {
+  onEdit?: (call: any) => void;
+  onDelete?: (id: any) => void;
+}) => {
   const getCallTypeIcon = (type: string) => {
     switch (type) {
-      case 'inbound': return '📞';
-      case 'outbound': return '📱';
+      case 'incoming': return '📞';
+      case 'outgoing': return '📱';
       case 'missed': return '📵';
       default: return '☎️';
     }
   };
 
-  const getOutcomeColor = (outcome: string) => {
-    switch (outcome) {
+  const getStatusColor = (status: string) => {
+    switch (status) {
       case 'completed': return 'text-green-600';
-      case 'no-answer': return 'text-red-600';
-      case 'voicemail': return 'text-yellow-600';
-      case 'busy': return 'text-orange-600';
+      case 'no_answer': 
       case 'missed': return 'text-red-600';
+      case 'left_voicemail': return 'text-yellow-600';
+      case 'busy': return 'text-orange-600';
       case 'failed': return 'text-red-600';
       default: return 'text-gray-600';
     }
@@ -325,54 +415,64 @@ export const CallItem = ({ call, isOpen, onToggle, onEdit, onDelete }: CallItemP
           </div>
           <div>
             <h4 className="font-semibold text-black text-base flex items-center gap-2">
-              <span className="text-lg">{getCallTypeIcon(call.type)}</span>
-              {call.type ? call.type.charAt(0).toUpperCase() + call.type.slice(1) : "Unknown Call"}
+              <span className="text-lg">{getCallTypeIcon(call.callType || call.type)}</span>
+              {call.callType || call.type 
+                ? (call.callType || call.type).charAt(0).toUpperCase() + (call.callType || call.type).slice(1) 
+                : "Unknown Call"}
               {call.duration && <span className="text-sm text-gray-500">({call.duration}min)</span>}
             </h4>
             <p className="text-xs text-gray-500">
-              {new Date(call.createdAt).toLocaleString()}
+              {new Date(call.createdAt || call.startedAt || call.callDate).toLocaleString()}
             </p>
           </div>
         </div>
         <div>
           {isOpen ? (
-            <ChevronUp className="w-5 h-5 text-black" />
+            <X className="w-5 h-5 text-black" />
           ) : (
-            <ChevronDown className="w-5 h-5 text-black" />
+            <PhoneCall className="w-5 h-5 text-black" />
           )}
         </div>
       </div>
 
       {isOpen && (
         <div className="mt-3 pl-1 border-t pt-3 space-y-2">
-          <p className="text-sm text-black leading-relaxed">{call.detail}</p>
+          {call.notes && (
+            <p className="text-sm text-black leading-relaxed">{call.notes}</p>
+          )}
           {call.phoneNumber && (
             <p className="text-sm text-black font-medium">📞 {call.phoneNumber}</p>
           )}
-          {call.outcome && (
-            <p className={`text-sm font-medium ${getOutcomeColor(call.outcome)}`}>
-              ✓ Status: {call.outcome.charAt(0).toUpperCase() + call.outcome.slice(1).replace('-', ' ')}
+          {call.status && (
+            <p className={`text-sm font-medium ${getStatusColor(call.status)}`}>
+              ✓ Status: {call.status.charAt(0).toUpperCase() + call.status.slice(1).replace('_', ' ')}
             </p>
           )}
-          {call.followUpRequired && call.followUpDate && (
+          {call.followUpRequired && call.followUpDateTime && (
             <p className="text-sm text-black font-medium">
-              📅 Follow-up: {new Date(call.followUpDate).toLocaleString()}
+              📅 Follow-up: {new Date(call.followUpDateTime).toLocaleString()}
             </p>
           )}
           {/* Edit & Delete Buttons */}
-          <div className="flex justify-end gap-0 mt-3">
-            <button
-              onClick={() => onEdit(call)}
-              className="flex items-center gap-1 px-3 py-1 rounded-lg text-black-700 text-xs"
-            >
-              <Pencil className="w-4 h-4" /> 
-            </button>
-            <button
-              onClick={() => onDelete(call.id)}
-              className="flex items-center gap-1 px-3 py-1 rounded-lg  text-red-700 text-xs"
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
+          <div className="flex justify-end gap-2 mt-3">
+            {onEdit && (
+              <button
+                onClick={() => onEdit(call)}
+                className="flex items-center gap-1 px-3 py-1 rounded-lg text-blue-700 hover:bg-blue-50 text-xs"
+              >
+                <User className="w-4 h-4" />
+                Edit
+              </button>
+            )}
+            {onDelete && (
+              <button
+                onClick={() => onDelete(call.id)}
+                className="flex items-center gap-1 px-3 py-1 rounded-lg text-red-700 hover:bg-red-50 text-xs"
+              >
+                <X className="w-4 h-4" />
+                Delete
+              </button>
+            )}
           </div>
         </div>
       )}
