@@ -1637,6 +1637,7 @@ export function registerWhatsAppRoutes(app: Express) {
           msgid,
           full,
           customerId,
+          leadId,
         } = req.body;
 
         // Validate required fields
@@ -1786,11 +1787,32 @@ export function registerWhatsAppRoutes(app: Express) {
         // Increment message count for the device
         await storage.incrementDeviceMessageCount(device.id);
 
-        // Get customer ID and name - use provided customerId or find by phone number
+        // Get customer/lead ID and name - use provided IDs or find by phone number
         let finalCustomerId: number | undefined = customerId ? parseInt(String(customerId)) : undefined;
-        let customerName: string | undefined;
+        let finalLeadId: number | undefined = leadId ? parseInt(String(leadId)) : undefined;
+        let recipientName: string | undefined;
         
         try {
+          // Handle lead mode
+          if (finalLeadId) {
+            const lead = await sql`
+              SELECT id, name, first_name, last_name, mobile, phone 
+              FROM leads 
+              WHERE id = ${finalLeadId} AND tenant_id = ${tenantId}
+              LIMIT 1
+            `;
+            
+            if (lead && lead.length > 0) {
+              const leadData = lead[0];
+              recipientName = leadData.name || `${leadData.first_name || ''} ${leadData.last_name || ''}`.trim();
+              console.log(`✅ Found lead by ID: ${finalLeadId}, name: ${recipientName}`);
+            } else {
+              console.warn(`⚠️ Lead ID ${finalLeadId} not found`);
+              finalLeadId = undefined;
+            }
+          }
+          
+          // Handle customer mode
           if (finalCustomerId) {
             // If customerId is provided, fetch customer details directly
             const result = await storage.getCustomersByTenant({
@@ -1801,16 +1823,17 @@ export function registerWhatsAppRoutes(app: Express) {
             const customer = customers.find((c: any) => c.id === finalCustomerId);
             
             if (customer) {
-              customerName = customer.name || `${customer.firstName || ''} ${customer.lastName || ''}`.trim();
-              console.log(`✅ Found customer by ID: ${finalCustomerId}, name: ${customerName}`);
+              recipientName = customer.name || `${customer.firstName || ''} ${customer.lastName || ''}`.trim();
+              console.log(`✅ Found customer by ID: ${finalCustomerId}, name: ${recipientName}`);
             } else {
               console.warn(`⚠️ Customer ID ${finalCustomerId} not found, will try phone number lookup`);
               finalCustomerId = undefined; // Reset to try phone lookup
             }
           }
           
-          // If customerId not provided or not found, try to find by phone number
-          if (!finalCustomerId) {
+          // If customerId not provided or not found, try to find by phone number (only if not a lead)
+          if (!finalCustomerId && !finalLeadId) {
+            // Try customers first
             const result = await storage.getCustomersByTenant({
               tenantId,
               limit: 1000,
@@ -1823,9 +1846,43 @@ export function registerWhatsAppRoutes(app: Express) {
             
             if (customer) {
               finalCustomerId = customer.id;
-              customerName = customer.name || `${customer.firstName || ''} ${customer.lastName || ''}`.trim();
-              console.log(`✅ Found customer by phone number: ${finalCustomerId}, name: ${customerName}`);
+              recipientName = customer.name || `${customer.firstName || ''} ${customer.lastName || ''}`.trim();
+              console.log(`✅ Found customer by phone number: ${finalCustomerId}, name: ${recipientName}`);
+            } else {
+              // Try leads
+              const leads = await sql`
+                SELECT id, name, first_name, last_name, mobile, phone 
+                FROM leads 
+                WHERE tenant_id = ${tenantId}
+              `;
+              const normalizePhone = (phone: string) => phone?.replace(/\D/g, '') || '';
+              const normalizedNumber = normalizePhone(number);
+              const lead = leads.find((l: any) => {
+                const leadPhone = normalizePhone(l.mobile || l.phone || '');
+                return leadPhone === normalizedNumber;
+              });
+              
+              if (lead) {
+                finalLeadId = lead.id;
+                recipientName = lead.name || `${lead.first_name || ''} ${lead.last_name || ''}`.trim();
+                console.log(`✅ Found lead by phone number: ${finalLeadId}, name: ${recipientName}`);
+              }
             }
+          }
+          
+          // Log activity for lead if we have a leadId
+          if (finalLeadId && req.user?.id) {
+            await storage.createLeadActivity({
+              tenantId,
+              leadId: finalLeadId,
+              userId: req.user.id,
+              activityType: 5, // 5 = WhatsApp message sent
+              activityTitle: `WhatsApp Media Sent (${media_type})`,
+              activityDescription: `Media type: ${media_type}${caption ? `, Caption: "${caption.substring(0, 100)}${caption.length > 100 ? '...' : ''}"` : ''}`,
+              activityStatus: 1, // 1 = Completed
+              activityDate: new Date().toISOString(),
+            });
+            console.log(`✅ Lead activity logged for lead ${finalLeadId}`);
           }
           
           // Log activity for customer if we have a customerId
@@ -1839,7 +1896,6 @@ export function registerWhatsAppRoutes(app: Express) {
               activityDescription: `Media type: ${media_type}${caption ? `, Caption: "${caption.substring(0, 100)}${caption.length > 100 ? '...' : ''}"` : ''}`,
               activityStatus: 1, // 1 = Completed
               activityDate: new Date().toISOString(),
-              // Note: activityTableId and activityTableName will be set after message is saved
             });
             console.log(`✅ Customer activity logged for customer ${finalCustomerId}`);
           }
@@ -1855,8 +1911,9 @@ export function registerWhatsAppRoutes(app: Express) {
             tenantId,
             deviceId: device.id,
             customerId: finalCustomerId,
+            leadId: finalLeadId,
             recipientNumber: number,
-            recipientName: customerName,
+            recipientName: recipientName,
             messageType: 'media',
             mediaType: media_type,
             mediaUrl: url,
@@ -1865,34 +1922,57 @@ export function registerWhatsAppRoutes(app: Express) {
             externalMessageId: data?.msgid || data?.id,
             sentBy: req.user?.id,
           });
-          console.log(`✅ WhatsApp media message saved to database with customerId: ${finalCustomerId || 'none'}`);
+          console.log(`✅ WhatsApp media message saved to database with customerId: ${finalCustomerId || 'none'}, leadId: ${finalLeadId || 'none'}`);
         } catch (dbError) {
           // Don't fail the whole operation if database logging fails
           console.error("⚠️ Failed to save WhatsApp message to database:", dbError);
         }
 
         // Update activity to link to the WhatsApp message
-        if (savedMessage && finalCustomerId && req.user?.id) {
+        if (savedMessage && req.user?.id) {
           try {
-            // Find the most recent activity for this customer with activityType 5
-            const recentActivity = await sql`
-              SELECT id FROM customer_activities 
-              WHERE customer_id = ${finalCustomerId} 
-                AND tenant_id = ${tenantId}
-                AND activity_type = 5
-                AND user_id = ${req.user.id}
-              ORDER BY created_at DESC
-              LIMIT 1
-            `;
-            
-            if (recentActivity && recentActivity.length > 0) {
-              await sql`
-                UPDATE customer_activities 
-                SET activity_table_id = ${savedMessage.id},
-                    activity_table_name = 'whatsapp_messages'
-                WHERE id = ${recentActivity[0].id}
+            if (finalLeadId) {
+              // Find the most recent activity for this lead with activityType 5
+              const recentActivity = await sql`
+                SELECT id FROM lead_activities 
+                WHERE lead_id = ${finalLeadId} 
+                  AND tenant_id = ${tenantId}
+                  AND activity_type = 5
+                  AND user_id = ${req.user.id}
+                ORDER BY created_at DESC
+                LIMIT 1
               `;
-              console.log(`✅ Linked WhatsApp activity to message ${savedMessage.id}`);
+              
+              if (recentActivity && recentActivity.length > 0) {
+                await sql`
+                  UPDATE lead_activities 
+                  SET activity_table_id = ${savedMessage.id},
+                      activity_table_name = 'whatsapp_messages'
+                  WHERE id = ${recentActivity[0].id}
+                `;
+                console.log(`✅ Linked WhatsApp activity to message ${savedMessage.id} for lead`);
+              }
+            } else if (finalCustomerId) {
+              // Find the most recent activity for this customer with activityType 5
+              const recentActivity = await sql`
+                SELECT id FROM customer_activities 
+                WHERE customer_id = ${finalCustomerId} 
+                  AND tenant_id = ${tenantId}
+                  AND activity_type = 5
+                  AND user_id = ${req.user.id}
+                ORDER BY created_at DESC
+                LIMIT 1
+              `;
+              
+              if (recentActivity && recentActivity.length > 0) {
+                await sql`
+                  UPDATE customer_activities 
+                  SET activity_table_id = ${savedMessage.id},
+                      activity_table_name = 'whatsapp_messages'
+                  WHERE id = ${recentActivity[0].id}
+                `;
+                console.log(`✅ Linked WhatsApp activity to message ${savedMessage.id} for customer`);
+              }
             }
           } catch (activityError) {
             console.error("⚠️ Failed to link WhatsApp activity to message:", activityError);
@@ -1920,7 +2000,7 @@ export function registerWhatsAppRoutes(app: Express) {
     async (req: any, res) => {
       try {
         const tenantId = req.user.tenantId;
-        const { sender, number, message, footer, msgid, full, customerId } = req.body;
+        const { sender, number, message, footer, msgid, full, customerId, leadId } = req.body;
 
         // Validate required fields
         if (!sender) {
@@ -1996,11 +2076,32 @@ export function registerWhatsAppRoutes(app: Express) {
           // Update message count for the device
           await storage.incrementDeviceMessageCount(senderDevice.id);
 
-          // Get customer ID and name - use provided customerId or find by phone number
+          // Get customer/lead ID and name - use provided IDs or find by phone number
           let finalCustomerId: number | undefined = customerId ? parseInt(String(customerId)) : undefined;
-          let customerName: string | undefined;
+          let finalLeadId: number | undefined = leadId ? parseInt(String(leadId)) : undefined;
+          let recipientName: string | undefined;
           
           try {
+            // Handle lead mode
+            if (finalLeadId) {
+              const lead = await sql`
+                SELECT id, name, first_name, last_name, mobile, phone 
+                FROM leads 
+                WHERE id = ${finalLeadId} AND tenant_id = ${tenantId}
+                LIMIT 1
+              `;
+              
+              if (lead && lead.length > 0) {
+                const leadData = lead[0];
+                recipientName = leadData.name || `${leadData.first_name || ''} ${leadData.last_name || ''}`.trim();
+                console.log(`✅ Found lead by ID: ${finalLeadId}, name: ${recipientName}`);
+              } else {
+                console.warn(`⚠️ Lead ID ${finalLeadId} not found`);
+                finalLeadId = undefined;
+              }
+            }
+            
+            // Handle customer mode
             if (finalCustomerId) {
               // If customerId is provided, fetch customer details directly
               const result = await storage.getCustomersByTenant({
@@ -2011,16 +2112,17 @@ export function registerWhatsAppRoutes(app: Express) {
               const customer = customers.find((c: any) => c.id === finalCustomerId);
               
               if (customer) {
-                customerName = customer.name || `${customer.firstName || ''} ${customer.lastName || ''}`.trim();
-                console.log(`✅ Found customer by ID: ${finalCustomerId}, name: ${customerName}`);
+                recipientName = customer.name || `${customer.firstName || ''} ${customer.lastName || ''}`.trim();
+                console.log(`✅ Found customer by ID: ${finalCustomerId}, name: ${recipientName}`);
               } else {
                 console.warn(`⚠️ Customer ID ${finalCustomerId} not found, will try phone number lookup`);
                 finalCustomerId = undefined; // Reset to try phone lookup
               }
             }
             
-            // If customerId not provided or not found, try to find by phone number
-            if (!finalCustomerId) {
+            // If customerId not provided or not found, try to find by phone number (only if not a lead)
+            if (!finalCustomerId && !finalLeadId) {
+              // Try customers first
               const result = await storage.getCustomersByTenant({
                 tenantId,
                 limit: 1000,
@@ -2033,9 +2135,43 @@ export function registerWhatsAppRoutes(app: Express) {
               
               if (customer) {
                 finalCustomerId = customer.id;
-                customerName = customer.name || `${customer.firstName || ''} ${customer.lastName || ''}`.trim();
-                console.log(`✅ Found customer by phone number: ${finalCustomerId}, name: ${customerName}`);
+                recipientName = customer.name || `${customer.firstName || ''} ${customer.lastName || ''}`.trim();
+                console.log(`✅ Found customer by phone number: ${finalCustomerId}, name: ${recipientName}`);
+              } else {
+                // Try leads
+                const leads = await sql`
+                  SELECT id, name, first_name, last_name, mobile, phone 
+                  FROM leads 
+                  WHERE tenant_id = ${tenantId}
+                `;
+                const normalizePhone = (phone: string) => phone?.replace(/\D/g, '') || '';
+                const normalizedNumber = normalizePhone(number);
+                const lead = leads.find((l: any) => {
+                  const leadPhone = normalizePhone(l.mobile || l.phone || '');
+                  return leadPhone === normalizedNumber;
+                });
+                
+                if (lead) {
+                  finalLeadId = lead.id;
+                  recipientName = lead.name || `${lead.first_name || ''} ${lead.last_name || ''}`.trim();
+                  console.log(`✅ Found lead by phone number: ${finalLeadId}, name: ${recipientName}`);
+                }
               }
+            }
+            
+            // Log activity for lead if we have a leadId
+            if (finalLeadId && req.user?.id) {
+              const activity = await storage.createLeadActivity({
+                tenantId,
+                leadId: finalLeadId,
+                userId: req.user.id,
+                activityType: 5, // 5 = WhatsApp message sent
+                activityTitle: "WhatsApp Message Sent",
+                activityDescription: `Message: "${message.substring(0, 100)}${message.length > 100 ? '...' : ''}"`,
+                activityStatus: 1, // 1 = Completed
+                activityDate: new Date().toISOString(),
+              });
+              console.log(`✅ Lead activity logged for lead ${finalLeadId}`);
             }
             
             // Log activity for customer if we have a customerId
@@ -2064,42 +2200,66 @@ export function registerWhatsAppRoutes(app: Express) {
               tenantId,
               deviceId: senderDevice.id,
               customerId: finalCustomerId,
+              leadId: finalLeadId,
               recipientNumber: number,
-              recipientName: customerName,
+              recipientName: recipientName,
               messageType: 'text',
               textContent: message,
               status: 'sent',
               externalMessageId: responseData.data?.msgid || responseData.data?.id,
               sentBy: req.user?.id,
             });
-            console.log(`✅ WhatsApp text message saved to database with customerId: ${finalCustomerId || 'none'}`);
+            console.log(`✅ WhatsApp text message saved to database with customerId: ${finalCustomerId || 'none'}, leadId: ${finalLeadId || 'none'}`);
           } catch (dbError) {
             // Don't fail the whole operation if database logging fails
             console.error("⚠️ Failed to save WhatsApp message to database:", dbError);
           }
 
           // Update activity to link to the WhatsApp message
-          if (savedMessage && finalCustomerId && req.user?.id) {
+          if (savedMessage && req.user?.id) {
             try {
-              // Find the most recent activity for this customer with activityType 5
-              const recentActivity = await sql`
-                SELECT id FROM customer_activities 
-                WHERE customer_id = ${finalCustomerId} 
-                  AND tenant_id = ${tenantId}
-                  AND activity_type = 5
-                  AND user_id = ${req.user.id}
-                ORDER BY created_at DESC
-                LIMIT 1
-              `;
-              
-              if (recentActivity && recentActivity.length > 0) {
-                await sql`
-                  UPDATE customer_activities 
-                  SET activity_table_id = ${savedMessage.id},
-                      activity_table_name = 'whatsapp_messages'
-                  WHERE id = ${recentActivity[0].id}
+              if (finalLeadId) {
+                // Find the most recent activity for this lead with activityType 5
+                const recentActivity = await sql`
+                  SELECT id FROM lead_activities 
+                  WHERE lead_id = ${finalLeadId} 
+                    AND tenant_id = ${tenantId}
+                    AND activity_type = 5
+                    AND user_id = ${req.user.id}
+                  ORDER BY created_at DESC
+                  LIMIT 1
                 `;
-                console.log(`✅ Linked WhatsApp activity to message ${savedMessage.id}`);
+                
+                if (recentActivity && recentActivity.length > 0) {
+                  await sql`
+                    UPDATE lead_activities 
+                    SET activity_table_id = ${savedMessage.id},
+                        activity_table_name = 'whatsapp_messages'
+                    WHERE id = ${recentActivity[0].id}
+                  `;
+                  console.log(`✅ Linked WhatsApp activity to message ${savedMessage.id} for lead`);
+                }
+              } else if (finalCustomerId) {
+                // Find the most recent activity for this customer with activityType 5
+                const recentActivity = await sql`
+                  SELECT id FROM customer_activities 
+                  WHERE customer_id = ${finalCustomerId} 
+                    AND tenant_id = ${tenantId}
+                    AND activity_type = 5
+                    AND user_id = ${req.user.id}
+                  ORDER BY created_at DESC
+                  LIMIT 1
+                `;
+                
+                if (recentActivity && recentActivity.length > 0) {
+                  await sql`
+                    UPDATE customer_activities 
+                    SET activity_table_id = ${savedMessage.id},
+                        activity_table_name = 'whatsapp_messages'
+                    WHERE id = ${recentActivity[0].id}
+                  `;
+                  console.log(`✅ Linked WhatsApp activity to message ${savedMessage.id} for customer`);
+                }
               }
             } catch (activityError) {
               console.error("⚠️ Failed to link WhatsApp activity to message:", activityError);

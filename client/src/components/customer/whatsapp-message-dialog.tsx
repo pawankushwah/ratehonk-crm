@@ -33,10 +33,18 @@ import EmojiPicker from "emoji-picker-react";
 interface WhatsAppMessageDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  customerPhone: string;
-  customerName: string;
-  customerId: number;
+  // Customer mode props
+  customerPhone?: string;
+  customerName?: string;
+  customerId?: number;
+  // Lead mode props
+  recipientType?: "customer" | "lead";
+  recipientId?: number;
+  recipientName?: string;
+  recipientPhone?: string;
+  // Common props
   tenantId?: number;
+  onSuccess?: () => void;
 }
 
 export function WhatsAppMessageDialog({
@@ -45,8 +53,18 @@ export function WhatsAppMessageDialog({
   customerPhone,
   customerName,
   customerId,
+  recipientType = "customer",
+  recipientId,
+  recipientName,
+  recipientPhone,
   tenantId,
+  onSuccess,
 }: WhatsAppMessageDialogProps) {
+  // Determine if we're in lead mode or customer mode
+  const isLeadMode = recipientType === "lead";
+  const phoneNumber = isLeadMode ? recipientPhone : customerPhone;
+  const displayName = isLeadMode ? recipientName : customerName;
+  const entityId = isLeadMode ? recipientId : customerId;
   const [activeTab, setActiveTab] = useState("text");
   const { toast } = useToast();
 
@@ -76,29 +94,47 @@ export function WhatsAppMessageDialog({
       if (!selectedDevice) {
         throw new Error("Please select a WhatsApp device");
       }
-      return await apiRequest("POST", "/api/whatsapp/send-text-message", {
+      const payload: any = {
         sender: selectedDevice.number,
-        number: customerPhone,
+        number: phoneNumber,
         message: textMessage,
-        customerId: customerId,
-      });
+      };
+      
+      if (isLeadMode && entityId) {
+        payload.leadId = entityId;
+      } else if (!isLeadMode && entityId) {
+        payload.customerId = entityId;
+      }
+      
+      return await apiRequest("POST", "/api/whatsapp/send-text-message", payload);
     },
     onSuccess: () => {
       toast({
         title: "Message Sent",
-        description: `WhatsApp message sent to ${customerName}`,
+        description: `WhatsApp message sent to ${displayName}`,
       });
       setTextMessage("");
       // Invalidate WhatsApp messages query to refresh the list
-      if (tenantId) {
+      if (tenantId && entityId) {
+        if (isLeadMode) {
+          queryClient.invalidateQueries({
+            queryKey: [`/api/tenants/${tenantId}/leads/${entityId}/whatsapp-messages`],
+          });
+        } else {
+          queryClient.invalidateQueries({
+            queryKey: [`/api/tenants/${tenantId}/customers/${entityId}/whatsapp-messages`],
+          });
+        }
+      }
+      // Also invalidate general queries
+      if (entityId) {
         queryClient.invalidateQueries({
-          queryKey: [`/api/tenants/${tenantId}/customers/${customerId}/whatsapp-messages`],
+          queryKey: isLeadMode ? ["/api/leads", entityId] : ["/api/customers", entityId],
         });
       }
-      // Also invalidate general customer queries
-      queryClient.invalidateQueries({
-        queryKey: ["/api/customers", customerId],
-      });
+      if (onSuccess) {
+        onSuccess();
+      }
       onOpenChange(false);
     },
     onError: (error: any) => {
@@ -117,19 +153,26 @@ export function WhatsAppMessageDialog({
       if (!selectedDevice) {
         throw new Error("Please select a WhatsApp device");
       }
-      return await apiRequest("POST", "/api/whatsapp/send-media-message", {
+      const payload: any = {
         sender: selectedDevice.number,
-        number: customerPhone,
+        number: phoneNumber,
         media_type: mediaType,
         url: mediaUrl,
         caption: mediaCaption || undefined,
-        customerId: customerId,
-      });
+      };
+      
+      if (isLeadMode && entityId) {
+        payload.leadId = entityId;
+      } else if (!isLeadMode && entityId) {
+        payload.customerId = entityId;
+      }
+      
+      return await apiRequest("POST", "/api/whatsapp/send-media-message", payload);
     },
     onSuccess: () => {
       toast({
         title: "Media Sent",
-        description: `WhatsApp media message sent to ${customerName}`,
+        description: `WhatsApp media message sent to ${displayName}`,
       });
       setMediaUrl("");
       setMediaCaption("");
@@ -137,15 +180,26 @@ export function WhatsAppMessageDialog({
         fileInputRef.current.value = '';
       }
       // Invalidate WhatsApp messages query to refresh the list
-      if (tenantId) {
+      if (tenantId && entityId) {
+        if (isLeadMode) {
+          queryClient.invalidateQueries({
+            queryKey: [`/api/tenants/${tenantId}/leads/${entityId}/whatsapp-messages`],
+          });
+        } else {
+          queryClient.invalidateQueries({
+            queryKey: [`/api/tenants/${tenantId}/customers/${entityId}/whatsapp-messages`],
+          });
+        }
+      }
+      // Also invalidate general queries
+      if (entityId) {
         queryClient.invalidateQueries({
-          queryKey: [`/api/tenants/${tenantId}/customers/${customerId}/whatsapp-messages`],
+          queryKey: isLeadMode ? ["/api/leads", entityId] : ["/api/customers", entityId],
         });
       }
-      // Also invalidate general customer queries
-      queryClient.invalidateQueries({
-        queryKey: ["/api/customers", customerId],
-      });
+      if (onSuccess) {
+        onSuccess();
+      }
       onOpenChange(false);
     },
     onError: (error: any) => {
@@ -309,10 +363,10 @@ export function WhatsAppMessageDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <MessageSquare className="h-5 w-5 text-green-600" />
-            Send WhatsApp Message to {customerName}
+            Send WhatsApp Message to {displayName}
           </DialogTitle>
           <p className="text-sm text-muted-foreground">
-            Phone: {customerPhone}
+            Phone: {phoneNumber}
           </p>
         </DialogHeader>
 
