@@ -28,6 +28,50 @@ import bcrypt from "bcrypt";
 // import { google } from 'googleapis';
 import jwt from "jsonwebtoken";
 import multer from "multer";
+
+// Helper function to get correct base URL
+function getBaseUrl(): string {
+  let baseUrl = process.env.APP_URL || process.env.FRONTEND_URL || "http://localhost:5000";
+  
+  // Remove trailing slash if present
+  baseUrl = baseUrl.replace(/\/$/, "");
+  
+  // Check if we're in development mode
+  const isDevelopment = process.env.NODE_ENV !== "production";
+  
+  // In development, allow localhost and 127.0.0.1
+  if (isDevelopment) {
+    // Allow localhost URLs in development
+    if (baseUrl.includes("localhost") || baseUrl.includes("127.0.0.1") || baseUrl.includes("0.0.0.0")) {
+      if (!baseUrl.startsWith("http")) {
+        baseUrl = `http://${baseUrl}`;
+      }
+      console.log("🔧 Development mode - Using local URL:", baseUrl);
+      return baseUrl;
+    }
+  }
+  
+  // Force correct domain in production - reject any wrong domains
+  if (baseUrl.includes("your-app-url.com") || baseUrl.includes("ww25")) {
+    console.log("⚠️ Detected wrong domain in env, overriding to crm.ratehonk.com");
+    baseUrl = "https://crm.ratehonk.com";
+  }
+  
+  // Ensure URL is absolute
+  if (!baseUrl.startsWith("http")) {
+    // Use https for production, http for development
+    const protocol = isDevelopment ? "http" : "https";
+    baseUrl = `${protocol}://${baseUrl}`;
+  }
+  
+  // In production, ensure it ends with the correct domain
+  if (!isDevelopment && !baseUrl.includes("crm.ratehonk.com")) {
+    console.log("⚠️ Production mode - Base URL doesn't contain crm.ratehonk.com, forcing correct domain");
+    baseUrl = "https://crm.ratehonk.com";
+  }
+  
+  return baseUrl;
+}
 import nodemailer from "nodemailer";
 import * as XLSX from "xlsx";
 // import pdfParse from "pdf-parse"; // Temporarily disabled
@@ -6773,48 +6817,68 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
 
       // Password is valid, continue with login
 
-      // Generate JWT token
-      const token = jwt.sign({ userId: user.id }, JWT_SECRET);
-
-      // Get tenant info if user is not saas_owner
-      let tenant = null;
-      let permissions = null;
-      if (user.tenant_id) {
-        console.log("Fetching tenant data for tenant ID:", user.tenant_id);
-        tenant = await simpleStorage.getTenant(user.tenant_id);
-        console.log("Tenant data retrieved:", user ? user : "Not found");
-        permissions = await simpleStorage.getRoleById(
-          user.role_id,
-          user.tenant_id,
-        );
+      // CRITICAL: Check if email is verified/activated - MUST be checked BEFORE sending verification code
+      // This check MUST happen before any verification code generation or email sending
+      console.log("🔐 Checking email verification status for user:", user.email);
+      console.log("🔐 is_email_verified value:", user.is_email_verified);
+      console.log("🔐 is_email_verified type:", typeof user.is_email_verified);
+      
+      // Strict check: user must be activated (is_email_verified must be exactly true)
+      // This catches: false, null, undefined, 0, "", etc.
+      // Only proceed if is_email_verified is explicitly true
+      if (user.is_email_verified !== true) {
+        console.log("❌ BLOCKED: Login attempt by unactivated user:", user.email);
+        console.log("❌ User activation status:", user.is_email_verified);
+        console.log("❌ Blocking login - user must activate account first");
+        console.log("❌ NO verification code will be sent");
+        // Return immediately - DO NOT proceed to verification code generation
+        return res.status(403).json({ 
+          message: "Please activate your account by clicking the activation link sent to your email before logging in.",
+          requiresActivation: true,
+        });
       }
 
-      console.log("Login successful for user:", user.email);
-      res.json({
-        user: {
-          id: user.id,
-          email: user.email,
-          role: user.role,
-          tenantId: user.tenant_id,
-          firstName: user.first_name || "",
-          lastName: user.last_name || "",
-          permissions: permissions ? permissions.permissions : {},
-          isActive: user.is_active,
-        },
-        tenant: tenant
-          ? {
-              id: tenant.id,
-              companyName: tenant.company_name,
-              subdomain: tenant.subdomain,
-              contactEmail: tenant.contact_email,
-              contactPhone: tenant.contact_phone,
-              address: tenant.address,
-              isActive: tenant.is_active,
-              logo: tenant.logo,
-            }
-          : null,
-        token,
+      console.log("✅ User is activated, proceeding with verification code generation");
+
+      // Generate 6-digit verification code
+      const crypto = await import("crypto");
+      const verificationCode = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit code
+      const expiresAt = new Date();
+      expiresAt.setMinutes(expiresAt.getMinutes() + 10); // 10 minutes expiration
+
+      // Save verification code
+      await simpleStorage.createLoginVerificationCode(
+        user.id,
+        user.email,
+        verificationCode,
+        expiresAt,
+      );
+
+      // Send verification code email
+      const firstName = user.first_name || "";
+      const lastName = user.last_name || "";
+      console.log("📧 Sending login verification code to:", user.email);
+      const emailSent = await emailService.sendLoginVerificationCode({
+        to: user.email,
+        firstName: firstName,
+        lastName: lastName,
+        verificationCode: verificationCode,
       });
+
+      if (!emailSent) {
+        console.error("❌ Failed to send verification code email");
+        return res.status(500).json({ 
+          message: "Failed to send verification code. Please try again.",
+        });
+      }
+
+      // Return response indicating code was sent (don't return token yet)
+      res.json({
+        requiresVerification: true,
+        message: "Verification code sent to your email. Please check your inbox.",
+        userId: user.id, // Send userId for verification step
+      });
+      return;
     } catch (error: any) {
       console.error("Login error details:", error);
       console.error("Error message:", error.message);
@@ -6937,7 +7001,7 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
       // Hash password
       const hashedPassword = await bcrypt.hash(password, 10);
 
-      // Create user
+      // Create user with email verification set to false
       const user = await simpleStorage.createUser({
         email,
         password: hashedPassword,
@@ -6946,6 +7010,7 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
         firstName,
         lastName,
         isActive: true,
+        isEmailVerified: false,
       });
 
       // Create 14-day trial subscription
@@ -6978,43 +7043,78 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
         // Continue without subscription - user can set it up later
       }
 
-      // Send welcome email
+      // Generate activation token and send activation email
       try {
-        const userName = `${firstName} ${lastName}`;
-        console.log("📧 Sending welcome email to:", email);
-        // await emailService.sendWelcomeEmail(email, companyName, userName);
-        await emailService.sendWelcomeEmail({
-          to: email,
-          firstName: firstName,
-          lastName: lastName,
-          companyName,
-          email,
-          temporaryPassword: "",
-        });
-        console.log("✅ Welcome email sent successfully");
-      } catch (emailError) {
-        console.error("Welcome email failed (non-critical):", emailError);
+        const crypto = await import("crypto");
+        const activationToken = crypto.randomBytes(32).toString("hex");
+        const expiresAt = new Date();
+        expiresAt.setHours(expiresAt.getHours() + 24); // 24 hours expiration
+
+        // Save activation token
+        await simpleStorage.createActivationToken(
+          user.id,
+          activationToken,
+          expiresAt,
+        );
+
+        // Send activation email
+        console.log("📧 ===== REGISTRATION - SENDING ACTIVATION EMAIL =====");
+        console.log("📧 Email:", email);
+        console.log("📧 First Name:", firstName);
+        console.log("📧 Last Name:", lastName);
+        console.log("📧 Company Name:", companyName);
+        console.log("📧 Activation token (first 8 chars):", activationToken.substring(0, 8));
+        console.log("📧 EmailService instance:", typeof emailService);
+        console.log("📧 EmailService method exists:", typeof emailService?.sendActivationEmail);
+
+        try {
+          const emailSent = await emailService.sendActivationEmail({
+            to: email,
+            firstName: firstName,
+            lastName: lastName,
+            activationToken: activationToken,
+            companyName: companyName,
+          });
+          
+          if (emailSent) {
+            console.log("✅ ===== ACTIVATION EMAIL SENT - REGISTRATION CONFIRMED =====");
+            console.log("✅ Activation email sent successfully to:", email);
+          } else {
+            console.error("❌ ===== ACTIVATION EMAIL SEND FAILED - FUNCTION RETURNED FALSE =====");
+            console.error("❌ Failed to send activation email to:", email);
+            console.error("❌ User can still activate manually via support");
+          }
+        } catch (emailError: any) {
+          console.error("❌ ===== EXCEPTION IN ACTIVATION EMAIL SENDING =====");
+          console.error("❌ Activation email error:", emailError);
+          console.error("❌ Exception message:", emailError?.message);
+          console.error("❌ Exception stack:", emailError?.stack);
+          console.error("❌ Error details:", {
+            message: emailError?.message,
+            code: emailError?.code,
+            command: emailError?.command,
+            response: emailError?.response,
+            responseCode: emailError?.responseCode,
+          });
+          // Continue without email - user account is still created
+        }
+      } catch (emailError: any) {
+        console.error("❌ ===== EXCEPTION IN ACTIVATION TOKEN CREATION =====");
+        console.error("❌ Activation token/email error:", emailError);
+        console.error("❌ Exception message:", emailError?.message);
+        console.error("❌ Exception stack:", emailError?.stack);
         // Continue without email - user account is still created
       }
 
-      // Generate JWT token
-      const token = jwt.sign({ userId: user.id }, JWT_SECRET);
-
+      // Don't return token - user needs to activate first
+      // Return success message indicating activation email was sent
       res.status(201).json({
+        message: "Registration successful! Please check your email to activate your account.",
+        requiresActivation: true,
         user: {
           id: user.id,
           email: user.email,
-          role: user.role,
-          tenantId: user.tenant_id,
-          firstName:
-            user.first_name || (user.name ? user.name.split(" ")[0] : ""),
-          lastName:
-            user.last_name ||
-            (user.name ? user.name.split(" ").slice(1).join(" ") : ""),
-          isActive: user.is_active,
         },
-        tenant,
-        token,
       });
     } catch (error: any) {
       console.error("Registration error details:", error);
@@ -7124,23 +7224,34 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
       const displayName =
         `${user.first_name || ""} ${user.last_name || ""}`.trim() || "User";
 
-      console.log("📧 Attempting to send password reset email...");
+      console.log("📧 ===== FORGOT PASSWORD ENDPOINT - SENDING EMAIL =====");
       console.log("📧 Email:", email);
       console.log("📧 Name:", displayName);
       console.log("📧 Token (first 8 chars):", resetToken.substring(0, 8));
+      console.log("📧 EmailService instance:", typeof emailService);
+      console.log("📧 EmailService method exists:", typeof emailService?.sendPasswordResetEmail);
 
       // Send the email
-      const emailSent = await emailService.sendPasswordResetEmail({
-        to: email,
-        displayName,
-        resetToken,
-        companyName: "RateHonk",
-      });
+      try {
+        const emailSent = await emailService.sendPasswordResetEmail({
+          to: email,
+          displayName,
+          resetToken,
+          companyName: "RateHonk",
+        });
 
-      if (emailSent) {
-        console.log("✅ Password reset email sent successfully");
-      } else {
-        console.warn("⚠️ Failed to send password reset email");
+        if (emailSent) {
+          console.log("✅ ===== EMAIL SENT - ENDPOINT CONFIRMED =====");
+          console.log("✅ Password reset email sent successfully");
+        } else {
+          console.error("❌ ===== EMAIL SEND FAILED - FUNCTION RETURNED FALSE =====");
+          console.warn("⚠️ Failed to send password reset email - sendPasswordResetEmail returned false");
+        }
+      } catch (emailError: any) {
+        console.error("❌ ===== EXCEPTION IN EMAIL SENDING =====");
+        console.error("❌ Exception caught:", emailError);
+        console.error("❌ Exception message:", emailError?.message);
+        console.error("❌ Exception stack:", emailError?.stack);
       }
 
       // Clean up expired tokens (asynchronously)
@@ -7221,6 +7332,241 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
       res.status(500).json({
         valid: false,
         message: "Internal server error",
+        details:
+          process.env.NODE_ENV === "development" ? error.message : undefined,
+      });
+    }
+  });
+
+  // Verify login code endpoint
+  app.post("/api/auth/verify-login-code", async (req, res) => {
+    try {
+      const { userId, code } = req.body;
+
+      if (!userId || !code) {
+        return res.status(400).json({ 
+          message: "User ID and verification code are required" 
+        });
+      }
+
+      console.log("🔐 Verifying login code for user:", userId);
+
+      // Get verification code
+      const verificationCodeData = await simpleStorage.getLoginVerificationCode(
+        userId,
+        code,
+      );
+
+      if (!verificationCodeData) {
+        // Check if there's a code but it's wrong (to increment attempts)
+        const existingCode = await sql`
+          SELECT * FROM login_verification_codes 
+          WHERE user_id = ${userId} 
+          AND used_at IS NULL 
+          AND expires_at > NOW()
+          ORDER BY created_at DESC
+          LIMIT 1
+        `;
+
+        if (existingCode[0]) {
+          await simpleStorage.incrementVerificationAttempts(existingCode[0].id);
+          
+          // Check if too many attempts
+          if (existingCode[0].attempts >= 4) {
+            return res.status(400).json({
+              message: "Too many failed attempts. Please request a new code.",
+              tooManyAttempts: true,
+            });
+          }
+        }
+
+        return res.status(400).json({
+          message: "Invalid or expired verification code. Please try again.",
+          attemptsRemaining: existingCode[0] ? (5 - existingCode[0].attempts - 1) : 4,
+        });
+      }
+
+      // Check if too many attempts
+      if (verificationCodeData.attempts >= 5) {
+        return res.status(400).json({
+          message: "Too many failed attempts. Please request a new code.",
+          tooManyAttempts: true,
+        });
+      }
+
+      // Code is valid - mark as used
+      await simpleStorage.markVerificationCodeAsUsed(verificationCodeData.id);
+
+      // Get user info
+      const user = await simpleStorage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      // Generate JWT token
+      const token = jwt.sign({ userId: user.id }, JWT_SECRET);
+
+      // Get tenant info if user is not saas_owner
+      let tenant = null;
+      let permissions = null;
+      if (user.tenant_id) {
+        console.log("Fetching tenant data for tenant ID:", user.tenant_id);
+        tenant = await simpleStorage.getTenant(user.tenant_id);
+        permissions = await simpleStorage.getRoleById(
+          user.role_id,
+          user.tenant_id,
+        );
+      }
+
+      console.log("✅ Login successful for user:", user.email);
+
+      res.json({
+        user: {
+          id: user.id,
+          email: user.email,
+          role: user.role,
+          tenantId: user.tenant_id,
+          firstName: user.first_name || "",
+          lastName: user.last_name || "",
+          permissions: permissions ? permissions.permissions : {},
+          isActive: user.is_active,
+        },
+        tenant: tenant
+          ? {
+              id: tenant.id,
+              companyName: tenant.company_name,
+              subdomain: tenant.subdomain,
+              contactEmail: tenant.contact_email,
+              contactPhone: tenant.contact_phone,
+              address: tenant.address,
+              isActive: tenant.is_active,
+              logo: tenant.logo,
+            }
+          : null,
+        token,
+      });
+    } catch (error: any) {
+      console.error("Error verifying login code:", error);
+      res.status(500).json({
+        message: "Error verifying code. Please try again.",
+        details: process.env.NODE_ENV === "development" ? error.message : undefined,
+      });
+    }
+  });
+
+  // Resend verification code endpoint
+  app.post("/api/auth/resend-verification-code", async (req, res) => {
+    try {
+      const { userId } = req.body;
+
+      if (!userId) {
+        return res.status(400).json({ message: "User ID is required" });
+      }
+
+      const user = await simpleStorage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      // Generate new 6-digit verification code
+      const crypto = await import("crypto");
+      const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+      const expiresAt = new Date();
+      expiresAt.setMinutes(expiresAt.getMinutes() + 10);
+
+      // Save verification code
+      await simpleStorage.createLoginVerificationCode(
+        user.id,
+        user.email,
+        verificationCode,
+        expiresAt,
+      );
+
+      // Send verification code email
+      const firstName = user.first_name || "";
+      const lastName = user.last_name || "";
+      const emailSent = await emailService.sendLoginVerificationCode({
+        to: user.email,
+        firstName: firstName,
+        lastName: lastName,
+        verificationCode: verificationCode,
+      });
+
+      if (!emailSent) {
+        return res.status(500).json({ 
+          message: "Failed to send verification code. Please try again.",
+        });
+      }
+
+      res.json({
+        success: true,
+        message: "Verification code resent to your email.",
+      });
+    } catch (error: any) {
+      console.error("Error resending verification code:", error);
+      res.status(500).json({
+        message: "Error resending code. Please try again.",
+      });
+    }
+  });
+
+  // Email activation endpoint
+  app.get("/api/auth/activate/:token", async (req, res) => {
+    try {
+      const { token } = req.params;
+
+      if (!token) {
+        return res.status(400).json({
+          success: false,
+          message: "Activation token is required",
+        });
+      }
+
+      console.log("🔐 Activating account with token:", token.substring(0, 8) + "...");
+
+      // Check if token exists and is not expired
+      const activationTokenData = await simpleStorage.getActivationToken(token);
+
+      if (!activationTokenData) {
+        console.log("🔐 Activation token not found or expired");
+        return res.status(400).json({
+          success: false,
+          message:
+            "Invalid or expired activation token. Please contact support or register again.",
+        });
+      }
+
+      // Check if user is already activated
+      if (activationTokenData.is_email_verified) {
+        console.log("✅ User already activated");
+        return res.status(400).json({
+          success: false,
+          message: "Account is already activated. You can login now.",
+        });
+      }
+
+      // Activate the user
+      await simpleStorage.activateUser(activationTokenData.user_id);
+
+      // Mark token as used
+      await simpleStorage.markActivationTokenAsUsed(activationTokenData.id);
+
+      console.log("✅ Account activated successfully for user:", activationTokenData.email);
+
+      // Redirect to login page (frontend will handle this)
+      const baseUrl = getBaseUrl();
+      const loginUrl = `${baseUrl}/login?activated=true`;
+      
+      res.json({
+        success: true,
+        message: "Account activated successfully! You can now login.",
+        redirectUrl: loginUrl,
+      });
+    } catch (error: any) {
+      console.error("Error activating account:", error);
+      res.status(500).json({
+        success: false,
+        message: "Error activating account. Please contact support.",
         details:
           process.env.NODE_ENV === "development" ? error.message : undefined,
       });
