@@ -323,33 +323,52 @@ class EmailService {
     lastName: string;
     verificationCode: string;
   }) {
+    try {
+      // Check if transporter is initialized
+      if (!this.transporter) {
+        console.error("❌ CRITICAL: Email transporter is not initialized!");
+        return false;
+      }
+
       // IMPORTANT: Use SMTP user email as "from" to avoid SPF/DKIM failures
       // Many SMTP servers reject emails when "from" doesn't match authenticated user
       const smtpUser = process.env.EMAIL_USER || process.env.SMTP_USER || "support@vanitechnologies.in";
+      const smtpHost = process.env.SMTP_HOST || "mail.vanitechnologies.in";
+      const smtpPort = parseInt(process.env.SMTP_PORT || "587");
       const fromEmail = smtpUser; // Force use of SMTP user email for better deliverability
+      
+      console.log("📧 ===== sendLoginVerificationCode CALLED =====");
+      console.log("📧 Environment Check:", {
+        SMTP_HOST: smtpHost,
+        SMTP_PORT: smtpPort,
+        EMAIL_USER: process.env.EMAIL_USER ? "✅ Set" : "❌ Not set",
+        SMTP_USER: process.env.SMTP_USER ? "✅ Set" : "❌ Not set",
+        EMAIL_PASS: process.env.EMAIL_PASS ? "✅ Set" : "❌ Not set",
+        SMTP_PASS: process.env.SMTP_PASS ? "✅ Set" : "❌ Not set",
+        NODE_ENV: process.env.NODE_ENV,
+      });
       
       const mailOptions = {
         from: fromEmail,
         to: data.to,
         subject: "Your Login Verification Code - RateHonk CRM",
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #333;">Login Verification Code</h2>
-          <p>Hello ${data.firstName} ${data.lastName},</p>
-          <p>You have requested to log in to your RateHonk CRM account. Please use the verification code below:</p>
-          <div style="text-align: center; margin: 30px 0;">
-            <div style="background-color: #f5f5f5; padding: 20px; border-radius: 5px; display: inline-block;">
-              <h1 style="color: #007bff; font-size: 32px; letter-spacing: 5px; margin: 0;">${data.verificationCode}</h1>
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #333;">Login Verification Code</h2>
+            <p>Hello ${data.firstName} ${data.lastName},</p>
+            <p>You have requested to log in to your RateHonk CRM account. Please use the verification code below:</p>
+            <div style="text-align: center; margin: 30px 0;">
+              <div style="background-color: #f5f5f5; padding: 20px; border-radius: 5px; display: inline-block;">
+                <h1 style="color: #007bff; font-size: 32px; letter-spacing: 5px; margin: 0;">${data.verificationCode}</h1>
+              </div>
             </div>
+            <p style="color: #666; font-size: 14px;">This code will expire in 10 minutes for security purposes.</p>
+            <p style="color: #666; font-size: 14px;">If you didn't request this code, please ignore this email or contact support if you have concerns.</p>
+            <p>Best regards,<br>The RateHonk Team</p>
           </div>
-          <p style="color: #666; font-size: 14px;">This code will expire in 10 minutes for security purposes.</p>
-          <p style="color: #666; font-size: 14px;">If you didn't request this code, please ignore this email or contact support if you have concerns.</p>
-          <p>Best regards,<br>The RateHonk Team</p>
-        </div>
-      `,
-    };
+        `,
+      };
 
-    try {
       console.log("📧 Attempting to send login verification code...");
       console.log("📧 To:", data.to);
       console.log("📧 Code:", data.verificationCode);
@@ -357,13 +376,19 @@ class EmailService {
       
       // Verify SMTP connection before sending
       try {
+        console.log("📧 Verifying SMTP connection...");
         await this.transporter.verify();
-        console.log("✅ SMTP connection verified");
+        console.log("✅ SMTP connection verified successfully");
       } catch (verifyError: any) {
         console.error("❌ SMTP verification failed:", verifyError?.message);
+        console.error("❌ SMTP verification error code:", verifyError?.code);
+        console.error("❌ SMTP verification command:", verifyError?.command);
+        console.error("❌ SMTP verification response:", verifyError?.response);
         console.error("❌ This may cause the email to fail");
+        // Don't return false here - try to send anyway as some servers have verify issues but can still send
       }
       
+      console.log("📧 Sending email via transporter...");
       const result = await this.transporter.sendMail(mailOptions);
       console.log(`✅ Login verification code sent successfully to ${data.to}`);
       console.log("📧 Message ID:", result.messageId);
@@ -372,15 +397,15 @@ class EmailService {
       console.log("📧 Rejected:", result.rejected);
       return true;
     } catch (error: any) {
-      console.error("❌ Error sending login verification code:", error);
-      console.error("❌ Error details:", {
-        message: error?.message,
-        code: error?.code,
-        command: error?.command,
-        response: error?.response,
-        responseCode: error?.responseCode,
-        stack: error?.stack,
-      });
+      console.error("❌ ===== ERROR SENDING LOGIN VERIFICATION CODE =====");
+      console.error("❌ Error type:", error?.constructor?.name);
+      console.error("❌ Error message:", error?.message);
+      console.error("❌ Error code:", error?.code);
+      console.error("❌ Error command:", error?.command);
+      console.error("❌ Error response:", error?.response);
+      console.error("❌ Error responseCode:", error?.responseCode);
+      console.error("❌ Error stack:", error?.stack);
+      console.error("❌ Full error object:", JSON.stringify(error, Object.getOwnPropertyNames(error)));
       return false;
     }
   }

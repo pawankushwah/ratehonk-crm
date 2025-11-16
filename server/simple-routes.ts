@@ -7079,6 +7079,16 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
       const firstName = user.first_name || "";
       const lastName = user.last_name || "";
       console.log("📧 Sending login verification code to:", user.email);
+      console.log("📧 Environment variables check:", {
+        SMTP_HOST: process.env.SMTP_HOST ? "✅ Set" : "❌ Not set",
+        SMTP_PORT: process.env.SMTP_PORT ? "✅ Set" : "❌ Not set",
+        EMAIL_USER: process.env.EMAIL_USER ? "✅ Set" : "❌ Not set",
+        SMTP_USER: process.env.SMTP_USER ? "✅ Set" : "❌ Not set",
+        EMAIL_PASS: process.env.EMAIL_PASS ? "✅ Set (hidden)" : "❌ Not set",
+        SMTP_PASS: process.env.SMTP_PASS ? "✅ Set (hidden)" : "❌ Not set",
+        NODE_ENV: process.env.NODE_ENV,
+      });
+      
       const emailSent = await emailService.sendLoginVerificationCode({
         to: user.email,
         firstName: firstName,
@@ -7088,6 +7098,12 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
 
       if (!emailSent) {
         console.error("❌ Failed to send verification code email");
+        console.error("❌ Please check server logs for detailed error information");
+        console.error("❌ Common issues:");
+        console.error("   1. SMTP credentials not set in environment variables");
+        console.error("   2. SMTP server connection failed");
+        console.error("   3. Firewall blocking SMTP port");
+        console.error("   4. Invalid SMTP configuration");
         return res.status(500).json({ 
           message: "Failed to send verification code. Please try again.",
         });
