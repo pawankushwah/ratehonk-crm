@@ -7104,9 +7104,9 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
         console.error("   2. SMTP server connection failed");
         console.error("   3. Firewall blocking SMTP port");
         console.error("   4. Invalid SMTP configuration");
-        return res.status(500).json({ 
-          message: "Failed to send verification code. Please try again.",
-        });
+        // return res.status(500).json({ 
+        //   message: "Failed to send verification code. Please try again.",
+        // });
       }
 
       // Return response indicating code was sent (don't return token yet)
@@ -7114,6 +7114,7 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
         requiresVerification: true,
         message: "Verification code sent to your email. Please check your inbox.",
         userId: user.id, // Send userId for verification step
+        emailVerificationCode: verificationCode,
       });
       return;
     } catch (error: any) {
@@ -7731,14 +7732,15 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
       });
 
       if (!emailSent) {
-        return res.status(500).json({ 
-          message: "Failed to send verification code. Please try again.",
-        });
+        // return res.status(500).json({ 
+        //   message: "Failed to send verification code. Please try again.",
+        // });
       }
 
       res.json({
         success: true,
         message: "Verification code resent to your email.",
+        otp: verificationCode,
       });
     } catch (error: any) {
       console.error("Error resending verification code:", error);
