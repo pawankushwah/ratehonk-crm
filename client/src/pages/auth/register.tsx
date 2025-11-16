@@ -215,7 +215,7 @@ export default function Register() {
                     name="firstName"
                     value={formData.firstName}
                     onChange={handleChange}
-                    placeholder="Harsh"
+                    placeholder="First Name"
                     className="h-12 border-2 border-orange-200 focus:border-orange-400 focus:ring-orange-400 rounded-lg bg-gray-50"
                     required
                   />
@@ -228,7 +228,7 @@ export default function Register() {
                     name="lastName"
                     value={formData.lastName}
                     onChange={handleChange}
-                    placeholder="Smith"
+                    placeholder="Last Name"
                     className="h-12 border-gray-300 focus:border-cyan-500 focus:ring-cyan-500 rounded-lg"
                     required
                   />
@@ -244,7 +244,7 @@ export default function Register() {
                   value={formData.email}
                   onChange={handleChange}
                   onBlur={(e) => checkEmailAvailability(e.target.value)}
-                  placeholder="Harshvani09@gmail.com"
+                  placeholder="Enter Email Address"
                   className="h-12 border-gray-300 focus:border-cyan-500 focus:ring-cyan-500 rounded-lg"
                   required
                 />

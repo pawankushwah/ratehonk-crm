@@ -7,7 +7,7 @@ import nodemailer from "nodemailer";
 // Helper function to get correct base URL
 function getBaseUrl(): string {
   try {
-    let baseUrl = process.env.APP_URL || process.env.FRONTEND_URL || "http://localhost:5000";
+    let baseUrl = process.env.APP_URL || process.env.FRONTEND_URL || "https://crm.ratehonk.com";
     
     // Remove trailing slash if present
     baseUrl = baseUrl.replace(/\/$/, "");
@@ -60,24 +60,44 @@ class EmailService {
 
   constructor() {
     // Create transporter with a common email service (you can configure this with real SMTP)
-    console.log("SMTP Credential", {
-      host: "mail.vanitechnologies.in", // Replace with your SMTP host
-      port: 587,
-      secure: false,
-      auth: {
-        user: process.env.EMAIL_USER || "support@vanitechnologies.in",
-        pass: process.env.EMAIL_PASS || "Support@2025",
-      },
+    const smtpHost = process.env.SMTP_HOST || "mail.vanitechnologies.in";
+    const smtpPort = parseInt(process.env.SMTP_PORT || "587");
+    const smtpUser = process.env.EMAIL_USER || process.env.SMTP_USER || "support@vanitechnologies.in";
+    const smtpPass = process.env.EMAIL_PASS || process.env.SMTP_PASS || "Support@2025";
+    const smtpSecure = process.env.SMTP_SECURE === "true" || false;
+    const fromEmail = process.env.EMAIL_FROM || smtpUser; // Use SMTP user as default "from"
+    
+    console.log("📧 SMTP Configuration:", {
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpSecure,
+      user: smtpUser,
+      from: fromEmail,
+      hasPassword: !!smtpPass,
     });
+    
     this.transporter = nodemailer.createTransport({
-      host: "mail.vanitechnologies.in", // Replace with your SMTP host
-      port: 587,
-      secure: false,
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpSecure,
       auth: {
-        user: process.env.EMAIL_USER || "support@vanitechnologies.in",
-        pass: process.env.EMAIL_PASS || "Support@2025",
+        user: smtpUser,
+        pass: smtpPass,
+      },
+      tls: {
+        rejectUnauthorized: false, // Allow self-signed certificates
       },
     });
+
+    // Verify SMTP connection on initialization
+    this.transporter.verify()
+      .then(() => {
+        console.log("✅ SMTP connection verified successfully");
+      })
+      .catch((error) => {
+        console.error("❌ SMTP connection verification failed:", error);
+        console.error("❌ This may cause email sending to fail");
+      });
   }
 
   async sendWelcomeEmail(data: {
@@ -88,10 +108,15 @@ class EmailService {
     email: string;
     temporaryPassword: string;
   }) {
-    const mailOptions = {
-      from: process.env.EMAIL_FROM || "noreply@ratehonk.com",
-      to: data.to,
-      subject: `Welcome to ${data.companyName} - Your Account Details`,
+      // IMPORTANT: Use SMTP user email as "from" to avoid SPF/DKIM failures
+      // Many SMTP servers reject emails when "from" doesn't match authenticated user
+      const smtpUser = process.env.EMAIL_USER || process.env.SMTP_USER || "support@vanitechnologies.in";
+      const fromEmail = smtpUser; // Force use of SMTP user email for better deliverability
+      
+      const mailOptions = {
+        from: fromEmail,
+        to: data.to,
+        subject: `Welcome to ${data.companyName} - Your Account Details`,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h2 style="color: #333;">Welcome to ${data.companyName}!</h2>
@@ -152,8 +177,13 @@ class EmailService {
       }
       console.log("✅ Transporter exists and is ready");
 
+      // IMPORTANT: Use SMTP user email as "from" to avoid SPF/DKIM failures
+      // Many SMTP servers reject emails when "from" doesn't match authenticated user
+      const smtpUser = process.env.EMAIL_USER || process.env.SMTP_USER || "support@vanitechnologies.in";
+      const fromEmail = smtpUser; // Force use of SMTP user email for better deliverability
+      
       const mailOptions = {
-        from: process.env.EMAIL_FROM || "noreply@ratehonk.com",
+        from: fromEmail,
         to: data.to,
         subject: "Password Reset Request",
         html: `
@@ -233,8 +263,13 @@ class EmailService {
       }
       console.log("✅ Transporter exists and is ready");
 
+      // IMPORTANT: Use SMTP user email as "from" to avoid SPF/DKIM failures
+      // Many SMTP servers reject emails when "from" doesn't match authenticated user
+      const smtpUser = process.env.EMAIL_USER || process.env.SMTP_USER || "support@vanitechnologies.in";
+      const fromEmail = smtpUser; // Force use of SMTP user email for better deliverability
+      
       const mailOptions = {
-        from: process.env.EMAIL_FROM || "noreply@ratehonk.com",
+        from: fromEmail,
         to: data.to,
         subject: "Activate Your Account - RateHonk CRM",
         html: `
@@ -288,10 +323,15 @@ class EmailService {
     lastName: string;
     verificationCode: string;
   }) {
-    const mailOptions = {
-      from: process.env.EMAIL_FROM || "noreply@ratehonk.com",
-      to: data.to,
-      subject: "Your Login Verification Code - RateHonk CRM",
+      // IMPORTANT: Use SMTP user email as "from" to avoid SPF/DKIM failures
+      // Many SMTP servers reject emails when "from" doesn't match authenticated user
+      const smtpUser = process.env.EMAIL_USER || process.env.SMTP_USER || "support@vanitechnologies.in";
+      const fromEmail = smtpUser; // Force use of SMTP user email for better deliverability
+      
+      const mailOptions = {
+        from: fromEmail,
+        to: data.to,
+        subject: "Your Login Verification Code - RateHonk CRM",
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h2 style="color: #333;">Login Verification Code</h2>
@@ -313,10 +353,23 @@ class EmailService {
       console.log("📧 Attempting to send login verification code...");
       console.log("📧 To:", data.to);
       console.log("📧 Code:", data.verificationCode);
+      console.log("📧 From:", mailOptions.from);
+      
+      // Verify SMTP connection before sending
+      try {
+        await this.transporter.verify();
+        console.log("✅ SMTP connection verified");
+      } catch (verifyError: any) {
+        console.error("❌ SMTP verification failed:", verifyError?.message);
+        console.error("❌ This may cause the email to fail");
+      }
       
       const result = await this.transporter.sendMail(mailOptions);
       console.log(`✅ Login verification code sent successfully to ${data.to}`);
       console.log("📧 Message ID:", result.messageId);
+      console.log("📧 Response:", result.response);
+      console.log("📧 Accepted:", result.accepted);
+      console.log("📧 Rejected:", result.rejected);
       return true;
     } catch (error: any) {
       console.error("❌ Error sending login verification code:", error);
@@ -326,6 +379,7 @@ class EmailService {
         command: error?.command,
         response: error?.response,
         responseCode: error?.responseCode,
+        stack: error?.stack,
       });
       return false;
     }

@@ -3942,6 +3942,45 @@ export class SimpleStorage {
             console.warn("Error fetching invoice details:", joinError);
           }
 
+          // Fetch line items from invoice_items table
+          let lineItems = [];
+          try {
+            const items = await sql`
+              SELECT * FROM invoice_items 
+              WHERE invoice_id = ${invoice.id}
+              ORDER BY id
+            `;
+            lineItems = items.map((item: any) => ({
+              id: item.id,
+              description: item.description,
+              itemTitle: item.description,
+              quantity: item.quantity || 1,
+              unitPrice: parseFloat(item.unit_price || 0),
+              sellingPrice: parseFloat(item.unit_price || 0),
+              tax: 0,
+              totalAmount: parseFloat(item.total_price || 0),
+            }));
+          } catch (itemsError) {
+            console.warn("Error fetching invoice items:", itemsError);
+          }
+
+          // Also check if line items are stored as JSON in the invoice record
+          let jsonLineItems = [];
+          if (invoice.line_items) {
+            try {
+              if (typeof invoice.line_items === 'string') {
+                jsonLineItems = JSON.parse(invoice.line_items);
+              } else if (Array.isArray(invoice.line_items)) {
+                jsonLineItems = invoice.line_items;
+              }
+            } catch (e) {
+              console.warn("Failed to parse line_items JSON:", e);
+            }
+          }
+
+          // Use JSON line items if available, otherwise use invoice_items table
+          const finalLineItems = jsonLineItems.length > 0 ? jsonLineItems : lineItems;
+
           return {
             id: invoice.id,
             tenantId: invoice.tenant_id,
@@ -3954,7 +3993,12 @@ export class SimpleStorage {
             subtotal: parseFloat(invoice.subtotal),
             taxAmount: parseFloat(invoice.tax_amount || "0"),
             totalAmount: parseFloat(invoice.total_amount),
+            paidAmount: parseFloat(invoice.paid_amount || invoice.amount_paid || "0"),
+            discountAmount: parseFloat(invoice.discount_amount || "0"),
+            currency: invoice.currency || "INR",
+            paymentTerms: invoice.payment_terms,
             notes: invoice.notes,
+            lineItems: finalLineItems,
             createdAt: invoice.created_at,
             customerName: customerName,
             customerEmail: customerEmail,
