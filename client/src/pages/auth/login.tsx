@@ -429,7 +429,7 @@ export default function Login() {
                     type="email"
                     value={email}
                     onChange={(e) => handleInputChange("email", e.target.value)}
-                    placeholder="Demo@gmail.com"
+                    placeholder="Enter Email Address"
                     className="h-12 border-2 rounded-lg bg-gray-50"
                     disabled={isBlocked}
                     required

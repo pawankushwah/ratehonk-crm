@@ -1784,93 +1784,279 @@ export default function Invoices() {
 
       {/* View Invoice Dialog */}
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Invoice Details</DialogTitle>
           </DialogHeader>
           {selectedInvoice && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-6">
+              {/* Header Section */}
+              <div className="grid grid-cols-2 gap-6 border-b pb-4">
                 <div>
-                  <Label>Invoice Number</Label>
-                  <p className="font-medium">{selectedInvoice.invoiceNumber}</p>
-                </div>
-                <div>
-                  <Label>Status</Label>
-                  <Badge
-                    className={getStatusBadge(selectedInvoice.status).color}
-                  >
-                    {getStatusBadge(selectedInvoice.status).label}
-                  </Badge>
-                </div>
-                <div>
-                  <Label>Issue Date</Label>
-                  <p>
-                    {new Date(selectedInvoice.issueDate).toLocaleDateString()}
-                  </p>
-                </div>
-                <div>
-                  <Label>Due Date</Label>
-                  <p>
-                    {new Date(selectedInvoice.dueDate).toLocaleDateString()}
-                  </p>
-                </div>
-                <div>
-                  <Label>Total Amount</Label>
-                  <p className="font-bold">
-                    ₹
-                    {parseFloat(
-                      selectedInvoice.totalAmount || 0,
-                    ).toLocaleString()}
-                  </p>
-                </div>
-                <div>
-                  <Label>Amount Paid</Label>
-                  <p className="font-bold text-green-600">
-                    ₹
-                    {parseFloat(
-                      (selectedInvoice as any).paidAmount || 0,
-                    ).toLocaleString()}
-                  </p>
-                </div>
-                {selectedInvoice.bookingId && (
-                  <div className="col-span-2">
-                    <Label>Linked Booking</Label>
-                    {(() => {
-                      const booking = bookings.find(
-                        (b) => b.id === selectedInvoice.bookingId,
-                      );
-                      return booking ? (
-                        <div className="bg-blue-50 p-3 rounded-lg mt-1">
-                          <p className="font-medium">
-                            {booking.bookingNumber || `BK-${booking.id}`}
-                          </p>
-                          <p className="text-sm text-gray-600">
-                            Customer: {booking.customerName || "Unknown"} |
-                            Travel Date:{" "}
-                            {booking.travelDate
-                              ? new Date(
-                                  booking.travelDate,
-                                ).toLocaleDateString()
-                              : "Not set"}
-                          </p>
-                        </div>
-                      ) : (
-                        <p className="text-sm text-gray-500">
-                          Booking not found
-                        </p>
-                      );
-                    })()}
+                  <h2 className="text-2xl font-bold mb-2">
+                    Invoice #{selectedInvoice.invoiceNumber || `INV-${selectedInvoice.id}`}
+                  </h2>
+                  <div className="space-y-1 text-sm text-gray-600">
+                    <p>
+                      <strong>Issue Date:</strong>{" "}
+                      {selectedInvoice.issueDate
+                        ? new Date(selectedInvoice.issueDate).toLocaleDateString()
+                        : "N/A"}
+                    </p>
+                    <p>
+                      <strong>Due Date:</strong>{" "}
+                      {selectedInvoice.dueDate
+                        ? new Date(selectedInvoice.dueDate).toLocaleDateString()
+                        : "N/A"}
+                    </p>
+                    <p>
+                      <strong>Status:</strong>{" "}
+                      <Badge className={getStatusBadge(selectedInvoice.status).color}>
+                        {getStatusBadge(selectedInvoice.status).label}
+                      </Badge>
+                    </p>
+                    <p>
+                      <strong>Currency:</strong> {selectedInvoice.currency || "INR"}
+                    </p>
                   </div>
-                )}
-              </div>
-              {selectedInvoice.notes && (
+                </div>
                 <div>
-                  <Label>Notes</Label>
-                  <p>{selectedInvoice.notes}</p>
+                  <h3 className="font-semibold mb-2">Customer Information</h3>
+                  {(() => {
+                    const customer = customers.find(
+                      (c) => c.id === selectedInvoice.customerId,
+                    );
+                    return customer ? (
+                      <div className="space-y-1 text-sm">
+                        <p className="font-medium">{customer.name || "N/A"}</p>
+                        {customer.email && <p>{customer.email}</p>}
+                        {customer.phone && <p>{customer.phone}</p>}
+                        {customer.address && <p>{customer.address}</p>}
+                        {(customer.city || customer.state || customer.country) && (
+                          <p>
+                            {customer.city || ""}
+                            {customer.city && customer.state ? ", " : ""}
+                            {customer.state || ""}
+                            {customer.country ? `, ${customer.country}` : ""}
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-gray-500">Customer not found</p>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              {/* Line Items Section */}
+              {(() => {
+                const invoiceData = selectedInvoice as any;
+                console.log("🔍 Preview Dialog - Invoice data:", invoiceData);
+                console.log("🔍 Preview Dialog - Line items raw:", invoiceData.lineItems);
+                
+                let lineItems = [];
+                if (invoiceData.lineItems) {
+                  if (typeof invoiceData.lineItems === "string") {
+                    try {
+                      lineItems = JSON.parse(invoiceData.lineItems);
+                    } catch (e) {
+                      console.warn("Failed to parse line items:", e);
+                    }
+                  } else if (Array.isArray(invoiceData.lineItems)) {
+                    lineItems = invoiceData.lineItems;
+                  }
+                }
+                
+                console.log("🔍 Preview Dialog - Parsed line items:", lineItems);
+
+                return lineItems.length > 0 ? (
+                  <div>
+                    <h3 className="font-semibold mb-3">Line Items</h3>
+                    <div className="border rounded-lg overflow-hidden">
+                      <table className="w-full">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-4 py-2 text-left text-sm font-medium">#</th>
+                            <th className="px-4 py-2 text-left text-sm font-medium">Item</th>
+                            <th className="px-4 py-2 text-right text-sm font-medium">Quantity</th>
+                            <th className="px-4 py-2 text-right text-sm font-medium">Unit Price</th>
+                            <th className="px-4 py-2 text-right text-sm font-medium">Tax</th>
+                            <th className="px-4 py-2 text-right text-sm font-medium">Total</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {lineItems.map((item: any, index: number) => (
+                            <tr key={index}>
+                              <td className="px-4 py-2">{index + 1}</td>
+                              <td className="px-4 py-2">
+                                {item.itemTitle || item.description || "N/A"}
+                              </td>
+                              <td className="px-4 py-2 text-right">{item.quantity || 1}</td>
+                              <td className="px-4 py-2 text-right">
+                                {selectedInvoice.currency === "USD" ? "$" : "₹"}
+                                {parseFloat(item.sellingPrice || item.unitPrice || 0).toFixed(2)}
+                              </td>
+                              <td className="px-4 py-2 text-right">
+                                {selectedInvoice.currency === "USD" ? "$" : "₹"}
+                                {parseFloat(item.tax || 0).toFixed(2)}
+                              </td>
+                              <td className="px-4 py-2 text-right font-medium">
+                                {selectedInvoice.currency === "USD" ? "$" : "₹"}
+                                {parseFloat(item.totalAmount || 0).toFixed(2)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : null;
+              })()}
+
+              {/* Payment Summary Section */}
+              <div className="grid grid-cols-2 gap-6">
+                <div>
+                  {selectedInvoice.bookingId && (
+                    <div className="mb-4">
+                      <Label className="mb-2 block">Linked Booking</Label>
+                      {(() => {
+                        const booking = bookings.find(
+                          (b) => b.id === selectedInvoice.bookingId,
+                        );
+                        return booking ? (
+                          <div className="bg-blue-50 p-3 rounded-lg">
+                            <p className="font-medium">
+                              {booking.bookingNumber || `BK-${booking.id}`}
+                            </p>
+                            <p className="text-sm text-gray-600">
+                              Customer: {booking.customerName || "Unknown"} | Travel Date:{" "}
+                              {booking.travelDate
+                                ? new Date(booking.travelDate).toLocaleDateString()
+                                : "Not set"}
+                            </p>
+                          </div>
+                        ) : (
+                          <p className="text-sm text-gray-500">Booking not found</p>
+                        );
+                      })()}
+                    </div>
+                  )}
+                </div>
+                <div className="bg-gray-50 p-4 rounded-lg">
+                  <h3 className="font-semibold mb-3">Payment Summary</h3>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span>Subtotal:</span>
+                      <span className="font-medium">
+                        {selectedInvoice.currency === "USD" ? "$" : "₹"}
+                        {parseFloat(
+                          (selectedInvoice as any).subtotal ||
+                            selectedInvoice.totalAmount ||
+                            0,
+                        ).toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </span>
+                    </div>
+                    {(selectedInvoice as any).discountAmount &&
+                      parseFloat((selectedInvoice as any).discountAmount.toString()) > 0 && (
+                        <div className="flex justify-between text-red-600">
+                          <span>Discount:</span>
+                          <span className="font-medium">
+                            -{selectedInvoice.currency === "USD" ? "$" : "₹"}
+                            {parseFloat(
+                              (selectedInvoice as any).discountAmount.toString(),
+                            ).toLocaleString(undefined, {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
+                          </span>
+                        </div>
+                      )}
+                    {(selectedInvoice as any).taxAmount &&
+                      parseFloat((selectedInvoice as any).taxAmount.toString()) > 0 && (
+                        <div className="flex justify-between">
+                          <span>Tax:</span>
+                          <span className="font-medium">
+                            {selectedInvoice.currency === "USD" ? "$" : "₹"}
+                            {parseFloat(
+                              (selectedInvoice as any).taxAmount.toString(),
+                            ).toLocaleString(undefined, {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
+                          </span>
+                        </div>
+                      )}
+                    <div className="flex justify-between border-t pt-2 font-bold text-lg">
+                      <span>Total Amount:</span>
+                      <span>
+                        {selectedInvoice.currency === "USD" ? "$" : "₹"}
+                        {parseFloat(selectedInvoice.totalAmount || 0).toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </span>
+                    </div>
+                    {(selectedInvoice as any).paidAmount &&
+                      parseFloat((selectedInvoice as any).paidAmount.toString()) > 0 && (
+                        <>
+                          <div className="flex justify-between text-green-600 border-t pt-2">
+                            <span>Amount Paid:</span>
+                            <span className="font-medium">
+                              {selectedInvoice.currency === "USD" ? "$" : "₹"}
+                              {parseFloat(
+                                (selectedInvoice as any).paidAmount.toString(),
+                              ).toLocaleString(undefined, {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                            </span>
+                          </div>
+                          <div className="flex justify-between font-semibold">
+                            <span>Balance Due:</span>
+                            <span>
+                              {selectedInvoice.currency === "USD" ? "$" : "₹"}
+                              {(
+                                parseFloat(selectedInvoice.totalAmount || 0) -
+                                parseFloat((selectedInvoice as any).paidAmount.toString())
+                              ).toLocaleString(undefined, {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                            </span>
+                          </div>
+                        </>
+                      )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Notes and Payment Terms */}
+              {(selectedInvoice.notes || (selectedInvoice as any).paymentTerms) && (
+                <div className="space-y-3">
+                  {selectedInvoice.notes && (
+                    <div>
+                      <Label className="mb-2 block">Notes</Label>
+                      <p className="text-sm bg-gray-50 p-3 rounded-lg">
+                        {selectedInvoice.notes}
+                      </p>
+                    </div>
+                  )}
+                  {(selectedInvoice as any).paymentTerms && (
+                    <div>
+                      <Label className="mb-2 block">Payment Terms</Label>
+                      <p className="text-sm bg-gray-50 p-3 rounded-lg">
+                        {(selectedInvoice as any).paymentTerms}
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
-              <div className="flex justify-end space-x-2">
+
+              {/* Action Buttons */}
+              <div className="flex justify-end space-x-2 border-t pt-4">
                 <Button
                   variant="outline"
                   onClick={() => handleDownloadPDF(selectedInvoice)}
@@ -1885,9 +2071,7 @@ export default function Invoices() {
                   <Mail className="mr-2 h-4 w-4" />
                   Send Email
                 </Button>
-                <Button onClick={() => setIsViewDialogOpen(false)}>
-                  Close
-                </Button>
+                <Button onClick={() => setIsViewDialogOpen(false)}>Close</Button>
               </div>
             </div>
           )}

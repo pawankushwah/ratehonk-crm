@@ -284,7 +284,20 @@ export default function Expenses() {
       approvedBy: expense.approved_by,
       approvedAt: expense.approved_at,
       rejectionReason: expense.rejection_reason,
-      tags: expense.tags || [],
+      tags: (() => {
+        // Handle tags - they might be a JSON string, array, null, or undefined
+        if (!expense.tags) return [];
+        if (Array.isArray(expense.tags)) return expense.tags;
+        if (typeof expense.tags === 'string') {
+          try {
+            const parsed = JSON.parse(expense.tags);
+            return Array.isArray(parsed) ? parsed : [];
+          } catch {
+            return [];
+          }
+        }
+        return [];
+      })(),
       notes: expense.notes,
       createdAt: new Date(expense.created_at),
       createdByName: expense.created_by_name,
@@ -794,7 +807,7 @@ export default function Expenses() {
                                   }
                                 </div>
                               )}
-                              {expense.tags.length > 0 && (
+                              {Array.isArray(expense.tags) && expense.tags.length > 0 && (
                                 <div className="flex gap-1 flex-wrap">
                                   {expense.tags.slice(0, 2).map((tag, index) => (
                                     <Badge key={index} variant="secondary" className="text-xs">
@@ -1008,7 +1021,7 @@ export default function Expenses() {
                             </div>
                           )}
                           
-                          {expense.tags.length > 0 && (
+                          {Array.isArray(expense.tags) && expense.tags.length > 0 && (
                             <div className="flex gap-1 flex-wrap">
                               {expense.tags.slice(0, 3).map((tag, index) => (
                                 <Badge key={index} variant="outline" className="text-xs">
@@ -1575,7 +1588,7 @@ export default function Expenses() {
                 )}
                 
                 {/* Tags */}
-                {selectedExpense.tags.length > 0 && (
+                {Array.isArray(selectedExpense.tags) && selectedExpense.tags.length > 0 && (
                   <div>
                     <h4 className="font-medium mb-2">Tags</h4>
                     <div className="flex gap-2 flex-wrap">

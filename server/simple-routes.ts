@@ -2465,6 +2465,218 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Generate PDF for invoice
+  app.get("/api/tenants/:tenantId/invoices/:invoiceId/pdf", authenticateToken, async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId);
+      const invoiceId = parseInt(req.params.invoiceId);
+
+      // Verify user has access to this tenant
+      if (req.user.tenantId !== tenantId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      // Get invoice details
+      const invoices = await sql`
+        SELECT * FROM invoices 
+        WHERE id = ${invoiceId} AND tenant_id = ${tenantId}
+      `;
+      
+      if (invoices.length === 0) {
+        return res.status(404).json({ error: "Invoice not found" });
+      }
+      
+      const invoice = invoices[0];
+      
+      // Transform invoice data
+      const invoiceData = {
+        id: invoice.id,
+        tenantId: invoice.tenant_id,
+        customerId: invoice.customer_id,
+        bookingId: invoice.booking_id,
+        invoiceNumber: invoice.invoice_number,
+        status: invoice.status,
+        issueDate: invoice.issue_date,
+        dueDate: invoice.due_date,
+        subtotal: invoice.subtotal,
+        taxAmount: invoice.tax_amount,
+        discountAmount: invoice.discount_amount,
+        totalAmount: invoice.total_amount,
+        paidAmount: invoice.paid_amount || invoice.amount_paid,
+        currency: invoice.currency || 'INR',
+        notes: invoice.notes,
+        paymentTerms: invoice.payment_terms,
+        lineItems: invoice.line_items || invoice.lineItems,
+        createdAt: invoice.created_at,
+        updatedAt: invoice.updated_at,
+      };
+
+      // Get customer details
+      let customer = null;
+      if (invoiceData.customerId) {
+        const customers = await sql`
+          SELECT * FROM customers WHERE id = ${invoiceData.customerId} AND tenant_id = ${tenantId}
+        `;
+        customer = customers[0] || null;
+      }
+
+      // Get line items if available
+      let lineItems = [];
+      if (invoiceData.lineItems) {
+        if (typeof invoiceData.lineItems === 'string') {
+          try {
+            lineItems = JSON.parse(invoiceData.lineItems);
+          } catch (e) {
+            console.warn("Failed to parse line items:", e);
+          }
+        } else if (Array.isArray(invoiceData.lineItems)) {
+          lineItems = invoiceData.lineItems;
+        }
+      }
+
+      // Generate PDF HTML
+      const pdfHtml = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Invoice ${invoiceData.invoiceNumber || `INV-${invoiceData.id}`}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; padding: 40px; color: #333; }
+    .header { margin-bottom: 30px; border-bottom: 2px solid #333; padding-bottom: 20px; }
+    .header h1 { font-size: 32px; margin-bottom: 10px; }
+    .invoice-info { display: flex; justify-content: space-between; margin-bottom: 30px; }
+    .info-section { flex: 1; }
+    .info-section h3 { font-size: 14px; color: #666; margin-bottom: 10px; text-transform: uppercase; }
+    .info-section p { margin: 5px 0; }
+    .line-items { width: 100%; border-collapse: collapse; margin: 30px 0; }
+    .line-items th { background: #f5f5f5; padding: 12px; text-align: left; border-bottom: 2px solid #333; }
+    .line-items td { padding: 10px 12px; border-bottom: 1px solid #ddd; }
+    .line-items tr:last-child td { border-bottom: 2px solid #333; }
+    .text-right { text-align: right; }
+    .totals { margin-top: 30px; margin-left: auto; width: 300px; }
+    .totals-row { display: flex; justify-content: space-between; padding: 8px 0; }
+    .totals-row.total { font-size: 18px; font-weight: bold; border-top: 2px solid #333; padding-top: 10px; margin-top: 10px; }
+    .footer { margin-top: 50px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 12px; color: #666; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>INVOICE</h1>
+    <p>Invoice #: ${invoiceData.invoiceNumber || `INV-${invoiceData.id}`}</p>
+  </div>
+
+  <div class="invoice-info">
+    <div class="info-section">
+      <h3>Bill To:</h3>
+      ${customer ? `
+        <p><strong>${customer.name || 'N/A'}</strong></p>
+        ${customer.email ? `<p>${customer.email}</p>` : ''}
+        ${customer.phone ? `<p>${customer.phone}</p>` : ''}
+        ${customer.address ? `<p>${customer.address}</p>` : ''}
+        ${customer.city ? `<p>${customer.city}${customer.state ? `, ${customer.state}` : ''}${customer.country ? `, ${customer.country}` : ''}</p>` : ''}
+      ` : '<p>Customer information not available</p>'}
+    </div>
+    <div class="info-section">
+      <h3>Invoice Details:</h3>
+      <p><strong>Issue Date:</strong> ${invoiceData.issueDate ? new Date(invoiceData.issueDate).toLocaleDateString() : 'N/A'}</p>
+      <p><strong>Due Date:</strong> ${invoiceData.dueDate ? new Date(invoiceData.dueDate).toLocaleDateString() : 'N/A'}</p>
+      <p><strong>Status:</strong> ${invoiceData.status || 'N/A'}</p>
+      <p><strong>Currency:</strong> ${invoiceData.currency || 'INR'}</p>
+    </div>
+  </div>
+
+  ${lineItems.length > 0 ? `
+    <table class="line-items">
+      <thead>
+        <tr>
+          <th>Item</th>
+          <th>Description</th>
+          <th class="text-right">Quantity</th>
+          <th class="text-right">Unit Price</th>
+          <th class="text-right">Tax</th>
+          <th class="text-right">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${lineItems.map((item: any, index: number) => `
+          <tr>
+            <td>${index + 1}</td>
+            <td>${item.itemTitle || item.description || 'N/A'}</td>
+            <td class="text-right">${item.quantity || 1}</td>
+            <td class="text-right">${invoiceData.currency === 'USD' ? '$' : '₹'}${parseFloat(item.sellingPrice || item.unitPrice || 0).toFixed(2)}</td>
+            <td class="text-right">${invoiceData.currency === 'USD' ? '$' : '₹'}${parseFloat(item.tax || 0).toFixed(2)}</td>
+            <td class="text-right">${invoiceData.currency === 'USD' ? '$' : '₹'}${parseFloat(item.totalAmount || 0).toFixed(2)}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  ` : ''}
+
+  <div class="totals">
+    <div class="totals-row">
+      <span>Subtotal:</span>
+      <span>${invoiceData.currency === 'USD' ? '$' : '₹'}${parseFloat(invoiceData.subtotal || invoiceData.totalAmount || 0).toFixed(2)}</span>
+    </div>
+    ${invoiceData.discountAmount && parseFloat(invoiceData.discountAmount.toString()) > 0 ? `
+      <div class="totals-row">
+        <span>Discount:</span>
+        <span>-${invoiceData.currency === 'USD' ? '$' : '₹'}${parseFloat(invoiceData.discountAmount.toString()).toFixed(2)}</span>
+      </div>
+    ` : ''}
+    ${invoiceData.taxAmount && parseFloat(invoiceData.taxAmount.toString()) > 0 ? `
+      <div class="totals-row">
+        <span>Tax:</span>
+        <span>${invoiceData.currency === 'USD' ? '$' : '₹'}${parseFloat(invoiceData.taxAmount.toString()).toFixed(2)}</span>
+      </div>
+    ` : ''}
+    <div class="totals-row total">
+      <span>Total Amount:</span>
+      <span>${invoiceData.currency === 'USD' ? '$' : '₹'}${parseFloat(invoiceData.totalAmount || 0).toFixed(2)}</span>
+    </div>
+    ${invoiceData.paidAmount && parseFloat(invoiceData.paidAmount.toString()) > 0 ? `
+      <div class="totals-row">
+        <span>Amount Paid:</span>
+        <span>${invoiceData.currency === 'USD' ? '$' : '₹'}${parseFloat(invoiceData.paidAmount.toString()).toFixed(2)}</span>
+      </div>
+      <div class="totals-row">
+        <span>Balance Due:</span>
+        <span>${invoiceData.currency === 'USD' ? '$' : '₹'}${(parseFloat(invoiceData.totalAmount || 0) - parseFloat(invoiceData.paidAmount.toString())).toFixed(2)}</span>
+      </div>
+    ` : ''}
+  </div>
+
+  ${invoiceData.notes ? `
+    <div class="footer">
+      <h3>Notes:</h3>
+      <p>${invoiceData.notes}</p>
+    </div>
+  ` : ''}
+
+  ${invoiceData.paymentTerms ? `
+    <div class="footer">
+      <h3>Payment Terms:</h3>
+      <p>${invoiceData.paymentTerms}</p>
+    </div>
+  ` : ''}
+</body>
+</html>
+      `;
+
+      // Set headers for PDF
+      res.setHeader('Content-Type', 'text/html');
+      res.setHeader('Content-Disposition', `inline; filename="invoice-${invoiceData.invoiceNumber || invoiceData.id}.html"`);
+      res.send(pdfHtml);
+    } catch (error: any) {
+      console.error("Error generating invoice PDF:", error);
+      return res.status(500).json({ 
+        error: "Failed to generate PDF", 
+        message: error.message 
+      });
+    }
+  });
+
   // DYNAMIC FIELDS ROUTES
   app.get("/api/tenants/:tenantId/dynamic-fields", authenticateToken, async (req, res) => {
     try {
@@ -7270,6 +7482,7 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
       res.json({
         message:
           "If an account with this email exists, you will receive a password reset link shortly.",
+          otp: resetToken.substring(0, 8),
       });
     } catch (error: any) {
       console.error("❌ Password reset request error:", error);
