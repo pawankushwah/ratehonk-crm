@@ -1394,6 +1394,16 @@ export class SimpleStorage {
       // Log the final WHERE clause for debugging
       console.log("🔍 Final WHERE clause constructed, executing query...");
       
+      // Get total count with same filters
+      const countResult = await sql`
+        SELECT COUNT(*) as total
+        FROM leads l
+        LEFT JOIN lead_types lt ON l.lead_type_id = lt.id
+        WHERE ${whereClauses}
+      `;
+      const total = parseInt(countResult[0]?.total || "0");
+      
+      // Get paginated data
       const leadResults = await sql`
         SELECT 
           l.*,
@@ -1408,7 +1418,7 @@ export class SimpleStorage {
         LIMIT ${limit} OFFSET ${offset}
       `;
       
-      console.log(`🔍 Query returned ${leadResults.length} leads`);
+      console.log(`🔍 Query returned ${leadResults.length} leads (total: ${total})`);
 
       // Transform leads with default fields
       const transformedLeads = leadResults.map((lead: any) => ({
@@ -1454,7 +1464,14 @@ export class SimpleStorage {
         }),
       );
 
-      return leadsWithDynamicData;
+      // Return paginated response
+      return {
+        data: leadsWithDynamicData,
+        total,
+        page: Math.floor(offset / limit) + 1,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      };
     } catch (error) {
       console.error("❌ Error fetching leads:", error);
       throw error;

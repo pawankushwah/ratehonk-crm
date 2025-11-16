@@ -1753,7 +1753,16 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
         typeSpecificFilters: String(typeSpecificFilters),
       });
 
-      res.json(leads || []);
+      // Return paginated response with total count
+      res.json(
+        leads || {
+          data: [],
+          total: 0,
+          page: Number(page) || 1,
+          limit: Number(limit),
+          totalPages: 0,
+        },
+      );
     } catch (error: any) {
       console.error("❌ Enhanced leads API error:", error);
       res.status(500).json({ error: error.message });

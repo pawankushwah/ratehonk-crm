@@ -342,6 +342,11 @@ export default function Leads() {
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const [totalItems, setTotalItems] = useState(0);
 
+  // Reset to page 1 when search term changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm]);
+
   useEffect(() => {
     const today = new Date();
     let start: Date | null = null;
@@ -1842,104 +1847,99 @@ export default function Leads() {
               </Table>
 
               {/* Pagination Controls */}
-              <div className="flex items-center justify-between px-6 py-4 border-t">
-                <div className="flex items-center space-x-2">
-                  <span className="text-sm text-gray-700">Show</span>
-                  <Select
-                    value={itemsPerPage.toString()}
-                    onValueChange={(value) => {
-                      setItemsPerPage(parseInt(value));
-                      setCurrentPage(1);
-                    }}
-                  >
-                    <SelectTrigger className="w-[70px]">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="5">5</SelectItem>
-                      <SelectItem value="10">10</SelectItem>
-                      <SelectItem value="25">25</SelectItem>
-                      <SelectItem value="50">50</SelectItem>
-                      <SelectItem value="100">100</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <span className="text-sm text-gray-700">
-                    of {totalItems} results
-                  </span>
-                </div>
-
-                <div className="flex items-center space-x-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-                    disabled={currentPage === 1}
-                    data-testid="button-previous-page"
-                  >
-                    Previous
-                  </Button>
-
-                  <div className="flex items-center space-x-1">
-                    {(() => {
-                      const totalPages = Math.ceil(totalItems / itemsPerPage);
-                      const maxVisiblePages = 5;
-                      const pages = [];
-
-                      for (
-                        let i = 0;
-                        i < Math.min(maxVisiblePages, totalPages);
-                        i++
-                      ) {
-                        let pageNumber;
-                        if (totalPages <= maxVisiblePages) {
-                          pageNumber = i + 1;
-                        } else if (currentPage <= 3) {
-                          pageNumber = i + 1;
-                        } else if (currentPage >= totalPages - 2) {
-                          pageNumber = totalPages - 4 + i;
-                        } else {
-                          pageNumber = currentPage - 2 + i;
-                        }
-
-                        pages.push(
-                          <Button
-                            key={pageNumber}
-                            variant={
-                              currentPage === pageNumber ? "default" : "outline"
-                            }
-                            size="sm"
-                            onClick={() => setCurrentPage(pageNumber)}
-                            className="w-8 h-8 p-0"
-                            data-testid={`button-page-${pageNumber}`}
-                          >
-                            {pageNumber}
-                          </Button>,
-                        );
-                      }
-                      return pages;
-                    })()}
+              {totalItems > 0 && (
+                <div className="flex items-center justify-between px-4 py-3 border-t">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-600">Items per page:</span>
+                    <Select
+                      value={itemsPerPage.toString()}
+                      onValueChange={(value) => {
+                        setItemsPerPage(Number(value));
+                        setCurrentPage(1);
+                      }}
+                    >
+                      <SelectTrigger
+                        className="w-20"
+                        data-testid="select-items-per-page"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="5">5</SelectItem>
+                        <SelectItem value="10">10</SelectItem>
+                        <SelectItem value="25">25</SelectItem>
+                        <SelectItem value="50">50</SelectItem>
+                        <SelectItem value="100">100</SelectItem>
+                        <SelectItem value="500">500</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
 
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      setCurrentPage(
-                        Math.min(
-                          Math.ceil(totalItems / itemsPerPage),
-                          currentPage + 1,
-                        ),
-                      )
-                    }
-                    disabled={
-                      currentPage >= Math.ceil(totalItems / itemsPerPage)
-                    }
-                    data-testid="button-next-page"
-                  >
-                    Next
-                  </Button>
+                  <div className="flex items-center gap-4">
+                    <span
+                      className="text-sm text-gray-600"
+                      data-testid="text-pagination-info"
+                    >
+                      {Math.min((currentPage - 1) * itemsPerPage + 1, totalItems)}{" "}
+                      - {Math.min(currentPage * itemsPerPage, totalItems)} of{" "}
+                      {totalItems} results
+                    </span>
+
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setCurrentPage(Math.max(1, currentPage - 1))
+                        }
+                        disabled={currentPage <= 1}
+                        data-testid="button-prev-page"
+                      >
+                        Previous
+                      </Button>
+
+                      <div className="flex items-center gap-1">
+                        {(() => {
+                          const totalPages = Math.ceil(totalItems / itemsPerPage);
+                          const pages = [];
+                          const startPage = Math.max(1, currentPage - 2);
+                          const endPage = Math.min(totalPages, currentPage + 2);
+
+                          for (let i = startPage; i <= endPage; i++) {
+                            pages.push(
+                              <Button
+                                key={i}
+                                variant={
+                                  currentPage === i ? "default" : "outline"
+                                }
+                                onClick={() => setCurrentPage(i)}
+                                className="w-8 h-8 p-0"
+                                data-testid={`button-page-${i}`}
+                              >
+                                {i}
+                              </Button>,
+                            );
+                          }
+                          return pages;
+                        })()}
+                      </div>
+
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          const totalPages = Math.ceil(totalItems / itemsPerPage);
+                          setCurrentPage(Math.min(totalPages, currentPage + 1));
+                        }}
+                        disabled={currentPage >= Math.ceil(totalItems / itemsPerPage)}
+                        data-testid="button-next-page"
+                      >
+                        Next
+                      </Button>
+                    </div>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           )}
           {/*KanbanBoard table  */}
