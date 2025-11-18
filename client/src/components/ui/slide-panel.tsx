@@ -23,7 +23,7 @@ export function SlidePanel({
     <>
       {/* Overlay */}
       <div
-        className="fixed inset-0 bg-black/50 z-40 transition-opacity"
+        className="fixed inset-0 bg-black/20 z-40 transition-opacity"
         onClick={onClose}
       />
 
