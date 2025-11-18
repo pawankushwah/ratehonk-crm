@@ -18,6 +18,7 @@ import { registerZoomRoutes } from "./zoom-routes";
 import {
   registerWhatsAppRoutes,
   sendWhatsAppWelcomeMessage,
+  sendWhatsAppCustomMessage,
 } from "./whatsapp-routes";
 import { registerMeetingRoutes } from "./meeting-routes";
 
@@ -2257,6 +2258,575 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
       return res.status(500).json({ message: "Internal server error", error: error.message });
     }
   });
+
+  app.post(
+    "/api/tenants/:tenantId/customers/:customerId/send-consulation-form",
+    authenticateToken,
+    async (req: any, res) => {
+      try {
+        const tenantId = parseInt(req.params.tenantId);
+        const customerId = parseInt(req.params.customerId);
+
+        if (!req.user || req.user.tenantId !== tenantId) {
+          return res.status(403).json({ message: "Unauthorized" });
+        }
+
+        const customer = await simpleStorage.getCustomerById(
+          customerId,
+          tenantId,
+        );
+
+        if (!customer) {
+          return res.status(404).json({ message: "Customer not found" });
+        }
+
+        if (!customer.email && !customer.phone) {
+          return res.status(400).json({
+            message: "Customer must have an email or phone number to send form",
+          });
+        }
+
+        const baseUrl = getBaseUrl();
+        const formUrl = `${baseUrl}/consulation-form?tenantId=${tenantId}&customerId=${customerId}`;
+        const customerName = customer.name || customer.email || "there";
+        const toastTenantName =
+          req.user?.tenantName || req.user?.companyName || "RateHonk CRM";
+
+        // Fetch form fields from database
+        let formFields: Array<{ id: string; label: string; type: string; required?: boolean }> = [];
+        try {
+          const [formTemplate] = await sql`
+            SELECT fields FROM consulation_form_templates
+            WHERE tenant_id = ${tenantId}
+            ORDER BY created_at DESC
+            LIMIT 1
+          `;
+          if (formTemplate && formTemplate.fields) {
+            formFields = formTemplate.fields;
+          }
+        } catch (dbError) {
+          console.log("No form template found in database, using empty fields list");
+        }
+
+        let emailSent = false;
+        if (customer.email) {
+          emailSent = await emailService.sendConsulationFormEmail({
+            to: customer.email,
+            customerName,
+            formUrl,
+            tenantName: toastTenantName,
+          });
+        }
+
+        let whatsappResult: { success: boolean; message?: string; error?: string } | null =
+          null;
+        if (customer.phone) {
+          const whatsappMessage = `Hello ${customerName}, please complete your consulation form here: ${formUrl}`;
+          whatsappResult = await sendWhatsAppCustomMessage({
+            tenantId,
+            phoneNumber: customer.phone,
+            message: whatsappMessage,
+            userId: req.user?.id,
+            customerId,
+            activityTitle: "Consulation Form Link Sent",
+          });
+        }
+
+        return res.json({
+          success: true,
+          formUrl,
+          sent: {
+            email: emailSent,
+            whatsapp: whatsappResult?.success || false,
+          },
+        });
+      } catch (error: any) {
+        console.error("❌ Error sending consulation form:", error);
+        return res.status(500).json({
+          message: "Failed to send consulation form",
+          error: error?.message,
+        });
+      }
+    },
+  );
+
+  // Save consulation form template for a tenant (protected endpoint - auth required)
+  app.post(
+    "/api/tenants/:tenantId/consulation-form/template",
+    authenticateToken,
+    async (req: any, res) => {
+      try {
+        const tenantId = parseInt(req.params.tenantId);
+
+        if (!tenantId || isNaN(tenantId)) {
+          return res.status(400).json({
+            success: false,
+            message: "Valid tenant ID is required",
+          });
+        }
+
+        if (!req.user || req.user.tenantId !== tenantId) {
+          return res.status(403).json({ message: "Unauthorized" });
+        }
+
+        const { fields } = req.body;
+
+        console.log("💾 Saving consulation form template:", {
+          tenantId,
+          fieldsCount: fields?.length,
+          fields: fields,
+        });
+
+        if (!fields || !Array.isArray(fields)) {
+          return res.status(400).json({
+            success: false,
+            message: "Form fields array is required",
+          });
+        }
+
+        // Check if template already exists for this tenant
+        const [existingTemplate] = await sql`
+          SELECT id FROM consulation_form_templates
+          WHERE tenant_id = ${tenantId}
+          ORDER BY created_at DESC
+          LIMIT 1
+        `;
+
+        const fieldsJson = JSON.stringify(fields);
+        console.log("💾 Fields JSON to save:", fieldsJson);
+
+        if (existingTemplate) {
+          // Update existing template
+          const updateResult = await sql`
+            UPDATE consulation_form_templates
+            SET fields = ${fieldsJson}::jsonb,
+                updated_at = NOW()
+            WHERE id = ${existingTemplate.id}
+            RETURNING id, tenant_id, fields
+          `;
+          console.log("✅ Updated existing template:", updateResult[0]);
+        } else {
+          // Create new template
+          const insertResult = await sql`
+            INSERT INTO consulation_form_templates (
+              tenant_id, fields, created_at, updated_at
+            )
+            VALUES (
+              ${tenantId}, ${fieldsJson}::jsonb, NOW(), NOW()
+            )
+            RETURNING id, tenant_id, fields
+          `;
+          console.log("✅ Created new template:", insertResult[0]);
+        }
+
+        // Verify the save by reading it back
+        const [verifyTemplate] = await sql`
+          SELECT fields FROM consulation_form_templates
+          WHERE tenant_id = ${tenantId}
+          ORDER BY created_at DESC
+          LIMIT 1
+        `;
+        
+        console.log("✅ Verified saved template:", {
+          hasFields: !!verifyTemplate?.fields,
+          fieldsType: typeof verifyTemplate?.fields,
+          isArray: Array.isArray(verifyTemplate?.fields),
+          fieldsLength: Array.isArray(verifyTemplate?.fields) ? verifyTemplate.fields.length : 'N/A',
+        });
+
+        return res.json({
+          success: true,
+          message: "Consulation form template saved successfully",
+        });
+      } catch (error: any) {
+        console.error("❌ Error saving consulation form template:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Failed to save consulation form template",
+          error: error?.message,
+        });
+      }
+    },
+  );
+
+  // Get consulation form fields for a tenant (public endpoint - no auth required)
+  app.get(
+    "/api/tenants/:tenantId/consulation-form",
+    async (req: any, res) => {
+      console.log("🔍 GET /api/tenants/:tenantId/consulation-form - Request received:", {
+        tenantId: req.params.tenantId,
+        url: req.url,
+        method: req.method,
+      });
+      
+      try {
+        const tenantId = parseInt(req.params.tenantId);
+        console.log("🔍 Parsed tenantId:", tenantId);
+
+        if (!tenantId || isNaN(tenantId)) {
+          console.log("❌ Invalid tenantId:", req.params.tenantId);
+          return res.status(400).json({
+            success: false,
+            message: "Valid tenant ID is required",
+          });
+        }
+
+        // Try to get form fields from database
+        try {
+          // Query JSONB field - explicitly cast to ensure proper retrieval
+          const result = await sql`
+            SELECT 
+              id,
+              tenant_id,
+              fields::text as fields_text,
+              fields as fields_jsonb,
+              created_at,
+              updated_at
+            FROM consulation_form_templates
+            WHERE tenant_id = ${tenantId}
+            ORDER BY created_at DESC
+            LIMIT 1
+          `;
+
+          console.log("📋 Form template query result:", {
+            resultLength: result?.length,
+            hasResult: !!result && result.length > 0,
+            tenantId: tenantId,
+          });
+
+          if (result && result.length > 0) {
+            const formTemplate = result[0];
+            console.log("📋 Form template from DB:", {
+              hasTemplate: !!formTemplate,
+              id: formTemplate?.id,
+              tenant_id: formTemplate?.tenant_id,
+              hasFields: !!formTemplate?.fields_jsonb,
+              hasFieldsText: !!formTemplate?.fields_text,
+              fieldsJsonbType: typeof formTemplate?.fields_jsonb,
+              fieldsTextType: typeof formTemplate?.fields_text,
+              fieldsJsonbValue: formTemplate?.fields_jsonb,
+              fieldsTextValue: formTemplate?.fields_text,
+              fieldsJsonbPreview: typeof formTemplate?.fields_jsonb === 'string' 
+                ? formTemplate.fields_jsonb.substring(0, 200) 
+                : JSON.stringify(formTemplate?.fields_jsonb).substring(0, 200),
+              fieldsTextPreview: formTemplate?.fields_text?.substring(0, 200),
+              isArray: Array.isArray(formTemplate?.fields_jsonb),
+            });
+
+            // Parse the fields - try both jsonb and text versions
+            // Prefer fields_jsonb if it's already parsed, otherwise parse fields_text
+            let parsedFields = formTemplate.fields_jsonb;
+            
+            // If jsonb is not an array, try parsing the text version
+            if (!Array.isArray(parsedFields)) {
+              const textToParse = formTemplate.fields_text || formTemplate.fields_jsonb;
+              if (textToParse && typeof textToParse === 'string') {
+                parsedFields = textToParse;
+              }
+            }
+            
+            console.log("🔍 Raw fields from DB:", {
+              type: typeof parsedFields,
+              isString: typeof parsedFields === 'string',
+              isArray: Array.isArray(parsedFields),
+              preview: typeof parsedFields === 'string' 
+                ? parsedFields.substring(0, 200) 
+                : JSON.stringify(parsedFields).substring(0, 200),
+            });
+            
+            // JSONB is often returned as a string, so we need to parse it
+            // If it's already an array, use it directly
+            if (Array.isArray(parsedFields)) {
+              console.log("✅ Fields is already an array, using directly");
+            } else if (typeof parsedFields === 'string') {
+              try {
+                parsedFields = JSON.parse(parsedFields);
+                console.log("✅ Parsed fields from JSON string, result type:", typeof parsedFields, "isArray:", Array.isArray(parsedFields));
+              } catch (parseError: any) {
+                console.error("❌ Failed to parse fields JSON string:", parseError?.message);
+                // Try parsing the text version as fallback
+                if (formTemplate.fields_text && typeof formTemplate.fields_text === 'string') {
+                  try {
+                    parsedFields = JSON.parse(formTemplate.fields_text);
+                    console.log("✅ Parsed fields from fields_text as fallback");
+                  } catch (fallbackError: any) {
+                    console.error("❌ Fallback parse also failed:", fallbackError?.message);
+                    parsedFields = null;
+                  }
+                } else {
+                  parsedFields = null;
+                }
+              }
+            } else if (parsedFields && typeof parsedFields === 'object') {
+              // It's already an object, might be parsed JSONB
+              console.log("✅ Fields is already an object, checking if it's an array...");
+            } else {
+              // Try parsing the text version
+              if (formTemplate.fields_text && typeof formTemplate.fields_text === 'string') {
+                try {
+                  parsedFields = JSON.parse(formTemplate.fields_text);
+                  console.log("✅ Parsed fields from fields_text");
+                } catch (parseError: any) {
+                  console.error("❌ Failed to parse fields_text:", parseError?.message);
+                  parsedFields = null;
+                }
+              }
+            }
+            
+            // If it's still an object but not an array, check if it needs unwrapping
+            if (parsedFields && typeof parsedFields === 'object' && !Array.isArray(parsedFields)) {
+              // Check if it's a Postgres JSONB object that needs unwrapping
+              if (parsedFields.fields && Array.isArray(parsedFields.fields)) {
+                parsedFields = parsedFields.fields;
+                console.log("✅ Extracted fields from object wrapper");
+              } else if (parsedFields.data && Array.isArray(parsedFields.data)) {
+                parsedFields = parsedFields.data;
+                console.log("✅ Extracted fields from data property");
+              } else {
+                // If it's a single object, wrap it in an array
+                parsedFields = [parsedFields];
+                console.log("⚠️ Converted single object to array");
+              }
+            }
+
+            // Ensure it's an array and return it
+            if (parsedFields && Array.isArray(parsedFields) && parsedFields.length > 0) {
+              console.log("✅ Returning", parsedFields.length, "fields:", JSON.stringify(parsedFields, null, 2));
+              return res.json({
+                success: true,
+                fields: parsedFields,
+              });
+            } else {
+              console.log("⚠️ Fields is not a valid array or is empty:", {
+                parsedFields,
+                type: typeof parsedFields,
+                isArray: Array.isArray(parsedFields),
+                length: Array.isArray(parsedFields) ? parsedFields.length : 'N/A',
+                rawFields: formTemplate.fields,
+                rawFieldsType: typeof formTemplate.fields,
+              });
+            }
+          } else {
+            console.log("⚠️ No template found for tenant:", tenantId);
+          }
+        } catch (dbError: any) {
+          console.error("❌ Error fetching form template from database:", {
+            message: dbError?.message,
+            code: dbError?.code,
+            stack: dbError?.stack,
+          });
+        }
+
+        // Return empty array if no fields found - form will show message
+        return res.json({
+          success: true,
+          fields: [],
+        });
+      } catch (error: any) {
+        console.error("❌ Error getting consulation form:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Failed to load consulation form",
+          error: error?.message,
+        });
+      }
+    },
+  );
+
+  // Submit consulation form (public endpoint - no auth required)
+  app.post(
+    "/api/tenants/:tenantId/customers/:customerId/consulation-form/submit",
+    async (req: any, res) => {
+      try {
+        const tenantId = parseInt(req.params.tenantId);
+        const customerId = parseInt(req.params.customerId);
+
+        if (!tenantId || isNaN(tenantId)) {
+          return res.status(400).json({
+            success: false,
+            message: "Valid tenant ID is required",
+          });
+        }
+
+        if (!customerId || isNaN(customerId)) {
+          return res.status(400).json({
+            success: false,
+            message: "Valid customer ID is required",
+          });
+        }
+
+        // Verify customer exists
+        const customer = await simpleStorage.getCustomerById(
+          customerId,
+          tenantId,
+        );
+
+        if (!customer) {
+          return res.status(404).json({
+            success: false,
+            message: "Customer not found",
+          });
+        }
+
+        const { fields, responses } = req.body;
+
+        if (!fields || !Array.isArray(fields) || !responses) {
+          return res.status(400).json({
+            success: false,
+            message: "Form fields and responses are required",
+          });
+        }
+
+        // Save submission to database
+        const [submission] = await sql`
+          INSERT INTO consulation_form_submissions (
+            tenant_id, customer_id, form_fields, responses, created_at, updated_at
+          )
+          VALUES (
+            ${tenantId}, ${customerId}, ${JSON.stringify(fields)}::jsonb, ${JSON.stringify(responses)}::jsonb, NOW(), NOW()
+          )
+          RETURNING *
+        `;
+
+        // Create customer activity for the submission
+        try {
+          await simpleStorage.createCustomerActivity({
+            tenantId,
+            customerId,
+            userId: null, // No user since it's a public form
+            activityType: 12, // Consulation Form Submitted (you may need to add this type)
+            activityTitle: "Consulation Form Submitted",
+            activityDescription: `Customer submitted consulation form with ${fields.length} fields`,
+            activityStatus: 1,
+          });
+        } catch (activityError) {
+          console.warn("⚠️ Failed to log consulation form activity:", activityError);
+          // Don't fail the submission if activity logging fails
+        }
+
+        return res.json({
+          success: true,
+          message: "Consulation form submitted successfully",
+          submissionId: submission.id,
+        });
+      } catch (error: any) {
+        console.error("❌ Error submitting consulation form:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Failed to submit consulation form",
+          error: error?.message,
+        });
+      }
+    },
+  );
+
+  // Get consulation form submissions for a customer
+  app.get(
+    "/api/tenants/:tenantId/customers/:customerId/consulation-form-submissions",
+    authenticateToken,
+    async (req: any, res) => {
+      try {
+        const tenantId = parseInt(req.params.tenantId);
+        const customerId = parseInt(req.params.customerId);
+
+        if (!tenantId || isNaN(tenantId)) {
+          return res.status(400).json({
+            success: false,
+            message: "Valid tenant ID is required",
+          });
+        }
+
+        if (!customerId || isNaN(customerId)) {
+          return res.status(400).json({
+            success: false,
+            message: "Valid customer ID is required",
+          });
+        }
+
+        // Check authorization
+        if (!req.user || req.user.tenantId !== tenantId) {
+          return res.status(403).json({ message: "Unauthorized" });
+        }
+
+        // Fetch submissions from database
+        const submissions = await sql`
+          SELECT 
+            id,
+            tenant_id,
+            customer_id,
+            form_fields::text as form_fields_text,
+            form_fields as form_fields_jsonb,
+            responses::text as responses_text,
+            responses as responses_jsonb,
+            created_at,
+            updated_at
+          FROM consulation_form_submissions
+          WHERE tenant_id = ${tenantId} AND customer_id = ${customerId}
+          ORDER BY created_at DESC
+        `;
+
+        // Parse JSONB fields
+        const parsedSubmissions = submissions.map((submission: any) => {
+          let formFields = submission.form_fields_jsonb;
+          let responses = submission.responses_jsonb;
+
+          // Parse form_fields if it's a string
+          if (typeof formFields === 'string') {
+            try {
+              formFields = JSON.parse(formFields);
+            } catch (e) {
+              // Try parsing from text version
+              if (submission.form_fields_text) {
+                try {
+                  formFields = JSON.parse(submission.form_fields_text);
+                } catch (e2) {
+                  formFields = [];
+                }
+              }
+            }
+          }
+
+          // Parse responses if it's a string
+          if (typeof responses === 'string') {
+            try {
+              responses = JSON.parse(responses);
+            } catch (e) {
+              // Try parsing from text version
+              if (submission.responses_text) {
+                try {
+                  responses = JSON.parse(submission.responses_text);
+                } catch (e2) {
+                  responses = {};
+                }
+              }
+            }
+          }
+
+          return {
+            id: submission.id,
+            tenantId: submission.tenant_id,
+            customerId: submission.customer_id,
+            formFields: formFields || [],
+            responses: responses || {},
+            createdAt: submission.created_at,
+            updatedAt: submission.updated_at,
+          };
+        });
+
+        return res.json({
+          success: true,
+          submissions: parsedSubmissions,
+        });
+      } catch (error: any) {
+        console.error("❌ Error fetching consulation form submissions:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Failed to fetch consulation form submissions",
+          error: error?.message,
+        });
+      }
+    },
+  );
 
   app.delete("/api/tenants/:tenantId/customers/:customerId", authenticateToken, async (req, res) => {
     try {

@@ -926,6 +926,35 @@ export const expenses = pgTable("expenses", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+// Consulation form templates table
+export const consulationFormTemplates = pgTable("consulation_form_templates", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+  fields: json("fields").$type<Array<{
+    id: string;
+    label: string;
+    type: string;
+    required?: boolean;
+  }>>().notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Consulation form submissions table
+export const consulationFormSubmissions = pgTable("consulation_form_submissions", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+  customerId: integer("customer_id").notNull().references(() => customers.id),
+  formFields: json("form_fields").$type<Array<{
+    id: string;
+    label: string;
+    type: string;
+  }>>().notNull(),
+  responses: json("responses").$type<Record<string, string>>().notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 // Call logs insert schema
 export const insertCallLogSchema = createInsertSchema(callLogs).omit({
   id: true,

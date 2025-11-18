@@ -58,7 +58,11 @@ export async function apiRequest(
   console.log("🔍 API Request - Data:", data);
   console.log("🔍 API Request - Token:", token ? "Present" : "Missing");
   
-  if (data) {
+  // Only set Content-Type and body for methods that support it (POST, PUT, PATCH)
+  const methodsWithBody = ["POST", "PUT", "PATCH"];
+  const hasBody = data && methodsWithBody.includes(method.toUpperCase());
+  
+  if (hasBody) {
     headers["Content-Type"] = "application/json";
   }
   
@@ -77,7 +81,7 @@ export async function apiRequest(
   console.log("🔍 API Request - Headers:", headers);
 
   // Add cache-busting headers for GET requests to prevent 304 responses
-  if (method === "GET") {
+  if (method.toUpperCase() === "GET") {
     headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
     headers["Pragma"] = "no-cache";
     headers["Expires"] = "0";
@@ -86,9 +90,9 @@ export async function apiRequest(
   const res = await fetch(fullUrl, {
     method,
     headers,
-    body: data ? JSON.stringify(data) : undefined,
+    body: hasBody ? JSON.stringify(data) : undefined, // Only include body for methods that support it
     credentials: "include",
-    cache: method === "GET" ? "no-store" : "default", // Prevent browser caching for GET requests
+    cache: method.toUpperCase() === "GET" ? "no-store" : "default", // Prevent browser caching for GET requests
   });
 
   console.log("🔍 API Request - Response status:", res.status);

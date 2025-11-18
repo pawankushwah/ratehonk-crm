@@ -170,6 +170,119 @@ export async function sendWhatsAppWelcomeMessage(
   }
 }
 
+export async function sendWhatsAppCustomMessage(options: {
+  tenantId: number;
+  phoneNumber: string;
+  message: string;
+  userId?: number;
+  customerId?: number;
+  leadId?: number;
+  activityTitle?: string;
+}): Promise<{ success: boolean; message?: string; error?: string }> {
+  try {
+    const { tenantId, phoneNumber, message, userId, customerId, leadId } =
+      options;
+
+    if (!phoneNumber || phoneNumber.trim() === "") {
+      return { success: false, error: "Phone number is required" };
+    }
+    if (!message || message.trim() === "") {
+      return { success: false, error: "Message text is required" };
+    }
+
+    const config = await storage.getWhatsAppConfigByTenant(tenantId);
+    if (!config) {
+      return {
+        success: false,
+        error: "WhatsApp is not configured for this tenant",
+      };
+    }
+
+    const devices = await storage.getWhatsAppDevicesByTenant(tenantId);
+    const defaultDevice =
+      devices.find(
+        (device: any) => device.isDefault && device.status === "connected",
+      ) || devices.find((device: any) => device.status === "connected");
+
+    if (!defaultDevice) {
+      return {
+        success: false,
+        error: "No connected WhatsApp device found for this tenant",
+      };
+    }
+
+    const payload = {
+      api_key: config.apiKey,
+      sender: defaultDevice.number,
+      number: phoneNumber.trim(),
+      message: message.trim(),
+    };
+
+    console.log("📤 Sending WhatsApp consultation message:", {
+      tenantId,
+      sender: defaultDevice.number,
+      recipient: phoneNumber,
+      messageLength: message.length,
+    });
+
+    const response = await fetch(`${WHATSAPP_API_BASE}/send-message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json();
+
+    if (!data?.status) {
+      console.error("❌ WhatsApp API send-message error:", data);
+      return {
+        success: false,
+        error: data?.msg || data?.error || "Failed to send WhatsApp message",
+      };
+    }
+
+    await storage.incrementDeviceMessageCount(defaultDevice.id);
+
+    try {
+      if (customerId && userId) {
+        await storage.createCustomerActivity({
+          tenantId,
+          customerId,
+          userId,
+          activityType: 5,
+          activityTitle:
+            options.activityTitle || "Consultation Form Link Sent",
+          activityDescription: `WhatsApp message sent: "${message.substring(0, 120)}${
+            message.length > 120 ? "..." : ""
+          }"`,
+          activityStatus: 1,
+          activityDate: new Date().toISOString(),
+        });
+      } else if (leadId && userId) {
+        await storage.createLeadActivity({
+          tenantId,
+          leadId,
+          userId,
+          activityType: 5,
+          activityTitle: options.activityTitle || "Consultation Form Link Sent",
+          activityDescription: `WhatsApp message sent: "${message.substring(0, 120)}${
+            message.length > 120 ? "..." : ""
+          }"`,
+          activityStatus: 1,
+          activityDate: new Date().toISOString(),
+        });
+      }
+    } catch (activityError) {
+      console.error("⚠️ Failed to log WhatsApp consultation activity:", activityError);
+    }
+
+    return { success: true, message: "WhatsApp message sent successfully" };
+  } catch (error: any) {
+    console.error("❌ Error sending WhatsApp consultation message:", error);
+    return { success: false, error: error?.message || "Failed to send WhatsApp message" };
+  }
+}
+
 // Zod schema for validating external WhatsApp API response
 const WhatsAppAPIResponseSchema = z.object({
   status: z.boolean(),

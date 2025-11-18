@@ -61,6 +61,8 @@ import {
   Package,
   UserCheck,
   Target,
+  ClipboardList,
+  Loader2,
 } from "lucide-react";
 import {
   BarChart,
@@ -119,9 +121,11 @@ export default function CustomerDetail() {
   const [isEditBookingOpen, setIsEditBookingOpen] = useState(false);
   const [selectedBooking, setSelectedBooking] = useState<any>(null);
   const [editingBooking, setEditingBooking] = useState<any>(null);
-  const [editableItem, setEditableItem] = useState(null);
+  const [editableItem, setEditableItem] = useState<any>(null);
   const [isZoomPhoneOpen, setIsZoomPhoneOpen] = useState(false);
   const [isWhatsAppDialogOpen, setIsWhatsAppDialogOpen] = useState(false);
+  const [isSendingConsulationForm, setIsSendingConsulationForm] =
+    useState(false);
 
   // Helper functions for activity display
   const getActivityIcon = (activityType: number) => {
@@ -256,7 +260,7 @@ export default function CustomerDetail() {
       staleTime: 0,
     });
 
-    const analytics = customerAnalytics || {};
+    const analytics: any = customerAnalytics || {};
 
     // Use API data if available, fallback to client-side calculations
     const summary = analytics.summary || {};
@@ -466,9 +470,14 @@ export default function CustomerDetail() {
                         dataKey="value"
                         label={({ name, value }) => `${name}: ${value}`}
                       >
-                        {paymentStatusData.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={entry.color} />
-                        ))}
+                        {paymentStatusData.map(
+                          (
+                            entry: { name: string; value: number; color: string },
+                            index: number,
+                          ) => (
+                            <Cell key={`cell-${index}`} fill={entry.color} />
+                          ),
+                        )}
                       </Pie>
                       <Tooltip />
                     </PieChart>
@@ -591,6 +600,29 @@ export default function CustomerDetail() {
   } = useQuery({
     queryKey: [`/api/tenants/${tenant?.id}/customers/${customerId}/whatsapp-messages`],
     enabled: !!customerId && !!tenant?.id && activeTab === "messages",
+    staleTime: 0,
+  });
+
+  // Fetch consulation form submissions from API
+  const {
+    data: consulationSubmissions = [],
+    isLoading: isLoadingConsulationSubmissions,
+    refetch: refetchConsulationSubmissions,
+  } = useQuery({
+    queryKey: ["consulation-form-submissions", customerId, tenant?.id],
+    queryFn: async () => {
+      const token = auth.getToken();
+      const response = await fetch(
+        `/api/tenants/${tenant?.id}/customers/${customerId}/consulation-form-submissions`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+      if (!response.ok) throw new Error("Failed to fetch consulation form submissions");
+      const data = await response.json();
+      return data.submissions || [];
+    },
+    enabled: !!customerId && !!tenant?.id && activeTab === "consulation-form",
     staleTime: 0,
   });
 
@@ -1680,7 +1712,94 @@ export default function CustomerDetail() {
         </div>
       );
     } else if (activeTab === "files") {
-      return <FilesDocumentsTable customerId={customerId} />;
+      return <FilesDocumentsTable customerId={safeCustomerId} />;
+    } else if (activeTab === "consulation-form") {
+      if (isLoadingConsulationSubmissions) {
+        return (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+          </div>
+        );
+      }
+
+      if (consulationSubmissions.length === 0) {
+        return (
+          <div className="text-center py-8 text-gray-500">
+            <ClipboardList className="w-8 h-8 mx-auto mb-2 opacity-50" />
+            <p>No consulation form submissions found for this customer</p>
+          </div>
+        );
+      }
+
+      return (
+        <div className="space-y-6">
+          {consulationSubmissions.map((submission: any) => {
+            const formFields = submission.formFields || [];
+            const responses = submission.responses || {};
+
+            return (
+              <Card key={submission.id} className="border border-gray-200">
+                <CardHeader className="bg-gray-50 border-b border-gray-200">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-lg font-semibold text-gray-900">
+                      Consulation Form Submission
+                    </CardTitle>
+                    <div className="text-sm text-gray-500">
+                      <CalendarDays className="w-4 h-4 inline mr-1" />
+                      {new Date(submission.createdAt).toLocaleDateString("en-US", {
+                        year: "numeric",
+                        month: "long",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-6">
+                  <div className="space-y-4">
+                    {formFields.map((field: any) => {
+                      const responseValue = responses[field.id] || "";
+                      if (!responseValue) return null;
+
+                      return (
+                        <div key={field.id} className="border-b border-gray-100 pb-4 last:border-0">
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            {field.label}
+                            {field.required && <span className="text-red-500 ml-1">*</span>}
+                          </label>
+                          <div className="mt-1">
+                            {field.type === "textarea" ? (
+                              <p className="text-sm text-gray-900 bg-gray-50 p-3 rounded-md whitespace-pre-wrap">
+                                {responseValue}
+                              </p>
+                            ) : field.type === "image" ? (
+                              <div className="mt-2">
+                                <img
+                                  src={responseValue}
+                                  alt={field.label}
+                                  className="max-w-md h-auto rounded-md border border-gray-200"
+                                  onError={(e) => {
+                                    (e.target as HTMLImageElement).src = "/placeholder-image.png";
+                                  }}
+                                />
+                              </div>
+                            ) : (
+                              <p className="text-sm text-gray-900 bg-gray-50 p-3 rounded-md">
+                                {responseValue}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      );
     }
     // else if (activeTab === "calls") {
     //   return <CallLogsSection customerId={parseInt(customerId)} />;
@@ -1688,7 +1807,7 @@ export default function CustomerDetail() {
     else if (activeTab === "analytics") {
       return (
         <CustomerAnalytics
-          customerId={customerId}
+          customerId={safeCustomerId}
           customer={customer}
           bookings={bookings}
         />
@@ -1734,6 +1853,48 @@ export default function CustomerDetail() {
 
   const displayName =
     `${customer.firstName} ${customer.lastName}`.trim() || customer.email;
+  const safeCustomerId = customerId ?? "";
+  const canSendConsulationForm = Boolean(customer.email || customer.phone);
+  const handleSendConsulationForm = async () => {
+    if (!tenant?.id || !customerId) {
+      toast({
+        title: "Unable to send consulation form",
+        description: "Missing tenant or customer information.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      setIsSendingConsulationForm(true);
+      const response: any = await apiRequest(
+        "POST",
+        `/api/tenants/${tenant.id}/customers/${customerId}/send-consulation-form`,
+        {},
+      );
+
+      const emailSent = response?.sent?.email;
+      const whatsappSent = response?.sent?.whatsapp;
+
+      toast({
+        title: "Consulation form sent",
+        description: [
+          emailSent ? "Email sent" : null,
+          whatsappSent ? "WhatsApp sent" : null,
+        ]
+          .filter(Boolean)
+          .join(" • ") || "Form link delivered.",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Failed to send consulation form",
+        description: error?.message || "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSendingConsulationForm(false);
+    }
+  };
 
   return (
     <Layout>
@@ -1762,7 +1923,7 @@ export default function CustomerDetail() {
                   <AvatarFallback className="bg-blue-100 text-blue-600 text-xl font-semibold">
                     {displayName
                       .split(" ")
-                      .map((n) => n[0])
+                      .map((n: string) => n[0])
                       .join("")}
                   </AvatarFallback>
                 </Avatar>
@@ -1809,6 +1970,25 @@ export default function CustomerDetail() {
                     Send WhatsApp
                   </Button>
                 )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex items-center"
+                  onClick={handleSendConsulationForm}
+                  disabled={isSendingConsulationForm || !canSendConsulationForm}
+                  title={
+                    canSendConsulationForm
+                      ? "Send consulation form via email and WhatsApp"
+                      : "Customer needs an email or phone number"
+                  }
+                >
+                  {isSendingConsulationForm ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <ClipboardList className="h-4 w-4 mr-2" />
+                  )}
+                  Send Consulation Form
+                </Button>
                 <Button variant="outline" size="sm">
                   <Settings className="h-4 w-4 mr-2" />
                   Edit
@@ -1934,6 +2114,7 @@ export default function CustomerDetail() {
                       // "calls",
                       "analytics",
                       "files",
+                      "consulation-form",
                     ].map((item) => (
                       <button
                         key={item}
@@ -1947,6 +2128,7 @@ export default function CustomerDetail() {
                           if (item === "messages") refetchMessages();
                           if (item === "bookings" || item === "analytics")
                             refetchBookings();
+                          if (item === "consulation-form") refetchConsulationSubmissions();
                         }}
                         className={`px-4 py-2 capitalize whitespace-nowrap text-sm md:text-base ${
                           activeTab === item
@@ -2228,6 +2410,7 @@ export default function CustomerDetail() {
         tableId={selectedActivityTable.tableId}
         tenantId={tenant?.id}
       />
+
     </Layout>
   );
 }
