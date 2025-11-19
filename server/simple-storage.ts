@@ -3898,6 +3898,160 @@ export class SimpleStorage {
   }
 
   // Invoice management methods
+  async getInvoiceById(tenantId: number, invoiceId: number) {
+    try {
+      // Fetch invoice by ID and tenant ID
+      const invoices = await sql`
+        SELECT * FROM invoices 
+        WHERE id = ${invoiceId} AND tenant_id = ${tenantId}
+        LIMIT 1
+      `;
+
+      if (invoices.length === 0) {
+        throw new Error("Invoice not found");
+      }
+
+      const invoice = invoices[0];
+
+      // Fetch customer details
+      let customerName = null;
+      let customerEmail = null;
+      let customerPhone = null;
+      let customerAddress = null;
+      
+      try {
+        if (invoice.customer_id) {
+          const customers = await sql`
+            SELECT name, email, phone, address 
+            FROM customers 
+            WHERE id = ${invoice.customer_id}
+          `;
+          if (customers.length > 0) {
+            const customer = customers[0];
+            customerName = customer.name || null;
+            customerEmail = customer.email || null;
+            customerPhone = customer.phone || null;
+            customerAddress = customer.address || null;
+          }
+        }
+      } catch (joinError) {
+        console.warn("Error fetching customer details:", joinError);
+      }
+
+      // Fetch booking details
+      let bookingNumber = null;
+      try {
+        if (invoice.booking_id) {
+          const bookings = await sql`
+            SELECT booking_number 
+            FROM bookings 
+            WHERE id = ${invoice.booking_id}
+          `;
+          if (bookings.length > 0) {
+            bookingNumber = bookings[0].booking_number;
+          }
+        }
+      } catch (joinError) {
+        console.warn("Error fetching booking details:", joinError);
+      }
+
+      // Fetch line items from invoice_items table
+      let lineItems = [];
+      try {
+        const items = await sql`
+          SELECT * FROM invoice_items 
+          WHERE invoice_id = ${invoice.id}
+          ORDER BY id
+        `;
+        lineItems = items.map((item: any) => ({
+          id: item.id,
+          description: item.description,
+          itemTitle: item.description,
+          quantity: item.quantity || 1,
+          unitPrice: parseFloat(item.unit_price || 0),
+          sellingPrice: parseFloat(item.unit_price || 0),
+          tax: 0,
+          totalAmount: parseFloat(item.total_price || 0),
+        }));
+      } catch (itemsError) {
+        console.warn("Error fetching invoice items:", itemsError);
+      }
+
+      // Also check if line items are stored as JSON in the invoice record
+      let jsonLineItems = [];
+      if (invoice.line_items) {
+        try {
+          if (typeof invoice.line_items === 'string') {
+            jsonLineItems = JSON.parse(invoice.line_items);
+          } else if (Array.isArray(invoice.line_items)) {
+            jsonLineItems = invoice.line_items;
+          }
+        } catch (e) {
+          console.warn("Failed to parse line_items JSON:", e);
+        }
+      }
+
+      // Use JSON line items if available, otherwise use invoice_items table
+      const finalLineItems = jsonLineItems.length > 0 ? jsonLineItems : lineItems;
+
+      // Fetch payment installments if they exist
+      let installments = [];
+      try {
+        const installmentData = await sql`
+          SELECT * FROM payment_installments 
+          WHERE invoice_id = ${invoice.id} AND tenant_id = ${tenantId}
+          ORDER BY installment_number ASC
+        `;
+        installments = installmentData.map((inst: any) => ({
+          installmentNumber: inst.installment_number,
+          dueDate: inst.due_date ? new Date(inst.due_date).toISOString().split("T")[0] : null,
+          amount: inst.amount?.toString() || "0",
+          status: inst.status,
+          paidAmount: parseFloat(inst.paid_amount || "0"),
+        }));
+      } catch (installmentError) {
+        console.warn("Error fetching installments:", installmentError);
+      }
+
+      return {
+        id: invoice.id,
+        tenantId: invoice.tenant_id,
+        customerId: invoice.customer_id,
+        bookingId: invoice.booking_id,
+        invoiceNumber: invoice.invoice_number,
+        status: invoice.status,
+        issueDate: invoice.issue_date || invoice.invoice_date,
+        dueDate: invoice.due_date,
+        subtotal: parseFloat(invoice.subtotal || "0"),
+        taxAmount: parseFloat(invoice.tax_amount || "0"),
+        totalAmount: parseFloat(invoice.total_amount || "0"),
+        paidAmount: parseFloat(invoice.paid_amount || invoice.amount_paid || "0"),
+        discountAmount: parseFloat(invoice.discount_amount || "0"),
+        currency: invoice.currency || "USD",
+        paymentMethod: invoice.payment_method || null,
+        paymentTerms: invoice.payment_terms || null,
+        isTaxInclusive: invoice.is_tax_inclusive || false,
+        notes: invoice.notes || null,
+        additionalNotes: invoice.additional_notes || null,
+        enableReminder: invoice.enable_reminder || false,
+        reminderFrequency: invoice.reminder_frequency || null,
+        reminderSpecificDate: invoice.reminder_specific_date || null,
+        lineItems: finalLineItems,
+        installments: installments.length > 0 ? installments : undefined,
+        createdAt: invoice.created_at,
+        updatedAt: invoice.updated_at,
+        customerName: customerName,
+        customerEmail: customerEmail,
+        customerPhone: customerPhone,
+        customerAddress: customerAddress,
+        bookingNumber: bookingNumber,
+      };
+    } catch (error) {
+      console.error("getInvoiceById error:", error);
+      throw error;
+    }
+  }
+
   async getInvoicesByTenant(tenantId: number) {
     try {
       // Simplified query without JOINs to avoid the column error
@@ -4061,47 +4215,147 @@ export class SimpleStorage {
       const totalAmount = parseFloat(
         invoiceData.totalAmount?.toString() || "0",
       );
+      const discountAmount = parseFloat(invoiceData.discountAmount?.toString() || "0");
+      const paidAmount = parseFloat(invoiceData.paidAmount?.toString() || "0");
 
+      // Prepare issue date - use issueDate if provided, otherwise invoiceDate, otherwise today
+      const issueDate = invoiceData.issueDate || invoiceData.invoiceDate || new Date().toISOString().split("T")[0];
+      const dueDate = invoiceData.dueDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+      
+      // Store full line items as JSON for complete data preservation
+      const lineItemsJson = JSON.stringify(invoiceData.lineItems || invoiceData.items || []);
+
+      // Build the INSERT query with all available fields
+      // Note: Some columns may not exist in the database yet - they should be added via migration
       const invoice = await sql`
         INSERT INTO invoices (
           tenant_id, customer_id, booking_id, invoice_number, status,
-          invoice_date, due_date, subtotal, tax_amount, total_amount, notes, enable_reminder, reminder_frequency, reminder_specific_date
+          invoice_date, issue_date, due_date, subtotal, tax_amount, discount_amount, total_amount, 
+          paid_amount, currency, payment_method, payment_terms, is_tax_inclusive,
+          notes, additional_notes, enable_reminder, reminder_frequency, reminder_specific_date, line_items
         ) VALUES (
           ${invoiceData.tenantId},
           ${invoiceData.customerId},
           ${invoiceData.bookingId || null},
           ${invoiceNumber},
           ${invoiceData.status || "draft"},
-          ${invoiceData.issueDate || invoiceData.invoiceDate || new Date().toISOString().split("T")[0]},
+          ${issueDate},
+          ${issueDate},
           ${invoiceData.dueDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]},
           ${subtotal},
           ${taxAmount},
+          ${discountAmount},
           ${totalAmount},
+          ${paidAmount},
+          ${invoiceData.currency || "USD"},
+          ${invoiceData.paymentMethod || null},
+          ${invoiceData.paymentTerms || null},
+          ${invoiceData.isTaxInclusive !== undefined ? invoiceData.isTaxInclusive : false},
           ${invoiceData.notes || invoiceData.description || null},
+          ${invoiceData.additionalNotes || null},
           ${invoiceData.enableReminder || false},
           ${invoiceData.reminderFrequency || null},
-          ${invoiceData.reminderSpecificDate || null}
+          ${invoiceData.reminderSpecificDate || null},
+          ${lineItemsJson}
         )
         RETURNING *
       `;
 
       const newInvoice = invoice[0];
 
-      // Create invoice items if provided
-      if (invoiceData.items && invoiceData.items.length > 0) {
-        for (const item of invoiceData.items) {
+      // Handle line items - check both lineItems and items for compatibility
+      const lineItems = invoiceData.lineItems || invoiceData.items || [];
+      
+      if (lineItems.length > 0) {
+        for (const item of lineItems) {
+          // Build description from available fields
+          const description = item.itemTitle || item.description || item.travelCategory || "Item";
+          
+          // Calculate unit price and total price
+          const unitPrice = parseFloat(item.sellingPrice?.toString() || item.unitPrice?.toString() || "0");
+          const quantity = parseInt(item.quantity?.toString() || "1");
+          const tax = parseFloat(item.tax?.toString() || "0");
+          const totalPrice = parseFloat(item.totalAmount?.toString() || item.totalPrice?.toString() || (unitPrice * quantity + tax).toString());
+
+          // Store line item with basic fields
+          // Additional fields (travelCategory, vendor, serviceProviderId, purchasePrice, taxRateId, etc.) 
+          // can be stored in a JSON column if needed, or in a separate table
           await sql`
             INSERT INTO invoice_items (
               invoice_id, description, quantity, unit_price, total_price, package_id
             ) VALUES (
               ${newInvoice.id},
-              ${item.description},
-              ${item.quantity || 1},
-              ${item.unitPrice},
-              ${item.totalPrice},
+              ${description},
+              ${quantity},
+              ${unitPrice},
+              ${totalPrice},
               ${item.packageId || null}
             )
           `;
+        }
+      }
+
+      // Create expenses if provided
+      if (invoiceData.expenses && Array.isArray(invoiceData.expenses) && invoiceData.expenses.length > 0) {
+        for (const expense of invoiceData.expenses) {
+          try {
+            await sql`
+              INSERT INTO expenses (
+                tenant_id, title, description, amount, currency, category, subcategory,
+                expense_date, payment_method, vendor_id, lead_type_id, expense_type,
+                status, notes, created_by
+              ) VALUES (
+                ${invoiceData.tenantId},
+                ${expense.title || "Expense"},
+                ${expense.notes || expense.description || null},
+                ${parseFloat(expense.amount?.toString() || "0")},
+                ${expense.currency || invoiceData.currency || "USD"},
+                ${expense.category || "General"},
+                ${expense.subcategory || expense.category || "General"},
+                ${expense.expenseDate || issueDate},
+                ${expense.paymentMethod || "bank_transfer"},
+                ${expense.vendorId || null},
+                ${expense.leadTypeId || null},
+                ${expense.expenseType || "purchase"},
+                ${expense.status || "pending"},
+                ${expense.notes || null},
+                ${invoiceData.userId || null}
+              )
+            `;
+          } catch (expenseError) {
+            console.error("⚠️ Failed to create expense:", expenseError);
+            // Continue with other expenses even if one fails
+          }
+        }
+      }
+
+      // Create payment installments if provided
+      if (invoiceData.installments && Array.isArray(invoiceData.installments) && invoiceData.installments.length > 0) {
+        try {
+          for (const installment of invoiceData.installments) {
+            await sql`
+              INSERT INTO payment_installments (
+                invoice_id, tenant_id, installment_number, amount, due_date, 
+                status, paid_amount, payment_method, notes, created_at, updated_at
+              ) VALUES (
+                ${newInvoice.id},
+                ${invoiceData.tenantId},
+                ${installment.installmentNumber || 1},
+                ${parseFloat(installment.amount?.toString() || "0")},
+                ${installment.dueDate || invoiceData.dueDate || dueDate},
+                ${installment.status || "pending"},
+                ${parseFloat(installment.paidAmount?.toString() || "0")},
+                ${installment.paymentMethod || null},
+                ${installment.notes || null},
+                NOW(),
+                NOW()
+              )
+            `;
+          }
+          console.log(`✅ Created ${invoiceData.installments.length} payment installments for invoice ${newInvoice.id}`);
+        } catch (installmentError) {
+          console.error("⚠️ Failed to create payment installments:", installmentError);
+          // Continue even if installments fail
         }
       }
 
@@ -4131,12 +4385,22 @@ export class SimpleStorage {
         bookingId: newInvoice.booking_id,
         invoiceNumber: newInvoice.invoice_number,
         status: newInvoice.status,
-        issueDate: newInvoice.invoice_date,
+        issueDate: newInvoice.issue_date || newInvoice.invoice_date,
         dueDate: newInvoice.due_date,
         subtotal: parseFloat(newInvoice.subtotal),
         taxAmount: parseFloat(newInvoice.tax_amount || "0"),
+        discountAmount: parseFloat(newInvoice.discount_amount || "0"),
         totalAmount: parseFloat(newInvoice.total_amount),
+        paidAmount: parseFloat(newInvoice.paid_amount || "0"),
+        currency: newInvoice.currency || "USD",
+        paymentMethod: newInvoice.payment_method || null,
+        paymentTerms: newInvoice.payment_terms || null,
+        isTaxInclusive: newInvoice.is_tax_inclusive || false,
         notes: newInvoice.notes,
+        additionalNotes: newInvoice.additional_notes || null,
+        enableReminder: newInvoice.enable_reminder || false,
+        reminderFrequency: newInvoice.reminder_frequency || null,
+        reminderSpecificDate: newInvoice.reminder_specific_date || null,
         createdAt: newInvoice.created_at,
       };
     } catch (error) {
@@ -4149,26 +4413,31 @@ export class SimpleStorage {
     try {
       console.log("Updating invoice with data:", invoiceData);
 
+      // Store full line items as JSON for complete data preservation
+      const lineItemsJson = invoiceData.lineItems || invoiceData.items ? JSON.stringify(invoiceData.lineItems || invoiceData.items || []) : null;
+
       // Sanitize and validate data before update
       const cleanData = {
-        customerId: invoiceData.customerId || null,
-        bookingId: invoiceData.bookingId || null,
+        customerId: invoiceData.customerId !== undefined ? invoiceData.customerId : null,
+        bookingId: invoiceData.bookingId !== undefined ? invoiceData.bookingId : null,
         status: invoiceData.status || null,
-        invoiceDate: invoiceData.invoiceDate || invoiceData.issueDate || null,
+        issueDate: invoiceData.issueDate || invoiceData.invoiceDate || null,
         dueDate: invoiceData.dueDate || null,
-        subtotal:
-          invoiceData.subtotal !== undefined
-            ? parseFloat(invoiceData.subtotal?.toString() || "0")
-            : null,
-        taxAmount:
-          invoiceData.taxAmount !== undefined
-            ? parseFloat(invoiceData.taxAmount?.toString() || "0")
-            : null,
-        totalAmount:
-          invoiceData.totalAmount !== undefined
-            ? parseFloat(invoiceData.totalAmount?.toString() || "0")
-            : null,
-        notes: invoiceData.notes || null,
+        subtotal: invoiceData.subtotal !== undefined ? parseFloat(invoiceData.subtotal?.toString() || "0") : null,
+        taxAmount: invoiceData.taxAmount !== undefined ? parseFloat(invoiceData.taxAmount?.toString() || "0") : null,
+        discountAmount: invoiceData.discountAmount !== undefined ? parseFloat(invoiceData.discountAmount?.toString() || "0") : null,
+        totalAmount: invoiceData.totalAmount !== undefined ? parseFloat(invoiceData.totalAmount?.toString() || "0") : null,
+        paidAmount: invoiceData.paidAmount !== undefined ? parseFloat(invoiceData.paidAmount?.toString() || "0") : null,
+        currency: invoiceData.currency || null,
+        paymentMethod: invoiceData.paymentMethod || null,
+        paymentTerms: invoiceData.paymentTerms || null,
+        isTaxInclusive: invoiceData.isTaxInclusive !== undefined ? invoiceData.isTaxInclusive : null,
+        notes: invoiceData.notes !== undefined ? invoiceData.notes : null,
+        additionalNotes: invoiceData.additionalNotes !== undefined ? invoiceData.additionalNotes : null,
+        enableReminder: invoiceData.enableReminder !== undefined ? invoiceData.enableReminder : null,
+        reminderFrequency: invoiceData.reminderFrequency || null,
+        reminderSpecificDate: invoiceData.reminderSpecificDate || null,
+        lineItems: lineItemsJson,
       };
 
       console.log("Clean update data:", cleanData);
@@ -4179,12 +4448,25 @@ export class SimpleStorage {
           customer_id = COALESCE(${cleanData.customerId}, customer_id),
           booking_id = COALESCE(${cleanData.bookingId}, booking_id),
           status = COALESCE(${cleanData.status}, status),
-          invoice_date = COALESCE(${cleanData.invoiceDate}, invoice_date),
+          issue_date = COALESCE(${cleanData.issueDate}, issue_date),
+          invoice_date = COALESCE(${cleanData.issueDate}, invoice_date),
           due_date = COALESCE(${cleanData.dueDate}, due_date),
           subtotal = COALESCE(${cleanData.subtotal}, subtotal),
           tax_amount = COALESCE(${cleanData.taxAmount}, tax_amount),
+          discount_amount = COALESCE(${cleanData.discountAmount}, discount_amount),
           total_amount = COALESCE(${cleanData.totalAmount}, total_amount),
-          notes = COALESCE(${cleanData.notes}, notes)
+          paid_amount = COALESCE(${cleanData.paidAmount}, paid_amount),
+          currency = COALESCE(${cleanData.currency}, currency),
+          payment_method = COALESCE(${cleanData.paymentMethod}, payment_method),
+          payment_terms = COALESCE(${cleanData.paymentTerms}, payment_terms),
+          is_tax_inclusive = COALESCE(${cleanData.isTaxInclusive}, is_tax_inclusive),
+          notes = COALESCE(${cleanData.notes}, notes),
+          additional_notes = COALESCE(${cleanData.additionalNotes}, additional_notes),
+          enable_reminder = COALESCE(${cleanData.enableReminder}, enable_reminder),
+          reminder_frequency = COALESCE(${cleanData.reminderFrequency}, reminder_frequency),
+          reminder_specific_date = COALESCE(${cleanData.reminderSpecificDate}, reminder_specific_date),
+          line_items = COALESCE(${cleanData.lineItems}, line_items),
+          updated_at = NOW()
         WHERE id = ${invoiceId}
         RETURNING *
       `;
@@ -4194,6 +4476,74 @@ export class SimpleStorage {
       }
 
       const updatedInvoice = invoice[0];
+      
+      // Also update invoice_items table if line items are provided
+      if (invoiceData.lineItems && Array.isArray(invoiceData.lineItems)) {
+        // Delete existing items
+        await sql`DELETE FROM invoice_items WHERE invoice_id = ${invoiceId}`;
+        
+        // Insert new items
+        for (const item of invoiceData.lineItems) {
+          const description = item.itemTitle || item.description || item.travelCategory || "Item";
+          const unitPrice = parseFloat(item.sellingPrice?.toString() || item.unitPrice?.toString() || "0");
+          const quantity = parseInt(item.quantity?.toString() || "1");
+          const tax = parseFloat(item.tax?.toString() || "0");
+          const totalPrice = parseFloat(item.totalAmount?.toString() || item.totalPrice?.toString() || (unitPrice * quantity + tax).toString());
+
+          await sql`
+            INSERT INTO invoice_items (
+              invoice_id, description, quantity, unit_price, total_price, package_id
+            ) VALUES (
+              ${invoiceId},
+              ${description},
+              ${quantity},
+              ${unitPrice},
+              ${totalPrice},
+              ${item.packageId || null}
+            )
+          `;
+        }
+      }
+
+      // Update payment installments if provided
+      if (invoiceData.installments !== undefined) {
+        // Get tenantId from invoiceData or updatedInvoice
+        const tenantId = invoiceData.tenantId || updatedInvoice.tenant_id;
+        
+        // Delete existing installments
+        await sql`DELETE FROM payment_installments WHERE invoice_id = ${invoiceId} AND tenant_id = ${tenantId}`;
+        
+        // Create new installments if provided
+        if (Array.isArray(invoiceData.installments) && invoiceData.installments.length > 0) {
+          try {
+            for (const installment of invoiceData.installments) {
+              await sql`
+                INSERT INTO payment_installments (
+                  invoice_id, tenant_id, installment_number, amount, due_date, 
+                  status, paid_amount, payment_method, notes, created_at, updated_at
+                ) VALUES (
+                  ${invoiceId},
+                  ${tenantId},
+                  ${installment.installmentNumber || 1},
+                  ${parseFloat(installment.amount?.toString() || "0")},
+                  ${installment.dueDate || updatedInvoice.due_date},
+                  ${installment.status || "pending"},
+                  ${parseFloat(installment.paidAmount?.toString() || "0")},
+                  ${installment.paymentMethod || null},
+                  ${installment.notes || null},
+                  NOW(),
+                  NOW()
+                )
+              `;
+            }
+            console.log(`✅ Updated payment installments for invoice ${invoiceId}`);
+          } catch (installmentError) {
+            console.error("⚠️ Failed to update payment installments:", installmentError);
+            // Continue even if installments fail
+          }
+        }
+      }
+
       return {
         id: updatedInvoice.id,
         tenantId: updatedInvoice.tenant_id,
@@ -4201,25 +4551,29 @@ export class SimpleStorage {
         bookingId: updatedInvoice.booking_id,
         invoiceNumber: updatedInvoice.invoice_number,
         status: updatedInvoice.status,
-        issueDate: updatedInvoice.invoice_date,
+        issueDate: updatedInvoice.issue_date || updatedInvoice.invoice_date,
         dueDate: updatedInvoice.due_date,
-        subtotal: parseFloat(updatedInvoice.subtotal),
+        subtotal: parseFloat(updatedInvoice.subtotal || "0"),
         taxAmount: parseFloat(updatedInvoice.tax_amount || "0"),
-        totalAmount: parseFloat(updatedInvoice.total_amount),
+        discountAmount: parseFloat(updatedInvoice.discount_amount || "0"),
+        totalAmount: parseFloat(updatedInvoice.total_amount || "0"),
+        paidAmount: parseFloat(updatedInvoice.paid_amount || "0"),
+        currency: updatedInvoice.currency || "USD",
+        paymentMethod: updatedInvoice.payment_method || null,
+        paymentTerms: updatedInvoice.payment_terms || null,
+        isTaxInclusive: updatedInvoice.is_tax_inclusive || false,
         notes: updatedInvoice.notes,
+        additionalNotes: updatedInvoice.additional_notes || null,
+        enableReminder: updatedInvoice.enable_reminder || false,
+        reminderFrequency: updatedInvoice.reminder_frequency || null,
+        reminderSpecificDate: updatedInvoice.reminder_specific_date || null,
         createdAt: updatedInvoice.created_at,
+        updatedAt: updatedInvoice.updated_at,
       };
     } catch (error) {
       console.error("Invoice update error:", error);
       throw error;
     }
-  }
-
-  async deleteInvoice(invoiceId: number) {
-    // Delete invoice items first
-    await sql`DELETE FROM invoice_items WHERE invoice_id = ${invoiceId}`;
-    // Delete invoice
-    await sql`DELETE FROM invoices WHERE id = ${invoiceId}`;
   }
 
   async getInvoiceItems(invoiceId: number) {
@@ -6628,58 +6982,6 @@ export class SimpleStorage {
   }
 
   // Invoice V2 CRUD operations
-  async updateInvoice(invoiceId: number, invoiceData: any) {
-    try {
-      console.log(
-        "🔧 UPDATEINVOICE: Updating invoice with data:",
-        JSON.stringify(invoiceData, null, 2),
-      );
-
-      const subtotal = parseFloat(invoiceData.subtotal?.toString() || "0");
-      const taxAmount = parseFloat(invoiceData.taxAmount?.toString() || "0");
-      const totalAmount = parseFloat(
-        invoiceData.totalAmount?.toString() || "0",
-      );
-
-      const [updatedInvoice] = await sql`
-        UPDATE invoices SET
-          customer_id = ${invoiceData.customerId},
-          invoice_number = ${invoiceData.invoiceNumber},
-          status = ${invoiceData.status},
-          invoice_date = ${invoiceData.invoiceDate},
-          due_date = ${invoiceData.dueDate},
-          subtotal = ${subtotal},
-          tax_amount = ${taxAmount},
-          total_amount = ${totalAmount},
-          notes = ${invoiceData.notes || ""}
-        WHERE id = ${invoiceId} AND tenant_id = ${invoiceData.tenantId}
-        RETURNING *
-      `;
-
-      if (!updatedInvoice) {
-        throw new Error("Invoice not found or unauthorized");
-      }
-
-      console.log("✅ UPDATEINVOICE: Invoice updated successfully");
-      return {
-        id: updatedInvoice.id,
-        tenantId: updatedInvoice.tenant_id,
-        customerId: updatedInvoice.customer_id,
-        invoiceNumber: updatedInvoice.invoice_number,
-        status: updatedInvoice.status,
-        invoiceDate: updatedInvoice.invoice_date,
-        dueDate: updatedInvoice.due_date,
-        subtotal: parseFloat(updatedInvoice.subtotal),
-        taxAmount: parseFloat(updatedInvoice.tax_amount),
-        totalAmount: parseFloat(updatedInvoice.total_amount),
-        notes: updatedInvoice.notes,
-        createdAt: updatedInvoice.created_at,
-      };
-    } catch (error) {
-      console.error("updateInvoice error:", error);
-      throw error;
-    }
-  }
 
   async deleteInvoice(invoiceId: number, tenantId: number) {
     try {
@@ -9524,6 +9826,7 @@ export class SimpleStorage {
         return {
           invoiceNumberStart: 1,
           defaultCurrency: "USD",
+          defaultGstSettingId: null,
           showTax: true,
           showDiscount: true,
           showNotes: true,
@@ -9531,6 +9834,8 @@ export class SimpleStorage {
           showProvider: true,
           showVendor: true,
           showUnitPrice: true,
+          sendInvoiceViaEmail: true,
+          sendInvoiceViaWhatsapp: false,
         };
       }
       return {
@@ -9538,6 +9843,7 @@ export class SimpleStorage {
         tenantId: settings.tenant_id,
         invoiceNumberStart: settings.invoice_number_start,
         defaultCurrency: settings.default_currency,
+        defaultGstSettingId: settings.default_gst_setting_id || null,
         showTax: settings.show_tax,
         showDiscount: settings.show_discount,
         showNotes: settings.show_notes,
@@ -9545,12 +9851,15 @@ export class SimpleStorage {
         showProvider: settings.show_provider,
         showVendor: settings.show_vendor,
         showUnitPrice: settings.show_unit_price,
+        sendInvoiceViaEmail: settings.send_invoice_via_email ?? true,
+        sendInvoiceViaWhatsapp: settings.send_invoice_via_whatsapp ?? false,
       };
     } catch (error) {
       console.error("Error getting invoice settings:", error);
       return {
         invoiceNumberStart: 1,
         defaultCurrency: "USD",
+        defaultGstSettingId: null,
         showTax: true,
         showDiscount: true,
         showNotes: true,
@@ -9558,6 +9867,8 @@ export class SimpleStorage {
         showProvider: true,
         showVendor: true,
         showUnitPrice: true,
+        sendInvoiceViaEmail: true,
+        sendInvoiceViaWhatsapp: false,
       };
     }
   }
@@ -9565,12 +9876,13 @@ export class SimpleStorage {
   async upsertInvoiceSettings(tenantId: number, settings: any) {
     try {
       const [result] =
-        await sql`INSERT INTO tenant_settings (tenant_id, invoice_number_start, default_currency, show_tax, show_discount, show_notes, show_voucher_invoice, show_provider, show_vendor, show_unit_price, updated_at) VALUES (${tenantId}, ${settings.invoiceNumberStart !== undefined ? settings.invoiceNumberStart : 1}, ${settings.defaultCurrency || "USD"}, ${settings.showTax !== undefined ? settings.showTax : true}, ${settings.showDiscount !== undefined ? settings.showDiscount : true}, ${settings.showNotes !== undefined ? settings.showNotes : true}, ${settings.showVoucherInvoice !== undefined ? settings.showVoucherInvoice : true}, ${settings.showProvider !== undefined ? settings.showProvider : true}, ${settings.showVendor !== undefined ? settings.showVendor : true}, ${settings.showUnitPrice !== undefined ? settings.showUnitPrice : true}, NOW()) ON CONFLICT (tenant_id) DO UPDATE SET invoice_number_start = COALESCE(${settings.invoiceNumberStart}, tenant_settings.invoice_number_start), default_currency = COALESCE(${settings.defaultCurrency}, tenant_settings.default_currency), show_tax = COALESCE(${settings.showTax}, tenant_settings.show_tax), show_discount = COALESCE(${settings.showDiscount}, tenant_settings.show_discount), show_notes = COALESCE(${settings.showNotes}, tenant_settings.show_notes), show_voucher_invoice = COALESCE(${settings.showVoucherInvoice}, tenant_settings.show_voucher_invoice), show_provider = COALESCE(${settings.showProvider}, tenant_settings.show_provider), show_vendor = COALESCE(${settings.showVendor}, tenant_settings.show_vendor), show_unit_price = COALESCE(${settings.showUnitPrice}, tenant_settings.show_unit_price), updated_at = NOW() RETURNING *`;
+        await sql`INSERT INTO tenant_settings (tenant_id, invoice_number_start, default_currency, default_gst_setting_id, show_tax, show_discount, show_notes, show_voucher_invoice, show_provider, show_vendor, show_unit_price, send_invoice_via_email, send_invoice_via_whatsapp, updated_at) VALUES (${tenantId}, ${settings.invoiceNumberStart !== undefined ? settings.invoiceNumberStart : 1}, ${settings.defaultCurrency || "USD"}, ${settings.defaultGstSettingId || null}, ${settings.showTax !== undefined ? settings.showTax : true}, ${settings.showDiscount !== undefined ? settings.showDiscount : true}, ${settings.showNotes !== undefined ? settings.showNotes : true}, ${settings.showVoucherInvoice !== undefined ? settings.showVoucherInvoice : true}, ${settings.showProvider !== undefined ? settings.showProvider : true}, ${settings.showVendor !== undefined ? settings.showVendor : true}, ${settings.showUnitPrice !== undefined ? settings.showUnitPrice : true}, ${settings.sendInvoiceViaEmail !== undefined ? settings.sendInvoiceViaEmail : true}, ${settings.sendInvoiceViaWhatsapp !== undefined ? settings.sendInvoiceViaWhatsapp : false}, NOW()) ON CONFLICT (tenant_id) DO UPDATE SET invoice_number_start = COALESCE(${settings.invoiceNumberStart}, tenant_settings.invoice_number_start), default_currency = COALESCE(${settings.defaultCurrency}, tenant_settings.default_currency), default_gst_setting_id = COALESCE(${settings.defaultGstSettingId}, tenant_settings.default_gst_setting_id), show_tax = COALESCE(${settings.showTax}, tenant_settings.show_tax), show_discount = COALESCE(${settings.showDiscount}, tenant_settings.show_discount), show_notes = COALESCE(${settings.showNotes}, tenant_settings.show_notes), show_voucher_invoice = COALESCE(${settings.showVoucherInvoice}, tenant_settings.show_voucher_invoice), show_provider = COALESCE(${settings.showProvider}, tenant_settings.show_provider), show_vendor = COALESCE(${settings.showVendor}, tenant_settings.show_vendor), show_unit_price = COALESCE(${settings.showUnitPrice}, tenant_settings.show_unit_price), send_invoice_via_email = COALESCE(${settings.sendInvoiceViaEmail}, tenant_settings.send_invoice_via_email), send_invoice_via_whatsapp = COALESCE(${settings.sendInvoiceViaWhatsapp}, tenant_settings.send_invoice_via_whatsapp), updated_at = NOW() RETURNING *`;
       return {
         id: result.id,
         tenantId: result.tenant_id,
         invoiceNumberStart: result.invoice_number_start,
         defaultCurrency: result.default_currency,
+        defaultGstSettingId: result.default_gst_setting_id || null,
         showTax: result.show_tax,
         showDiscount: result.show_discount,
         showNotes: result.show_notes,
@@ -9578,6 +9890,8 @@ export class SimpleStorage {
         showProvider: result.show_provider,
         showVendor: result.show_vendor,
         showUnitPrice: result.show_unit_price,
+        sendInvoiceViaEmail: result.send_invoice_via_email ?? true,
+        sendInvoiceViaWhatsapp: result.send_invoice_via_whatsapp ?? false,
       };
     } catch (error) {
       console.error("Error upserting invoice settings:", error);

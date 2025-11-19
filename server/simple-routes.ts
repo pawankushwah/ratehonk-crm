@@ -2426,6 +2426,31 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/tenants/:tenantId/invoices/:invoiceId", authenticateToken, async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId);
+      const invoiceId = parseInt(req.params.invoiceId);
+      const invoice = await simpleStorage.getInvoiceById(tenantId, invoiceId);
+      return res.json({
+        success: true,
+        invoice: invoice,
+      });
+    } catch (error: any) {
+      console.error("Get invoice error:", error);
+      if (error.message === "Invoice not found") {
+        return res.status(404).json({
+          success: false,
+          message: "Invoice not found",
+        });
+      }
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+        error: error.message,
+      });
+    }
+  });
+
   app.put("/api/tenants/:tenantId/invoices/:invoiceId", authenticateToken, async (req, res) => {
     try {
       const tenantId = parseInt(req.params.tenantId);
@@ -2664,7 +2689,8 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
 </html>
       `;
 
-      // Set headers for PDF
+      // For now, return HTML that can be printed as PDF
+      // In production, you would use a library like puppeteer or pdfkit to generate actual PDF
       res.setHeader('Content-Type', 'text/html');
       res.setHeader('Content-Disposition', `inline; filename="invoice-${invoiceData.invoiceNumber || invoiceData.id}.html"`);
       res.send(pdfHtml);
@@ -2672,6 +2698,200 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
       console.error("Error generating invoice PDF:", error);
       return res.status(500).json({ 
         error: "Failed to generate PDF", 
+        message: error.message 
+      });
+    }
+  });
+
+  // Send invoice via email
+  app.post("/api/tenants/:tenantId/invoices/:invoiceId/email", authenticateToken, async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId);
+      const invoiceId = parseInt(req.params.invoiceId);
+
+      // Verify user has access to this tenant
+      if (req.user.tenantId !== tenantId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      // Get invoice details
+      const invoice = await simpleStorage.getInvoiceById(tenantId, invoiceId);
+      if (!invoice) {
+        return res.status(404).json({ error: "Invoice not found" });
+      }
+
+      // Get customer details
+      let customer = null;
+      if (invoice.customerId) {
+        const customers = await sql`
+          SELECT * FROM customers WHERE id = ${invoice.customerId} AND tenant_id = ${tenantId}
+        `;
+        customer = customers[0] || null;
+      }
+
+      if (!customer || !customer.email) {
+        return res.status(400).json({ error: "Customer email not found" });
+      }
+
+      // Get tenant details for company info
+      const tenants = await sql`
+        SELECT * FROM tenants WHERE id = ${tenantId}
+      `;
+      const tenant = tenants[0] || null;
+
+      // Generate invoice HTML for email
+      const invoiceHtml = `
+        <html>
+        <head>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 20px; color: #333; }
+            .header { margin-bottom: 30px; border-bottom: 2px solid #333; padding-bottom: 20px; }
+            .invoice-info { display: flex; justify-content: space-between; margin-bottom: 30px; }
+            .info-section { flex: 1; }
+            .line-items { width: 100%; border-collapse: collapse; margin: 30px 0; }
+            .line-items th { background: #f5f5f5; padding: 12px; text-align: left; border-bottom: 2px solid #333; }
+            .line-items td { padding: 10px 12px; border-bottom: 1px solid #ddd; }
+            .text-right { text-align: right; }
+            .totals { margin-top: 30px; margin-left: auto; width: 300px; }
+            .totals-row { display: flex; justify-content: space-between; padding: 8px 0; }
+            .totals-row.total { font-size: 18px; font-weight: bold; border-top: 2px solid #333; padding-top: 10px; margin-top: 10px; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>INVOICE</h1>
+            <p>Invoice #: ${invoice.invoiceNumber || `INV-${invoice.id}`}</p>
+          </div>
+          <div class="invoice-info">
+            <div class="info-section">
+              <h3>Bill To:</h3>
+              <p><strong>${customer.name || 'N/A'}</strong></p>
+              ${customer.email ? `<p>${customer.email}</p>` : ''}
+              ${customer.phone ? `<p>${customer.phone}</p>` : ''}
+            </div>
+            <div class="info-section">
+              <h3>Invoice Details:</h3>
+              <p><strong>Issue Date:</strong> ${invoice.issueDate ? new Date(invoice.issueDate).toLocaleDateString() : 'N/A'}</p>
+              <p><strong>Due Date:</strong> ${invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString() : 'N/A'}</p>
+              <p><strong>Status:</strong> ${invoice.status || 'N/A'}</p>
+            </div>
+          </div>
+          ${invoice.lineItems && invoice.lineItems.length > 0 ? `
+            <table class="line-items">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Description</th>
+                  <th class="text-right">Quantity</th>
+                  <th class="text-right">Unit Price</th>
+                  <th class="text-right">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${invoice.lineItems.map((item: any, index: number) => `
+                  <tr>
+                    <td>${index + 1}</td>
+                    <td>${item.itemTitle || item.description || 'N/A'}</td>
+                    <td class="text-right">${item.quantity || 1}</td>
+                    <td class="text-right">${invoice.currency === 'USD' ? '$' : '₹'}${parseFloat(item.sellingPrice || item.unitPrice || 0).toFixed(2)}</td>
+                    <td class="text-right">${invoice.currency === 'USD' ? '$' : '₹'}${parseFloat(item.totalAmount || 0).toFixed(2)}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          ` : ''}
+          <div class="totals">
+            <div class="totals-row total">
+              <span>Total Amount:</span>
+              <span>${invoice.currency === 'USD' ? '$' : '₹'}${parseFloat(invoice.totalAmount || 0).toFixed(2)}</span>
+            </div>
+          </div>
+          ${invoice.notes ? `<p><strong>Notes:</strong> ${invoice.notes}</p>` : ''}
+        </body>
+        </html>
+      `;
+
+      // Send email using tenant email service
+      try {
+        const { tenantEmailService } = await import("./tenant-email-service.js");
+        await tenantEmailService.sendCustomerEmail({
+          to: customer.email,
+          subject: `Invoice ${invoice.invoiceNumber || `INV-${invoice.id}`} from ${tenant?.company_name || tenant?.name || 'Company'}`,
+          body: `Please find attached invoice ${invoice.invoiceNumber || `INV-${invoice.id}`}. Total amount: ${invoice.currency === 'USD' ? '$' : '₹'}${parseFloat(invoice.totalAmount?.toString() || "0").toFixed(2)}`,
+          htmlBody: invoiceHtml,
+          tenantId: tenantId,
+        });
+
+        return res.json({ 
+          success: true, 
+          message: "Invoice sent via email successfully" 
+        });
+      } catch (emailError: any) {
+        console.error("Failed to send invoice email:", emailError);
+        return res.status(500).json({ 
+          error: "Failed to send email", 
+          message: emailError.message 
+        });
+      }
+    } catch (error: any) {
+      console.error("Error sending invoice email:", error);
+      return res.status(500).json({ 
+        error: "Internal server error", 
+        message: error.message 
+      });
+    }
+  });
+
+  // Send invoice via WhatsApp
+  app.post("/api/tenants/:tenantId/invoices/:invoiceId/whatsapp", authenticateToken, async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId);
+      const invoiceId = parseInt(req.params.invoiceId);
+
+      // Verify user has access to this tenant
+      if (req.user.tenantId !== tenantId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      // Get invoice details
+      const invoice = await simpleStorage.getInvoiceById(tenantId, invoiceId);
+      if (!invoice) {
+        return res.status(404).json({ error: "Invoice not found" });
+      }
+
+      // Get customer details
+      let customer = null;
+      if (invoice.customerId) {
+        const customers = await sql`
+          SELECT * FROM customers WHERE id = ${invoice.customerId} AND tenant_id = ${tenantId}
+        `;
+        customer = customers[0] || null;
+      }
+
+      if (!customer || !customer.phone) {
+        return res.status(400).json({ error: "Customer phone number not found" });
+      }
+
+      // Generate WhatsApp message
+      const message = `*Invoice ${invoice.invoiceNumber || `INV-${invoice.id}`}*\n\n` +
+        `Total Amount: ${invoice.currency === 'USD' ? '$' : '₹'}${parseFloat(invoice.totalAmount?.toString() || "0").toFixed(2)}\n` +
+        `Due Date: ${invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString() : 'N/A'}\n` +
+        `Status: ${invoice.status || 'N/A'}\n\n` +
+        `Please make the payment by the due date. Thank you!`;
+
+      // For now, return a WhatsApp link (in production, integrate with WhatsApp Business API)
+      const whatsappLink = `https://wa.me/${customer.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(message)}`;
+
+      return res.json({ 
+        success: true, 
+        message: "WhatsApp link generated",
+        whatsappLink: whatsappLink,
+        phone: customer.phone
+      });
+    } catch (error: any) {
+      console.error("Error sending invoice via WhatsApp:", error);
+      return res.status(500).json({ 
+        error: "Internal server error", 
         message: error.message 
       });
     }
@@ -19778,21 +19998,20 @@ Please improve this email.`;
       const tenantId = req.user.tenantId;
       const { gstSettingId } = req.query;
 
-      let query = db
-        .select()
-        .from(gstRates)
-        .where(eq(gstRates.tenantId, tenantId));
-
+      const conditions = [eq(gstRates.tenantId, tenantId)];
+      
       if (gstSettingId) {
-        query = query.where(
-          eq(gstRates.gstSettingId, parseInt(gstSettingId as string)),
-        );
+        conditions.push(eq(gstRates.gstSettingId, parseInt(gstSettingId as string)));
       }
 
-      const rates = await query.orderBy(
-        asc(gstRates.displayOrder),
-        asc(gstRates.rateName),
-      );
+      const rates = await db
+        .select()
+        .from(gstRates)
+        .where(and(...conditions))
+        .orderBy(
+          asc(gstRates.displayOrder),
+          asc(gstRates.rateName),
+        );
 
       res.json(rates);
     } catch (error: any) {

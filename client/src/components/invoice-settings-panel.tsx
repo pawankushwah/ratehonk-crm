@@ -22,10 +22,12 @@ import {
 } from "@/components/ui/select";
 import { Settings, Save } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
+import type { GstSetting } from "@shared/schema";
 
 interface InvoiceSettings {
   invoiceNumberStart: number;
   defaultCurrency: string;
+  defaultGstSettingId?: number | null;
   showTax: boolean;
   showDiscount: boolean;
   showNotes: boolean;
@@ -33,6 +35,8 @@ interface InvoiceSettings {
   showProvider: boolean;
   showVendor: boolean;
   showUnitPrice: boolean;
+  sendInvoiceViaEmail: boolean;
+  sendInvoiceViaWhatsapp: boolean;
 }
 
 interface InvoiceSettingsPanelProps {
@@ -46,6 +50,7 @@ export function InvoiceSettingsPanel({ tenantId }: InvoiceSettingsPanelProps) {
   const [settings, setSettings] = useState<InvoiceSettings>({
     invoiceNumberStart: 1,
     defaultCurrency: "USD",
+    defaultGstSettingId: null,
     showTax: true,
     showDiscount: true,
     showNotes: true,
@@ -53,9 +58,11 @@ export function InvoiceSettingsPanel({ tenantId }: InvoiceSettingsPanelProps) {
     showProvider: true,
     showVendor: true,
     showUnitPrice: true,
+    sendInvoiceViaEmail: true,
+    sendInvoiceViaWhatsapp: false,
   });
 
-  const { data: fetchedSettings, isLoading } = useQuery({
+  const { data: fetchedSettings, isLoading, refetch } = useQuery({
     queryKey: ["/api/invoice-settings", tenantId],
     queryFn: async () => {
       const response = await fetch(`/api/invoice-settings/${tenantId}`);
@@ -64,6 +71,21 @@ export function InvoiceSettingsPanel({ tenantId }: InvoiceSettingsPanelProps) {
       return result.data;
     },
     enabled: open,
+    refetchOnMount: true,
+    staleTime: 0,
+  });
+
+  // Refetch settings when panel opens
+  useEffect(() => {
+    if (open && tenantId) {
+      refetch();
+    }
+  }, [open, tenantId, refetch]);
+
+  // Fetch GST settings for dropdown
+  const { data: gstSettings = [] } = useQuery<GstSetting[]>({
+    queryKey: ['/api/gst-settings'],
+    enabled: open && !!tenantId,
   });
 
   useEffect(() => {
@@ -74,11 +96,8 @@ export function InvoiceSettingsPanel({ tenantId }: InvoiceSettingsPanelProps) {
 
   const saveMutation = useMutation({
     mutationFn: async (data: InvoiceSettings) => {
-      return await apiRequest("/api/invoice-settings", {
-        method: "POST",
-        body: JSON.stringify({ tenantId, ...data }),
-        headers: { "Content-Type": "application/json" },
-      });
+      const response = await apiRequest("POST", "/api/invoice-settings", { tenantId, ...data });
+      return await response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({
@@ -167,6 +186,37 @@ export function InvoiceSettingsPanel({ tenantId }: InvoiceSettingsPanelProps) {
                 <SelectItem value="CAD">CAD - Canadian Dollar (C$)</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+
+          {/* Default Tax Setting */}
+          <div className="space-y-2">
+            <Label htmlFor="defaultGstSetting">Default Tax Setting</Label>
+            <Select
+              value={settings.defaultGstSettingId?.toString() || "none"}
+              onValueChange={(value) =>
+                setSettings({ 
+                  ...settings, 
+                  defaultGstSettingId: value === "none" ? null : parseInt(value)
+                })
+              }
+            >
+              <SelectTrigger data-testid="select-tax-setting">
+                <SelectValue placeholder="Select tax setting" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">None</SelectItem>
+                {gstSettings
+                  .filter((setting) => setting.isActive)
+                  .map((setting) => (
+                    <SelectItem key={setting.id} value={setting.id.toString()}>
+                      {setting.taxName} {setting.country && `(${setting.country})`}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Default tax setting to use when creating invoices
+            </p>
           </div>
 
           {/* Field Visibility Toggles */}
@@ -272,6 +322,45 @@ export function InvoiceSettingsPanel({ tenantId }: InvoiceSettingsPanelProps) {
                     setSettings({ ...settings, showUnitPrice: checked })
                   }
                   data-testid="switch-show-unit-price"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Invoice Delivery Options */}
+          <div className="space-y-4 border-t pt-4">
+            <h3 className="font-semibold text-sm">Invoice Delivery</h3>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Choose how invoices should be automatically sent to customers
+            </p>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="sendInvoiceViaEmail" className="cursor-pointer">
+                  Send invoice via Email
+                </Label>
+                <Switch
+                  id="sendInvoiceViaEmail"
+                  checked={settings.sendInvoiceViaEmail}
+                  onCheckedChange={(checked) =>
+                    setSettings({ ...settings, sendInvoiceViaEmail: checked })
+                  }
+                  data-testid="switch-send-email"
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <Label
+                  htmlFor="sendInvoiceViaWhatsapp"
+                  className="cursor-pointer"
+                >
+                  Send invoice via WhatsApp
+                </Label>
+                <Switch
+                  id="sendInvoiceViaWhatsapp"
+                  checked={settings.sendInvoiceViaWhatsapp}
+                  onCheckedChange={(checked) =>
+                    setSettings({ ...settings, sendInvoiceViaWhatsapp: checked })
+                  }
+                  data-testid="switch-send-whatsapp"
                 />
               </div>
             </div>

@@ -1603,7 +1603,7 @@ export default function Leads() {
                           key={lead.id}
                           className="border-b border-gray-100 hover:bg-gray-50"
                         >
-                          <TableCell>
+                          <TableCell className="px-[20px] pr-[8px] py-[12px] text-left">
                             <div className="flex items-center space-x-3">
                               <Avatar className="h-10 w-10">
                                 <AvatarImage
@@ -1624,13 +1624,13 @@ export default function Leads() {
                               </div>
                             </div>
                           </TableCell>
-                          <TableCell className="text-gray-600 text-left">
+                          <TableCell className="px-[20px] pr-[8px] py-[12px] text-gray-600 text-left">
                             {lead.phone || "Unknown"}
                           </TableCell>
-                          <TableCell className="text-gray-600 text-left">
+                          <TableCell className="px-[20px] pr-[8px] py-[12px] text-gray-600 text-left">
                             {lead.source || "Unknown"}
                           </TableCell>
-                          <TableCell className="text-gray-600 text-left">
+                          <TableCell className="px-[20px] pr-[8px] py-[12px] text-gray-600 text-left">
                             <TooltipProvider delayDuration={200}>
                               <Tooltip>
                                 <TooltipTrigger asChild>
@@ -1708,13 +1708,13 @@ export default function Leads() {
                               </Tooltip>
                             </TooltipProvider>
                           </TableCell>
-                          <TableCell className="text-gray-600 text-center">
+                          <TableCell className="px-[20px] pr-[8px] py-[12px] text-gray-600 text-center">
                             {(lead as any).score || "Unknown"}
                           </TableCell>
-                          <TableCell className="text-gray-600 text-center">
+                          <TableCell className="px-[20px] pr-[8px] py-[12px] text-gray-600 text-center">
                             {(lead as any).priority || "Unknown"}
                           </TableCell>
-                          <TableCell className="text-center">
+                          <TableCell className="px-[20px] pr-[8px] py-[12px] text-center">
                             <Select
                               value={lead.status}
                               onValueChange={(newStatus: string) =>
@@ -1744,12 +1744,12 @@ export default function Leads() {
                               </SelectContent>
                             </Select>
                           </TableCell>
-                          <TableCell className="text-gray-600 text-left">
+                          <TableCell className="px-[20px] pr-[8px] py-[12px] text-gray-600 text-left">
                             {lead.created_at
                               ? format(new Date(lead.created_at), "dd MMM yyyy")
                               : "N/A"}
                           </TableCell>
-                          <TableCell className="text-center">
+                          <TableCell className="px-[20px] pr-[8px] py-[12px] text-center">
                             <div className="flex items-center justify-center space-x-2">
                               <Button
                                 variant="outline"
