@@ -84,6 +84,7 @@ const invoiceStatuses = [
     color: "bg-yellow-100 text-yellow-800",
   },
   { value: "paid", label: "Paid", color: "bg-green-100 text-green-800" },
+  { value: "partial", label: "Partially Paid", color: "bg-blue-100 text-blue-800" },
   { value: "overdue", label: "Overdue", color: "bg-red-100 text-red-800" },
   {
     value: "cancelled",
@@ -522,6 +523,11 @@ export default function Invoices() {
           label: "Pending",
           color: "bg-yellow-100 text-yellow-800 border-yellow-200",
         };
+      case "partial":
+        return {
+          label: "Partially Paid",
+          color: "bg-blue-100 text-blue-800 border-blue-200",
+        };
       case "overdue":
         return {
           label: "Overdue",
@@ -790,8 +796,23 @@ export default function Invoices() {
       key: "status",
       label: "Status",
       sortable: true,
-      render: (status) => {
-        const statusConfig = getStatusBadge(status);
+      render: (status, invoice) => {
+        // Determine status based on paidAmount vs totalAmount if status is not explicitly set
+        const invoiceData = invoice as any;
+        const paidAmount = parseFloat(invoiceData.paidAmount?.toString() || invoiceData.amountPaid?.toString() || "0");
+        const totalAmount = parseFloat(invoiceData.totalAmount?.toString() || "0");
+        
+        let displayStatus = status;
+        if (!displayStatus || displayStatus === "pending") {
+          // Auto-detect partial payment
+          if (paidAmount > 0 && paidAmount < totalAmount) {
+            displayStatus = "partial";
+          } else if (paidAmount >= totalAmount && totalAmount > 0) {
+            displayStatus = "paid";
+          }
+        }
+        
+        const statusConfig = getStatusBadge(displayStatus);
         return (
           <Badge className={statusConfig.color}>{statusConfig.label}</Badge>
         );
@@ -873,8 +894,19 @@ export default function Invoices() {
     ).toLowerCase();
 
     const matchesSearch = searchableText.includes(searchTerm.toLowerCase());
-    const matchesStatus =
-      statusFilter === "all" || invoice.status === statusFilter;
+    
+    let matchesStatus = false;
+    if (statusFilter === "all") {
+      matchesStatus = true;
+    } else if (statusFilter === "partial") {
+      // Partial payment: paidAmount > 0 and paidAmount < totalAmount
+      const paidAmount = parseFloat(invoice.paidAmount?.toString() || invoice.amountPaid?.toString() || "0");
+      const totalAmount = parseFloat(invoice.totalAmount?.toString() || "0");
+      matchesStatus = paidAmount > 0 && paidAmount < totalAmount;
+    } else {
+      matchesStatus = invoice.status === statusFilter;
+    }
+    
     return matchesSearch && matchesStatus;
   });
 
