@@ -102,7 +102,7 @@ export default function LeadCreate() {
 
         
         <div
-          className="w-[1027px] h-[1084px] mx-auto mt-[25px] 
+          className="w-[1027px] h-auto mx-auto mt-[25px] 
                     bg-white rounded-[16px] shadow-sm border border-gray-200
                     p-[20px] space-y-[12px]"
         >

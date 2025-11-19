@@ -268,11 +268,11 @@ export function FlexibleLeadForm({
       "1": "flight",
       "2": "hotel",
       "3": "package",
-      "4": "event",
-      "5": "car-rental",
+      "4": "Event Booking",
+      "5": "Car Rental",
       "6": "attraction",
       "7": "holiday",
-      "0": "default",
+      "8": "Activities",
     };
 
     return categoryToKeyMap[categoryNumber || "0"] || "flight";
@@ -678,14 +678,6 @@ export function FlexibleLeadForm({
   };
 
   const leadTypeOptions = [
-    {
-      value: "Activity",
-      label: "Activity",
-    },
-    {
-      value: "Holidays",
-      label: "Holidays",
-    },
     ...leadTypes.map((type) => {
       const categoryInfo = getCategoryInfo(type.id.toString());
       return {
@@ -695,6 +687,8 @@ export function FlexibleLeadForm({
       };
     }),
   ];
+
+  console.log("leadTypeOptions:", leadTypeOptions);
 
   const priorityOptions = [
     { value: "low", label: "Low" },
@@ -760,22 +754,40 @@ export function FlexibleLeadForm({
     },
   });
 
+  console.log("customers :", customers);
+
   const getCustomerOptions = (): AutocompleteOption[] => {
     const customerOptions = customers.map((customer: any) => {
       const name =
         customer.name ||
-        `${customer.firstName || ""} ${customer.lastName || ""}`.trim() ||
+        `${customer.firstName || ""}`.trim() ||
         "Unnamed Customer";
-      const email = customer.email ? ` | ${customer.email}` : "";
-      const phone = customer.phone ? ` | ${customer.phone}` : "";
+
       return {
-        value: `${name}`,
-        label: `${name}`,
+        value: name,
+        label: name,
+        firstName: customer.firstName || "",
+        lastName: customer.lastName || "",
+        email: customer.email || "",
+        phone: customer.phone || "",
+        country: customer.country || "",
+        state: customer.state || "",
+        city: customer.city || "",
       };
     });
-    console.log("selectedCustomerId", customerOptions);
+
     return [
-      { value: "create_new", label: "➕ Create New Customer" },
+      {
+        value: "create_new",
+        label: "➕ Create New Customer",
+        firstName: "",
+        lastName: "",
+        email: "",
+        phone: "",
+        country: "",
+        state: "",
+        city: "",
+      },
       ...customerOptions,
     ];
   };
@@ -796,10 +808,9 @@ export function FlexibleLeadForm({
       });
       setIsDialogOpen(false);
       setEditingCustomer(null);
-      setFormValidationErrors({}); 
+      setFormValidationErrors({});
     },
     onError: (error: any) => {
-      
       if (
         error.validationErrors &&
         Object.keys(error.validationErrors).length > 0
@@ -863,22 +874,58 @@ export function FlexibleLeadForm({
               Basic Information
             </h2>
 
-            <div className="grid grid-cols-12 gap-3 items-start">
-              <div className="col-span-12 md:col-span-5">
+            <div className="grid grid-cols-2 gap-4 items-end">
+              <div className="">
                 <FormField
                   control={form.control}
                   name="firstName"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel className="text-xs font-semibold text-gray-700 block mb-1.5">
+                      <FormLabel className="text-xs font-semibold text-gray-700 mb-1.5 flex items-center justify-between">
                         Search Customer
+                        <Button
+                          className={`
+          w-[137px] h-[32px] 
+          rounded-[6px] 
+          bg-[#0E76BC] hover:bg-[#0C5F96] 
+          text-white text-xs font-medium 
+          flex items-center justify-center 
+          gap-[10px] 
+          px-[12px] py-[8px] 
+          shadow-[0_1px_2px_0_rgba(16,24,40,0.05)]
+          transition-colors
+        `}
+                          type="button"
+                          onClick={() => {
+                            setEditingCustomer(null);
+                            setFormValidationErrors({});
+                            setIsDialogOpen(true);
+                          }}
+                        >
+                          <Plus className="h-4 w-4" />
+                          New Customer
+                        </Button>
                       </FormLabel>
                       <FormControl>
                         <AutocompleteInput
                           data-testid="autocomplete-customer"
                           suggestions={getCustomerOptions()}
                           value={field.value}
-                          onValueChange={(val) => field.onChange(val)}
+                          onValueChange={(val) => {
+                            field.onChange(val);
+
+                            const selected = getCustomerOptions().find(
+                              (c) => c.value === val
+                            );
+
+                            if (selected && selected.value !== "create_new") {
+                              form.setValue("email", selected.email || "");
+                              form.setValue("phone", selected.phone || "");
+                              form.setValue("country", selected.country || "");
+                              form.setValue("state", selected.state || "");
+                              form.setValue("city", selected.city || "");
+                            }
+                          }}
                           placeholder="Search name, gmail, organization"
                           emptyText="No customers found"
                           className="h-10 rounded-md border-gray-300 focus:ring-2 focus:ring-cyan-500"
@@ -890,32 +937,20 @@ export function FlexibleLeadForm({
                 />
               </div>
 
-              <div className="col-span-6 md:col-span-2 flex items-center">
-                <Button
-                  className={`
-          w-[137px] h-[32px] 
-          rounded-[6px] 
-          bg-[#0E76BC] hover:bg-[#0C5F96] 
-          text-white text-xs font-medium 
-          flex items-center justify-center 
-          gap-[10px] 
-          px-[12px] py-[8px] 
-          shadow-[0_1px_2px_0_rgba(16,24,40,0.05)]
-          transition-colors
-        `}
-                  onClick={() => {
-                    setEditingCustomer(null);
-                    setFormValidationErrors({});
-                    setIsDialogOpen(true);
-                  }}
-                >
-                  <Plus className="h-4 w-4" />
-                  New Customer
-                </Button>
-              </div>
+              <input
+                type="hidden"
+                {...form.register("dynamicData.customerName")}
+              />
+              <input
+                type="hidden"
+                {...form.register("dynamicData.customerEmail")}
+              />
+              <input
+                type="hidden"
+                {...form.register("dynamicData.customerPhone")}
+              />
 
-              {/* Budget */}
-              <div className="col-span-6 md:col-span-5">
+              <div className="flex items-end">
                 <FormField
                   control={form.control}
                   name="budgetRange"
@@ -939,7 +974,7 @@ export function FlexibleLeadForm({
             </div>
 
             <div className="grid grid-cols-12 gap-3">
-              <div className="col-span-12 md:col-span-4">
+              <div className="col-span-12 md:col-span-3 ">
                 <FormField
                   control={form.control}
                   name="status"
@@ -963,7 +998,7 @@ export function FlexibleLeadForm({
                 />
               </div>
 
-              <div className="col-span-12 md:col-span-4">
+              <div className="col-span-12 md:col-span-3">
                 <FormField
                   control={form.control}
                   name="priority"
@@ -989,7 +1024,7 @@ export function FlexibleLeadForm({
             </div>
 
             <div className="grid grid-cols-12 gap-3">
-              <div className="col-span-4">
+              <div className="col-span-3">
                 <FormField
                   control={form.control}
                   name="source"
@@ -1081,8 +1116,8 @@ export function FlexibleLeadForm({
                     className={cn(
                       "px-3 py-1.5 rounded-md text-xs font-medium border transition-colors",
                       selectedLeadType === type.value
-                        ? "bg-[#F8FAFC] text-black border-[#E2E8F0]" 
-                        : "bg-white text-black border-gray-300 hover:bg-gray-50" 
+                        ? "bg-[#F8FAFC] text-black border-[#E2E8F0]"
+                        : "bg-white text-black border-gray-300 hover:bg-gray-50"
                     )}
                   >
                     {type.label}
@@ -1134,7 +1169,6 @@ export function FlexibleLeadForm({
   "
         >
           <div className="flex gap-3 w-full max-w-[947px] justify-end">
-            
             <Button
               type="button"
               variant="outline"

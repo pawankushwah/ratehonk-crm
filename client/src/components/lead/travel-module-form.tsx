@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { UseFormReturn } from "react-hook-form";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -24,6 +24,7 @@ import { cn, handleNumericKeyDown } from "@/lib/utils";
 import { useAuth } from "@/components/auth/auth-provider";
 import { auth } from "@/lib/auth";
 import type { TravelPackage } from "@/lib/types";
+import { useForm, useFieldArray } from "react-hook-form";
 
 interface TravelModuleFormProps {
   form: UseFormReturn<any>;
@@ -36,12 +37,10 @@ export function TravelModuleForm({
   selectedCategory,
   typeSpecificData,
 }: TravelModuleFormProps) {
+  console.log("selectedCategory", selectedCategory);
   const { tenant } = useAuth();
   const [activeTab, setActiveTab] = useState("one-way");
   const [cities, setCities] = useState([{ from: "", to: "", date: "" }]);
-
-  const [economyType, setEconomyType] = useState("Economy");
-  const [showEconomy, setShowEconomy] = useState(false);
   const [alternateDays, setAlternateDays] = useState("Alternate Days");
   const [showAlternate, setShowAlternate] = useState(false);
   const [directFlight, setDirectFlight] = useState(false);
@@ -109,18 +108,38 @@ export function TravelModuleForm({
     { value: "other", label: "Other" },
   ];
 
+  const staticPackageTypes = [
+    "Adventure Tours",
+    "Family Packages",
+    "Business Travel",
+    "Luxury Tours",
+    "Honeymoon Packages",
+    "Group Tours",
+    "Weekend Getaways",
+    "International Tours",
+    "Domestic Tours",
+    "Pilgrimage Tours",
+    "Educational Tours",
+    "Corporate Packages",
+  ];
+
+  const staticOptions = staticPackageTypes.map((name, index) => ({
+    value: name,
+    label: name,
+  }));
+
   const packageOptions = packages
     .filter((pkg) => pkg.isActive)
     .map((pkg) => ({
       value: pkg.id.toString(),
       label: `${pkg.name} - ${pkg.destination} ($${pkg.price})`,
     }));
+  const finalPackageOptions = [...staticOptions, ...packageOptions];
 
   const handleTabChange = (tab: string) => {
     setActiveTab(tab);
     form.setValue("typeSpecificData.flightType", tab);
 
-    // Reset cities array based on flight type
     if (tab === "one-way" || tab === "round-trip") {
       setCities([{ from: "", to: "", date: "" }]);
     }
@@ -143,12 +162,39 @@ export function TravelModuleForm({
     }
   };
 
+  const { fields, append, remove } = useFieldArray({
+    control: form.control,
+    name: "typeSpecificData.activities",
+  });
+
+  const locationValue = form.watch("typeSpecificData.attractionLocation");
+  const dateRangeValue = form.watch("typeSpecificData.dateRange");
+
+  const autoAddedRef = useRef(false);
+  useEffect(() => {
+    const hasLocation = !!locationValue?.trim();
+    const hasDateRange = dateRangeValue?.from && dateRangeValue?.to;
+
+    if (hasLocation && hasDateRange && !autoAddedRef.current) {
+      autoAddedRef.current = true;
+    }
+
+    if (!hasLocation || !hasDateRange) {
+      autoAddedRef.current = false;
+    }
+  }, [locationValue, dateRangeValue, append]);
+
+  const showActivities =
+    locationValue?.trim() && dateRangeValue?.from && dateRangeValue?.to;
+
+  //for flight
   const renderFlightFields = () => (
     <div className="space-y-6">
-      <div className="w-full flex gap-2 bg-white">
+      <div className="w-full flex gap-4 items-end flex-wrap">
         {flightTypeOptions.map((option) => (
           <button
             key={option.value}
+            type="button"
             onClick={() => handleTabChange(option.value)}
             className={cn(
               "px-4 py-2 rounded-lg text-sm font-medium border shadow-sm transition",
@@ -161,17 +207,16 @@ export function TravelModuleForm({
           </button>
         ))}
 
-        <div className="col-span-3">
+        <div className="flex-1">
           <FormField
             control={form.control}
             name="typeSpecificData.flightClass"
             render={({ field }) => (
               <FormItem>
-                
                 <FormControl>
                   <Combobox
                     options={flightClassOptions}
-                    value={field.value}
+                    value={field.value ?? ""}
                     onValueChange={field.onChange}
                     placeholder="Select class"
                     searchPlaceholder="Search..."
@@ -179,12 +224,10 @@ export function TravelModuleForm({
                   />
                 </FormControl>
                 <FormMessage />
-              </FormItem> 
+              </FormItem>
             )}
           />
         </div>
-
-        
 
         <div className="relative">
           <button
@@ -217,7 +260,6 @@ export function TravelModuleForm({
           )}
         </div>
 
-        {/* Direct Flight Switch */}
         <div className="flex items-center gap-2">
           <span className="text-sm text-gray-700">Direct Flight</span>
 
@@ -243,15 +285,13 @@ export function TravelModuleForm({
 
       <div className="flex items-center gap-3"></div>
 
-      {/* Flight Routes */}
       <div className="space-y-4">
         {cities.map((city, index) => (
           <div key={index} className="grid grid-cols-12 gap-4 items-end">
-            {/* From City */}
             <div className="col-span-4">
               <FormField
                 control={form.control}
-                name={`typeSpecificData.sourceCity`}
+                name={`typeSpecificData.sourceCity${index + 1}`}
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel className="text-xs font-semibold mb-1.5 block text-gray-700">
@@ -259,8 +299,8 @@ export function TravelModuleForm({
                     </FormLabel>
                     <FormControl>
                       <Input
-                        className="h-12 rounded-lg px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                         placeholder="Enter City"
+                        className="h-12 rounded-lg px-3"
                         {...field}
                       />
                     </FormControl>
@@ -270,11 +310,10 @@ export function TravelModuleForm({
               />
             </div>
 
-           
             <div className="col-span-4">
               <FormField
                 control={form.control}
-                name={`typeSpecificData.destinationCity`}
+                name={`typeSpecificData.destinationCity${index + 1}`}
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel className="text-xs font-semibold mb-1.5 block text-gray-700">
@@ -282,8 +321,8 @@ export function TravelModuleForm({
                     </FormLabel>
                     <FormControl>
                       <Input
-                        className="h-12 rounded-lg px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                         placeholder="Enter City"
+                        className="h-12 rounded-lg px-3"
                         {...field}
                       />
                     </FormControl>
@@ -293,11 +332,10 @@ export function TravelModuleForm({
               />
             </div>
 
-            
             <div className="col-span-3">
               <FormField
                 control={form.control}
-                name={`typeSpecificData.departureDate`}
+                name={`typeSpecificData.date${index + 1}`}
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel className="text-xs font-semibold mb-1.5 block text-gray-700">
@@ -306,21 +344,15 @@ export function TravelModuleForm({
                     <Popover>
                       <PopoverTrigger asChild>
                         <FormControl>
-                          <Button
-                            className={cn(
-                              "flex h-12 w-full items-center justify-between rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-normal shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent",
-                              !field.value && "text-gray-500"
-                            )}
-                          >
-                            {field.value ? (
-                              format(field.value, "MM/dd/yyyy")
-                            ) : (
-                              <span>Select date</span>
-                            )}
-                            <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                          <Button className="flex h-12 w-full justify-between px-3">
+                            {field.value
+                              ? format(field.value, "MM/dd/yyyy")
+                              : "Select date"}
+                            <CalendarIcon className="h-4 w-4" />
                           </Button>
                         </FormControl>
                       </PopoverTrigger>
+
                       <PopoverContent className="w-auto p-0" align="start">
                         <Calendar
                           mode="single"
@@ -337,7 +369,6 @@ export function TravelModuleForm({
               />
             </div>
 
-           
             {activeTab === "multi-city" && cities.length > 1 && (
               <div className="col-span-1">
                 <Button
@@ -353,7 +384,6 @@ export function TravelModuleForm({
           </div>
         ))}
 
-        
         {activeTab === "multi-city" && (
           <div className="flex justify-start">
             <Button
@@ -369,7 +399,6 @@ export function TravelModuleForm({
         )}
       </div>
 
-      
       {activeTab === "round-trip" && (
         <div className="grid grid-cols-12 gap-4">
           <div className="col-span-4">
@@ -417,9 +446,7 @@ export function TravelModuleForm({
         </div>
       )}
 
-      
       <div className="grid grid-cols-12 gap-4">
-       
         <div className="col-span-3">
           <FormField
             control={form.control}
@@ -443,39 +470,13 @@ export function TravelModuleForm({
             )}
           />
         </div>
-
-        {/* Flight Class */}
-        {/* <div className="col-span-3">
-          <FormField
-            control={form.control}
-            name="typeSpecificData.flightClass"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel className="text-xs font-semibold mb-1.5 block text-gray-700">
-                  Class
-                </FormLabel>
-                <FormControl>
-                  <Combobox
-                    options={flightClassOptions}
-                    value={field.value}
-                    onValueChange={field.onChange}
-                    placeholder="Select class"
-                    searchPlaceholder="Search..."
-                    emptyText="No options"
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        </div> */}
       </div>
     </div>
   );
 
+  // for hotel
   const renderHotelFields = () => (
     <div className="space-y-3">
-      
       <div
         className="
       border border-[#E3E8EF] rounded-lg bg-white
@@ -483,7 +484,6 @@ export function TravelModuleForm({
       w-full lg:h-[90px]
     "
       >
-        
         <div className="border-b md:border-b-0 md:border-r border-[#E3E8EF] p-4 flex flex-col justify-center">
           <FormLabel className="text-xs font-semibold text-gray-700 mb-1">
             Going To
@@ -497,7 +497,6 @@ export function TravelModuleForm({
           />
         </div>
 
-       
         <div className="border-b lg:border-b-0 lg:border-r border-[#E3E8EF] p-4 flex flex-col justify-center">
           <FormLabel className="text-xs font-semibold text-gray-700 mb-1">
             Check In
@@ -512,7 +511,6 @@ export function TravelModuleForm({
           />
         </div>
 
-       
         <div className="p-4 flex flex-col justify-center">
           <FormLabel className="text-xs font-semibold text-gray-700 mb-1">
             Check Out
@@ -528,14 +526,12 @@ export function TravelModuleForm({
         </div>
       </div>
 
-     
       <div
         className="
       grid grid-cols-1 md:grid-cols-2 gap-4 lg:gap-[17px]
       w-full
     "
       >
-       
         <div>
           <FormLabel className="text-xs font-semibold text-gray-700 mb-1">
             No. of Nights
@@ -547,7 +543,6 @@ export function TravelModuleForm({
           />
         </div>
 
-      
         <div>
           <FormLabel className="text-xs font-semibold text-gray-700 mb-1">
             Guests and Rooms
@@ -562,6 +557,7 @@ export function TravelModuleForm({
     </div>
   );
 
+  // for car
   const renderCarRentalFields = () => (
     <div className="space-y-3">
       <div className="flex items-center gap-2 mb-2">
@@ -576,7 +572,9 @@ export function TravelModuleForm({
             name="typeSpecificData.pickupFrom"
             render={({ field }) => (
               <FormItem>
-                <FormLabel className="text-xs font-semibold mb-1.5 block">Pick-Up From</FormLabel>
+                <FormLabel className="text-xs font-semibold mb-1.5 block">
+                  Pick-Up From
+                </FormLabel>
                 <FormControl>
                   <Combobox
                     options={pickupFromOptions}
@@ -599,7 +597,9 @@ export function TravelModuleForm({
             name="typeSpecificData.pickupLocation"
             render={({ field }) => (
               <FormItem>
-                <FormLabel className="text-xs font-semibold mb-1.5 block">Pickup Location</FormLabel>
+                <FormLabel className="text-xs font-semibold mb-1.5 block">
+                  Pickup Location
+                </FormLabel>
                 <FormControl>
                   <Input
                     className="h-10 rounded-lg px-3 py-2 border border-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
@@ -619,14 +619,16 @@ export function TravelModuleForm({
             name="typeSpecificData.pickupDate"
             render={({ field }) => (
               <FormItem>
-                <FormLabel className="text-xs font-semibold mb-1.5 block">Pick-Up Date</FormLabel>
+                <FormLabel className="text-xs font-semibold mb-1.5 block">
+                  Pick-Up Date
+                </FormLabel>
                 <Popover>
                   <PopoverTrigger asChild>
                     <FormControl>
                       <Button
                         className={cn(
                           "flex h-10 w-full items-center justify-between rounded-lg border border-input bg-background px-3 py-2 text-sm font-normal shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500",
-                          !field.value && "text-muted-foreground",
+                          !field.value && "text-muted-foreground"
                         )}
                       >
                         {field.value ? (
@@ -660,14 +662,16 @@ export function TravelModuleForm({
             name="typeSpecificData.dropoffDate"
             render={({ field }) => (
               <FormItem>
-                <FormLabel className="text-xs font-semibold mb-1.5 block">Drop-Off Date</FormLabel>
+                <FormLabel className="text-xs font-semibold mb-1.5 block">
+                  Drop-Off Date
+                </FormLabel>
                 <Popover>
                   <PopoverTrigger asChild>
                     <FormControl>
                       <Button
                         className={cn(
                           "flex h-10 w-full items-center justify-between rounded-lg border border-input bg-background px-3 py-2 text-sm font-normal shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500",
-                          !field.value && "text-muted-foreground",
+                          !field.value && "text-muted-foreground"
                         )}
                       >
                         {field.value ? (
@@ -701,7 +705,9 @@ export function TravelModuleForm({
             name="typeSpecificData.carType"
             render={({ field }) => (
               <FormItem>
-                <FormLabel className="text-xs font-semibold mb-1.5 block">Car Type</FormLabel>
+                <FormLabel className="text-xs font-semibold mb-1.5 block">
+                  Car Type
+                </FormLabel>
                 <FormControl>
                   <Combobox
                     options={carTypeOptions}
@@ -721,6 +727,8 @@ export function TravelModuleForm({
     </div>
   );
 
+  //for event
+
   const renderEventFields = () => (
     <div className="space-y-3">
       <div className="flex items-center gap-2 mb-2">
@@ -734,7 +742,9 @@ export function TravelModuleForm({
             name="typeSpecificData.eventName"
             render={({ field }) => (
               <FormItem>
-                <FormLabel className="text-xs font-semibold mb-1.5 block">Event Name</FormLabel>
+                <FormLabel className="text-xs font-semibold mb-1.5 block">
+                  Event Name
+                </FormLabel>
                 <FormControl>
                   <Input
                     className="h-10 rounded-lg px-3 py-2 border border-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
@@ -865,27 +875,98 @@ export function TravelModuleForm({
     </div>
   );
 
-  const renderPackageFields = () => (
+  // for holidays
+  const renderHolidaysFields = () => (
     <div className="space-y-3">
       <div className="flex items-center gap-2 mb-2">
-        <h3 className="text-sm font-semibold">Package Details</h3>
+        <h3 className="text-sm font-semibold">Holidays Details</h3>
       </div>
 
       <div className="grid grid-cols-12 gap-3">
         <div className="col-span-6">
           <FormField
             control={form.control}
-            name="typeSpecificData.destination"
+            name="typeSpecificData.eventLocation"
             render={({ field }) => (
               <FormItem>
                 <FormLabel className="text-xs font-semibold mb-1.5 block">
-                  Destination
+                  Location
                 </FormLabel>
                 <FormControl>
                   <Input
-                    className="h-10 rounded-lg px-3 py-2 border border-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
-                    placeholder="Destination"
+                    className="h-10 rounded-lg px-3 py-2 border border-input"
+                    placeholder="Event location"
                     {...field}
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
+
+        <div className="col-span-6">
+          <FormField
+            control={form.control}
+            name="typeSpecificData.eventDate"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel className="text-xs font-semibold mb-1.5 block">
+                  Event Date
+                </FormLabel>
+
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <FormControl>
+                      <Button
+                        className={cn(
+                          "flex h-10 w-full items-center justify-between rounded-lg border border-input bg-background px-3 text-sm font-normal",
+                          !field.value && "text-muted-foreground"
+                        )}
+                      >
+                        {field.value ? format(field.value, "PPP") : "Pick date"}
+                        <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                      </Button>
+                    </FormControl>
+                  </PopoverTrigger>
+
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={field.value}
+                      onSelect={field.onChange}
+                      disabled={(date) => date < new Date()}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
+
+        <div className="col-span-12">
+          <FormField
+            control={form.control}
+            name="typeSpecificData.packageType"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel className="text-xs font-semibold mb-1.5 block">
+                  Package Type
+                </FormLabel>
+                <FormControl>
+                  <Combobox
+                    options={finalPackageOptions}
+                    value={field.value}
+                    onValueChange={field.onChange}
+                    placeholder={
+                      packagesLoading ? "Loading..." : "Select package"
+                    }
+                    searchPlaceholder="Search packages..."
+                    emptyText="No packages available"
+                    disabled={packagesLoading}
                   />
                 </FormControl>
                 <FormMessage />
@@ -904,11 +985,16 @@ export function TravelModuleForm({
                   Duration
                 </FormLabel>
                 <FormControl>
-                  <Input
-                    className="h-10 rounded-lg px-3 py-2 border border-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
-                    placeholder="5 days, 7 nights"
+                  <select
                     {...field}
-                  />
+                    className="h-10 w-full rounded-lg border border-input px-3 text-sm"
+                  >
+                    <option value="">All Duration</option>
+                    <option value="1-3">1–3 days</option>
+                    <option value="4-7">4–7 days</option>
+                    <option value="8-12">8–12 days</option>
+                    <option value="12+">12+ days</option>
+                  </select>
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -919,112 +1005,18 @@ export function TravelModuleForm({
         <div className="col-span-6">
           <FormField
             control={form.control}
-            name="typeSpecificData.travelDate"
+            name="typeSpecificData.budget"
             render={({ field }) => (
               <FormItem>
                 <FormLabel className="text-xs font-semibold mb-1.5 block">
-                  Travel Date
-                </FormLabel>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <FormControl>
-                      <Button
-                        className={cn(
-                          "flex h-10 w-full items-center justify-between rounded-lg border border-input bg-background px-3 py-2 text-sm font-normal shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500",
-                          !field.value && "text-muted-foreground"
-                        )}
-                      >
-                        {field.value ? (
-                          format(field.value, "PPP")
-                        ) : (
-                          <span>Pick date</span>
-                        )}
-                        <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                      </Button>
-                    </FormControl>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0" align="start">
-                    <Calendar
-                      mode="single"
-                      selected={field.value}
-                      onSelect={field.onChange}
-                      disabled={(date) => date < new Date()}
-                      initialFocus
-                    />
-                  </PopoverContent>
-                </Popover>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        </div>
-
-        <div className="col-span-6">
-          <FormField
-            control={form.control}
-            name="typeSpecificData.travelers"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel className="text-xs font-semibold mb-1.5 block">
-                  Travelers
+                  Budget
                 </FormLabel>
                 <FormControl>
                   <Input
-                    className="h-10 rounded-lg px-3 py-2 border border-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
-                    type="text"
-                    onKeyDown={handleNumericKeyDown}
-                    placeholder="2"
                     {...field}
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        </div>
-
-        <div className="col-span-12">
-          <FormField
-            control={form.control}
-            name="typeSpecificData.packageType"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel className="text-xs font-semibold mb-1.5 block">
-                  Package Type
-                </FormLabel>
-                <FormControl>
-                  <Combobox
-                    options={packageOptions}
-                    value={field.value}
-                    onValueChange={field.onChange}
-                    placeholder={
-                      packagesLoading ? "Loading..." : "Select package"
-                    }
-                    searchPlaceholder="Search packages..."
-                    emptyText="No packages available"
-                    disabled={packagesLoading}
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        </div>
-
-        <div className="col-span-12">
-          <FormField
-            control={form.control}
-            name="typeSpecificData.specialRequests"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel className="text-xs font-semibold mb-1.5 block">
-                  Special Requirements
-                </FormLabel>
-                <FormControl>
-                  <Textarea
-                    rows={2}
-                    placeholder="Special requirements..."
-                    {...field}
+                    type="number"
+                    className="h-10 rounded-lg px-3 py-2 border border-input"
+                    placeholder="Enter budget"
                   />
                 </FormControl>
                 <FormMessage />
@@ -1036,6 +1028,31 @@ export function TravelModuleForm({
     </div>
   );
 
+  // for package
+  const renderPackageFields = () => (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 mb-2">
+        <h3 className="text-sm font-semibold">Package Details</h3>
+      </div>
+
+       <div className="space-y-6">
+        <div className="flex items-center gap-2 mb-2">
+          <h3 className="text-sm font-semibold">Flight Details</h3>
+        </div>
+      </div>
+      {renderFlightFields()}
+     
+      <div className="space-y-6">
+        <div className="flex items-center gap-2 mb-2">
+          <h3 className="text-sm font-semibold">Hotels Details</h3>
+        </div>
+      </div>
+
+      {renderHotelFields()}
+    </div>
+  );
+
+  // for attraction
   const renderAttractionFields = () => (
     <div className="space-y-3">
       <div className="flex items-center gap-2 mb-2">
@@ -1111,8 +1128,222 @@ export function TravelModuleForm({
     </div>
   );
 
+  // for Activities
+  const renderActivitiesFields = () => (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 mb-1">
+        <h3 className="text-sm font-semibold">Activities Details</h3>
+      </div>
+
+      <div className="grid grid-cols-12 gap-3">
+        <div className="col-span-6">
+          <FormField
+            control={form.control}
+            name="typeSpecificData.attractionLocation"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel className="text-xs font-semibold mb-1.5 block">
+                  Location
+                </FormLabel>
+                <FormControl>
+                  <Input
+                    {...field}
+                    placeholder="City or location"
+                    className="h-10 rounded-lg"
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
+
+        <div className="col-span-6">
+          <FormField
+            control={form.control}
+            name="typeSpecificData.dateRange"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel className="text-xs font-semibold mb-1.5 block">
+                  Date Range
+                </FormLabel>
+
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <FormControl>
+                      <Button
+                        variant="outline"
+                        className="h-10 w-full justify-between rounded-lg border text-left font-normal"
+                      >
+                        {field.value?.from ? (
+                          field.value.to ? (
+                            `${format(new Date(field.value.from), "PPP")} → ${format(
+                              new Date(field.value.to),
+                              "PPP"
+                            )}`
+                          ) : (
+                            format(new Date(field.value.from), "PPP")
+                          )
+                        ) : (
+                          <span>Pick a date range</span>
+                        )}
+
+                        <CalendarIcon className="h-4 w-4 opacity-50" />
+                      </Button>
+                    </FormControl>
+                  </PopoverTrigger>
+
+                  <PopoverContent align="start" className="p-0">
+                    <Calendar
+                      mode="range"
+                      selected={field.value}
+                      onSelect={(range) => {
+                        if (!range) return field.onChange(null);
+
+                        field.onChange({
+                          from: range.from ? new Date(range.from) : null,
+                          to: range.to ? new Date(range.to) : null,
+                        });
+                      }}
+                      disabled={(date) => date < new Date()}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
+      </div>
+
+      {showActivities && (
+        <div className="space-y-3 mt-4">
+          <h4 className="text-sm font-semibold">Activities</h4>
+
+          {fields.map((item, index) => (
+            <div key={item.id} className="grid grid-cols-12 gap-3 items-center">
+              <div className="col-span-7">
+                <FormField
+                  control={form.control}
+                  name={`typeSpecificData.activityName${index}`}
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormControl>
+                        <Input
+                          {...field}
+                          placeholder="Enter activity name"
+                          className="h-10 rounded-lg"
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <div className="col-span-4">
+                <FormField
+                  control={form.control}
+                  name={`typeSpecificData.activityDatetime${index}`}
+                  render={({ field }) => (
+                    <FormItem>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <FormControl>
+                            <Button
+                              variant="outline"
+                              className="h-10 w-full justify-between rounded-lg border px-3 text-left font-normal"
+                            >
+                              {field.value
+                                ? format(field.value, "PPP p")
+                                : "Pick date & time"}
+
+                              <CalendarIcon className="h-4 w-4 opacity-50" />
+                            </Button>
+                          </FormControl>
+                        </PopoverTrigger>
+
+                        <PopoverContent className="p-0 w-auto">
+                          <div className="p-3 space-y-3">
+                            <Calendar
+                              mode="single"
+                              selected={field.value}
+                              onSelect={(date) =>
+                                field.onChange(
+                                  date
+                                    ? new Date(
+                                        date.getFullYear(),
+                                        date.getMonth(),
+                                        date.getDate(),
+                                        field.value?.getHours() ?? 12,
+                                        field.value?.getMinutes() ?? 0
+                                      )
+                                    : null
+                                )
+                              }
+                              disabled={(date) => date < new Date()}
+                            />
+
+                            <Input
+                              type="time"
+                              className="h-9"
+                              onChange={(e) => {
+                                const [h, m] = e.target.value.split(":");
+                                const date = field.value || new Date();
+
+                                field.onChange(
+                                  new Date(
+                                    date.getFullYear(),
+                                    date.getMonth(),
+                                    date.getDate(),
+                                    Number(h),
+                                    Number(m)
+                                  )
+                                );
+                              }}
+                            />
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <div className="col-span-1 flex justify-center">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-red-500"
+                  onClick={() => remove(index)}
+                >
+                  ✕
+                </Button>
+              </div>
+            </div>
+          ))}
+
+          <Button
+            type="button"
+            variant="outline"
+            className="mt-2"
+            onClick={() =>
+              append({
+                name: "",
+                datetime: null,
+              })
+            }
+          >
+            + Add Activity
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+
   const renderModuleFields = () => {
-    console.log("selectedCategory :",selectedCategory)
+    console.log("selectedCategory :", selectedCategory);
     switch (selectedCategory) {
       case "flight":
         return renderFlightFields();
@@ -1120,14 +1351,16 @@ export function TravelModuleForm({
         return renderHotelFields();
       case "package":
         return renderPackageFields();
-      case "event":
-        return renderEventFields();
+      case "holiday":
+        return renderHolidaysFields();
       case "Car Rental":
         return renderCarRentalFields();
       case "attraction":
         return renderAttractionFields();
-      case "holiday":
-        return renderPackageFields();
+      case "Event Booking":
+        return renderEventFields();
+      case "Activities":
+        return renderActivitiesFields();
       default:
         return null;
     }

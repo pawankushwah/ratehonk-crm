@@ -1572,13 +1572,52 @@ export default function Leads() {
                                               :
                                             </span>
                                             <span className="text-gray-900 text-right font-normal">
-                                              {typeof value === "object" &&
-                                              value !== null
-                                                ? JSON.stringify(value)
-                                                : value === null ||
-                                                    value === undefined
-                                                  ? "N/A"
-                                                  : String(value)}
+                                              {(() => {
+                                                
+                                                if (
+                                                  key === "dateRange" &&
+                                                  typeof value === "object" &&
+                                                  value?.from &&
+                                                  value?.to
+                                                ) {
+                                                  return `${format(new Date(value.from), "PPP")} → ${format(
+                                                    new Date(value.to),
+                                                    "PPP"
+                                                  )}`;
+                                                }
+
+                                                if (
+                                                  key === "activities" &&
+                                                  Array.isArray(value)
+                                                ) {
+                                                  return (
+                                                    <div className="flex flex-col text-right">
+                                                      {value.map((a, i) => (
+                                                        <span key={i}>
+                                                          {a.name} –{" "}
+                                                          {a.datetime
+                                                            ? format(
+                                                                new Date(
+                                                                  a.datetime
+                                                                ),
+                                                                "PPP p"
+                                                              )
+                                                            : "No time"}
+                                                        </span>
+                                                      ))}
+                                                    </div>
+                                                  );
+                                                }
+
+                                               
+                                                if (
+                                                  typeof value === "object" &&
+                                                  value !== null
+                                                ) {
+                                                  return JSON.stringify(value);
+                                                }
+                                                return value ?? "N/A";
+                                              })()}
                                             </span>
                                           </div>
                                         ))}
