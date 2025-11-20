@@ -28,57 +28,11 @@ import bcrypt from "bcrypt";
 // import { google } from 'googleapis';
 import jwt from "jsonwebtoken";
 import multer from "multer";
-
-// Helper function to get correct base URL
-function getBaseUrl(): string {
-  let baseUrl = process.env.APP_URL || process.env.FRONTEND_URL || "http://localhost:5000";
-  
-  // Remove trailing slash if present
-  baseUrl = baseUrl.replace(/\/$/, "");
-  
-  // Check if we're in development mode
-  const isDevelopment = process.env.NODE_ENV !== "production";
-  
-  // In development, allow localhost and 127.0.0.1
-  if (isDevelopment) {
-    // Allow localhost URLs in development
-    if (baseUrl.includes("localhost") || baseUrl.includes("127.0.0.1") || baseUrl.includes("0.0.0.0")) {
-      if (!baseUrl.startsWith("http")) {
-        baseUrl = `http://${baseUrl}`;
-      }
-      console.log("🔧 Development mode - Using local URL:", baseUrl);
-      return baseUrl;
-    }
-  }
-  
-  // Force correct domain in production - reject any wrong domains
-  if (baseUrl.includes("your-app-url.com") || baseUrl.includes("ww25")) {
-    console.log("⚠️ Detected wrong domain in env, overriding to crm.ratehonk.com");
-    baseUrl = "https://crm.ratehonk.com";
-  }
-  
-  // Ensure URL is absolute
-  if (!baseUrl.startsWith("http")) {
-    // Use https for production, http for development
-    const protocol = isDevelopment ? "http" : "https";
-    baseUrl = `${protocol}://${baseUrl}`;
-  }
-  
-  // In production, ensure it ends with the correct domain
-  if (!isDevelopment && !baseUrl.includes("crm.ratehonk.com")) {
-    console.log("⚠️ Production mode - Base URL doesn't contain crm.ratehonk.com, forcing correct domain");
-    baseUrl = "https://crm.ratehonk.com";
-  }
-  
-  return baseUrl;
-}
 import nodemailer from "nodemailer";
 import * as XLSX from "xlsx";
 // import pdfParse from "pdf-parse"; // Temporarily disabled
 import Tesseract from "tesseract.js";
 import { c } from "node_modules/vite/dist/node/types.d-aGj9QkWt.js";
-import fs from "fs";
-import path from "path";
 
 // Gmail OAuth handling function - COMPLETELY REWRITTEN to avoid googleapis imports
 async function handleGmailCallback(
@@ -1753,16 +1707,7 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
         typeSpecificFilters: String(typeSpecificFilters),
       });
 
-      // Return paginated response with total count
-      res.json(
-        leads || {
-          data: [],
-          total: 0,
-          page: Number(page) || 1,
-          limit: Number(limit),
-          totalPages: 0,
-        },
-      );
+      res.json(leads || []);
     } catch (error: any) {
       console.error("❌ Enhanced leads API error:", error);
       res.status(500).json({ error: error.message });
@@ -7258,85 +7203,48 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
 
       // Password is valid, continue with login
 
-      // CRITICAL: Check if email is verified/activated - MUST be checked BEFORE sending verification code
-      // This check MUST happen before any verification code generation or email sending
-      console.log("🔐 Checking email verification status for user:", user.email);
-      console.log("🔐 is_email_verified value:", user.is_email_verified);
-      console.log("🔐 is_email_verified type:", typeof user.is_email_verified);
-      
-      // Strict check: user must be activated (is_email_verified must be exactly true)
-      // This catches: false, null, undefined, 0, "", etc.
-      // Only proceed if is_email_verified is explicitly true
-      if (user.is_email_verified !== true) {
-        console.log("❌ BLOCKED: Login attempt by unactivated user:", user.email);
-        console.log("❌ User activation status:", user.is_email_verified);
-        console.log("❌ Blocking login - user must activate account first");
-        console.log("❌ NO verification code will be sent");
-        // Return immediately - DO NOT proceed to verification code generation
-        return res.status(403).json({ 
-          message: "Please activate your account by clicking the activation link sent to your email before logging in.",
-          requiresActivation: true,
-        });
+      // Generate JWT token
+      const token = jwt.sign({ userId: user.id }, JWT_SECRET);
+
+      // Get tenant info if user is not saas_owner
+      let tenant = null;
+      let permissions = null;
+      if (user.tenant_id) {
+        console.log("Fetching tenant data for tenant ID:", user.tenant_id);
+        tenant = await simpleStorage.getTenant(user.tenant_id);
+        console.log("Tenant data retrieved:", user ? user : "Not found");
+        permissions = await simpleStorage.getRoleById(
+          user.role_id,
+          user.tenant_id,
+        );
       }
 
-      console.log("✅ User is activated, proceeding with verification code generation");
-
-      // Generate 6-digit verification code
-      const crypto = await import("crypto");
-      const verificationCode = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit code
-      const expiresAt = new Date();
-      expiresAt.setMinutes(expiresAt.getMinutes() + 10); // 10 minutes expiration
-
-      // Save verification code
-      await simpleStorage.createLoginVerificationCode(
-        user.id,
-        user.email,
-        verificationCode,
-        expiresAt,
-      );
-
-      // Send verification code email
-      const firstName = user.first_name || "";
-      const lastName = user.last_name || "";
-      console.log("📧 Sending login verification code to:", user.email);
-      console.log("📧 Environment variables check:", {
-        SMTP_HOST: process.env.SMTP_HOST ? "✅ Set" : "❌ Not set",
-        SMTP_PORT: process.env.SMTP_PORT ? "✅ Set" : "❌ Not set",
-        EMAIL_USER: process.env.EMAIL_USER ? "✅ Set" : "❌ Not set",
-        SMTP_USER: process.env.SMTP_USER ? "✅ Set" : "❌ Not set",
-        EMAIL_PASS: process.env.EMAIL_PASS ? "✅ Set (hidden)" : "❌ Not set",
-        SMTP_PASS: process.env.SMTP_PASS ? "✅ Set (hidden)" : "❌ Not set",
-        NODE_ENV: process.env.NODE_ENV,
-      });
-      
-      const emailSent = await emailService.sendLoginVerificationCode({
-        to: user.email,
-        firstName: firstName,
-        lastName: lastName,
-        verificationCode: verificationCode,
-      });
-
-      if (!emailSent) {
-        console.error("❌ Failed to send verification code email");
-        console.error("❌ Please check server logs for detailed error information");
-        console.error("❌ Common issues:");
-        console.error("   1. SMTP credentials not set in environment variables");
-        console.error("   2. SMTP server connection failed");
-        console.error("   3. Firewall blocking SMTP port");
-        console.error("   4. Invalid SMTP configuration");
-        // return res.status(500).json({ 
-        //   message: "Failed to send verification code. Please try again.",
-        // });
-      }
-
-      // Return response indicating code was sent (don't return token yet)
+      console.log("Login successful for user:", user.email);
       res.json({
-        requiresVerification: true,
-        message: "Verification code sent to your email. Please check your inbox.",
-        userId: user.id, // Send userId for verification step
-        emailVerificationCode: verificationCode,
+        user: {
+          id: user.id,
+          email: user.email,
+          role: user.role,
+          tenantId: user.tenant_id,
+          firstName: user.first_name || "",
+          lastName: user.last_name || "",
+          permissions: permissions ? permissions.permissions : {},
+          isActive: user.is_active,
+        },
+        tenant: tenant
+          ? {
+              id: tenant.id,
+              companyName: tenant.company_name,
+              subdomain: tenant.subdomain,
+              contactEmail: tenant.contact_email,
+              contactPhone: tenant.contact_phone,
+              address: tenant.address,
+              isActive: tenant.is_active,
+              logo: tenant.logo,
+            }
+          : null,
+        token,
       });
-      return;
     } catch (error: any) {
       console.error("Login error details:", error);
       console.error("Error message:", error.message);
@@ -7459,7 +7367,7 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
       // Hash password
       const hashedPassword = await bcrypt.hash(password, 10);
 
-      // Create user with email verification set to false
+      // Create user
       const user = await simpleStorage.createUser({
         email,
         password: hashedPassword,
@@ -7468,7 +7376,6 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
         firstName,
         lastName,
         isActive: true,
-        isEmailVerified: false,
       });
 
       // Create 14-day trial subscription
@@ -7501,78 +7408,43 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
         // Continue without subscription - user can set it up later
       }
 
-      // Generate activation token and send activation email
+      // Send welcome email
       try {
-        const crypto = await import("crypto");
-        const activationToken = crypto.randomBytes(32).toString("hex");
-        const expiresAt = new Date();
-        expiresAt.setHours(expiresAt.getHours() + 24); // 24 hours expiration
-
-        // Save activation token
-        await simpleStorage.createActivationToken(
-          user.id,
-          activationToken,
-          expiresAt,
-        );
-
-        // Send activation email
-        console.log("📧 ===== REGISTRATION - SENDING ACTIVATION EMAIL =====");
-        console.log("📧 Email:", email);
-        console.log("📧 First Name:", firstName);
-        console.log("📧 Last Name:", lastName);
-        console.log("📧 Company Name:", companyName);
-        console.log("📧 Activation token (first 8 chars):", activationToken.substring(0, 8));
-        console.log("📧 EmailService instance:", typeof emailService);
-        console.log("📧 EmailService method exists:", typeof emailService?.sendActivationEmail);
-
-        try {
-          const emailSent = await emailService.sendActivationEmail({
-            to: email,
-            firstName: firstName,
-            lastName: lastName,
-            activationToken: activationToken,
-            companyName: companyName,
-          });
-          
-          if (emailSent) {
-            console.log("✅ ===== ACTIVATION EMAIL SENT - REGISTRATION CONFIRMED =====");
-            console.log("✅ Activation email sent successfully to:", email);
-          } else {
-            console.error("❌ ===== ACTIVATION EMAIL SEND FAILED - FUNCTION RETURNED FALSE =====");
-            console.error("❌ Failed to send activation email to:", email);
-            console.error("❌ User can still activate manually via support");
-          }
-        } catch (emailError: any) {
-          console.error("❌ ===== EXCEPTION IN ACTIVATION EMAIL SENDING =====");
-          console.error("❌ Activation email error:", emailError);
-          console.error("❌ Exception message:", emailError?.message);
-          console.error("❌ Exception stack:", emailError?.stack);
-          console.error("❌ Error details:", {
-            message: emailError?.message,
-            code: emailError?.code,
-            command: emailError?.command,
-            response: emailError?.response,
-            responseCode: emailError?.responseCode,
-          });
-          // Continue without email - user account is still created
-        }
-      } catch (emailError: any) {
-        console.error("❌ ===== EXCEPTION IN ACTIVATION TOKEN CREATION =====");
-        console.error("❌ Activation token/email error:", emailError);
-        console.error("❌ Exception message:", emailError?.message);
-        console.error("❌ Exception stack:", emailError?.stack);
+        const userName = `${firstName} ${lastName}`;
+        console.log("📧 Sending welcome email to:", email);
+        // await emailService.sendWelcomeEmail(email, companyName, userName);
+        await emailService.sendWelcomeEmail({
+          to: email,
+          firstName: firstName,
+          lastName: lastName,
+          companyName,
+          email,
+          temporaryPassword: "",
+        });
+        console.log("✅ Welcome email sent successfully");
+      } catch (emailError) {
+        console.error("Welcome email failed (non-critical):", emailError);
         // Continue without email - user account is still created
       }
 
-      // Don't return token - user needs to activate first
-      // Return success message indicating activation email was sent
+      // Generate JWT token
+      const token = jwt.sign({ userId: user.id }, JWT_SECRET);
+
       res.status(201).json({
-        message: "Registration successful! Please check your email to activate your account.",
-        requiresActivation: true,
         user: {
           id: user.id,
           email: user.email,
+          role: user.role,
+          tenantId: user.tenant_id,
+          firstName:
+            user.first_name || (user.name ? user.name.split(" ")[0] : ""),
+          lastName:
+            user.last_name ||
+            (user.name ? user.name.split(" ").slice(1).join(" ") : ""),
+          isActive: user.is_active,
         },
+        tenant,
+        token,
       });
     } catch (error: any) {
       console.error("Registration error details:", error);
@@ -7682,34 +7554,23 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
       const displayName =
         `${user.first_name || ""} ${user.last_name || ""}`.trim() || "User";
 
-      console.log("📧 ===== FORGOT PASSWORD ENDPOINT - SENDING EMAIL =====");
+      console.log("📧 Attempting to send password reset email...");
       console.log("📧 Email:", email);
       console.log("📧 Name:", displayName);
       console.log("📧 Token (first 8 chars):", resetToken.substring(0, 8));
-      console.log("📧 EmailService instance:", typeof emailService);
-      console.log("📧 EmailService method exists:", typeof emailService?.sendPasswordResetEmail);
 
       // Send the email
-      try {
-        const emailSent = await emailService.sendPasswordResetEmail({
-          to: email,
-          displayName,
-          resetToken,
-          companyName: "RateHonk",
-        });
+      const emailSent = await emailService.sendPasswordResetEmail({
+        to: email,
+        displayName,
+        resetToken,
+        companyName: "RateHonk",
+      });
 
-        if (emailSent) {
-          console.log("✅ ===== EMAIL SENT - ENDPOINT CONFIRMED =====");
-          console.log("✅ Password reset email sent successfully");
-        } else {
-          console.error("❌ ===== EMAIL SEND FAILED - FUNCTION RETURNED FALSE =====");
-          console.warn("⚠️ Failed to send password reset email - sendPasswordResetEmail returned false");
-        }
-      } catch (emailError: any) {
-        console.error("❌ ===== EXCEPTION IN EMAIL SENDING =====");
-        console.error("❌ Exception caught:", emailError);
-        console.error("❌ Exception message:", emailError?.message);
-        console.error("❌ Exception stack:", emailError?.stack);
+      if (emailSent) {
+        console.log("✅ Password reset email sent successfully");
+      } else {
+        console.warn("⚠️ Failed to send password reset email");
       }
 
       // Clean up expired tokens (asynchronously)
@@ -7719,7 +7580,6 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
       res.json({
         message:
           "If an account with this email exists, you will receive a password reset link shortly.",
-          otp: resetToken.substring(0, 8),
       });
     } catch (error: any) {
       console.error("❌ Password reset request error:", error);
@@ -7791,242 +7651,6 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
       res.status(500).json({
         valid: false,
         message: "Internal server error",
-        details:
-          process.env.NODE_ENV === "development" ? error.message : undefined,
-      });
-    }
-  });
-
-  // Verify login code endpoint
-  app.post("/api/auth/verify-login-code", async (req, res) => {
-    try {
-      const { userId, code } = req.body;
-
-      if (!userId || !code) {
-        return res.status(400).json({ 
-          message: "User ID and verification code are required" 
-        });
-      }
-
-      console.log("🔐 Verifying login code for user:", userId);
-
-      // Get verification code
-      const verificationCodeData = await simpleStorage.getLoginVerificationCode(
-        userId,
-        code,
-      );
-
-      if (!verificationCodeData) {
-        // Check if there's a code but it's wrong (to increment attempts)
-        const existingCode = await sql`
-          SELECT * FROM login_verification_codes 
-          WHERE user_id = ${userId} 
-          AND used_at IS NULL 
-          AND expires_at > NOW()
-          ORDER BY created_at DESC
-          LIMIT 1
-        `;
-
-        if (existingCode[0]) {
-          await simpleStorage.incrementVerificationAttempts(existingCode[0].id);
-          
-          // Check if too many attempts
-          if (existingCode[0].attempts >= 4) {
-            return res.status(400).json({
-              message: "Too many failed attempts. Please request a new code.",
-              tooManyAttempts: true,
-            });
-          }
-        }
-
-        return res.status(400).json({
-          message: "Invalid or expired verification code. Please try again.",
-          attemptsRemaining: existingCode[0] ? (5 - existingCode[0].attempts - 1) : 4,
-        });
-      }
-
-      // Check if too many attempts
-      if (verificationCodeData.attempts >= 5) {
-        return res.status(400).json({
-          message: "Too many failed attempts. Please request a new code.",
-          tooManyAttempts: true,
-        });
-      }
-
-      // Code is valid - mark as used
-      await simpleStorage.markVerificationCodeAsUsed(verificationCodeData.id);
-
-      // Get user info
-      const user = await simpleStorage.getUser(userId);
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
-      }
-
-      // Generate JWT token
-      const token = jwt.sign({ userId: user.id }, JWT_SECRET);
-
-      // Get tenant info if user is not saas_owner
-      let tenant = null;
-      let permissions = null;
-      if (user.tenant_id) {
-        console.log("Fetching tenant data for tenant ID:", user.tenant_id);
-        tenant = await simpleStorage.getTenant(user.tenant_id);
-        permissions = await simpleStorage.getRoleById(
-          user.role_id,
-          user.tenant_id,
-        );
-      }
-
-      console.log("✅ Login successful for user:", user.email);
-
-      res.json({
-        user: {
-          id: user.id,
-          email: user.email,
-          role: user.role,
-          tenantId: user.tenant_id,
-          firstName: user.first_name || "",
-          lastName: user.last_name || "",
-          permissions: permissions ? permissions.permissions : {},
-          isActive: user.is_active,
-        },
-        tenant: tenant
-          ? {
-              id: tenant.id,
-              companyName: tenant.company_name,
-              subdomain: tenant.subdomain,
-              contactEmail: tenant.contact_email,
-              contactPhone: tenant.contact_phone,
-              address: tenant.address,
-              isActive: tenant.is_active,
-              logo: tenant.logo,
-            }
-          : null,
-        token,
-      });
-    } catch (error: any) {
-      console.error("Error verifying login code:", error);
-      res.status(500).json({
-        message: "Error verifying code. Please try again.",
-        details: process.env.NODE_ENV === "development" ? error.message : undefined,
-      });
-    }
-  });
-
-  // Resend verification code endpoint
-  app.post("/api/auth/resend-verification-code", async (req, res) => {
-    try {
-      const { userId } = req.body;
-
-      if (!userId) {
-        return res.status(400).json({ message: "User ID is required" });
-      }
-
-      const user = await simpleStorage.getUser(userId);
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
-      }
-
-      // Generate new 6-digit verification code
-      const crypto = await import("crypto");
-      const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
-      const expiresAt = new Date();
-      expiresAt.setMinutes(expiresAt.getMinutes() + 10);
-
-      // Save verification code
-      await simpleStorage.createLoginVerificationCode(
-        user.id,
-        user.email,
-        verificationCode,
-        expiresAt,
-      );
-
-      // Send verification code email
-      const firstName = user.first_name || "";
-      const lastName = user.last_name || "";
-      const emailSent = await emailService.sendLoginVerificationCode({
-        to: user.email,
-        firstName: firstName,
-        lastName: lastName,
-        verificationCode: verificationCode,
-      });
-
-      if (!emailSent) {
-        // return res.status(500).json({ 
-        //   message: "Failed to send verification code. Please try again.",
-        // });
-      }
-
-      res.json({
-        success: true,
-        message: "Verification code resent to your email.",
-        otp: verificationCode,
-      });
-    } catch (error: any) {
-      console.error("Error resending verification code:", error);
-      res.status(500).json({
-        message: "Error resending code. Please try again.",
-      });
-    }
-  });
-
-  // Email activation endpoint
-  app.get("/api/auth/activate/:token", async (req, res) => {
-    try {
-      const { token } = req.params;
-
-      if (!token) {
-        return res.status(400).json({
-          success: false,
-          message: "Activation token is required",
-        });
-      }
-
-      console.log("🔐 Activating account with token:", token.substring(0, 8) + "...");
-
-      // Check if token exists and is not expired
-      const activationTokenData = await simpleStorage.getActivationToken(token);
-
-      if (!activationTokenData) {
-        console.log("🔐 Activation token not found or expired");
-        return res.status(400).json({
-          success: false,
-          message:
-            "Invalid or expired activation token. Please contact support or register again.",
-        });
-      }
-
-      // Check if user is already activated
-      if (activationTokenData.is_email_verified) {
-        console.log("✅ User already activated");
-        return res.status(400).json({
-          success: false,
-          message: "Account is already activated. You can login now.",
-        });
-      }
-
-      // Activate the user
-      await simpleStorage.activateUser(activationTokenData.user_id);
-
-      // Mark token as used
-      await simpleStorage.markActivationTokenAsUsed(activationTokenData.id);
-
-      console.log("✅ Account activated successfully for user:", activationTokenData.email);
-
-      // Redirect to login page (frontend will handle this)
-      const baseUrl = getBaseUrl();
-      const loginUrl = `${baseUrl}/login?activated=true`;
-      
-      res.json({
-        success: true,
-        message: "Account activated successfully! You can now login.",
-        redirectUrl: loginUrl,
-      });
-    } catch (error: any) {
-      console.error("Error activating account:", error);
-      res.status(500).json({
-        success: false,
-        message: "Error activating account. Please contact support.",
         details:
           process.env.NODE_ENV === "development" ? error.message : undefined,
       });
@@ -17190,16 +16814,11 @@ Please improve this email.`;
     }
   });
 
-  app.post("/api/tenants/:tenantId/leads/:leadId/notes", authenticateToken, async (req, res) => {
+  app.post("/api/tenants/:tenantId/leads/:leadId/notes", async (req, res) => {
     try {
       const leadId = parseInt(req.params.leadId);
       const tenantId = parseInt(req.params.tenantId);
-      const user = (req as any).user;
-
-      // Tenant access validation
-      if (user.tenantId !== tenantId) {
-        return res.status(403).json({ message: "Access denied" });
-      }
+      const userId = 64; // Using valid user ID for tenant 22 (shashivani01@gmail.com)
 
       console.log("🔍 API: Creating lead note for leadId:", leadId);
       console.log("🔍 API: Request body:", req.body);
@@ -17208,31 +16827,11 @@ Please improve this email.`;
         ...req.body,
         leadId,
         tenantId,
-        userId: user.id,
+        userId,
       };
 
       console.log("🔍 API: Final noteData being sent to storage:", noteData);
       const note = await simpleStorage.createLeadNote(noteData);
-
-      // Create activity for note creation
-      try {
-        await simpleStorage.createLeadActivity({
-          tenantId: tenantId,
-          leadId: leadId,
-          userId: user.id,
-          activityType: 7, // 7 = Note Created
-          activityTitle: `Note Created: ${noteData.noteTitle || note.noteTitle || 'Untitled Note'}`,
-          activityDescription: noteData.noteContent || note.noteContent || `Note type: ${noteData.noteType || 'general'}`,
-          activityStatus: 1, // 1 = Completed
-          activityDate: new Date().toISOString(),
-          activityTableId: note.id,
-          activityTableName: "lead_notes",
-        });
-        console.log(`✅ Lead activity logged for note creation: ${note.id}`);
-      } catch (activityError) {
-        // Don't fail the whole operation if activity logging fails
-        console.error("⚠️ Failed to log note creation activity:", activityError);
-      }
 
       res.json({
         success: true,
@@ -17306,61 +16905,47 @@ Please improve this email.`;
   });
 
   // POST /api/tenants/:tenantId/leads/:leadId/emails - Send email for a lead
-  app.post("/api/tenants/:tenantId/leads/:leadId/emails", authenticateToken, async (req, res) => {
+  app.post("/api/tenants/:tenantId/leads/:leadId/emails", async (req, res) => {
     try {
       const leadId = parseInt(req.params.leadId);
       const tenantId = parseInt(req.params.tenantId);
-      const user = (req as any).user;
+      const { email, subject, body, fromEmail } = req.body;
 
-      if (!tenantId) {
-        return res.status(403).json({ message: "Access denied - no tenant" });
-      }
+      console.log("🔍 API: Sending email for leadId:", leadId);
+      console.log("🔍 API: Email data:", { email, subject, fromEmail });
 
-      // First, try to send the actual email
-      let emailStatus = "failed";
-      let errorMessage = null;
+      // Insert into email_logs table
+      const result = await sql`
+        INSERT INTO email_logs (
+          tenant_id, lead_id, email, subject, body, from_email, status, sent_at
+        ) VALUES (${tenantId}, ${leadId}, ${email}, ${subject}, ${body}, ${fromEmail}, 'sent', NOW()) 
+        RETURNING id, lead_id, email, subject, body, from_email, status, sent_at
+      `;
 
-      try {
-        const { tenantEmailService } = await import(
-          "./tenant-email-service.js"
-        );
-        await tenantEmailService.sendCustomerEmail({
-          to: req.body.email,
-          subject: req.body.subject,
-          body: req.body.body,
-          htmlBody: req.body.htmlBody,
-          tenantId: tenantId,
-          attachments: req.body.attachments,
-        });
-        emailStatus = req.body.status || "sent";
-        console.log(`✅ Email sent successfully to ${req.body.email}`);
-      } catch (emailError: any) {
-        console.error(
-          `❌ Failed to send email to ${req.body.email}:`,
-          emailError,
-        );
-        emailStatus = "failed";
-        errorMessage = emailError.message;
-      }
+      const newEmail = result[0];
+      console.log("✅ API: Email logged successfully with ID:", newEmail.id);
 
-      // Save to database with status
-      const emailData = {
-        ...req.body,
-        tenantId: tenantId,
-        leadId: leadId,
-        userId: user?.id,
-        status: emailStatus,
-        errorMessage: errorMessage,
-        sentAt: new Date().toISOString(),
-      };
-
-      const email = await simpleStorage.createLeadEmail(emailData);
-      res.status(201).json(email);
-    } catch (error: any) {
-      console.error("❌ Error creating lead email:", error);
-      res
-        .status(500)
-        .json({ message: "Internal server error", error: error.message });
+      res.json({
+        success: true,
+        message: "Email sent successfully",
+        email: {
+          id: newEmail.id,
+          leadId: newEmail.lead_id,
+          email: newEmail.email,
+          subject: newEmail.subject,
+          body: newEmail.body,
+          fromEmail: newEmail.from_email,
+          status: newEmail.status,
+          sentAt: newEmail.sent_at,
+        },
+      });
+    } catch (error) {
+      console.error("❌ API: Error sending lead email:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to send email",
+        error: error.message,
+      });
     }
   });
 
@@ -17414,21 +16999,22 @@ Please improve this email.`;
   });
 
   // POST /api/tenants/:tenantId/leads/:leadId/calls - Create new call log
-  app.post("/api/tenants/:tenantId/leads/:leadId/calls", authenticateToken, async (req, res) => {
+  app.post("/api/tenants/:tenantId/leads/:leadId/calls", async (req, res) => {
     try {
       const { tenantId, leadId } = req.params;
-      const { callType, status, duration, notes, phoneNumber, followUpDateTime, followUpRequired } = req.body;
-      const user = (req as any).user;
-
-      // Tenant access validation
-      if (user.tenantId !== parseInt(tenantId)) {
-        return res.status(403).json({ message: "Access denied" });
-      }
+      const { callType, status, duration, notes } = req.body;
 
       console.log(
         `📞 SIMPLE ROUTES: Creating call log for tenant ${tenantId}, lead ${leadId}`,
       );
       console.log("📞 Call data:", req.body);
+
+      // Get a valid user ID for this tenant
+      const userData = await sql`
+        SELECT id FROM users WHERE tenant_id = ${tenantId} LIMIT 1
+      `;
+
+      const userId = userData[0]?.id || null;
 
       // Check if lead has been converted to customer
       const leadData = await sql`
@@ -17447,22 +17033,16 @@ Please improve this email.`;
           status, 
           duration, 
           notes,
-          caller_number,
-          "followUpDateTime",
-          "followUpRequired",
           started_at
         ) VALUES (
           ${tenantId}, 
           ${leadId}, 
           ${customerId},
-          ${user.id},
+          ${userId},
           ${callType || "outbound"}, 
           ${status || "completed"}, 
           ${duration ? parseInt(duration) : null}, 
           ${notes || ""},
-          ${phoneNumber || null},
-          ${followUpDateTime || null},
-          ${followUpRequired || false},
           NOW()
         ) RETURNING 
           id,
@@ -17471,35 +17051,12 @@ Please improve this email.`;
           status,
           duration,
           notes,
-          caller_number as "phoneNumber",
-          "followUpDateTime",
-          "followUpRequired",
           started_at as "startedAt",
           created_at as "createdAt"
       `;
 
       const newCall = result[0];
       console.log(`📞 SIMPLE ROUTES: Created call log with ID ${newCall.id}`);
-
-      // Create activity for call log creation
-      try {
-        await simpleStorage.createLeadActivity({
-          tenantId: parseInt(tenantId),
-          leadId: parseInt(leadId),
-          userId: user.id,
-          activityType: 3, // 3 = Call Made
-          activityTitle: callType || "Call Made",
-          activityDescription: `Mobile Number ${phoneNumber || "N/A"} Status ${status || "completed"} Minutes ${duration || 0} Notes ${notes || ""} Date ${new Date().toISOString()}${followUpDateTime ? ` Follow Up ${followUpDateTime}` : ""}${followUpRequired ? ` Follow Up Status ${followUpRequired}` : ""}`,
-          activityStatus: 1, // 1 = Completed
-          activityDate: new Date().toISOString(),
-          activityTableId: newCall.id,
-          activityTableName: "call_logs",
-        });
-        console.log(`✅ Lead activity logged for call creation: ${newCall.id}`);
-      } catch (activityError) {
-        // Don't fail the whole operation if activity logging fails
-        console.error("⚠️ Failed to log call creation activity:", activityError);
-      }
 
       return res.status(201).json({
         success: true,
@@ -17606,27 +17163,6 @@ Please improve this email.`;
         };
 
         const note = await simpleStorage.createCustomerNote(noteData);
-
-        // Create activity for note creation
-        try {
-          await simpleStorage.createCustomerActivity({
-            tenantId: parseInt(tenantId),
-            customerId: parseInt(customerId),
-            userId: user.id,
-            activityType: 7, // 7 = Note Created
-            activityTitle: `Note Created: ${noteData.noteTitle || note.noteTitle || 'Untitled Note'}`,
-            activityDescription: noteData.noteContent || note.noteContent || `Note type: ${noteData.noteType || 'general'}`,
-            activityStatus: 1, // 1 = Completed
-            activityDate: new Date().toISOString(),
-            activityTableId: note.id,
-            activityTableName: "customer_notes",
-          });
-          console.log(`✅ Customer activity logged for note creation: ${note.id}`);
-        } catch (activityError) {
-          // Don't fail the whole operation if activity logging fails
-          console.error("⚠️ Failed to log note creation activity:", activityError);
-        }
-
         res.status(201).json(note);
       } catch (error: any) {
         console.error("❌ Error creating customer note:", error);
@@ -17725,9 +17261,10 @@ Please improve this email.`;
     },
   });
 
-  // Serve uploaded files from local filesystem
-  // Handle both /uploads/email-attachments/ and /uploads/ paths
+  // Serve uploaded email attachments from local filesystem
   app.get("/uploads/email-attachments/:filename", (req, res) => {
+    const fs = require("fs");
+    const path = require("path");
     const filename = req.params.filename;
     
     // Security: prevent path traversal - only allow alphanumeric, dash, underscore, and dot
@@ -17751,51 +17288,6 @@ Please improve this email.`;
     }
   });
 
-  // Serve uploaded files from /uploads/ directory (for customer files and other uploads)
-  app.get("/uploads/:filename", (req, res) => {
-    let filename = decodeURIComponent(req.params.filename); // Decode URL-encoded filename
-    
-    // Security: prevent path traversal - allow alphanumeric, dash, underscore, dot, parentheses, and timezone offset (+/-)
-    // But sanitize to prevent directory traversal by removing any path separators
-    filename = filename.replace(/[\/\\]/g, ''); // Remove any path separators
-    // Allow timestamp, timezone offset (like +0530 or -0500), dashes, underscores, dots, parentheses, and alphanumeric
-    if (!/^[0-9]+[+-][0-9]{4}-[a-zA-Z0-9._()\s-]+$/.test(filename)) {
-      // Also allow older format without timezone for backward compatibility
-      if (!/^[0-9]+-[a-zA-Z0-9._()\s-]+$/.test(filename) && !/^[a-zA-Z0-9._()\s-]+$/.test(filename)) {
-        return res.status(403).json({ message: "Invalid filename" });
-      }
-    }
-    
-    const filePath = path.join(process.cwd(), "uploads", filename);
-    
-    // Security: ensure the resolved path is within the uploads directory
-    const safePath = path.normalize(filePath);
-    const uploadsDir = path.join(process.cwd(), "uploads");
-    if (!safePath.startsWith(path.normalize(uploadsDir))) {
-      return res.status(403).json({ message: "Access denied" });
-    }
-    
-    if (fs.existsSync(safePath) && fs.statSync(safePath).isFile()) {
-      // Set appropriate content type based on file extension
-      const ext = path.extname(filename).toLowerCase();
-      const contentTypes: Record<string, string> = {
-        '.jpg': 'image/jpeg',
-        '.jpeg': 'image/jpeg',
-        '.png': 'image/png',
-        '.gif': 'image/gif',
-        '.webp': 'image/webp',
-        '.pdf': 'application/pdf',
-        '.txt': 'text/plain',
-        '.csv': 'text/csv',
-      };
-      const contentType = contentTypes[ext] || 'application/octet-stream';
-      res.setHeader('Content-Type', contentType);
-      res.sendFile(safePath);
-    } else {
-      res.status(404).json({ message: "File not found" });
-    }
-  });
-
   // Email attachment upload endpoint
   app.post(
     "/api/email-attachments/upload",
@@ -17813,25 +17305,7 @@ Please improve this email.`;
         const uploadedFiles = [];
 
         for (const file of req.files) {
-          // Sanitize filename to prevent issues with spaces and special characters
-          const sanitizeFilename = (name: string): string => {
-            const ext = path.extname(name);
-            const baseName = path.basename(name, ext);
-            // Keep alphanumeric, spaces, dashes, underscores, dots, and parentheses
-            const sanitized = baseName
-              .replace(/[^a-zA-Z0-9._\s()-]/g, '') // Remove dangerous chars but keep parentheses
-              .replace(/\s+/g, ' ') // Normalize spaces
-              .trim()
-              .substring(0, 100); // Limit length
-            return `${sanitized}${ext}`;
-          };
-
-          const sanitizedOriginalName = sanitizeFilename(file.originalname);
-          const file_ext = path.extname(file.originalname);
-          const timestamp = Date.now();
-          const randomSuffix = Math.random().toString(36).substring(2, 8);
-          const safeFileName = `file_${randomSuffix}${file_ext}`;
-          const fileName = `email-attachments/${safeFileName}`;
+          const fileName = `email-attachments/${Date.now()}-${file.originalname}`;
 
           try {
             const url = await objectStorage.uploadFile(
@@ -17841,8 +17315,8 @@ Please improve this email.`;
             );
 
             uploadedFiles.push({
-              filename: file.originalname, // Keep original for display
-              path: url, // This will be the sanitized path
+              filename: file.originalname,
+              path: url,
               size: file.size,
               mimetype: file.mimetype,
             });
@@ -18151,18 +17625,14 @@ Please improve this email.`;
         );
 
         // Get customer's bookings and related data
-        const [customerBookings, customerInvoices, customersResult] =
+        const [customerBookings, customerInvoices, allCustomers] =
           await Promise.all([
             simpleStorage.getBookingsByTenant(parseInt(tenantId)),
             simpleStorage.getInvoicesByTenant(parseInt(tenantId)),
             simpleStorage.getCustomersByTenant({
               tenantId: parseInt(tenantId),
-              limit: 10000, // Get all customers for analytics
             }),
           ]);
-
-        // Extract the data array from the customers result
-        const allCustomers = customersResult.data || [];
 
         // Filter data for this specific customer
         const customerSpecificBookings = customerBookings.filter(
@@ -18417,139 +17887,87 @@ Please improve this email.`;
   };
 
   // Handle raw binary PUT requests from Uppy (AwsS3 plugin sends file as raw body)
-  // express.raw() middleware already parses the body into req.body as a Buffer
   const handleRawFileUpload = async (req: any, res: any) => {
     try {
-      console.log("📁 ========== Raw file upload (PUT) handler called ==========");
+      console.log("📁 Raw file upload (PUT) received");
       console.log("📁 Content-Type:", req.headers["content-type"]);
       console.log("📁 Content-Length:", req.headers["content-length"]);
-      console.log("📁 Query params:", req.query);
-      console.log("📁 Request body type:", typeof req.body);
-      console.log("📁 Request body is Buffer:", Buffer.isBuffer(req.body));
-      console.log("📁 Request body length:", req.body?.length || 0);
       
-      // express.raw() should parse the body into req.body as a Buffer
-      // But if express.json() ran first, req.body might be an object or string
-      let fileBuffer: Buffer;
+      // Uppy sends the file as raw binary in the request body
+      // We need to read it as a buffer
+      const chunks: Buffer[] = [];
       
-      if (Buffer.isBuffer(req.body)) {
-        // Good - body is already a Buffer
-        fileBuffer = req.body;
-      } else if (typeof req.body === 'string') {
-        // Body was parsed as string, convert to Buffer
-        console.log("⚠️ Body was parsed as string, converting to Buffer");
-        fileBuffer = Buffer.from(req.body, 'binary');
-      } else if (req.body && typeof req.body === 'object') {
-        // Body was parsed as JSON, this shouldn't happen but handle it
-        console.error("❌ Body was parsed as JSON object - this shouldn't happen for binary uploads");
-        return res.status(400).json({
+      req.on("data", (chunk: Buffer) => {
+        chunks.push(chunk);
+      });
+      
+      req.on("end", async () => {
+        try {
+          const fileBuffer = Buffer.concat(chunks);
+          
+          if (fileBuffer.length === 0) {
+            return res.status(400).json({
+              success: false,
+              message: "No file data received",
+            });
+          }
+
+          // Get filename from query parameter or use a default
+          const filename = (req.query.filename as string) || `file-${Date.now()}`;
+          const contentType = req.headers["content-type"] || "application/octet-stream";
+
+          // Generate a unique object path
+          const timestamp = Date.now();
+          const randomSuffix = Math.random().toString(36).substring(2, 8);
+          const objectPath = `uploads/${timestamp}-${randomSuffix}-${filename}`;
+          const publicUrl = `/uploads/${timestamp}-${randomSuffix}-${filename}`;
+
+          // Save file to local filesystem (or upload to object storage)
+          const fs = await import("fs");
+          const path = await import("path");
+          const uploadsDir = path.default.join(process.cwd(), "uploads");
+          
+          if (!fs.default.existsSync(uploadsDir)) {
+            fs.default.mkdirSync(uploadsDir, { recursive: true });
+          }
+          
+          const filePath = path.default.join(uploadsDir, `${timestamp}-${randomSuffix}-${filename}`);
+          fs.default.writeFileSync(filePath, fileBuffer);
+
+          console.log("📁 File saved to:", filePath);
+          console.log("📁 Public URL:", publicUrl);
+
+          res.json({
+            success: true,
+            objectPath,
+            publicUrl,
+            fileName: filename,
+            mimeType: contentType,
+            fileSize: fileBuffer.length,
+          });
+        } catch (error: any) {
+          console.error("❌ Error processing raw file upload:", error);
+          res.status(500).json({
+            success: false,
+            message: "Failed to store file",
+            error: error.message,
+          });
+        }
+      });
+
+      req.on("error", (error: any) => {
+        console.error("❌ Request stream error:", error);
+        res.status(500).json({
           success: false,
-          message: "Request body was parsed as JSON instead of binary data. Check middleware order.",
+          message: "Error reading file data",
+          error: error.message,
         });
-      } else {
-        // No body at all
-        console.error("❌ No request body found");
-        return res.status(400).json({
-          success: false,
-          message: "No file data received",
-        });
-      }
-      
-      if (!fileBuffer || fileBuffer.length === 0) {
-        console.error("❌ File buffer is empty");
-        return res.status(400).json({
-          success: false,
-          message: "No file data received",
-        });
-      }
-
-      console.log("📁 File buffer size:", fileBuffer.length, "bytes");
-
-      // Get filename from query parameter or use a default
-      let originalFilename = (req.query.filename as string) || `file-${Date.now()}`;
-      const contentType = req.headers["content-type"] || "application/octet-stream";
-
-      console.log("📁 Original filename:", originalFilename);
-      console.log("📁 Content-Type:", contentType);
-
-      // Sanitize filename: remove path separators and special characters, keep only safe characters
-      const sanitizeFilename = (name: string): string => {
-        // Get file extension
-        const ext = path.extname(name);
-        // Get base name without extension
-        const baseName = path.basename(name, ext);
-        // Sanitize: remove special characters, keep alphanumeric, spaces, dashes, underscores, dots
-        const sanitized = baseName
-          .replace(/[^a-zA-Z0-9._\s-]/g, '') // Remove special chars
-          .replace(/\s+/g, '_') // Replace spaces with underscores
-          .replace(/_{2,}/g, '_') // Replace multiple underscores with single
-          .substring(0, 100); // Limit length
-        return `${sanitized}${ext}`;
-      };
-
-      const sanitizedFilename = sanitizeFilename(originalFilename);
-
-      // Generate timestamp with timezone offset
-      const now = new Date();
-      const timestamp = now.getTime();
-      const timezoneOffset = -now.getTimezoneOffset(); // Offset in minutes
-      const timezoneOffsetHours = Math.floor(Math.abs(timezoneOffset) / 60);
-      const timezoneOffsetMinutes = Math.abs(timezoneOffset) % 60;
-      const timezoneSign = timezoneOffset >= 0 ? '+' : '-';
-      const timezoneString = `${timezoneSign}${String(timezoneOffsetHours).padStart(2, '0')}${String(timezoneOffsetMinutes).padStart(2, '0')}`;
-      
-      // Format: timestamp-timezone-sanitized-filename
-      // Example: 1763110450418+0530-Screenshot_2.png
-      const finalFilename = `${timestamp}${timezoneString}-${sanitizedFilename}`;
-      const objectPath = `uploads/${finalFilename}`;
-      const publicUrl = `/uploads/${finalFilename}`;
-
-      // Save file to local filesystem (or upload to object storage)
-      const uploadsDir = path.join(process.cwd(), "uploads");
-      
-      console.log("📁 Uploads directory:", uploadsDir);
-      
-      if (!fs.existsSync(uploadsDir)) {
-        console.log("📁 Creating uploads directory:", uploadsDir);
-        fs.mkdirSync(uploadsDir, { recursive: true });
-      }
-      
-      const filePath = path.join(uploadsDir, finalFilename);
-      
-      console.log("📁 Saving file to:", filePath);
-      console.log("📁 Final filename:", finalFilename);
-      fs.writeFileSync(filePath, fileBuffer);
-      
-      // Verify file was saved
-      if (fs.existsSync(filePath)) {
-        const stats = fs.statSync(filePath);
-        console.log("✅ File saved successfully!");
-        console.log("📁 File size on disk:", stats.size, "bytes");
-        console.log("📁 File path:", filePath);
-        console.log("📁 Public URL:", publicUrl);
-      } else {
-        console.error("❌ File was not saved - file does not exist after write");
-        return res.status(500).json({
-          success: false,
-          message: "File was not saved to disk",
-        });
-      }
-
-      res.json({
-        success: true,
-        objectPath,
-        publicUrl,
-        fileName: sanitizedFilename,
-        originalFileName: originalFilename,
-        mimeType: contentType,
-        fileSize: fileBuffer.length,
       });
     } catch (error: any) {
-      console.error("❌ Error processing raw file upload:", error);
-      console.error("❌ Error stack:", error.stack);
+      console.error("❌ Raw file upload error:", error);
       res.status(500).json({
         success: false,
-        message: "Failed to store file",
+        message: "Failed to process file upload",
         error: error.message,
       });
     }
@@ -18563,180 +17981,13 @@ Please improve this email.`;
   );
 
   // PUT endpoint handles raw binary uploads from Uppy
-  // express.raw() parses the body into req.body as a Buffer
-  // IMPORTANT: This must be registered BEFORE any JSON body parsers that might consume the stream
+  // Use express.raw() to handle binary data without consuming the stream
   app.put(
     "/api/objects/store",
-    (req, res, next) => {
-      console.log("🔵 PUT /api/objects/store - Request received");
-      console.log("🔵 Method:", req.method);
-      console.log("🔵 URL:", req.url);
-      console.log("🔵 Headers:", {
-        "content-type": req.headers["content-type"],
-        "content-length": req.headers["content-length"],
-        "authorization": req.headers["authorization"] ? "Present" : "Missing"
-      });
-      next();
-    },
     authenticateToken,
     express.raw({ type: "*/*", limit: "50mb" }), // Handle any content type, up to 50MB
     handleRawFileUpload
   );
-
-  // Get data from any table by table name and ID (for activity popups)
-  app.get("/api/activity-table-data", authenticateToken, async (req, res) => {
-    try {
-      const user = (req as any).user;
-      const { tableName, tableId, tenantId } = req.query;
-
-      if (!tableName || !tableId) {
-        return res.status(400).json({
-          success: false,
-          message: "tableName and tableId are required",
-        });
-      }
-
-      const finalTenantId = tenantId ? parseInt(tenantId as string) : user.tenantId;
-
-      // Sanitize table name to prevent SQL injection
-      const allowedTables = [
-        "invoices",
-        "bookings",
-        "estimates",
-        "leads",
-        "customers",
-        "expenses",
-        "packages",
-        "email_logs",
-        "call_logs",
-        "whatsapp_messages",
-        "customer_files",
-        "customer_notes",
-      ];
-      
-      const sanitizedTableName = tableName as string;
-      if (!allowedTables.includes(sanitizedTableName)) {
-        return res.status(400).json({
-          success: false,
-          message: `Table "${sanitizedTableName}" is not allowed`,
-        });
-      }
-
-      const tableIdNum = parseInt(tableId as string);
-      if (isNaN(tableIdNum)) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid tableId",
-        });
-      }
-
-      // Fetch data from the specified table using a switch to prevent SQL injection
-      let result: any[] = [];
-      
-      switch (sanitizedTableName) {
-        case "invoices":
-          result = await sql`
-            SELECT * FROM invoices 
-            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
-          `;
-          break;
-        case "bookings":
-          result = await sql`
-            SELECT * FROM bookings 
-            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
-          `;
-          break;
-        case "estimates":
-          result = await sql`
-            SELECT * FROM estimates 
-            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
-          `;
-          break;
-        case "leads":
-          result = await sql`
-            SELECT * FROM leads 
-            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
-          `;
-          break;
-        case "customers":
-          result = await sql`
-            SELECT * FROM customers 
-            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
-          `;
-          break;
-        case "expenses":
-          result = await sql`
-            SELECT * FROM expenses 
-            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
-          `;
-          break;
-        case "packages":
-          result = await sql`
-            SELECT * FROM packages 
-            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
-          `;
-          break;
-        case "email_logs":
-          // Select all columns that exist in email_logs table
-          // Note: Some columns may not exist in all databases, so we use a safe approach
-          result = await sql`
-            SELECT *
-            FROM email_logs 
-            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
-          `;
-          break;
-        case "call_logs":
-          result = await sql`
-            SELECT * FROM call_logs 
-            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
-          `;
-          break;
-        case "whatsapp_messages":
-          result = await sql`
-            SELECT * FROM whatsapp_messages 
-            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
-          `;
-          break;
-        case "customer_files":
-          result = await sql`
-            SELECT * FROM customer_files 
-            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
-          `;
-          break;
-        case "customer_notes":
-          result = await sql`
-            SELECT * FROM customer_notes 
-            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
-          `;
-          break;
-        default:
-          return res.status(400).json({
-            success: false,
-            message: `Table "${sanitizedTableName}" is not supported`,
-          });
-      }
-
-      if (!result || result.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: `Record not found in ${sanitizedTableName}`,
-        });
-      }
-
-      res.json({
-        success: true,
-        data: result[0],
-        tableName: sanitizedTableName,
-      });
-    } catch (error: any) {
-      console.error("❌ Error fetching activity table data:", error);
-      res.status(500).json({
-        success: false,
-        message: "Failed to fetch data",
-        error: error.message,
-      });
-    }
-  });
 
   // Get customer files
   app.get("/api/customer-files", authenticateToken, async (req, res) => {
@@ -18829,30 +18080,9 @@ Please improve this email.`;
         uploadedBy: user.id,
         tags: req.body.tags || [],
         isPublic: req.body.isPublic || false,
-        description: req.body.description || null,
       };
 
       const file = await simpleStorage.createCustomerFile(fileData);
-
-      // Create activity for file upload
-      try {
-        await simpleStorage.createCustomerActivity({
-          tenantId: finalTenantId,
-          customerId: parseInt(customerId),
-          userId: user.id,
-          activityType: 6, // 6 = File Uploaded
-          activityTitle: `File Uploaded: ${fileData.fileName}`,
-          activityDescription: fileData.description || `File type: ${fileType}, Size: ${(fileSize / 1024).toFixed(2)} KB`,
-          activityStatus: 1, // 1 = Completed
-          activityDate: new Date().toISOString(),
-          activityTableId: file.id,
-          activityTableName: "customer_files",
-        });
-        console.log(`✅ Customer activity logged for file upload: ${file.id}`);
-      } catch (activityError) {
-        // Don't fail the whole operation if activity logging fails
-        console.error("⚠️ Failed to log file upload activity:", activityError);
-      }
 
       res.json({ success: true, file });
     } catch (error) {

@@ -62,7 +62,6 @@ import { directCustomersApi } from "@/lib/direct-customers-api";
 import type { Customer } from "@shared/schema";
 import { Link } from "wouter";
 import { ZoomPhoneEmbed } from "@/components/zoom/zoom-phone-embed";
-import { format } from "date-fns";
 import {
   BarChart,
   Bar,
@@ -682,19 +681,19 @@ export default function Customers() {
                   <TableHead className="px-[20px] pr-[8px] py-[12px] text-left text-sm font-medium text-[#121926] first:rounded-tl-lg first:rounded-bl-lg">
                     Customer Name
                   </TableHead>
-                  <TableHead className="px-[20px] pr-[8px] py-[12px] text-left text-sm font-medium text-[#121926]">
+                  <TableHead className="px-[20px] pr-[8px] py-[12px] text-left text-sm font-medium text-[#121926] first:rounded-tl-lg first:rounded-bl-lg">
                     Phone
                   </TableHead>
-                  <TableHead className="px-[20px] pr-[8px] py-[12px] text-center text-sm font-medium text-[#121926]">
+                  <TableHead className="px-[20px] pr-[8px] py-[12px] text-left text-sm font-medium text-[#121926] first:rounded-tl-lg first:rounded-bl-lg">
                     Status
                   </TableHead>
-                  <TableHead className="px-[20px] pr-[8px] py-[12px] text-left text-sm font-medium text-[#121926]">
+                  <TableHead className="px-[20px] pr-[8px] py-[12px] text-left text-sm font-medium text-[#121926] first:rounded-tl-lg first:rounded-bl-lg">
                     Notes
                   </TableHead>
-                  <TableHead className="px-[20px] pr-[8px] py-[12px] text-left text-sm font-medium text-[#121926]">
+                  <TableHead className="px-[20px] pr-[8px] py-[12px] text-left text-sm font-medium text-[#121926] first:rounded-tl-lg first:rounded-bl-lg">
                     Date Added
                   </TableHead>
-                  <TableHead className="px-[20px] pr-[8px] py-[12px] text-center text-sm font-medium text-[#121926] last:rounded-tr-lg last:rounded-br-lg">
+                  <TableHead className="px-[20px] pr-[8px] py-[12px] text-left text-sm font-medium text-[#121926] first:rounded-tl-lg first:rounded-bl-lg">
                     Actions
                   </TableHead>
                 </TableRow>
@@ -753,10 +752,10 @@ export default function Customers() {
                             </div>
                           </div>
                         </TableCell>
-                        <TableCell className="text-gray-900 text-left">
+                        <TableCell className="text-gray-900">
                           {customer.phone || "N/A"}
                         </TableCell>
-                        <TableCell className="text-center">
+                        <TableCell>
                           <Badge
                             variant="outline"
                             className={`${statusConfig.color} border`}
@@ -764,16 +763,16 @@ export default function Customers() {
                             {statusConfig.label}
                           </Badge>
                         </TableCell>
-                        <TableCell className="text-gray-600 max-w-xs truncate text-left">
+                        <TableCell className="text-gray-600 max-w-xs truncate">
                           {customer.notes || "No notes"}
                         </TableCell>
-                        <TableCell className="text-gray-600 text-left">
+                        <TableCell className="text-gray-600">
                           {customer.createdAt
-                            ? format(new Date(customer.createdAt), "dd MMM yyyy")
+                            ? new Date(customer.createdAt).toLocaleDateString()
                             : "N/A"}
                         </TableCell>
-                        <TableCell className="text-center">
-                          <div className="flex items-center justify-center space-x-2">
+                        <TableCell>
+                          <div className="flex items-center space-x-2">
                             <Button
                               variant="outline"
                               size="sm"

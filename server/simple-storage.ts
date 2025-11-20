@@ -25,7 +25,6 @@ export class SimpleStorage {
       const user = users[0];
       if (user) {
         console.log("🔍 User found with id:", user.id);
-        console.log("🔍 User is_email_verified:", user.is_email_verified);
       } else {
         console.log("🔍 No user found with this email");
       }
@@ -283,166 +282,6 @@ export class SimpleStorage {
       `;
     } catch (error) {
       console.error("Error cleaning up expired tokens:", error);
-      throw error;
-    }
-  }
-
-  // Email activation token management
-  async createActivationToken(
-    userId: number,
-    token: string,
-    expiresAt: Date,
-  ) {
-    try {
-      console.log(
-        "🔐 Creating activation token for user:",
-        userId,
-        "expires:",
-        expiresAt.toISOString(),
-      );
-      const expiresAtString = expiresAt.toISOString();
-      const [activationToken] = await sql`
-        INSERT INTO email_activation_tokens (user_id, token, expires_at)
-        VALUES (${userId}, ${token}, ${expiresAtString})
-        RETURNING *
-      `;
-      console.log("✅ Activation token created successfully");
-      return activationToken;
-    } catch (error) {
-      console.error("❌ Error creating activation token:", error);
-      throw error;
-    }
-  }
-
-  async getActivationToken(token: string) {
-    try {
-      const [activationToken] = await sql`
-        SELECT eat.*, u.email, u.first_name, u.last_name, u.id as user_id, u.is_email_verified
-        FROM email_activation_tokens eat
-        JOIN users u ON eat.user_id = u.id
-        WHERE eat.token = ${token} 
-        AND eat.used_at IS NULL 
-        AND eat.expires_at > NOW()
-      `;
-      return activationToken;
-    } catch (error) {
-      console.error("Error getting activation token:", error);
-      throw error;
-    }
-  }
-
-  async markActivationTokenAsUsed(tokenId: number) {
-    try {
-      await sql`
-        UPDATE email_activation_tokens 
-        SET used_at = NOW() 
-        WHERE id = ${tokenId}
-      `;
-    } catch (error) {
-      console.error("Error marking activation token as used:", error);
-      throw error;
-    }
-  }
-
-  async activateUser(userId: number) {
-    try {
-      await sql`
-        UPDATE users 
-        SET is_email_verified = true
-        WHERE id = ${userId}
-      `;
-    } catch (error) {
-      console.error("Error activating user:", error);
-      throw error;
-    }
-  }
-
-  // Login verification code management
-  async createLoginVerificationCode(
-    userId: number,
-    email: string,
-    code: string,
-    expiresAt: Date,
-  ) {
-    try {
-      console.log(
-        "🔐 Creating login verification code for user:",
-        userId,
-        "expires:",
-        expiresAt.toISOString(),
-      );
-      const expiresAtString = expiresAt.toISOString();
-      // Delete any existing codes for this user first
-      await sql`
-        DELETE FROM login_verification_codes 
-        WHERE user_id = ${userId} AND used_at IS NULL
-      `;
-      
-      const [verificationCode] = await sql`
-        INSERT INTO login_verification_codes (user_id, email, code, expires_at)
-        VALUES (${userId}, ${email}, ${code}, ${expiresAtString})
-        RETURNING *
-      `;
-      console.log("✅ Login verification code created successfully");
-      return verificationCode;
-    } catch (error) {
-      console.error("❌ Error creating login verification code:", error);
-      throw error;
-    }
-  }
-
-  async getLoginVerificationCode(userId: number, code: string) {
-    try {
-      const [verificationCode] = await sql`
-        SELECT lvc.*, u.email, u.first_name, u.last_name, u.id as user_id
-        FROM login_verification_codes lvc
-        JOIN users u ON lvc.user_id = u.id
-        WHERE lvc.user_id = ${userId}
-        AND lvc.code = ${code}
-        AND lvc.used_at IS NULL 
-        AND lvc.expires_at > NOW()
-      `;
-      return verificationCode;
-    } catch (error) {
-      console.error("Error getting login verification code:", error);
-      throw error;
-    }
-  }
-
-  async incrementVerificationAttempts(codeId: number) {
-    try {
-      await sql`
-        UPDATE login_verification_codes 
-        SET attempts = attempts + 1
-        WHERE id = ${codeId}
-      `;
-    } catch (error) {
-      console.error("Error incrementing verification attempts:", error);
-      throw error;
-    }
-  }
-
-  async markVerificationCodeAsUsed(codeId: number) {
-    try {
-      await sql`
-        UPDATE login_verification_codes 
-        SET used_at = NOW() 
-        WHERE id = ${codeId}
-      `;
-    } catch (error) {
-      console.error("Error marking verification code as used:", error);
-      throw error;
-    }
-  }
-
-  async cleanupExpiredVerificationCodes() {
-    try {
-      await sql`
-        DELETE FROM login_verification_codes 
-        WHERE expires_at < NOW() OR attempts >= 5
-      `;
-    } catch (error) {
-      console.error("Error cleaning up expired verification codes:", error);
       throw error;
     }
   }
@@ -1309,17 +1148,7 @@ export class SimpleStorage {
       if (typeSpecificFilters) {
         try {
           const filters = JSON.parse(typeSpecificFilters);
-          console.log("🔍 Applying type-specific filters:", JSON.stringify(filters, null, 2));
-
-          // Group date range filters (travelDate_from, travelDate_to)
-          const dateRangeFields = new Set<string>();
-          Object.keys(filters).forEach((key) => {
-            if (key.endsWith("_from") || key.endsWith("_to")) {
-              const baseField = key.replace(/_from$|_to$/, "");
-              dateRangeFields.add(baseField);
-            }
-          });
-          console.log("🔍 Date range fields detected:", Array.from(dateRangeFields));
+          console.log("🔍 Applying type-specific filters:", filters);
 
           Object.entries(filters).forEach(([fieldName, fieldValue]) => {
             if (
@@ -1327,51 +1156,9 @@ export class SimpleStorage {
               fieldValue !== null &&
               fieldValue !== undefined
             ) {
-              // Check if this is part of a date range
-              if (fieldName.endsWith("_from")) {
-                const baseField = fieldName.replace(/_from$/, "");
-                const toValue = filters[`${baseField}_to`];
-                
-                if (toValue && toValue !== "" && toValue !== null && toValue !== undefined) {
-                  // Date range: BETWEEN from AND to
-                  // Handle NULL values and ensure the field exists in JSON
-                  // Extract date from ISO timestamp string (e.g., "2025-11-29T18:30:00.000Z" -> "2025-11-29")
-                  whereClauses = sql`${whereClauses} AND (
-                    l.type_specific_data->>${baseField} IS NOT NULL 
-                    AND l.type_specific_data->>${baseField} != ''
-                    AND DATE(l.type_specific_data->>${baseField}) >= ${String(fieldValue)}::date 
-                    AND DATE(l.type_specific_data->>${baseField}) <= ${String(toValue)}::date
-                  )`;
-                  console.log(`🔍 Date range filter applied: ${baseField} BETWEEN ${fieldValue} AND ${toValue}`);
-                } else {
-                  // Only from date: >= from
-                  // Extract date from ISO timestamp string
-                  whereClauses = sql`${whereClauses} AND (
-                    l.type_specific_data->>${baseField} IS NOT NULL 
-                    AND l.type_specific_data->>${baseField} != ''
-                    AND DATE(l.type_specific_data->>${baseField}) >= ${String(fieldValue)}::date
-                  )`;
-                  console.log(`🔍 Date from filter applied: ${baseField} >= ${fieldValue}`);
-                }
-              } else if (fieldName.endsWith("_to")) {
-                // Only process _to if _from doesn't exist (to avoid duplicate processing)
-                const baseField = fieldName.replace(/_to$/, "");
-                if (!filters[`${baseField}_from`] || filters[`${baseField}_from`] === "" || filters[`${baseField}_from`] === null || filters[`${baseField}_from`] === undefined) {
-                  // Only to date: <= to
-                  // Extract date from ISO timestamp string
-                  whereClauses = sql`${whereClauses} AND (
-                    l.type_specific_data->>${baseField} IS NOT NULL 
-                    AND l.type_specific_data->>${baseField} != ''
-                    AND DATE(l.type_specific_data->>${baseField}) <= ${String(fieldValue)}::date
-                  )`;
-                  console.log(`🔍 Date to filter applied: ${baseField} <= ${fieldValue}`);
-                }
-              } else if (!dateRangeFields.has(fieldName)) {
-                // Regular field (not part of a date range): exact match
-                // Use PostgreSQL JSON ->> operator to query JSON fields
-                whereClauses = sql`${whereClauses} AND l.type_specific_data->>${fieldName} = ${String(fieldValue)}`;
-                console.log(`🔍 Filter applied: ${fieldName} = ${fieldValue}`);
-              }
+              // Use PostgreSQL JSON ->> operator to query JSON fields
+              whereClauses = sql`${whereClauses} AND l.type_specific_data->>${fieldName} = ${String(fieldValue)}`;
+              console.log(`🔍 Filter applied: ${fieldName} = ${fieldValue}`);
             }
           });
         } catch (error) {
@@ -1391,19 +1178,6 @@ export class SimpleStorage {
         : "created_at";
       const order = sortOrder.toLowerCase() === "asc" ? sql`ASC` : sql`DESC`;
 
-      // Log the final WHERE clause for debugging
-      console.log("🔍 Final WHERE clause constructed, executing query...");
-      
-      // Get total count with same filters
-      const countResult = await sql`
-        SELECT COUNT(*) as total
-        FROM leads l
-        LEFT JOIN lead_types lt ON l.lead_type_id = lt.id
-        WHERE ${whereClauses}
-      `;
-      const total = parseInt(countResult[0]?.total || "0");
-      
-      // Get paginated data
       const leadResults = await sql`
         SELECT 
           l.*,
@@ -1417,8 +1191,6 @@ export class SimpleStorage {
         ORDER BY ${sql(sortColumn)} ${order}
         LIMIT ${limit} OFFSET ${offset}
       `;
-      
-      console.log(`🔍 Query returned ${leadResults.length} leads (total: ${total})`);
 
       // Transform leads with default fields
       const transformedLeads = leadResults.map((lead: any) => ({
@@ -1464,14 +1236,7 @@ export class SimpleStorage {
         }),
       );
 
-      // Return paginated response
-      return {
-        data: leadsWithDynamicData,
-        total,
-        page: Math.floor(offset / limit) + 1,
-        limit,
-        totalPages: Math.ceil(total / limit),
-      };
+      return leadsWithDynamicData;
     } catch (error) {
       console.error("❌ Error fetching leads:", error);
       throw error;
@@ -1648,8 +1413,6 @@ export class SimpleStorage {
         activity_title,
         activity_description,
         activity_status,
-        activity_table_id,
-        activity_table_name,
       } = activityData;
 
       if (!tenant_id) throw new Error("tenantId is required");
@@ -1663,8 +1426,6 @@ export class SimpleStorage {
           activity_title,
           activity_description,
           activity_status,
-          activity_table_id,
-          activity_table_name,
           activity_date,
           created_at,
           updated_at
@@ -1677,8 +1438,6 @@ export class SimpleStorage {
           ${activity_title},
           ${activity_description || null},
           ${activity_status},
-          ${activity_table_id || null},
-          ${activity_table_name || null},
           ${new Date().toISOString()},
           NOW(),
           NOW()
@@ -4096,45 +3855,6 @@ export class SimpleStorage {
             console.warn("Error fetching invoice details:", joinError);
           }
 
-          // Fetch line items from invoice_items table
-          let lineItems = [];
-          try {
-            const items = await sql`
-              SELECT * FROM invoice_items 
-              WHERE invoice_id = ${invoice.id}
-              ORDER BY id
-            `;
-            lineItems = items.map((item: any) => ({
-              id: item.id,
-              description: item.description,
-              itemTitle: item.description,
-              quantity: item.quantity || 1,
-              unitPrice: parseFloat(item.unit_price || 0),
-              sellingPrice: parseFloat(item.unit_price || 0),
-              tax: 0,
-              totalAmount: parseFloat(item.total_price || 0),
-            }));
-          } catch (itemsError) {
-            console.warn("Error fetching invoice items:", itemsError);
-          }
-
-          // Also check if line items are stored as JSON in the invoice record
-          let jsonLineItems = [];
-          if (invoice.line_items) {
-            try {
-              if (typeof invoice.line_items === 'string') {
-                jsonLineItems = JSON.parse(invoice.line_items);
-              } else if (Array.isArray(invoice.line_items)) {
-                jsonLineItems = invoice.line_items;
-              }
-            } catch (e) {
-              console.warn("Failed to parse line_items JSON:", e);
-            }
-          }
-
-          // Use JSON line items if available, otherwise use invoice_items table
-          const finalLineItems = jsonLineItems.length > 0 ? jsonLineItems : lineItems;
-
           return {
             id: invoice.id,
             tenantId: invoice.tenant_id,
@@ -4147,12 +3867,7 @@ export class SimpleStorage {
             subtotal: parseFloat(invoice.subtotal),
             taxAmount: parseFloat(invoice.tax_amount || "0"),
             totalAmount: parseFloat(invoice.total_amount),
-            paidAmount: parseFloat(invoice.paid_amount || invoice.amount_paid || "0"),
-            discountAmount: parseFloat(invoice.discount_amount || "0"),
-            currency: invoice.currency || "INR",
-            paymentTerms: invoice.payment_terms,
             notes: invoice.notes,
-            lineItems: finalLineItems,
             createdAt: invoice.created_at,
             customerName: customerName,
             customerEmail: customerEmail,
@@ -7968,8 +7683,6 @@ export class SimpleStorage {
           la.activity_description as "activityDescription",
           la.activity_status as "activityStatus",
           la.activity_date as "activityDate",
-          la.activity_table_id as "activityTableId",
-          la.activity_table_name as "activityTableName",
           la.created_at as "createdAt",
           la.updated_at as "updatedAt",
           u.email as "userEmail",
@@ -8001,13 +7714,11 @@ export class SimpleStorage {
       const [activity] = await sql`
         INSERT INTO lead_activities (
           tenant_id, lead_id, user_id, activity_type, 
-          activity_title, activity_description, activity_status, 
-          activity_table_id, activity_table_name, activity_date
+          activity_title, activity_description, activity_status, activity_date
         ) VALUES (
           ${activityData.tenantId}, ${activityData.leadId}, ${activityData.userId}, 
           ${activityData.activityType || 1}, ${activityData.activityTitle}, 
           ${activityData.activityDescription}, ${activityData.activityStatus || 1}, 
-          ${activityData.activityTableId || null}, ${activityData.activityTableName || null},
           ${activityData.activityDate || new Date().toISOString()}
         )
         RETURNING 
@@ -8019,8 +7730,6 @@ export class SimpleStorage {
           activity_title as "activityTitle",
           activity_description as "activityDescription",
           activity_status as "activityStatus",
-          activity_table_id as "activityTableId",
-          activity_table_name as "activityTableName",
           activity_date as "activityDate",
           created_at as "createdAt",
           updated_at as "updatedAt"
@@ -8402,8 +8111,6 @@ export class SimpleStorage {
           activity_description as "activityDescription",
           activity_status as "activityStatus",
           activity_date as "activityDate",
-          activity_table_id as "activityTableId",
-          activity_table_name as "activityTableName",
           created_at as "createdAt",
           updated_at as "updatedAt"
         FROM customer_activities 
@@ -8422,14 +8129,11 @@ export class SimpleStorage {
       const [activity] = await sql`
         INSERT INTO customer_activities (
           tenant_id, customer_id, user_id, activity_type, 
-          activity_title, activity_description, activity_status, 
-          activity_table_id, activity_table_name, activity_date
+          activity_title, activity_description, activity_status, activity_date
         ) VALUES (
           ${data.tenantId}, ${data.customerId}, ${data.userId}, 
           ${data.activityType}, ${data.activityTitle}, ${data.activityDescription || null},
-          ${data.activityStatus || 1}, 
-          ${data.activityTableId || null}, ${data.activityTableName || null},
-          ${data.activityDate || sql`NOW()`}
+          ${data.activityStatus || 1}, ${data.activityDate || sql`NOW()`}
         )
         RETURNING 
           id,
@@ -8440,8 +8144,6 @@ export class SimpleStorage {
           activity_title as "activityTitle",
           activity_description as "activityDescription",
           activity_status as "activityStatus",
-          activity_table_id as "activityTableId",
-          activity_table_name as "activityTableName",
           activity_date as "activityDate",
           created_at as "createdAt",
           updated_at as "updatedAt"
@@ -8467,8 +8169,6 @@ export class SimpleStorage {
           activity_title = ${data.activityTitle},
           activity_description = ${data.activityDescription || null},
           activity_status = ${data.activityStatus || 1},
-          activity_table_id = ${data.activityTableId || null},
-          activity_table_name = ${data.activityTableName || null},
           activity_date = ${data.activityDate || sql`NOW()`},
           updated_at = NOW()
         WHERE id = ${id} AND tenant_id = ${tenantId} AND customer_id = ${customerId}
@@ -8546,12 +8246,11 @@ export class SimpleStorage {
       const [email] = await sql`
         INSERT INTO email_logs (
           tenant_id, customer_id, campaign_id, subscriber_id, email, subject, body, 
-          status, sent_at, from_email, attachments
+          status, sent_at, from_email
         ) VALUES (
           ${data.tenantId}, ${data.customerId}, ${data.campaignId || null}, ${data.subscriberId || null}, 
           ${data.email}, ${data.subject}, ${data.body},
-          ${data.status || "sent"}, ${data.sentAt || sql`NOW()`}, ${data.fromEmail || null},
-          ${data.attachments ? JSON.stringify(data.attachments) : null}
+          ${data.status || "sent"}, ${data.sentAt || sql`NOW()`}, ${data.fromEmail || null}
         )
         RETURNING 
           id,
@@ -8569,10 +8268,8 @@ export class SimpleStorage {
           clicked_at as "clickedAt",
           error_message as "errorMessage",
           lead_id as "leadId",
-          from_email as "fromEmail",
-          attachments
+          from_email as "fromEmail"
       `;
-      // Create activity linked to the email_logs record
       this.createCustomerActivity({
         tenantId: data.tenantId,
         customerId: data.customerId,
@@ -8581,64 +8278,9 @@ export class SimpleStorage {
         activityTitle: data.subject,
         activityDescription: data.body,
         activityStatus: 1,
-        activityTableId: email.id,
-        activityTableName: "email_logs",
       });
-      return email;
     } catch (error) {
       console.error("❌ Error creating customer email:", error);
-      throw error;
-    }
-  }
-
-  async createLeadEmail(data: any) {
-    try {
-      const [email] = await sql`
-        INSERT INTO email_logs (
-          tenant_id, lead_id, campaign_id, subscriber_id, email, subject, body, 
-          status, sent_at, from_email, attachments
-        ) VALUES (
-          ${data.tenantId}, ${data.leadId}, ${data.campaignId || null}, ${data.subscriberId || null}, 
-          ${data.email}, ${data.subject}, ${data.body},
-          ${data.status || "sent"}, ${data.sentAt || sql`NOW()`}, ${data.fromEmail || null},
-          ${data.attachments ? JSON.stringify(data.attachments) : null}
-        )
-        RETURNING 
-          id,
-          tenant_id as "tenantId",
-          customer_id as "customerId",
-          campaign_id as "campaignId",
-          subscriber_id as "subscriberId",
-          email,
-          subject,
-          body,
-          status,
-          sent_at as "sentAt",
-          delivered_at as "deliveredAt",
-          opened_at as "openedAt",
-          clicked_at as "clickedAt",
-          error_message as "errorMessage",
-          lead_id as "leadId",
-          from_email as "fromEmail",
-          attachments
-      `;
-      // Create activity linked to the email_logs record
-      if (data.userId) {
-        this.createLeadActivity({
-          tenantId: data.tenantId,
-          leadId: data.leadId,
-          userId: data.userId,
-          activityType: 2,
-          activityTitle: data.subject,
-          activityDescription: data.body,
-          activityStatus: 1,
-          activityTableId: email.id,
-          activityTableName: "email_logs",
-        });
-      }
-      return email;
-    } catch (error) {
-      console.error("❌ Error creating lead email:", error);
       throw error;
     }
   }
@@ -8754,13 +8396,12 @@ export class SimpleStorage {
           "followUpDateTime",
           "followUpRequired"
       `;
-      // Create activity linked to the call_logs record
       this.createCustomerActivity({
         tenantId: data.tenantId,
         customerId: data.customerId,
         userId: data.userId,
         activityType: 3,
-        activityTitle: data.callType || "Call Made",
+        activityTitle: data.callType,
         activityDescription:
           "Mobile Number " +
           data.phoneNumber +
@@ -8779,8 +8420,6 @@ export class SimpleStorage {
           " Follow Up Status " +
           data.followUpRequired,
         activityStatus: 1,
-        activityTableId: call.id,
-        activityTableName: "call_logs",
       });
       return call;
     } catch (error) {
@@ -10336,7 +9975,7 @@ export class SimpleStorage {
         SELECT 
           wm.*,
           wd.number as device_number,
-          (u.first_name || ' ' || u.last_name) as sent_by_name
+          u.name as sent_by_name
         FROM whatsapp_messages wm
         LEFT JOIN whatsapp_devices wd ON wm.device_id = wd.id
         LEFT JOIN users u ON wm.sent_by = u.id
@@ -10379,7 +10018,7 @@ export class SimpleStorage {
         SELECT 
           wm.*,
           wd.number as device_number,
-          (u.first_name || ' ' || u.last_name) as sent_by_name
+          u.name as sent_by_name
         FROM whatsapp_messages wm
         LEFT JOIN whatsapp_devices wd ON wm.device_id = wd.id
         LEFT JOIN users u ON wm.sent_by = u.id

@@ -1,8 +1,11 @@
-name: Deploy to Production (Simple) - DISABLED
+name: Deploy to Production (Simple)
 
-# This workflow is disabled - use deploy.yml instead
 on:
-  workflow_dispatch: # Only manual trigger, no automatic runs
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch: # Allows manual triggering
 
 jobs:
   deploy:

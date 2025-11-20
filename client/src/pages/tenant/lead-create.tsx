@@ -2,12 +2,13 @@ import { useLocation } from "wouter";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Layout } from "@/components/layout/layout";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Settings, HelpCircle, Bell } from "lucide-react";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useToast } from "@/hooks/use-toast";
 import { FlexibleLeadForm } from "@/components/lead/flexible-lead-form";
 import { directLeadsApi } from "@/lib/direct-leads-api";
 import type { Lead } from "@/lib/types";
+import { Link } from "wouter";
 
 export default function LeadCreate() {
   const [, setLocation] = useLocation();
@@ -60,31 +61,58 @@ export default function LeadCreate() {
 
   return (
     <Layout>
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-        <div className="max-w-5xl mx-auto p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <Button
-              variant="ghost"
-              onClick={onCancel}
-              className="hover:bg-gray-100 dark:hover:bg-gray-800"
-              data-testid="button-back-to-leads"
-            >
-              <ArrowLeft className="h-4 w-4 mr-2" />
-              Back
-            </Button>
-            <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">Create Lead</h1>
-            <div className="w-20"></div>
+      <div className="w-full  mt-[12px] rounded-[15px]">
+        
+        <div
+          className="w-full h-[72px] bg-white px-[18px] py-[16px] 
+                    border-b border-[#E3E8EF] rounded-[16px] flex items-center justify-between"
+        >
+          <h1 className="text-[18px] font-semibold">Lead Management</h1>
+
+          <div className="flex gap-3 ml-auto">
+            <div className="w-10 h-10 flex items-center justify-center rounded-lg border border-gray-200 bg-white shadow-sm">
+              <Link href="/dynamic-fields">
+                <Settings className="h-5 w-5 text-gray-600" />
+              </Link>
+            </div>
+            <div className="w-10 h-10 flex items-center justify-center rounded-lg border border-gray-200 bg-white shadow-sm">
+              <Link href="/support">
+                <HelpCircle className="h-5 w-5 text-gray-600" />
+              </Link>
+            </div>
+            <div className="w-10 h-10 flex items-center justify-center rounded-lg border border-gray-200 bg-white shadow-sm">
+              <Bell className="h-5 w-5 text-gray-600" />
+            </div>
+          </div>
+        </div>
+
+       
+        <div className="w-full bg-[#F5F6FA] px-[18px] py-[14px] border-b border-gray-200 flex items-center gap-4">
+          <div className="flex items-center gap-2 text-sm text-gray-600">
+            <i className="ri-folder-line text-gray-600"></i>
+            <span>Lead Management</span>
+            <span className="text-gray-400">›</span>
           </div>
 
-          <div className="bg-white dark:bg-gray-900 rounded-lg shadow-sm border border-gray-200 dark:border-gray-800 p-4">
-            <FlexibleLeadForm
-              tenantId={String(tenant?.id!)}
-              userId={String(user?.id!)}
-              onSubmit={onSubmit}
-              onCancel={onCancel}
-              isLoading={createLeadMutation.isPending}
-            />
+          <div className="px-3 py-[6px] bg-white border border-gray-300 rounded-md shadow-sm flex items-center gap-2">
+            <i className="ri-file-add-line text-gray-600"></i>
+            Create Lead
           </div>
+        </div>
+
+        
+        <div
+          className="w-[1027px] h-auto mx-auto mt-[25px] 
+                    bg-white rounded-[16px] shadow-sm border border-gray-200
+                    p-[20px] space-y-[12px]"
+        >
+          <FlexibleLeadForm
+            tenantId={String(tenant?.id!)}
+            userId={String(user?.id!)}
+            onSubmit={onSubmit}
+            onCancel={onCancel}
+            isLoading={createLeadMutation.isPending}
+          />
         </div>
       </div>
     </Layout>

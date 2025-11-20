@@ -17,6 +17,11 @@ import {
 export interface AutocompleteOption {
   value: string;
   label: string;
+    email?: string;
+  phone?: string;
+   country?: string;
+  state?: string;
+  city?: string;
 }
 
 interface AutocompleteInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'> {

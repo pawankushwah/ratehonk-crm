@@ -1287,7 +1287,7 @@ export default function InvoiceCreate() {
 
   return (
     <Layout initialSidebarCollapsed={true}>
-      <div className="p-6 max-w-[1600px] mx-auto">
+      <div className="p-6 max-w-7xl mx-auto">
         <div className="bg-white rounded-2xl shadow-sm">
           <div className="">
             <div className=" w-full h-[72px] flex items-center bg-white px-[18px] py-4 rounded-t-xl border-b border-[#E3E8EF] shadow-[0px_1px_6px_0px_rgba(0,0,0,0.05)]">

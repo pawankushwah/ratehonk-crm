@@ -6,7 +6,6 @@ interface AuthContextType {
   tenant: Tenant | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  setAuthData: (authData: { user: User; tenant?: Tenant | null }) => void;
   logout: () => void;
   isAuthenticated: boolean;
 }
@@ -53,12 +52,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setTenant(authData.tenant || null);
   };
 
-  const setAuthData = (authData: { user: User; tenant?: Tenant | null }) => {
-    console.log("🔍 AuthProvider - Setting auth data directly, user:", authData.user?.email, "tenant:", authData.tenant?.id);
-    setUser(authData.user);
-    setTenant(authData.tenant || null);
-  };
-
   const logout = () => {
     auth.logout();
     setUser(null);
@@ -70,7 +63,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     tenant,
     loading,
     login,
-    setAuthData,
     logout,
     isAuthenticated: !!user,
   };
@@ -89,7 +81,6 @@ export function useAuth() {
       tenant: null,
       loading: true,
       login: async () => {},
-      setAuthData: () => {},
       logout: () => {},
       isAuthenticated: false,
     };

@@ -8,17 +8,13 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertCircle, CheckCircle, Eye, EyeOff, Loader2 } from "lucide-react";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useToast } from "@/hooks/use-toast";
-import { auth } from "@/lib/auth";
 import { WelcomeScreen } from "@/components/ui/welcome-screen";
 import Logo from "../../assets/Logo-sidebar.svg";
 
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [verificationCode, setVerificationCode] = useState("");
   const [loading, setLoading] = useState(false);
-  const [verifying, setVerifying] = useState(false);
-  const [resending, setResending] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [loginAttempts, setLoginAttempts] = useState(0);
@@ -26,36 +22,24 @@ export default function Login() {
   const [blockTimer, setBlockTimer] = useState(0);
   const [successMessage, setSuccessMessage] = useState("");
   const [showWelcomeScreen, setShowWelcomeScreen] = useState(false);
-  const [requiresVerification, setRequiresVerification] = useState(false);
-  const [verificationUserId, setVerificationUserId] = useState<number | null>(null);
-  const [verificationError, setVerificationError] = useState("");
   const [, setLocation] = useLocation();
-  const { login: loginViaAuth, setAuthData } = useAuth();
+  const { login } = useAuth();
   const { toast } = useToast();
 
-  // Check for URL parameters (success messages from registration, password reset, activation)
+  // Check for URL parameters (success messages from registration, password reset)
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const success = urlParams.get("success");
     const message = urlParams.get("message");
-    const activated = urlParams.get("activated");
 
-    if (activated === "true") {
+    if (success === "registered") {
       setSuccessMessage(
-        "Account activated successfully! Please sign in with your credentials.",
-      );
-      toast({
-        title: "Account Activated!",
-        description: "Your account has been activated. You can now sign in.",
-      });
-    } else if (success === "registered") {
-      setSuccessMessage(
-        "Account created successfully! Please check your email to activate your account.",
+        "Account created successfully! Please sign in with your new credentials.",
       );
       toast({
         title: "Registration Successful!",
         description:
-          "Please check your email and click the activation link to activate your account.",
+          "Welcome to TravelCRM Pro! Your 7-day free trial has started.",
       });
     } else if (success === "password-reset") {
       setSuccessMessage(
@@ -148,29 +132,10 @@ export default function Login() {
     }
 
     setLoading(true);
-    setVerificationError("");
 
     try {
-      // Call auth.login directly to handle verification requirement
-      const result = await auth.login(email, password);
-      
-      // Check if verification is required
-      if (result && typeof result === 'object' && 'requiresVerification' in result && result.requiresVerification) {
-        setRequiresVerification(true);
-        setVerificationUserId(result.userId);
-        setLoading(false);
-        toast({
-          title: "Verification Code Sent",
-          description: result.message || "Please check your email for the verification code.",
-        });
-        return;
-      }
+      await login(email, password);
 
-      // If we get here, login was successful (shouldn't happen with new system)
-      // Update auth provider state by calling loginViaAuth
-      await loginViaAuth(email, password);
-      setLoading(false);
-      
       // Reset login attempts on success
       setLoginAttempts(0);
       setIsBlocked(false);
@@ -185,17 +150,6 @@ export default function Login() {
       setShowWelcomeScreen(true);
     } catch (error: any) {
       console.error("Login error:", error);
-
-      // Check if account requires activation
-      if (error.message?.includes("activate your account") || error.message?.includes("requiresActivation")) {
-        toast({
-          title: "Account Not Activated",
-          description: "Please activate your account by clicking the activation link sent to your email before logging in.",
-          variant: "destructive",
-        });
-        setLoading(false);
-        return;
-      }
 
       // Increment login attempts
       const newAttempts = loginAttempts + 1;
@@ -268,92 +222,6 @@ export default function Login() {
     }
   };
 
-  const handleVerifyCode = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!verificationCode || verificationCode.length !== 6) {
-      setVerificationError("Please enter a valid 6-digit code");
-      return;
-    }
-
-    if (!verificationUserId) {
-      setVerificationError("Session expired. Please login again.");
-      return;
-    }
-
-    setVerifying(true);
-    setVerificationError("");
-
-    try {
-      const result = await auth.verifyLoginCode(verificationUserId, verificationCode);
-      
-      // Login successful - auth.verifyLoginCode already stored token in localStorage
-      // Now update the auth provider state with the result
-      setAuthData({
-        user: result.user,
-        tenant: result.tenant || null,
-      });
-      
-      toast({
-        title: "Welcome Back!",
-        description: "Successfully logged in to your account.",
-      });
-
-      // Use full page reload to ensure auth state is properly initialized
-      // This ensures ProtectedRoute sees the authenticated state
-      setTimeout(() => {
-        window.location.href = "/modules";
-      }, 100);
-    } catch (error: any) {
-      console.error("Verification error:", error);
-      setVerificationError(error.message || "Invalid verification code. Please try again.");
-      toast({
-        title: "Verification Failed",
-        description: error.message || "Invalid verification code. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setVerifying(false);
-    }
-  };
-
-  const handleResendCode = async () => {
-    if (!verificationUserId) {
-      toast({
-        title: "Error",
-        description: "Session expired. Please login again.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    setResending(true);
-    try {
-      await auth.resendVerificationCode(verificationUserId);
-      toast({
-        title: "Code Resent",
-        description: "A new verification code has been sent to your email.",
-      });
-      setVerificationCode("");
-      setVerificationError("");
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message || "Failed to resend code. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setResending(false);
-    }
-  };
-
-  const handleBackToLogin = () => {
-    setRequiresVerification(false);
-    setVerificationUserId(null);
-    setVerificationCode("");
-    setVerificationError("");
-  };
-
   const handleWelcomeComplete = () => {
     console.log("🎉 Welcome screen complete, navigating to modules");
     setLocation("/modules");
@@ -415,173 +283,86 @@ export default function Login() {
               </Alert>
             )}
 
-            {!requiresVerification ? (
-              <form onSubmit={handleSubmit} className="space-y-6">
-                <div className="space-y-2">
-                  <Label
-                    htmlFor="email"
-                    className="text-sm font-medium text-gray-700"
-                  >
-                    Email Address
-                  </Label>
+            <form onSubmit={handleSubmit} className="space-y-6">
+              <div className="space-y-2">
+                <Label
+                  htmlFor="email"
+                  className="text-sm font-medium text-gray-700"
+                >
+                  Email Address
+                </Label>
+                <Input
+                  id="email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => handleInputChange("email", e.target.value)}
+                  placeholder="Demo@gmail.com"
+                  className="h-12 border-2 rounded-lg bg-gray-50"
+                  disabled={isBlocked}
+                  required
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label
+                  htmlFor="password"
+                  className="text-sm font-medium text-gray-700"
+                >
+                  Password
+                </Label>
+                <div className="relative">
                   <Input
-                    id="email"
-                    type="email"
-                    value={email}
-                    onChange={(e) => handleInputChange("email", e.target.value)}
-                    placeholder="Enter Email Address"
-                    className="h-12 border-2 rounded-lg bg-gray-50"
+                    id="password"
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(e) =>
+                      handleInputChange("password", e.target.value)
+                    }
+                    placeholder="Enter Password"
+                    className="h-12 border-gray-300 focus:border-cyan-500 focus:ring-cyan-500 rounded-lg pr-10"
                     disabled={isBlocked}
                     required
                   />
-                </div>
-
-                <div className="space-y-2">
-                  <Label
-                    htmlFor="password"
-                    className="text-sm font-medium text-gray-700"
-                  >
-                    Password
-                  </Label>
-                  <div className="relative">
-                    <Input
-                      id="password"
-                      type={showPassword ? "text" : "password"}
-                      value={password}
-                      onChange={(e) =>
-                        handleInputChange("password", e.target.value)
-                      }
-                      placeholder="Enter Password"
-                      className="h-12 border-gray-300 focus:border-cyan-500 focus:ring-cyan-500 rounded-lg pr-10"
-                      disabled={isBlocked}
-                      required
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
-                      onClick={() => setShowPassword(!showPassword)}
-                      disabled={isBlocked}
-                    >
-                      {showPassword ? (
-                        <EyeOff className="h-4 w-4 text-gray-400" />
-                      ) : (
-                        <Eye className="h-4 w-4 text-gray-400" />
-                      )}
-                    </Button>
-                  </div>
-                  <div className="text-right">
-                    <Link
-                      href="/forgot-password"
-                      className="text-sm text-cyan-600 hover:text-cyan-700 hover:underline"
-                    >
-                      Forgot Password?
-                    </Link>
-                  </div>
-                </div>
-
-                <Button
-                  type="submit"
-                  className="w-full h-12 bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm rounded-lg transition-all duration-200 disabled:opacity-50"
-                  disabled={loading || isBlocked}
-                >
-                  {loading ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Logging in...
-                    </>
-                  ) : (
-                    "Log In"
-                  )}
-                </Button>
-              </form>
-            ) : (
-              <form onSubmit={handleVerifyCode} className="space-y-6">
-                <Alert className="mb-6 border-blue-200 bg-blue-50">
-                  <CheckCircle className="h-4 w-4 text-blue-600" />
-                  <AlertDescription className="text-blue-800">
-                    Verification code sent to <strong>{email}</strong>. Please check your email and enter the 6-digit code below.
-                  </AlertDescription>
-                </Alert>
-
-                {verificationError && (
-                  <Alert variant="destructive" className="mb-6">
-                    <AlertCircle className="h-4 w-4" />
-                    <AlertDescription>{verificationError}</AlertDescription>
-                  </Alert>
-                )}
-
-                <div className="space-y-2">
-                  <Label
-                    htmlFor="verificationCode"
-                    className="text-sm font-medium text-gray-700"
-                  >
-                    Verification Code
-                  </Label>
-                  <Input
-                    id="verificationCode"
-                    type="text"
-                    value={verificationCode}
-                    onChange={(e) => {
-                      const value = e.target.value.replace(/\D/g, "").slice(0, 6);
-                      setVerificationCode(value);
-                      setVerificationError("");
-                    }}
-                    placeholder="000000"
-                    className="h-12 border-2 rounded-lg bg-gray-50 text-center text-2xl font-mono tracking-widest"
-                    maxLength={6}
-                    required
-                    autoFocus
-                  />
-                  <p className="text-xs text-gray-500 text-center">
-                    Enter the 6-digit code sent to your email
-                  </p>
-                </div>
-
-                <Button
-                  type="submit"
-                  className="w-full h-12 bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm rounded-lg transition-all duration-200 disabled:opacity-50"
-                  disabled={verifying || verificationCode.length !== 6}
-                >
-                  {verifying ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Verifying...
-                    </>
-                  ) : (
-                    "Verify Code"
-                  )}
-                </Button>
-
-                <div className="space-y-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="w-full"
-                    onClick={handleResendCode}
-                    disabled={resending}
-                  >
-                    {resending ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Sending...
-                      </>
-                    ) : (
-                      "Resend Code"
-                    )}
-                  </Button>
                   <Button
                     type="button"
                     variant="ghost"
-                    className="w-full"
-                    onClick={handleBackToLogin}
+                    size="sm"
+                    className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                    onClick={() => setShowPassword(!showPassword)}
+                    disabled={isBlocked}
                   >
-                    Back to Login
+                    {showPassword ? (
+                      <EyeOff className="h-4 w-4 text-gray-400" />
+                    ) : (
+                      <Eye className="h-4 w-4 text-gray-400" />
+                    )}
                   </Button>
                 </div>
-              </form>
-            )}
+                <div className="text-right">
+                  <Link
+                    href="/forgot-password"
+                    className="text-sm text-cyan-600 hover:text-cyan-700 hover:underline"
+                  >
+                    Forgot Password?
+                  </Link>
+                </div>
+              </div>
+
+              <Button
+                type="submit"
+                className="w-full h-12 bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm rounded-lg transition-all duration-200 disabled:opacity-50"
+                disabled={loading || isBlocked}
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Logging in...
+                  </>
+                ) : (
+                  "Log In"
+                )}
+              </Button>
+            </form>
 
             <div className="mt-8 text-center">
               <p className="text-sm text-gray-600">

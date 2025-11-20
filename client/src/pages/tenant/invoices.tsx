@@ -1835,7 +1835,7 @@ export default function Invoices() {
 
       {/* View Invoice Dialog - Preview */}
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
-        <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Invoice Preview</DialogTitle>
             <DialogDescription>

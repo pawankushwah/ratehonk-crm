@@ -26,7 +26,6 @@ import {
 const ACTIVITY_TYPES = [
   { value: 1, label: "Lead Created" },
   { value: 2, label: "Email Sent" },
-  { value: 11, label: "Whatsapp Sent" },
   { value: 3, label: "Call Made" },
   { value: 4, label: "Meeting Scheduled" },
   { value: 5, label: "Follow-up" },
@@ -62,12 +61,12 @@ interface ActivityModalProps {
   isLoading?: boolean;
 }
 
-const ActivityModal: React.FC<ActivityModalProps> = ({
-  isOpen,
-  onClose,
-  onSave,
+const ActivityModal: React.FC<ActivityModalProps> = ({ 
+  isOpen, 
+  onClose, 
+  onSave, 
   editableActivity,
-  isLoading = false,
+  isLoading = false 
 }) => {
   const form = useForm<ActivityFormData>({
     resolver: zodResolver(activityFormSchema),
@@ -75,20 +74,20 @@ const ActivityModal: React.FC<ActivityModalProps> = ({
       activityType: 1,
       activityTitle: "",
       activityDescription: "",
-      activityStatus: 1,
-      activityDate: new Date().toISOString().slice(0, 16),
+      activityStatus: 0,
+      activityDate: new Date().toISOString().slice(0, 16), // Current datetime
     },
   });
 
-  // Update form when editing
+  // Populate form when editing
   useEffect(() => {
     if (editableActivity) {
       form.reset({
         activityType: editableActivity.activityType || 1,
         activityTitle: editableActivity.activityTitle || "",
         activityDescription: editableActivity.activityDescription || "",
-        activityStatus: editableActivity.activityStatus ?? 1,
-        activityDate: editableActivity.activityDate
+        activityStatus: editableActivity.activityStatus || 0,
+        activityDate: editableActivity.activityDate 
           ? new Date(editableActivity.activityDate).toISOString().slice(0, 16)
           : new Date().toISOString().slice(0, 16),
       });
@@ -97,64 +96,64 @@ const ActivityModal: React.FC<ActivityModalProps> = ({
         activityType: 1,
         activityTitle: "",
         activityDescription: "",
-        activityStatus: 1,
+        activityStatus: 0,
         activityDate: new Date().toISOString().slice(0, 16),
       });
     }
   }, [editableActivity, form]);
 
   const onSubmit = (data: ActivityFormData) => {
-    onSave(data, editableActivity ? "edit" : "create");
+    console.log("🔥 Form submitted with data:", data);
+    // Convert activityDate back to ISO string for database
+    const formattedData = {
+      ...data,
+      activityDate: new Date(data.activityDate).toISOString(),
+    };
+    
+    console.log("🔥 Calling onSave with formatted data:", formattedData);
+    onSave(formattedData, editableActivity ? "edit" : "add");
+    // Don't close here - let parent handle closing after API success
   };
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+      <div className="bg-white w-full max-w-2xl rounded-2xl shadow-lg p-6 relative max-h-[90vh] overflow-y-auto">
+        {/* Close Button */}
+        <button
+          className="absolute top-4 right-4 text-gray-600 hover:text-black z-10"
+          onClick={onClose}
+        >
+          <X size={20} />
+        </button>
+
         {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-gray-200 bg-gradient-to-r from-green-50 to-emerald-50">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
-              <Calendar className="w-5 h-5 text-green-600" />
-            </div>
-            <div>
-              <h2 className="text-xl font-semibold text-gray-900">
-                {editableActivity
-                  ? "Edit Lead Activity"
-                  : "Add Lead Activity"}
-              </h2>
-              <p className="text-sm text-gray-600">
-                Track lead interactions and activities
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 bg-white rounded-lg shadow-sm flex items-center justify-center hover:bg-gray-50 transition-colors"
-          >
-            <X className="w-4 h-4 text-gray-600" />
-          </button>
+        <div className="mb-6">
+          <h2 className="text-2xl font-semibold text-gray-900 mb-2">
+            {editableActivity ? "Edit Activity" : "Add New Activity"}
+          </h2>
+          <p className="text-sm text-gray-600">
+            Track lead activities and manage follow-ups
+          </p>
         </div>
 
         {/* Form */}
         <Form {...form}>
-          <form
-            onSubmit={form.handleSubmit(onSubmit)}
-            className="p-6 space-y-6"
-          >
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
             {/* Activity Type */}
             <FormField
               control={form.control}
               name="activityType"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="text-sm font-medium text-gray-900">
+                  <FormLabel className="flex items-center gap-2">
+                    <FileText className="w-4 h-4" />
                     Activity Type *
                   </FormLabel>
-                  <Select
+                  <Select 
+                    value={field.value?.toString()} 
                     onValueChange={(value) => field.onChange(parseInt(value))}
-                    value={field.value.toString()}
                   >
                     <FormControl>
                       <SelectTrigger>
@@ -163,10 +162,7 @@ const ActivityModal: React.FC<ActivityModalProps> = ({
                     </FormControl>
                     <SelectContent>
                       {ACTIVITY_TYPES.map((type) => (
-                        <SelectItem
-                          key={type.value}
-                          value={type.value.toString()}
-                        >
+                        <SelectItem key={type.value} value={type.value.toString()}>
                           {type.label}
                         </SelectItem>
                       ))}
@@ -183,14 +179,14 @@ const ActivityModal: React.FC<ActivityModalProps> = ({
               name="activityTitle"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="text-sm font-medium text-gray-900">
+                  <FormLabel className="flex items-center gap-2">
+                    <User className="w-4 h-4" />
                     Activity Title *
                   </FormLabel>
                   <FormControl>
-                    <Input
-                      placeholder="Enter activity title"
-                      {...field}
-                      className="w-full"
+                    <Input 
+                      placeholder="Enter a descriptive title for this activity" 
+                      {...field} 
                     />
                   </FormControl>
                   <FormMessage />
@@ -204,15 +200,12 @@ const ActivityModal: React.FC<ActivityModalProps> = ({
               name="activityDescription"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="text-sm font-medium text-gray-900">
-                    Activity Description
-                  </FormLabel>
+                  <FormLabel>Description</FormLabel>
                   <FormControl>
-                    <Textarea
-                      placeholder="Enter activity description and details"
+                    <Textarea 
+                      placeholder="Add any additional details about this activity..."
                       rows={4}
-                      {...field}
-                      className="w-full resize-none"
+                      {...field} 
                     />
                   </FormControl>
                   <FormMessage />
@@ -226,12 +219,13 @@ const ActivityModal: React.FC<ActivityModalProps> = ({
               name="activityStatus"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="text-sm font-medium text-gray-900">
-                    Activity Status *
+                  <FormLabel className="flex items-center gap-2">
+                    <Clock className="w-4 h-4" />
+                    Status *
                   </FormLabel>
-                  <Select
+                  <Select 
+                    value={field.value?.toString()} 
                     onValueChange={(value) => field.onChange(parseInt(value))}
-                    value={field.value.toString()}
                   >
                     <FormControl>
                       <SelectTrigger>
@@ -240,11 +234,15 @@ const ActivityModal: React.FC<ActivityModalProps> = ({
                     </FormControl>
                     <SelectContent>
                       {ACTIVITY_STATUS.map((status) => (
-                        <SelectItem
-                          key={status.value}
-                          value={status.value.toString()}
-                        >
-                          {status.label}
+                        <SelectItem key={status.value} value={status.value.toString()}>
+                          <span className={`flex items-center gap-2 ${
+                            status.value === 1 ? 'text-green-600' : 'text-orange-600'
+                          }`}>
+                            <span className={`w-2 h-2 rounded-full ${
+                              status.value === 1 ? 'bg-green-500' : 'bg-orange-500'
+                            }`}></span>
+                            {status.label}
+                          </span>
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -260,14 +258,14 @@ const ActivityModal: React.FC<ActivityModalProps> = ({
               name="activityDate"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="text-sm font-medium text-gray-900">
-                    Activity Date *
+                  <FormLabel className="flex items-center gap-2">
+                    <Calendar className="w-4 h-4" />
+                    Activity Date & Time *
                   </FormLabel>
                   <FormControl>
-                    <input
-                      type="datetime-local"
-                      {...field}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    <Input 
+                      type="datetime-local" 
+                      {...field} 
                     />
                   </FormControl>
                   <FormMessage />
@@ -276,25 +274,20 @@ const ActivityModal: React.FC<ActivityModalProps> = ({
             />
 
             {/* Form Actions */}
-            <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
-              <Button
-                type="button"
-                variant="outline"
+            <div className="flex justify-end gap-3 pt-4 border-t">
+              <Button 
+                type="button" 
+                variant="outline" 
                 onClick={onClose}
-                disabled={isLoading}
               >
                 Cancel
               </Button>
-              <Button
+              <Button 
                 type="submit"
+                className="bg-blue-600 hover:bg-blue-700"
                 disabled={isLoading}
-                className="bg-green-600 hover:bg-green-700"
               >
-                {isLoading
-                  ? "Saving..."
-                  : editableActivity
-                    ? "Update Activity"
-                    : "Save Activity"}
+                {isLoading ? "Saving..." : editableActivity ? "Update Activity" : "Create Activity"}
               </Button>
             </div>
           </form>
@@ -304,14 +297,13 @@ const ActivityModal: React.FC<ActivityModalProps> = ({
   );
 };
 
-// Activity Item component for displaying activities
+// Activity Item component for displaying activities (backward compatibility)
 export const ActivityItem = ({ 
   activity, 
   isOpen, 
   onToggle, 
   onEdit, 
   onDelete,
-  index,
   onDragStart,
   onDragOver,
   onDrop,
@@ -332,10 +324,10 @@ export const ActivityItem = ({
 
   return (
     <div
-      className={`border rounded-lg p-4 mb-4 bg-white shadow-md transition-all duration-300 hover:shadow-lg ${
+      className={`border rounded-lg p-4 mb-4 bg-white shadow-md transition-all duration-300 hover:shadow-lg cursor-grab ${
         isDragging ? "opacity-50 scale-[0.98]" : ""
       }`}
-      draggable={!!onDragStart}
+      draggable
       onDragStart={onDragStart}
       onDragOver={onDragOver}
       onDrop={onDrop}
@@ -392,24 +384,20 @@ export const ActivityItem = ({
 
           {/* Edit & Delete Buttons */}
           <div className="flex justify-end gap-2 mt-3">
-            {onEdit && (
-              <button
-                onClick={() => onEdit(activity)}
-                className="flex items-center gap-1 px-3 py-1 rounded-lg text-blue-700 hover:bg-blue-50 text-xs"
-              >
-                <User className="w-4 h-4" />
-                Edit
-              </button>
-            )}
-            {onDelete && (
-              <button
-                onClick={() => onDelete(activity.id)}
-                className="flex items-center gap-1 px-3 py-1 rounded-lg text-red-700 hover:bg-red-50 text-xs"
-              >
-                <X className="w-4 h-4" />
-                Delete
-              </button>
-            )}
+            <button
+              onClick={() => onEdit && onEdit(activity)}
+              className="flex items-center gap-1 px-3 py-1 rounded-lg text-blue-700 hover:bg-blue-50 text-xs"
+            >
+              <User className="w-4 h-4" />
+              Edit
+            </button>
+            <button
+              onClick={() => onDelete && onDelete(activity.id)}
+              className="flex items-center gap-1 px-3 py-1 rounded-lg text-red-700 hover:bg-red-50 text-xs"
+            >
+              <X className="w-4 h-4" />
+              Delete
+            </button>
           </div>
         </div>
       )}

@@ -2,30 +2,13 @@ import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
-    let errorMessage = res.statusText;
-    try {
-      const text = await res.text();
-      if (text) {
-        // Try to parse as JSON to get the actual error message
-        try {
-          const json = JSON.parse(text);
-          errorMessage = json.message || json.error || text;
-        } catch {
-          // If not JSON, use the text as is
-          errorMessage = text;
-        }
-      }
-    } catch {
-      // If reading fails, use status text
-      errorMessage = res.statusText;
-    }
-    
-    console.error("🔍 API Request - Error response:", errorMessage);
+    const text = (await res.text()) || res.statusText;
+    console.error("🔍 API Request - Error response:", text);
     
     // Handle 401 unauthorized errors specifically
     if (res.status === 401) {
       // Check if it's an invalid/expired token error
-      if (errorMessage.includes("Invalid or expired token")) {
+      if (text.includes("Invalid or expired token")) {
         // Clear local storage and redirect to login
         localStorage.removeItem("auth_token");
         localStorage.removeItem("token");
@@ -36,12 +19,7 @@ async function throwIfResNotOk(res: Response) {
       }
     }
     
-    // For 403 (activation required), throw the actual message
-    if (res.status === 403) {
-      throw new Error(errorMessage);
-    }
-    
-    throw new Error(`${res.status}: ${errorMessage}`);
+    throw new Error(`${res.status}: ${text}`);
   }
 }
 
@@ -76,19 +54,11 @@ export async function apiRequest(
   console.log("🔍 API Request - Full URL:", fullUrl);
   console.log("🔍 API Request - Headers:", headers);
 
-  // Add cache-busting headers for GET requests to prevent 304 responses
-  if (method === "GET") {
-    headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
-    headers["Pragma"] = "no-cache";
-    headers["Expires"] = "0";
-  }
-
   const res = await fetch(fullUrl, {
     method,
     headers,
     body: data ? JSON.stringify(data) : undefined,
     credentials: "include",
-    cache: method === "GET" ? "no-store" : "default", // Prevent browser caching for GET requests
   });
 
   console.log("🔍 API Request - Response status:", res.status);
