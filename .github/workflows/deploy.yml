@@ -1,4 +1,4 @@
-name: Deploy to Production Server
+name: CI/CD Pipeline
 
 on:
   push:
@@ -7,9 +7,12 @@ on:
       - master
   workflow_dispatch: # Allows manual triggering
 
+env:
+  NODE_VERSION: '20'
+
 jobs:
-  deploy:
-    name: Deploy to Production
+  build:
+    name: Build Application
     runs-on: ubuntu-latest
     
     steps:
@@ -19,60 +22,329 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        run: npm install
-
-      - name: Run tests (optional)
         run: |
-          echo "Running tests..."
-          # Uncomment if you have tests
-          # npm test
-        continue-on-error: true
+          # Install dependencies
+          npm install
+          
+      - name: Fix rollup optional dependencies
+        run: |
+          # Explicitly install rollup native dependency (fixes npm bug with optional deps)
+          # This is required for vite build to work on Linux
+          # Method 1: Install at root level
+          npm install @rollup/rollup-linux-x64-gnu --save-optional --force || \
+          # Method 2: Install directly into rollup's node_modules
+          (cd node_modules/rollup && npm install @rollup/rollup-linux-x64-gnu --save-optional --force) || \
+          # Method 3: Manual symlink/copy workaround
+          echo "Rollup native dependency installation attempted"
 
-      - name: Build project
+      - name: Run type check
+        run: npm run check
+        continue-on-error: true  # Don't fail build on type errors, but show them
+
+      - name: Build application
         run: npm run build
 
-      - name: Deploy to server
-        uses: appleboy/scp-action@v0.1.7
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
         with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ secrets.SERVER_PORT || 22 }}
-          source: |
-            "server/*"
-            "client/*"
-            "shared/*"
-            "package.json"
-            "package-lock.json"
-            "ecosystem.config.js"
-            "ecosystem.config.cjs"
-            "drizzle.config.ts"
-            "tsconfig.json"
-            "vite.config.ts"
-            "tailwind.config.ts"
-            "postcss.config.js"
-            ".github/workflows/deploy-remote.sh"
-          target: ${{ secrets.SERVER_PATH }}
+          name: build-files
+          path: |
+            dist/
+            package.json
+            package-lock.json
+            ecosystem.config.js
+            ecosystem.config.cjs
+            server/
+            shared/
+            drizzle.config.ts
+            tsconfig.json
+            vite.config.ts
+            tailwind.config.ts
+            postcss.config.js
+            scripts/deploy.sh
+          retention-days: 1
 
-      - name: Execute deployment script on server
-        uses: appleboy/ssh-action@v1.0.3
+  deploy:
+    name: Deploy to VPS
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    # Using repository secrets from: Settings → Secrets and variables → Actions
+    # Required secrets: VPS_SSH_PRIVATE_KEY, VPS_HOST, VPS_USER, DEPLOY_PATH (optional)
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
         with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ secrets.SERVER_PORT || 22 }}
-          script: |
-            cd ${{ secrets.SERVER_PATH }}
-            chmod +x .github/workflows/deploy-remote.sh
-            export DEPLOY_PATH="${{ secrets.SERVER_PATH }}"
-            .github/workflows/deploy-remote.sh
+          name: build-files
+          path: .
 
-      - name: Deployment status
+      - name: Debug - Check secrets availability
         run: |
-          echo "✅ Deployment completed successfully!"
-          echo "🚀 Application should be running on: https://crm.ratehonk.com"
+          echo "Checking if secrets are available..."
+          if [ -z "$VPS_SSH_PRIVATE_KEY" ]; then
+            echo "❌ VPS_SSH_PRIVATE_KEY is empty or not accessible"
+            exit 1
+          else
+            KEY_LENGTH=${#VPS_SSH_PRIVATE_KEY}
+            echo "✅ VPS_SSH_PRIVATE_KEY is available (length: $KEY_LENGTH)"
+          fi
+          if [ -z "$VPS_HOST" ]; then
+            echo "❌ VPS_HOST is empty or not accessible"
+          else
+            echo "✅ VPS_HOST is available: $VPS_HOST"
+          fi
+          if [ -z "$VPS_USER" ]; then
+            echo "❌ VPS_USER is empty or not accessible"
+          else
+            echo "✅ VPS_USER is available: $VPS_USER"
+          fi
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
 
+      - name: Prepare and validate SSH key
+        id: prepare-ssh-key
+        run: |
+          # Create .ssh directory
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          
+          # Write the raw key to a temp file first
+          echo "$VPS_SSH_PRIVATE_KEY" > ~/.ssh/deploy_key_raw
+          
+          # Show key info for debugging (first and last lines only)
+          KEY_SIZE=$(wc -c < ~/.ssh/deploy_key_raw)
+          KEY_LINES=$(wc -l < ~/.ssh/deploy_key_raw)
+          
+          echo "=== Key Debug Info ==="
+          echo "Total lines: $KEY_LINES"
+          echo "Total size: $KEY_SIZE bytes"
+          
+          # Check if key looks valid
+          # Ed25519 keys are typically 400-600 bytes, RSA keys are 1700+ bytes
+          if [ "$KEY_SIZE" -lt 300 ]; then
+            echo "❌ ERROR: SSH key is too small ($KEY_SIZE bytes)"
+            echo "A valid SSH private key should be at least 300+ bytes"
+            echo "Ed25519 keys are typically 400-600 bytes"
+            echo "RSA keys are typically 1700+ bytes"
+            echo ""
+            echo "The secret 'VPS_SSH_PRIVATE_KEY' in GitHub appears to be incorrect."
+            echo ""
+            echo "To fix this:"
+            echo "1. Generate a new SSH key (if needed):"
+            echo "   ssh-keygen -t ed25519 -C 'github-actions' -f ~/.ssh/github_actions_deploy"
+            echo ""
+            echo "2. Get your private key content:"
+            echo "   Get-Content ~/.ssh/github_actions_deploy"
+            echo ""
+            echo "3. Copy the ENTIRE key (from BEGIN to END, all lines)"
+            echo ""
+            echo "4. Update GitHub secret:"
+            echo "   GitHub Repo → Settings → Secrets and variables → Actions"
+            echo "   → Click edit (pencil icon) next to VPS_SSH_PRIVATE_KEY"
+            echo "   → Paste the ENTIRE private key"
+            echo "   → Click Update secret"
+            echo ""
+            echo "The key should look like:"
+            echo "-----BEGIN OPENSSH PRIVATE KEY-----"
+            echo "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW..."
+            echo "... (many more lines) ..."
+            echo "-----END OPENSSH PRIVATE KEY-----"
+            exit 1
+          fi
+          
+          FIRST_LINE_RAW=$(head -n 1 ~/.ssh/deploy_key_raw | head -c 50)
+          LAST_LINE_RAW=$(tail -n 1 ~/.ssh/deploy_key_raw | head -c 50)
+          echo "First line preview: ${FIRST_LINE_RAW}..."
+          echo "Last line preview: ${LAST_LINE_RAW}..."
+          echo "======================"
+          
+          # Clean the key: remove Windows line endings, extra whitespace
+          # Remove carriage returns, normalize line endings
+          cat ~/.ssh/deploy_key_raw | tr -d '\r' > ~/.ssh/deploy_key_temp
+          
+          # Set correct permissions immediately (SSH requires 600)
+          chmod 600 ~/.ssh/deploy_key_temp
+          
+          # Remove leading/trailing whitespace from each line, but preserve structure
+          sed -i 's/^[[:space:]]*//;s/[[:space:]]*$//' ~/.ssh/deploy_key_temp
+          
+          # Remove completely empty lines (but keep the key structure)
+          sed -i '/^$/d' ~/.ssh/deploy_key_temp
+          
+          # Ensure permissions are still correct after sed operations
+          chmod 600 ~/.ssh/deploy_key_temp
+          
+          # Ensure the key starts and ends properly
+          FIRST_LINE=$(head -n 1 ~/.ssh/deploy_key_temp)
+          LAST_LINE=$(tail -n 1 ~/.ssh/deploy_key_temp)
+          
+          if [[ ! "$FIRST_LINE" =~ ^-----BEGIN.*PRIVATE.*KEY-----$ ]]; then
+            echo "❌ Key does not start with proper BEGIN line"
+            echo "Found: $FIRST_LINE"
+            exit 1
+          fi
+          
+          if [[ ! "$LAST_LINE" =~ ^-----END.*PRIVATE.*KEY-----$ ]]; then
+            echo "❌ Key does not end with proper END line"
+            echo "Found: $LAST_LINE"
+            exit 1
+          fi
+          
+          # Try to validate with ssh-keygen
+          if ssh-keygen -l -f ~/.ssh/deploy_key_temp > /dev/null 2>&1; then
+            echo "✅ SSH key format validated by ssh-keygen"
+          else
+            echo "⚠️  ssh-keygen validation failed, but continuing..."
+          fi
+          
+          # Try to load with ssh-add to verify it works
+          eval "$(ssh-agent -s)" > /dev/null 2>&1
+          if ssh-add ~/.ssh/deploy_key_temp 2>&1; then
+            echo "✅ SSH key can be loaded into ssh-agent"
+            ssh-add -D > /dev/null 2>&1
+            kill $SSH_AGENT_PID > /dev/null 2>&1 || true
+          else
+            echo "❌ SSH key cannot be loaded into ssh-agent"
+            echo "Trying to convert key format..."
+            
+            # Try to convert OpenSSH format to PEM if it's OpenSSH format
+            if [[ "$FIRST_LINE" == "-----BEGIN OPENSSH PRIVATE KEY-----" ]]; then
+              echo "Attempting to convert OpenSSH format..."
+              # Try using ssh-keygen to convert
+              ssh-keygen -p -m PEM -f ~/.ssh/deploy_key_temp -N "" 2>&1 || true
+            fi
+            
+            # Try loading again
+            eval "$(ssh-agent -s)" > /dev/null 2>&1
+            if ssh-add ~/.ssh/deploy_key_temp 2>&1; then
+              echo "✅ Key works after conversion"
+              ssh-add -D > /dev/null 2>&1
+              kill $SSH_AGENT_PID > /dev/null 2>&1 || true
+            else
+              echo "❌ Key still cannot be loaded"
+              echo "Key preview (first 5 lines):"
+              head -n 5 ~/.ssh/deploy_key_temp
+              echo ""
+              echo "Key preview (last 5 lines):"
+              tail -n 5 ~/.ssh/deploy_key_temp
+              exit 1
+            fi
+          fi
+          
+          # If we get here, the key is valid
+          mv ~/.ssh/deploy_key_temp ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          echo "✅ SSH key prepared and validated successfully"
+
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+
+      - name: Setup SSH
+        run: |
+          # Start ssh-agent and export variables
+          eval "$(ssh-agent -s)"
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> $GITHUB_ENV
+          echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> $GITHUB_ENV
+          
+          # Add the cleaned key to ssh-agent
+          ssh-add ~/.ssh/deploy_key
+          
+          # Verify key was added
+          ssh-add -l
+
+      - name: Add VPS to known hosts
+        run: |
+          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to VPS
+        env:
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/home/ratehonk-crm/htdocs/crm.ratehonk.com/crm-ratehonk' }}
+        run: |
+          # Create deployment directory and fix permissions
+          ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "
+            mkdir -p $DEPLOY_PATH
+            # Fix ownership and permissions (if user has sudo, otherwise skip)
+            sudo chown -R \$USER:\$USER $DEPLOY_PATH 2>/dev/null || true
+            chmod -R 755 $DEPLOY_PATH 2>/dev/null || true
+          "
+          
+          # Transfer build files to VPS (using temp directory first if needed)
+          TEMP_DIR="$DEPLOY_PATH/.deploy-temp"
+          ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "mkdir -p $TEMP_DIR && chmod 755 $TEMP_DIR"
+          
+          # Transfer files to temp directory
+          scp -r dist ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:$TEMP_DIR/
+          scp package.json package-lock.json ecosystem.config.js ecosystem.config.cjs ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:$TEMP_DIR/
+          scp -r server shared ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:$TEMP_DIR/
+          scp drizzle.config.ts tsconfig.json vite.config.ts tailwind.config.ts postcss.config.js ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:$TEMP_DIR/ 2>/dev/null || true
+          # Ensure scripts directory exists and transfer deploy.sh
+          ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "mkdir -p $TEMP_DIR/scripts"
+          scp scripts/deploy.sh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:$TEMP_DIR/scripts/deploy.sh
+          
+          # Move files from temp to final location and fix permissions
+          ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "
+            cd $DEPLOY_PATH
+            # Remove old files (keep .env and other config files)
+            rm -rf dist server shared package.json package-lock.json ecosystem.config.js ecosystem.config.cjs drizzle.config.ts tsconfig.json vite.config.ts tailwind.config.ts postcss.config.js scripts 2>/dev/null || true
+            # Move new files from temp
+            mv $TEMP_DIR/* . 2>/dev/null || true
+            mv $TEMP_DIR/.* . 2>/dev/null || true
+            # Clean up temp directory
+            rm -rf $TEMP_DIR
+            # Ensure scripts directory exists
+            mkdir -p scripts
+            # Fix permissions
+            chmod -R 755 . 2>/dev/null || true
+            find . -type f -exec chmod 644 {} \; 2>/dev/null || true
+            find . -type d -exec chmod 755 {} \; 2>/dev/null || true
+            # Make deploy script executable
+            if [ -f 'scripts/deploy.sh' ]; then
+              chmod +x scripts/deploy.sh
+              echo '✅ deploy.sh script found and made executable'
+            else
+              echo '⚠️  deploy.sh not found in scripts/, checking root...'
+              if [ -f 'deploy.sh' ]; then
+                mv deploy.sh scripts/deploy.sh
+                chmod +x scripts/deploy.sh
+                echo '✅ deploy.sh moved to scripts/ and made executable'
+              else
+                echo '❌ deploy.sh not found anywhere!'
+                ls -la scripts/ 2>/dev/null || echo 'scripts/ directory does not exist'
+                ls -la | grep deploy || echo 'No deploy.sh in root'
+              fi
+            fi
+          "
+          
+          # Execute deployment script
+          ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "
+            export DEPLOY_PATH='${{ secrets.DEPLOY_PATH || '/home/ratehonk-crm/htdocs/crm.ratehonk.com/crm-ratehonk' }}'
+            export GITHUB_REF='${{ github.ref }}'
+            cd \"\$DEPLOY_PATH\" || exit 1
+            echo '🔍 Checking for deploy.sh script...'
+            if [ -f 'scripts/deploy.sh' ]; then
+              echo '✅ Found scripts/deploy.sh, executing...'
+              bash scripts/deploy.sh
+            elif [ -f 'deploy.sh' ]; then
+              echo '✅ Found deploy.sh in root, executing...'
+              bash deploy.sh
+            else
+              echo '❌ deploy.sh script not found!'
+              echo 'Current directory: '\$(pwd)
+              echo 'Files in current directory:'
+              ls -la
+              echo 'Files in scripts/ directory:'
+              ls -la scripts/ 2>/dev/null || echo 'scripts/ directory does not exist'
+              exit 1
+            fi
+          "
