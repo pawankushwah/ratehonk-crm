@@ -9538,6 +9538,157 @@ export class SimpleStorage {
     }
   }
 
+  // Expense Settings Methods
+  async getExpenseSettings(tenantId: number) {
+    try {
+      const [settings] =
+        await sql`SELECT * FROM tenant_settings WHERE tenant_id = ${tenantId}`;
+      if (!settings) {
+        return {
+          expenseNumberStart: 1,
+          defaultCurrency: "USD",
+          defaultGstSettingId: null,
+          showTax: true,
+          showVendor: true,
+          showLeadType: true,
+          showCategory: true,
+          showSubcategory: true,
+          showPaymentMethod: true,
+          showPaymentStatus: true,
+          showNotes: true,
+        };
+      }
+      return {
+        id: settings.id,
+        tenantId: settings.tenant_id,
+        expenseNumberStart: settings.expense_number_start ?? 1,
+        defaultCurrency: settings.default_currency ?? "USD",
+        defaultGstSettingId: settings.default_gst_setting_id || null,
+        showTax: settings.show_expense_tax ?? true,
+        showVendor: settings.show_expense_vendor ?? true,
+        showLeadType: settings.show_expense_lead_type ?? true,
+        showCategory: settings.show_expense_category ?? true,
+        showSubcategory: settings.show_expense_subcategory ?? true,
+        showPaymentMethod: settings.show_expense_payment_method ?? true,
+        showPaymentStatus: settings.show_expense_payment_status ?? true,
+        showNotes: settings.show_expense_notes ?? true,
+      };
+    } catch (error) {
+      console.error("Error getting expense settings:", error);
+      return {
+        expenseNumberStart: 1,
+        defaultCurrency: "USD",
+        defaultGstSettingId: null,
+        showTax: true,
+        showVendor: true,
+        showLeadType: true,
+        showCategory: true,
+        showSubcategory: true,
+        showPaymentMethod: true,
+        showPaymentStatus: true,
+        showNotes: true,
+      };
+    }
+  }
+
+  async upsertExpenseSettings(tenantId: number, settings: any) {
+    try {
+      const [result] =
+        await sql`INSERT INTO tenant_settings (tenant_id, expense_number_start, default_currency, default_gst_setting_id, show_expense_tax, show_expense_vendor, show_expense_lead_type, show_expense_category, show_expense_subcategory, show_expense_payment_method, show_expense_payment_status, show_expense_notes, updated_at) VALUES (${tenantId}, ${settings.expenseNumberStart !== undefined ? settings.expenseNumberStart : 1}, ${settings.defaultCurrency || "USD"}, ${settings.defaultGstSettingId || null}, ${settings.showTax !== undefined ? settings.showTax : true}, ${settings.showVendor !== undefined ? settings.showVendor : true}, ${settings.showLeadType !== undefined ? settings.showLeadType : true}, ${settings.showCategory !== undefined ? settings.showCategory : true}, ${settings.showSubcategory !== undefined ? settings.showSubcategory : true}, ${settings.showPaymentMethod !== undefined ? settings.showPaymentMethod : true}, ${settings.showPaymentStatus !== undefined ? settings.showPaymentStatus : true}, ${settings.showNotes !== undefined ? settings.showNotes : true}, NOW()) ON CONFLICT (tenant_id) DO UPDATE SET expense_number_start = COALESCE(${settings.expenseNumberStart}, tenant_settings.expense_number_start), default_currency = COALESCE(${settings.defaultCurrency}, tenant_settings.default_currency), default_gst_setting_id = COALESCE(${settings.defaultGstSettingId}, tenant_settings.default_gst_setting_id), show_expense_tax = COALESCE(${settings.showTax}, tenant_settings.show_expense_tax), show_expense_vendor = COALESCE(${settings.showVendor}, tenant_settings.show_expense_vendor), show_expense_lead_type = COALESCE(${settings.showLeadType}, tenant_settings.show_expense_lead_type), show_expense_category = COALESCE(${settings.showCategory}, tenant_settings.show_expense_category), show_expense_subcategory = COALESCE(${settings.showSubcategory}, tenant_settings.show_expense_subcategory), show_expense_payment_method = COALESCE(${settings.showPaymentMethod}, tenant_settings.show_expense_payment_method), show_expense_payment_status = COALESCE(${settings.showPaymentStatus}, tenant_settings.show_expense_payment_status), show_expense_notes = COALESCE(${settings.showNotes}, tenant_settings.show_expense_notes), updated_at = NOW() RETURNING *`;
+      return {
+        id: result.id,
+        tenantId: result.tenant_id,
+        expenseNumberStart: result.expense_number_start ?? 1,
+        defaultCurrency: result.default_currency ?? "USD",
+        defaultGstSettingId: result.default_gst_setting_id || null,
+        showTax: result.show_expense_tax ?? true,
+        showVendor: result.show_expense_vendor ?? true,
+        showLeadType: result.show_expense_lead_type ?? true,
+        showCategory: result.show_expense_category ?? true,
+        showSubcategory: result.show_expense_subcategory ?? true,
+        showPaymentMethod: result.show_expense_payment_method ?? true,
+        showPaymentStatus: result.show_expense_payment_status ?? true,
+        showNotes: result.show_expense_notes ?? true,
+      };
+    } catch (error) {
+      console.error("Error upserting expense settings:", error);
+      throw error;
+    }
+  }
+
+  // Estimate Settings Methods
+  async getEstimateSettings(tenantId: number) {
+    try {
+      const [settings] = await sql`
+        SELECT * FROM tenant_settings WHERE tenant_id = ${tenantId}
+      `;
+      if (!settings) {
+        return {
+          estimateNumberStart: 1,
+          defaultCurrency: "USD",
+          defaultGstSettingId: null,
+          showTax: true,
+          showDiscount: true,
+          showNotes: true,
+          showDeposit: true,
+          showPaymentTerms: true,
+          sendEstimateViaEmail: true,
+          sendEstimateViaWhatsapp: false,
+        };
+      }
+      return {
+        id: settings.id,
+        tenantId: settings.tenant_id,
+        estimateNumberStart: settings.estimate_number_start ?? 1,
+        defaultCurrency: settings.default_currency ?? "USD",
+        defaultGstSettingId: settings.default_gst_setting_id || null,
+        showTax: settings.show_estimate_tax ?? true,
+        showDiscount: settings.show_estimate_discount ?? true,
+        showNotes: settings.show_estimate_notes ?? true,
+        showDeposit: settings.show_estimate_deposit ?? true,
+        showPaymentTerms: settings.show_estimate_payment_terms ?? true,
+        sendEstimateViaEmail: settings.send_estimate_via_email ?? true,
+        sendEstimateViaWhatsapp: settings.send_estimate_via_whatsapp ?? false,
+      };
+    } catch (error) {
+      console.error("Error getting estimate settings:", error);
+      return {
+        estimateNumberStart: 1,
+        defaultCurrency: "USD",
+        defaultGstSettingId: null,
+        showTax: true,
+        showDiscount: true,
+        showNotes: true,
+        showDeposit: true,
+        showPaymentTerms: true,
+      };
+    }
+  }
+
+  async upsertEstimateSettings(tenantId: number, settings: any) {
+    try {
+      const [result] =
+        await sql`INSERT INTO tenant_settings (tenant_id, estimate_number_start, default_currency, default_gst_setting_id, show_estimate_tax, show_estimate_discount, show_estimate_notes, show_estimate_deposit, show_estimate_payment_terms, send_estimate_via_email, send_estimate_via_whatsapp, updated_at) VALUES (${tenantId}, ${settings.estimateNumberStart !== undefined ? settings.estimateNumberStart : 1}, ${settings.defaultCurrency || "USD"}, ${settings.defaultGstSettingId || null}, ${settings.showTax !== undefined ? settings.showTax : true}, ${settings.showDiscount !== undefined ? settings.showDiscount : true}, ${settings.showNotes !== undefined ? settings.showNotes : true}, ${settings.showDeposit !== undefined ? settings.showDeposit : true}, ${settings.showPaymentTerms !== undefined ? settings.showPaymentTerms : true}, ${settings.sendEstimateViaEmail !== undefined ? settings.sendEstimateViaEmail : true}, ${settings.sendEstimateViaWhatsapp !== undefined ? settings.sendEstimateViaWhatsapp : false}, NOW()) ON CONFLICT (tenant_id) DO UPDATE SET estimate_number_start = COALESCE(${settings.estimateNumberStart}, tenant_settings.estimate_number_start), default_currency = COALESCE(${settings.defaultCurrency}, tenant_settings.default_currency), default_gst_setting_id = COALESCE(${settings.defaultGstSettingId}, tenant_settings.default_gst_setting_id), show_estimate_tax = COALESCE(${settings.showTax}, tenant_settings.show_estimate_tax), show_estimate_discount = COALESCE(${settings.showDiscount}, tenant_settings.show_estimate_discount), show_estimate_notes = COALESCE(${settings.showNotes}, tenant_settings.show_estimate_notes), show_estimate_deposit = COALESCE(${settings.showDeposit}, tenant_settings.show_estimate_deposit), show_estimate_payment_terms = COALESCE(${settings.showPaymentTerms}, tenant_settings.show_estimate_payment_terms), send_estimate_via_email = COALESCE(${settings.sendEstimateViaEmail}, tenant_settings.send_estimate_via_email), send_estimate_via_whatsapp = COALESCE(${settings.sendEstimateViaWhatsapp}, tenant_settings.send_estimate_via_whatsapp), updated_at = NOW() RETURNING *`;
+      return {
+        id: result.id,
+        tenantId: result.tenant_id,
+        estimateNumberStart: result.estimate_number_start ?? 1,
+        defaultCurrency: result.default_currency ?? "USD",
+        defaultGstSettingId: result.default_gst_setting_id || null,
+        showTax: result.show_estimate_tax ?? true,
+        showDiscount: result.show_estimate_discount ?? true,
+        showNotes: result.show_estimate_notes ?? true,
+        showDeposit: result.show_estimate_deposit ?? true,
+        showPaymentTerms: result.show_estimate_payment_terms ?? true,
+        sendEstimateViaEmail: result.send_estimate_via_email ?? true,
+        sendEstimateViaWhatsapp: result.send_estimate_via_whatsapp ?? false,
+      };
+    } catch (error) {
+      console.error("Error upserting estimate settings:", error);
+      throw error;
+    }
+  }
+
   // WhatsApp Configuration Methods
   async createWhatsAppConfig(config: any) {
     try {

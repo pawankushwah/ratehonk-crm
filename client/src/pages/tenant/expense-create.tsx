@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Layout } from "@/components/layout/layout";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,7 @@ import {
   Trash2,
   ArrowLeft,
   Receipt,
+  HelpCircle,
 } from "lucide-react";
 import {
   Select,
@@ -36,6 +37,8 @@ import { useLocation } from "wouter";
 import { VendorCreateForm } from "@/components/forms/vendor-create-form";
 import { LeadTypeCreateForm } from "@/components/forms/lead-type-create-form";
 import { DatePicker } from "@/components/ui/date-picker";
+import { ExpenseSettingsPanel } from "@/components/expense-settings-panel";
+import { Switch } from "@/components/ui/switch";
 import ReactQuill from "react-quill";
 import "react-quill/dist/quill.snow.css";
 
@@ -65,7 +68,7 @@ export default function ExpenseCreate() {
       vendorId: "",
       leadTypeId: "",
       amount: "",
-      taxRate: "0",
+      taxRateId: "",
       taxAmount: "0",
       totalAmount: 0,
       paymentMethod: "credit_card",
@@ -76,9 +79,70 @@ export default function ExpenseCreate() {
     },
   ]);
 
+  const [selectedTaxSettingId, setSelectedTaxSettingId] = useState<string>("");
+
   const [expenseDate, setExpenseDate] = useState(new Date().toISOString().split("T")[0]);
-  const currency = "USD"; // Default currency
+  const [currency, setCurrency] = useState("USD");
   const [notesContent, setNotesContent] = useState("");
+  const [isTaxInclusive, setIsTaxInclusive] = useState(false);
+
+  // Fetch expense settings
+  const { data: expenseSettings = {
+    expenseNumberStart: 1,
+    defaultCurrency: "USD",
+    defaultGstSettingId: null,
+    showTax: true,
+    showVendor: true,
+    showLeadType: true,
+    showCategory: true,
+    showSubcategory: true,
+    showPaymentMethod: true,
+    showPaymentStatus: true,
+    showNotes: true,
+  }, refetch: refetchExpenseSettings } = useQuery({
+    queryKey: ["/api/expense-settings", tenant?.id],
+    queryFn: async () => {
+      if (!tenant?.id) return null;
+      const token = auth.getToken();
+      const response = await fetch(`/api/expense-settings/${tenant.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error("Failed to fetch expense settings");
+      const result = await response.json();
+      return result.data;
+    },
+    enabled: !!tenant?.id,
+    refetchOnMount: true,
+    staleTime: 0,
+  });
+
+  // Update currency when settings load
+  useEffect(() => {
+    if (expenseSettings?.defaultCurrency) {
+      setCurrency(expenseSettings.defaultCurrency);
+    }
+    if (expenseSettings?.defaultGstSettingId) {
+      setSelectedTaxSettingId(expenseSettings.defaultGstSettingId.toString());
+    }
+  }, [expenseSettings?.defaultCurrency, expenseSettings?.defaultGstSettingId]);
+
+  // Fetch GST rates based on selected tax setting
+  const { data: gstRates = [] } = useQuery<any[]>({
+    queryKey: ["/api/gst-rates", selectedTaxSettingId],
+    enabled: !!selectedTaxSettingId && !!tenant?.id,
+    queryFn: async () => {
+      const token = auth.getToken();
+      const response = await fetch(
+        `/api/gst-rates?gstSettingId=${selectedTaxSettingId}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      if (!response.ok) return [];
+      const result = await response.json();
+      return Array.isArray(result) ? result : result.rates || [];
+    },
+  });
 
   // Slide panel states
   const [isVendorPanelOpen, setIsVendorPanelOpen] = useState(false);
@@ -194,7 +258,7 @@ export default function ExpenseCreate() {
         vendorId: "",
         leadTypeId: "",
         amount: "",
-        taxRate: "0",
+        taxRateId: "",
         taxAmount: "0",
         totalAmount: 0,
         paymentMethod: "credit_card",
@@ -216,17 +280,75 @@ export default function ExpenseCreate() {
     const updatedItems = [...expenseItems];
     updatedItems[index] = { ...updatedItems[index], [field]: value };
 
-    // Calculate totals if amount or tax changes
-    if (field === "amount" || field === "taxRate") {
+    // Calculate totals if amount or tax rate changes
+    if (field === "amount" || field === "taxRateId") {
       const amount = parseFloat(updatedItems[index].amount || "0");
-      const taxRate = parseFloat(updatedItems[index].taxRate || "0");
-      const taxAmount = (amount * taxRate) / 100;
+      let taxAmount = 0;
+      let totalAmount = amount;
+      
+      if (updatedItems[index].taxRateId) {
+        const selectedRate = gstRates.find(
+          (rate: any) => rate.id?.toString() === updatedItems[index].taxRateId
+        );
+        if (selectedRate) {
+          const ratePercentage = parseFloat(selectedRate.rate || "0");
+          
+          if (isTaxInclusive) {
+            // When tax is inclusive, tax is already in the price
+            // Calculate: amount = subtotal + tax, so tax = amount - subtotal
+            // Or: subtotal = amount / (1 + rate/100), tax = amount - subtotal
+            const subtotal = amount / (1 + ratePercentage / 100);
+            taxAmount = amount - subtotal;
+            totalAmount = amount; // Total is the amount itself when inclusive
+          } else {
+            // When tax is exclusive, calculate tax and add it
+            taxAmount = (amount * ratePercentage) / 100;
+            totalAmount = amount + taxAmount;
+          }
+        }
+      }
+      
       updatedItems[index].taxAmount = taxAmount.toFixed(2);
-      updatedItems[index].totalAmount = amount + taxAmount;
+      updatedItems[index].totalAmount = totalAmount;
     }
 
     setExpenseItems(updatedItems);
   };
+
+  // Recalculate all items when tax inclusive setting changes
+  useEffect(() => {
+    const recalculatedItems = expenseItems.map((item) => {
+      if (item.amount && item.taxRateId) {
+        const amount = parseFloat(item.amount || "0");
+        let taxAmount = 0;
+        let totalAmount = amount;
+        
+        const selectedRate = gstRates.find(
+          (rate: any) => rate.id?.toString() === item.taxRateId
+        );
+        if (selectedRate) {
+          const ratePercentage = parseFloat(selectedRate.rate || "0");
+          
+          if (isTaxInclusive) {
+            const subtotal = amount / (1 + ratePercentage / 100);
+            taxAmount = amount - subtotal;
+            totalAmount = amount;
+          } else {
+            taxAmount = (amount * ratePercentage) / 100;
+            totalAmount = amount + taxAmount;
+          }
+        }
+        
+        return {
+          ...item,
+          taxAmount: taxAmount.toFixed(2),
+          totalAmount: totalAmount,
+        };
+      }
+      return item;
+    });
+    setExpenseItems(recalculatedItems);
+  }, [isTaxInclusive, gstRates]);
 
   // Get vendor options
   const getVendorOptions = (): AutocompleteOption[] => {
@@ -264,6 +386,48 @@ export default function ExpenseCreate() {
     }));
   };
 
+  // Build dynamic grid template based on visible fields
+  const getGridTemplate = () => {
+    const cols: string[] = [];
+    
+    cols.push("40px"); // # column (fixed width)
+    if (expenseSettings?.showCategory !== false) cols.push("1fr"); // Category
+    cols.push("1.5fr"); // Title (always visible)
+    if (expenseSettings?.showVendor !== false) cols.push("1fr"); // Vendor
+    if (expenseSettings?.showLeadType !== false) cols.push("1fr"); // Lead Type
+    cols.push("1fr"); // Amount (always visible)
+    if (expenseSettings?.showTax !== false) {
+      cols.push("1fr"); // Tax Rate (dropdown)
+      cols.push("1fr"); // Tax Amt
+    }
+    cols.push("1fr"); // Total (always visible)
+    if (expenseSettings?.showPaymentStatus !== false) cols.push("1fr"); // Status
+    if (expenseSettings?.showPaymentStatus !== false) {
+      cols.push("1fr"); // Paid
+      cols.push("1fr"); // Due
+    }
+    if (expenseSettings?.showPaymentMethod !== false) cols.push("1fr"); // Payment
+    cols.push("50px"); // Delete button (fixed width)
+    
+    return cols.join(" ");
+  };
+  
+  const gridTemplate = getGridTemplate();
+
+  // Get currency symbol
+  const getCurrencySymbol = () => {
+    switch (currency) {
+      case "INR": return "₹";
+      case "USD": return "$";
+      case "EUR": return "€";
+      case "GBP": return "£";
+      case "AUD": return "A$";
+      case "CAD": return "C$";
+      default: return "$";
+    }
+  };
+  const currencySymbol = getCurrencySymbol();
+
   // Handle vendor selection
   const handleVendorSelection = (vendorId: string, index: number) => {
     if (vendorId === "create_new") {
@@ -286,15 +450,33 @@ export default function ExpenseCreate() {
 
   // Calculate totals
   const calculateSubtotal = () => {
-    return expenseItems.reduce((sum, item) => sum + parseFloat(item.amount || "0"), 0);
+    if (isTaxInclusive) {
+      // When tax is inclusive, subtotal = sum of all amounts (tax is already included)
+      return expenseItems.reduce((sum, item) => sum + parseFloat(item.amount || "0"), 0);
+    } else {
+      // When tax is exclusive, subtotal = sum of amounts without tax
+      return expenseItems.reduce((sum, item) => sum + parseFloat(item.amount || "0"), 0);
+    }
   };
 
   const calculateTotalTax = () => {
-    return expenseItems.reduce((sum, item) => sum + parseFloat(item.taxAmount || "0"), 0);
+    if (isTaxInclusive) {
+      // When tax is inclusive, tax should be 0 in display (it's already in the price)
+      return 0;
+    } else {
+      // When tax is exclusive, sum all tax amounts
+      return expenseItems.reduce((sum, item) => sum + parseFloat(item.taxAmount || "0"), 0);
+    }
   };
 
   const calculateGrandTotal = () => {
-    return calculateSubtotal() + calculateTotalTax();
+    if (isTaxInclusive) {
+      // When tax is inclusive, grand total = subtotal (tax is already included)
+      return calculateSubtotal();
+    } else {
+      // When tax is exclusive, grand total = subtotal + tax
+      return calculateSubtotal() + calculateTotalTax();
+    }
   };
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
@@ -304,7 +486,7 @@ export default function ExpenseCreate() {
       title: item.title,
       description: item.notes,
       amount: parseFloat(item.amount || "0"),
-      currency: currency,
+      currency: expenseSettings?.defaultCurrency || currency,
       category: item.category,
       subcategory: "",
       expenseDate: expenseDate,
@@ -315,7 +497,14 @@ export default function ExpenseCreate() {
       expenseType: "purchase",
       receiptUrl: "",
       taxAmount: parseFloat(item.taxAmount || "0"),
-      taxRate: parseFloat(item.taxRate || "0"),
+      taxRate: item.taxRateId
+        ? (() => {
+            const selectedRate = gstRates.find(
+              (rate: any) => rate.id?.toString() === item.taxRateId
+            );
+            return selectedRate ? parseFloat(selectedRate.rate || "0") : 0;
+          })()
+        : 0,
       isReimbursable: false,
       isRecurring: false,
       recurringFrequency: "",
@@ -329,30 +518,35 @@ export default function ExpenseCreate() {
 
   return (
     <Layout initialSidebarCollapsed={true}>
-      <div className="container mx-auto py-6 space-y-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => navigate("/expenses")}
-              data-testid="button-back"
-            >
-              <ArrowLeft className="h-5 w-5" />
-            </Button>
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
+      <div className="p-6 max-w-[1600px] mx-auto">
+        <div className="bg-white rounded-2xl shadow-sm">
+          <div className="">
+            <div className=" w-full h-[72px] flex items-center bg-white px-[18px] py-4 rounded-t-xl border-b border-[#E3E8EF] shadow-[0px_1px_6px_0px_rgba(0,0,0,0.05)]">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate("/expenses")}
+                data-testid="button-back"
+              >
+                <ArrowLeft className="h-4 w-4 mr-2" />
+                Back
+              </Button>
+              <h1 className="ml-4 font-inter font-medium text-[20px] leading-[24px] text-[#121926]">
                 Create Expenses
               </h1>
-              <p className="text-gray-600 dark:text-gray-400">
-                Add multiple expense entries at once
-              </p>
+
+              <div className="flex gap-3 ml-auto">
+                {tenant?.id && <ExpenseSettingsPanel tenantId={tenant.id} />}
+                <div className="w-10 h-10 flex items-center justify-center rounded-lg border border-gray-200 bg-white shadow-sm">
+                  <HelpCircle className="h-5 w-5 text-gray-600" />
+                </div>
+              </div>
             </div>
           </div>
-        </div>
 
-        <form onSubmit={handleSubmit}>
-          <Card>
+          <div className="p-6">
+            <form onSubmit={handleSubmit}>
+              <Card>
             <CardContent className="p-6 space-y-6">
               {/* Expense Date Row */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -371,20 +565,23 @@ export default function ExpenseCreate() {
               {/* Expense Line Items */}
               <div className="border rounded-lg overflow-hidden">
                 {/* Table Header */}
-                <div className="grid grid-cols-[auto_1fr_1.5fr_0.8fr_0.8fr_0.8fr_0.5fr_0.6fr_0.8fr_0.8fr_0.8fr_0.8fr_0.8fr_auto] gap-2 bg-gray-100 dark:bg-gray-800 p-3 font-medium text-sm">
-                  <div className="text-center">#</div>
-                  <div>Category *</div>
-                  <div>Title *</div>
-                  <div>Vendor</div>
-                  <div>Lead Type</div>
-                  <div>Amount *</div>
-                  <div>Tax %</div>
-                  <div>Tax Amt</div>
-                  <div>Total</div>
-                  <div>Status *</div>
-                  <div>Paid</div>
-                  <div>Due</div>
-                  <div>Payment</div>
+                <div 
+                  className="grid gap-2 bg-gray-100 dark:bg-gray-800 p-3 font-medium text-sm"
+                  style={{ gridTemplateColumns: gridTemplate }}
+                >
+                  <div className="text-center flex items-center justify-center">#</div>
+                  {expenseSettings?.showCategory !== false && <div className="flex items-center">Category *</div>}
+                  <div className="flex items-center">Title *</div>
+                  {expenseSettings?.showVendor !== false && <div className="flex items-center">Vendor</div>}
+                  {expenseSettings?.showLeadType !== false && <div className="flex items-center">Lead Type</div>}
+                  <div className="flex items-center">Amount ({currencySymbol}) *</div>
+                  {expenseSettings?.showTax !== false && <div className="flex items-center">Tax Rate</div>}
+                  {expenseSettings?.showTax !== false && <div className="flex items-center">Tax Amt ({currencySymbol})</div>}
+                  <div className="flex items-center">Total ({currencySymbol})</div>
+                  {expenseSettings?.showPaymentStatus !== false && <div className="flex items-center">Status *</div>}
+                  {expenseSettings?.showPaymentStatus !== false && <div className="flex items-center">Paid ({currencySymbol})</div>}
+                  {expenseSettings?.showPaymentStatus !== false && <div className="flex items-center">Due ({currencySymbol})</div>}
+                  {expenseSettings?.showPaymentMethod !== false && <div className="flex items-center">Payment</div>}
                   <div></div>
                 </div>
 
@@ -393,24 +590,27 @@ export default function ExpenseCreate() {
                   {expenseItems.map((item, index) => (
                     <div
                       key={index}
-                      className="grid grid-cols-[auto_1fr_1.5fr_0.8fr_0.8fr_0.8fr_0.5fr_0.6fr_0.8fr_0.8fr_0.8fr_0.8fr_0.8fr_auto] gap-2 p-3 hover:bg-gray-50 dark:hover:bg-gray-900"
+                      className="grid gap-2 p-3 hover:bg-gray-50 dark:hover:bg-gray-900"
+                      style={{ gridTemplateColumns: gridTemplate }}
                     >
                       <div className="flex items-center justify-center">
                         <span className="font-medium text-sm">{index + 1}</span>
                       </div>
 
-                      <div>
-                        <AutocompleteInput
-                          data-testid={`autocomplete-category-${index}`}
-                          suggestions={getCategoryOptions()}
-                          value={item.category}
-                          onValueChange={(value) =>
-                            updateExpenseItem(index, "category", value)
-                          }
-                          placeholder="Select..."
-                          emptyText="No categories found"
-                        />
-                      </div>
+                      {expenseSettings?.showCategory !== false && (
+                        <div>
+                          <AutocompleteInput
+                            data-testid={`autocomplete-category-${index}`}
+                            suggestions={getCategoryOptions()}
+                            value={item.category}
+                            onValueChange={(value) =>
+                              updateExpenseItem(index, "category", value)
+                            }
+                            placeholder="Select..."
+                            emptyText="No categories found"
+                          />
+                        </div>
+                      )}
 
                       <div>
                         <AutocompleteInput
@@ -426,31 +626,35 @@ export default function ExpenseCreate() {
                         />
                       </div>
 
-                      <div>
-                        <AutocompleteInput
-                          data-testid={`autocomplete-vendor-${index}`}
-                          suggestions={getVendorOptions()}
-                          value={item.vendorId}
-                          onValueChange={(value) =>
-                            handleVendorSelection(value, index)
-                          }
-                          placeholder="Select..."
-                          emptyText="No vendors found"
-                        />
-                      </div>
+                      {expenseSettings?.showVendor !== false && (
+                        <div>
+                          <AutocompleteInput
+                            data-testid={`autocomplete-vendor-${index}`}
+                            suggestions={getVendorOptions()}
+                            value={item.vendorId}
+                            onValueChange={(value) =>
+                              handleVendorSelection(value, index)
+                            }
+                            placeholder="Select..."
+                            emptyText="No vendors found"
+                          />
+                        </div>
+                      )}
 
-                      <div>
-                        <AutocompleteInput
-                          data-testid={`autocomplete-lead-type-${index}`}
-                          suggestions={getLeadTypeOptions()}
-                          value={item.leadTypeId}
-                          onValueChange={(value) =>
-                            handleLeadTypeSelection(value, index)
-                          }
-                          placeholder="Select..."
-                          emptyText="No lead types found"
-                        />
-                      </div>
+                      {expenseSettings?.showLeadType !== false && (
+                        <div>
+                          <AutocompleteInput
+                            data-testid={`autocomplete-lead-type-${index}`}
+                            suggestions={getLeadTypeOptions()}
+                            value={item.leadTypeId}
+                            onValueChange={(value) =>
+                              handleLeadTypeSelection(value, index)
+                            }
+                            placeholder="Select..."
+                            emptyText="No lead types found"
+                          />
+                        </div>
+                      )}
 
                       <div>
                         <Input
@@ -466,26 +670,50 @@ export default function ExpenseCreate() {
                         />
                       </div>
 
-                      <div>
-                        <Input
-                          data-testid={`input-tax-rate-${index}`}
-                          type="text"
-                          value={item.taxRate}
-                          onChange={(e) =>
-                            updateExpenseItem(index, "taxRate", e.target.value)
-                          }
-                          onKeyPress={handleNumericKeyPress}
-                          placeholder="0"
-                        />
-                      </div>
+                      {expenseSettings?.showTax !== false && (
+                        <div>
+                          <Select
+                            value={item.taxRateId || "none"}
+                            onValueChange={(value) =>
+                              updateExpenseItem(index, "taxRateId", value === "none" ? "" : value)
+                            }
+                          >
+                            <SelectTrigger data-testid={`select-tax-rate-${index}`} className="text-xs">
+                              <SelectValue placeholder="Select tax rate" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">None</SelectItem>
+                              {gstRates
+                                .filter((rate: any) => rate.isActive !== false)
+                                .map((rate: any) => (
+                                  <SelectItem key={rate.id} value={rate.id?.toString()}>
+                                    {rate.rateName || `Rate ${rate.rate}%`} ({rate.rate}%)
+                                  </SelectItem>
+                                ))}
+                            </SelectContent>
+                          </Select>
+                          {!selectedTaxSettingId && (
+                            <p className="text-xs text-gray-500 mt-1">
+                              Select tax setting in expense settings
+                            </p>
+                          )}
+                          {selectedTaxSettingId && gstRates.length === 0 && (
+                            <p className="text-xs text-gray-500 mt-1">
+                              No tax rates available
+                            </p>
+                          )}
+                        </div>
+                      )}
 
-                      <div>
-                        <Input
-                          value={item.taxAmount}
-                          readOnly
-                          className="bg-gray-50 dark:bg-gray-900 text-xs"
-                        />
-                      </div>
+                      {expenseSettings?.showTax !== false && (
+                        <div>
+                          <Input
+                            value={item.taxAmount}
+                            readOnly
+                            className="bg-gray-50 dark:bg-gray-900 text-xs"
+                          />
+                        </div>
+                      )}
 
                       <div>
                         <Input
@@ -495,80 +723,88 @@ export default function ExpenseCreate() {
                         />
                       </div>
 
-                      <div>
-                        <Select
-                          value={item.paymentStatus}
-                          onValueChange={(value) => {
-                            updateExpenseItem(index, "paymentStatus", value);
-                            // Auto-fill paid/due amounts based on status
-                            if (value === "paid") {
-                              updateExpenseItem(index, "amountPaid", item.totalAmount.toFixed(2));
-                              updateExpenseItem(index, "amountDue", "0");
-                            } else if (value === "due") {
-                              updateExpenseItem(index, "amountPaid", "0");
-                              updateExpenseItem(index, "amountDue", item.totalAmount.toFixed(2));
+                      {expenseSettings?.showPaymentStatus !== false && (
+                        <div>
+                          <Select
+                            value={item.paymentStatus}
+                            onValueChange={(value) => {
+                              updateExpenseItem(index, "paymentStatus", value);
+                              // Auto-fill paid/due amounts based on status
+                              if (value === "paid") {
+                                updateExpenseItem(index, "amountPaid", item.totalAmount.toFixed(2));
+                                updateExpenseItem(index, "amountDue", "0");
+                              } else if (value === "due") {
+                                updateExpenseItem(index, "amountPaid", "0");
+                                updateExpenseItem(index, "amountDue", item.totalAmount.toFixed(2));
+                              }
+                            }}
+                          >
+                            <SelectTrigger data-testid={`select-payment-status-${index}`} className="text-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="paid">Paid</SelectItem>
+                              <SelectItem value="credit">Credit</SelectItem>
+                              <SelectItem value="due">Due</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+
+                      {expenseSettings?.showPaymentStatus !== false && (
+                        <div>
+                          <Input
+                            data-testid={`input-amount-paid-${index}`}
+                            type="text"
+                            value={item.amountPaid}
+                            onChange={(e) =>
+                              updateExpenseItem(index, "amountPaid", e.target.value)
                             }
-                          }}
-                        >
-                          <SelectTrigger data-testid={`select-payment-status-${index}`} className="text-xs">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="paid">Paid</SelectItem>
-                            <SelectItem value="credit">Credit</SelectItem>
-                            <SelectItem value="due">Due</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
+                            onKeyPress={handleNumericKeyPress}
+                            placeholder="0.00"
+                            className="text-xs"
+                          />
+                        </div>
+                      )}
 
-                      <div>
-                        <Input
-                          data-testid={`input-amount-paid-${index}`}
-                          type="text"
-                          value={item.amountPaid}
-                          onChange={(e) =>
-                            updateExpenseItem(index, "amountPaid", e.target.value)
-                          }
-                          onKeyPress={handleNumericKeyPress}
-                          placeholder="0.00"
-                          className="text-xs"
-                        />
-                      </div>
+                      {expenseSettings?.showPaymentStatus !== false && (
+                        <div>
+                          <Input
+                            data-testid={`input-amount-due-${index}`}
+                            type="text"
+                            value={item.amountDue}
+                            onChange={(e) =>
+                              updateExpenseItem(index, "amountDue", e.target.value)
+                            }
+                            onKeyPress={handleNumericKeyPress}
+                            placeholder="0.00"
+                            className="text-xs"
+                          />
+                        </div>
+                      )}
 
-                      <div>
-                        <Input
-                          data-testid={`input-amount-due-${index}`}
-                          type="text"
-                          value={item.amountDue}
-                          onChange={(e) =>
-                            updateExpenseItem(index, "amountDue", e.target.value)
-                          }
-                          onKeyPress={handleNumericKeyPress}
-                          placeholder="0.00"
-                          className="text-xs"
-                        />
-                      </div>
-
-                      <div>
-                        <Select
-                          value={item.paymentMethod}
-                          onValueChange={(value) =>
-                            updateExpenseItem(index, "paymentMethod", value)
-                          }
-                        >
-                          <SelectTrigger data-testid={`select-payment-method-${index}`} className="text-xs">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="credit_card">Card</SelectItem>
-                            <SelectItem value="debit_card">Debit</SelectItem>
-                            <SelectItem value="bank_transfer">Bank</SelectItem>
-                            <SelectItem value="cash">Cash</SelectItem>
-                            <SelectItem value="check">Check</SelectItem>
-                            <SelectItem value="petty_cash">Petty</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
+                      {expenseSettings?.showPaymentMethod !== false && (
+                        <div>
+                          <Select
+                            value={item.paymentMethod}
+                            onValueChange={(value) =>
+                              updateExpenseItem(index, "paymentMethod", value)
+                            }
+                          >
+                            <SelectTrigger data-testid={`select-payment-method-${index}`} className="text-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="credit_card">Card</SelectItem>
+                              <SelectItem value="debit_card">Debit</SelectItem>
+                              <SelectItem value="bank_transfer">Bank</SelectItem>
+                              <SelectItem value="cash">Cash</SelectItem>
+                              <SelectItem value="check">Check</SelectItem>
+                              <SelectItem value="petty_cash">Petty</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
 
                       <div className="flex items-center justify-center">
                         <Button
@@ -601,71 +837,99 @@ export default function ExpenseCreate() {
                 </div>
               </div>
 
-              {/* Calculation Summary */}
-              <div className="border rounded-lg p-6 bg-gradient-to-r from-gray-50 to-slate-50 dark:from-gray-900 dark:to-slate-900">
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-                  Summary
-                </h3>
-                <div className="space-y-3">
-                  <div className="flex justify-between items-center py-2 border-b">
-                    <span className="text-gray-700 dark:text-gray-300 font-medium">Subtotal:</span>
-                    <span className="font-semibold text-lg">
-                      {currency === "INR" ? "₹" : currency === "USD" ? "$" : currency === "EUR" ? "€" : "£"}
-                      {calculateSubtotal().toFixed(2)}
-                    </span>
+              {/* Tax Inclusive/Exclusive Toggle */}
+              {expenseSettings?.showTax !== false && (
+                <div className="flex items-center justify-between p-3 border rounded-lg">
+                  <div className="flex flex-col">
+                    <Label htmlFor="taxInclusive" className="text-sm font-medium">
+                      Tax Type
+                    </Label>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {isTaxInclusive ? "Tax is included in prices" : "Tax will be added to prices"}
+                    </p>
                   </div>
-
-                  <div className="flex justify-between items-center py-2 border-b">
-                    <span className="text-gray-700 dark:text-gray-300 font-medium">Total Tax:</span>
-                    <span className="font-semibold text-lg text-blue-600">
-                      {currency === "INR" ? "₹" : currency === "USD" ? "$" : currency === "EUR" ? "€" : "£"}
-                      {calculateTotalTax().toFixed(2)}
-                    </span>
-                  </div>
-
-                  <div className="flex justify-between items-center py-3 border-t-2 border-gray-300 dark:border-gray-600">
-                    <span className="text-gray-900 dark:text-white font-bold text-lg">Grand Total:</span>
-                    <span className="font-bold text-2xl text-cyan-600">
-                      {currency === "INR" ? "₹" : currency === "USD" ? "$" : currency === "EUR" ? "€" : "£"}
-                      {calculateGrandTotal().toFixed(2)}
-                    </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground">Exclusive</span>
+                    <Switch
+                      id="taxInclusive"
+                      checked={isTaxInclusive}
+                      onCheckedChange={setIsTaxInclusive}
+                      data-testid="switch-tax-inclusive"
+                    />
+                    <span className="text-sm text-muted-foreground">Inclusive</span>
                   </div>
                 </div>
-              </div>
+              )}
 
-              {/* Notes Section with Rich Text Editor */}
-              <div className="border rounded-lg p-4">
-                <Label htmlFor="notes" className="text-lg font-semibold mb-3 block">
-                  Notes (Optional)
-                </Label>
-                <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
-                  Add any additional notes or attachments for all expenses.
-                </p>
-                <div className="bg-white dark:bg-gray-900 rounded-lg" data-testid="rich-text-editor-notes">
-                  <ReactQuill
-                    theme="snow"
-                    value={notesContent}
-                    onChange={setNotesContent}
-                    className="h-48"
-                    modules={{
-                      toolbar: [
-                        [{ 'header': [1, 2, 3, false] }],
-                        ['bold', 'italic', 'underline', 'strike'],
-                        [{ 'list': 'ordered'}, { 'list': 'bullet' }],
-                        [{ 'color': [] }, { 'background': [] }],
-                        ['link', 'image'],
-                        ['clean']
-                      ],
-                    }}
-                    formats={[
-                      'header',
-                      'bold', 'italic', 'underline', 'strike',
-                      'list', 'bullet',
-                      'color', 'background',
-                      'link', 'image'
-                    ]}
-                    placeholder="Type your notes here..."
-                  />
+              {/* Notes and Summary in Same Row */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* Notes Section with Rich Text Editor */}
+                {expenseSettings?.showNotes !== false && (
+                  <div className="border rounded-lg p-4">
+                    <Label htmlFor="notes" className="text-lg font-semibold mb-3 block">
+                      Notes (Optional)
+                    </Label>
+                    <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+                      Add any additional notes or attachments for all expenses.
+                    </p>
+                    <div className="bg-white dark:bg-gray-900 rounded-lg" data-testid="rich-text-editor-notes">
+                      <ReactQuill
+                        theme="snow"
+                        value={notesContent}
+                        onChange={setNotesContent}
+                        className="h-48"
+                        modules={{
+                          toolbar: [
+                            [{ 'header': [1, 2, 3, false] }],
+                            ['bold', 'italic', 'underline', 'strike'],
+                            [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+                            [{ 'color': [] }, { 'background': [] }],
+                            ['link', 'image'],
+                            ['clean']
+                          ],
+                        }}
+                        formats={[
+                          'header',
+                          'bold', 'italic', 'underline', 'strike',
+                          'list', 'bullet',
+                          'color', 'background',
+                          'link', 'image'
+                        ]}
+                        placeholder="Type your notes here..."
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Calculation Summary */}
+                <div className="border rounded-lg p-6 bg-gradient-to-r from-gray-50 to-slate-50 dark:from-gray-900 dark:to-slate-900">
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+                    Summary
+                  </h3>
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center py-2 border-b">
+                      <span className="text-gray-700 dark:text-gray-300 font-medium">Subtotal:</span>
+                      <span className="font-semibold text-lg">
+                        {currencySymbol}{calculateSubtotal().toFixed(2)}
+                      </span>
+                    </div>
+
+                    {expenseSettings?.showTax !== false && (
+                      <div className="flex justify-between items-center py-2 border-b">
+                        <span className="text-gray-700 dark:text-gray-300 font-medium">Total Tax:</span>
+                        <span className="font-semibold text-lg text-blue-600">
+                          {currencySymbol}{isTaxInclusive ? "0.00" : calculateTotalTax().toFixed(2)}
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="flex justify-between items-center py-3 border-t-2 border-gray-300 dark:border-gray-600">
+                      <span className="text-gray-900 dark:text-white font-bold text-lg">Grand Total:</span>
+                      <span className="font-bold text-2xl text-cyan-600">
+                        {currencySymbol}{calculateGrandTotal().toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -690,9 +954,11 @@ export default function ExpenseCreate() {
                     : `Create ${expenseItems.length} Expense${expenseItems.length > 1 ? "s" : ""}`}
                 </Button>
               </div>
-            </CardContent>
-          </Card>
-        </form>
+              </CardContent>
+            </Card>
+            </form>
+          </div>
+        </div>
       </div>
 
       {/* Vendor Create Slide Panel */}
