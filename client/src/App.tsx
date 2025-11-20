@@ -408,7 +408,7 @@ function Router() {
           </ProtectedRoute>
         </Route>
 
-        <Route path="/invoice-create">
+        <Route path="/invoice-create/:id?">
           <ProtectedRoute>
             <InvoiceCreate />
           </ProtectedRoute>

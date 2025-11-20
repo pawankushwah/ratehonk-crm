@@ -65,6 +65,7 @@ export const tenantSettings = pgTable("tenant_settings", {
   // Invoice Settings
   invoiceNumberStart: integer("invoice_number_start").default(1),
   defaultCurrency: text("default_currency").default("USD"),
+  defaultGstSettingId: integer("default_gst_setting_id"), // Default tax setting for invoices
   // Field visibility toggles for invoice create page
   showTax: boolean("show_tax").default(true),
   showDiscount: boolean("show_discount").default(true),
@@ -73,6 +74,8 @@ export const tenantSettings = pgTable("tenant_settings", {
   showProvider: boolean("show_provider").default(true),
   showVendor: boolean("show_vendor").default(true),
   showUnitPrice: boolean("show_unit_price").default(true),
+  sendInvoiceViaEmail: boolean("send_invoice_via_email").default(true),
+  sendInvoiceViaWhatsapp: boolean("send_invoice_via_whatsapp").default(false),
   // WhatsApp Welcome Messages
   enableLeadWelcomeMessage: boolean("enable_lead_welcome_message").default(true),
   leadWelcomeMessage: text("lead_welcome_message").default("Hello! Thank you for your interest. Our team will get in touch with you shortly."),

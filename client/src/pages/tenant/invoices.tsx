@@ -73,7 +73,8 @@ import { auth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { EnhancedTable, TableColumn } from "@/components/ui/enhanced-table";
 import type { Invoice } from "@shared/schema";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
+import { ModernTemplate, InvoiceData } from "@/components/invoices/invoice-templates";
 
 const invoiceStatuses = [
   { value: "draft", label: "Draft", color: "bg-gray-100 text-gray-800" },
@@ -83,6 +84,7 @@ const invoiceStatuses = [
     color: "bg-yellow-100 text-yellow-800",
   },
   { value: "paid", label: "Paid", color: "bg-green-100 text-green-800" },
+  { value: "partial", label: "Partially Paid", color: "bg-blue-100 text-blue-800" },
   { value: "overdue", label: "Overdue", color: "bg-red-100 text-red-800" },
   {
     value: "cancelled",
@@ -95,6 +97,7 @@ export default function Invoices() {
   const { tenant } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [, navigate] = useLocation();
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
@@ -453,12 +456,55 @@ export default function Invoices() {
           description: `Invoice sent to customer successfully!`,
         });
       } else {
-        throw new Error("Failed to send email");
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to send email");
       }
-    } catch (error) {
+    } catch (error: any) {
       toast({
         title: "Error",
-        description: "Failed to send email. Please try again.",
+        description: error.message || "Failed to send email. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Send invoice via WhatsApp handler
+  const handleSendWhatsApp = async (invoice: any) => {
+    try {
+      const response = await fetch(
+        `/api/tenants/${tenant?.id}/invoices/${invoice.id}/whatsapp`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${localStorage.getItem("token")}`,
+          },
+        },
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.whatsappLink) {
+          // Open WhatsApp link in new tab
+          window.open(data.whatsappLink, '_blank');
+          toast({
+            title: "Success",
+            description: `WhatsApp link opened. Please send the message to complete.`,
+          });
+        } else {
+          toast({
+            title: "Success",
+            description: `WhatsApp message prepared successfully!`,
+          });
+        }
+      } else {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to send WhatsApp message");
+      }
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to send WhatsApp message. Please try again.",
         variant: "destructive",
       });
     }
@@ -476,6 +522,11 @@ export default function Invoices() {
         return {
           label: "Pending",
           color: "bg-yellow-100 text-yellow-800 border-yellow-200",
+        };
+      case "partial":
+        return {
+          label: "Partially Paid",
+          color: "bg-blue-100 text-blue-800 border-blue-200",
         };
       case "overdue":
         return {
@@ -745,8 +796,23 @@ export default function Invoices() {
       key: "status",
       label: "Status",
       sortable: true,
-      render: (status) => {
-        const statusConfig = getStatusBadge(status);
+      render: (status, invoice) => {
+        // Determine status based on paidAmount vs totalAmount if status is not explicitly set
+        const invoiceData = invoice as any;
+        const paidAmount = parseFloat(invoiceData.paidAmount?.toString() || invoiceData.amountPaid?.toString() || "0");
+        const totalAmount = parseFloat(invoiceData.totalAmount?.toString() || "0");
+        
+        let displayStatus = status;
+        if (!displayStatus || displayStatus === "pending") {
+          // Auto-detect partial payment
+          if (paidAmount > 0 && paidAmount < totalAmount) {
+            displayStatus = "partial";
+          } else if (paidAmount >= totalAmount && totalAmount > 0) {
+            displayStatus = "paid";
+          }
+        }
+        
+        const statusConfig = getStatusBadge(displayStatus);
         return (
           <Badge className={statusConfig.color}>{statusConfig.label}</Badge>
         );
@@ -774,43 +840,8 @@ export default function Invoices() {
             size="sm"
             variant="outline"
             onClick={() => {
-              console.log("🔍 Edit Invoice - Raw invoice data:", invoice);
-              setEditingInvoice(invoice);
-              // Initialize edit states with invoice data using type assertion
-              const invoiceData = invoice as any;
-              const lineItemsData =
-                invoiceData.lineItems &&
-                Array.isArray(invoiceData.lineItems) &&
-                invoiceData.lineItems.length > 0
-                  ? invoiceData.lineItems
-                  : [
-                      {
-                        travelCategory: "",
-                        vendor: "",
-                        itemTitle: "",
-                        invoiceNumber: "",
-                        voucherNumber: "",
-                        quantity: 1,
-                        unitPrice: 0,
-                        sellingPrice: 0,
-                        purchasePrice: 0,
-                        tax: 0,
-                        totalAmount: 0,
-                      },
-                    ];
-              console.log(
-                "🔍 Edit Invoice - Line items to set:",
-                lineItemsData,
-              );
-              setEditLineItems(lineItemsData);
-              setEditDiscountAmount(
-                parseFloat(invoiceData.discountAmount?.toString() || "0"),
-              );
-              setEditAmountPaid(
-                parseFloat(invoiceData.paidAmount?.toString() || "0"),
-              );
-              setEditPaymentStatus(invoiceData.status || "pending");
-              setIsEditDialogOpen(true);
+              // Navigate to invoice create page with invoice ID for editing
+              navigate(`/invoice-create/${invoice.id}`);
             }}
             title="Edit Invoice"
           >
@@ -834,6 +865,15 @@ export default function Invoices() {
           >
             <Mail className="h-4 w-4" />
           </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => handleSendWhatsApp(invoice)}
+            className="text-green-600 hover:text-green-700"
+            title="Send WhatsApp"
+          >
+            <MessageCircle className="h-4 w-4" />
+          </Button>
         </div>
       ),
     },
@@ -854,8 +894,19 @@ export default function Invoices() {
     ).toLowerCase();
 
     const matchesSearch = searchableText.includes(searchTerm.toLowerCase());
-    const matchesStatus =
-      statusFilter === "all" || invoice.status === statusFilter;
+    
+    let matchesStatus = false;
+    if (statusFilter === "all") {
+      matchesStatus = true;
+    } else if (statusFilter === "partial") {
+      // Partial payment: paidAmount > 0 and paidAmount < totalAmount
+      const paidAmount = parseFloat(invoice.paidAmount?.toString() || invoice.amountPaid?.toString() || "0");
+      const totalAmount = parseFloat(invoice.totalAmount?.toString() || "0");
+      matchesStatus = paidAmount > 0 && paidAmount < totalAmount;
+    } else {
+      matchesStatus = invoice.status === statusFilter;
+    }
+    
     return matchesSearch && matchesStatus;
   });
 
@@ -1287,7 +1338,7 @@ export default function Invoices() {
                   <SelectValue placeholder="Filter by status" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Statuses</SelectItem>
+                  <SelectItem value="all">All Status</SelectItem>
                   {invoiceStatuses.map((status) => (
                     <SelectItem key={status.value} value={status.value}>
                       {status.label}
@@ -1782,115 +1833,151 @@ export default function Invoices() {
         </DialogContent>
       </Dialog>
 
-      {/* View Invoice Dialog */}
+      {/* View Invoice Dialog - Preview */}
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Invoice Details</DialogTitle>
+            <DialogTitle>Invoice Preview</DialogTitle>
+            <DialogDescription>
+              View invoice details as it appears to customers.
+            </DialogDescription>
           </DialogHeader>
-          {selectedInvoice && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label>Invoice Number</Label>
-                  <p className="font-medium">{selectedInvoice.invoiceNumber}</p>
-                </div>
-                <div>
-                  <Label>Status</Label>
-                  <Badge
-                    className={getStatusBadge(selectedInvoice.status).color}
+          {selectedInvoice && (() => {
+            // Get currency symbol helper
+            const getCurrencySymbol = (currencyCode: string): string => {
+              const symbols: { [key: string]: string } = {
+                USD: "$",
+                INR: "₹",
+                EUR: "€",
+                GBP: "£",
+                JPY: "¥",
+                AUD: "A$",
+                CAD: "C$",
+                CHF: "CHF",
+                CNY: "¥",
+                SGD: "S$",
+                HKD: "HK$",
+                NZD: "NZ$",
+              };
+              return symbols[currencyCode] || currencyCode;
+            };
+
+            // Parse line items
+            const invoiceData = selectedInvoice as any;
+            let lineItems: any[] = [];
+            if (invoiceData.lineItems) {
+              if (typeof invoiceData.lineItems === "string") {
+                try {
+                  lineItems = JSON.parse(invoiceData.lineItems);
+                } catch (e) {
+                  console.warn("Failed to parse line items:", e);
+                }
+              } else if (Array.isArray(invoiceData.lineItems)) {
+                lineItems = invoiceData.lineItems;
+              }
+            }
+
+            // Get customer data
+            const customer = customers.find(
+              (c) => c.id === selectedInvoice.customerId,
+            );
+
+            // Get company info from tenant
+            const companyName = tenant?.companyName || "Company Name";
+            const companyEmail = tenant?.contactEmail || "company@example.com";
+            const companyPhone = tenant?.contactPhone || "";
+
+            // Get currency symbol
+            const currency = selectedInvoice.currency || "USD";
+            const currencySymbol = getCurrencySymbol(currency);
+
+            // Prepare invoice data for template
+            const previewData: InvoiceData = {
+              invoiceNumber: selectedInvoice.invoiceNumber || `INV-${selectedInvoice.id}`,
+              issueDate: selectedInvoice.issueDate || new Date().toISOString().split("T")[0],
+              dueDate: selectedInvoice.dueDate || new Date().toISOString().split("T")[0],
+              customerName: customer?.name || customer?.customerName || "Customer",
+              customerEmail: customer?.email || customer?.customerEmail || "",
+              customerPhone: customer?.phone || customer?.customerPhone || "",
+              customerAddress: customer?.address || customer?.customerAddress || "",
+              companyName: companyName,
+              companyEmail: companyEmail,
+              companyPhone: companyPhone,
+              companyAddress: tenant?.address || "",
+              items: lineItems
+                .map((item, index) => {
+                  const sellingPrice = parseFloat(item.sellingPrice || item.unitPrice || "0");
+                  const quantity = parseInt(item.quantity || "1");
+                  const totalAmount = parseFloat(item.totalAmount?.toString() || "0");
+                  const hasTitle = item.itemTitle && item.itemTitle.trim() !== "";
+                  const hasPrice = sellingPrice > 0;
+                  const hasTotal = totalAmount > 0;
+                  const hasCategory = item.travelCategory && item.travelCategory.trim() !== "";
+                  
+                  // Include items that have any meaningful data
+                  if (!hasTitle && !hasPrice && !hasTotal && !hasCategory) {
+                    return null;
+                  }
+                  
+                  // Build description from available data
+                  let description = item.itemTitle?.trim();
+                  if (!description && hasCategory) {
+                    description = item.travelCategory;
+                  }
+                  if (!description) {
+                    description = `Item ${index + 1}`;
+                  }
+                  
+                  return {
+                    description: description,
+                    quantity: quantity || 1,
+                    unitPrice: sellingPrice,
+                    totalPrice: totalAmount > 0 ? totalAmount : (sellingPrice * quantity),
+                  };
+                })
+                .filter((item) => item !== null) as { description: string; quantity: number; unitPrice: number; totalPrice: number; }[],
+              subtotal: parseFloat((invoiceData.subtotal || invoiceData.totalAmount || 0).toString()),
+              taxAmount: parseFloat((invoiceData.taxAmount || 0).toString()),
+              discountAmount: parseFloat((invoiceData.discountAmount || 0).toString()),
+              totalAmount: parseFloat(selectedInvoice.totalAmount || 0),
+              currency: currencySymbol,
+              notes: selectedInvoice.notes || undefined,
+              paymentTerms: invoiceData.paymentTerms || undefined,
+              paymentStatus: invoiceData.status || selectedInvoice.status || "pending",
+              paidAmount: parseFloat((invoiceData.paidAmount || 0).toString()),
+              installments: invoiceData.installments || undefined,
+            };
+
+            return (
+              <div className="mt-4">
+                <ModernTemplate data={previewData} />
+                <div className="flex justify-end gap-2 pt-4 border-t mt-4">
+                  <Button
+                    variant="outline"
+                    onClick={() => handleDownloadPDF(selectedInvoice)}
                   >
-                    {getStatusBadge(selectedInvoice.status).label}
-                  </Badge>
+                    <Download className="mr-2 h-4 w-4" />
+                    Download PDF
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => handleSendEmail(selectedInvoice)}
+                  >
+                    <Mail className="mr-2 h-4 w-4" />
+                    Send Email
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => handleSendWhatsApp(selectedInvoice)}
+                  >
+                    <MessageCircle className="mr-2 h-4 w-4" />
+                    Send WhatsApp
+                  </Button>
+                  <Button onClick={() => setIsViewDialogOpen(false)}>Close</Button>
                 </div>
-                <div>
-                  <Label>Issue Date</Label>
-                  <p>
-                    {new Date(selectedInvoice.issueDate).toLocaleDateString()}
-                  </p>
-                </div>
-                <div>
-                  <Label>Due Date</Label>
-                  <p>
-                    {new Date(selectedInvoice.dueDate).toLocaleDateString()}
-                  </p>
-                </div>
-                <div>
-                  <Label>Total Amount</Label>
-                  <p className="font-bold">
-                    ₹
-                    {parseFloat(
-                      selectedInvoice.totalAmount || 0,
-                    ).toLocaleString()}
-                  </p>
-                </div>
-                <div>
-                  <Label>Amount Paid</Label>
-                  <p className="font-bold text-green-600">
-                    ₹
-                    {parseFloat(
-                      (selectedInvoice as any).paidAmount || 0,
-                    ).toLocaleString()}
-                  </p>
-                </div>
-                {selectedInvoice.bookingId && (
-                  <div className="col-span-2">
-                    <Label>Linked Booking</Label>
-                    {(() => {
-                      const booking = bookings.find(
-                        (b) => b.id === selectedInvoice.bookingId,
-                      );
-                      return booking ? (
-                        <div className="bg-blue-50 p-3 rounded-lg mt-1">
-                          <p className="font-medium">
-                            {booking.bookingNumber || `BK-${booking.id}`}
-                          </p>
-                          <p className="text-sm text-gray-600">
-                            Customer: {booking.customerName || "Unknown"} |
-                            Travel Date:{" "}
-                            {booking.travelDate
-                              ? new Date(
-                                  booking.travelDate,
-                                ).toLocaleDateString()
-                              : "Not set"}
-                          </p>
-                        </div>
-                      ) : (
-                        <p className="text-sm text-gray-500">
-                          Booking not found
-                        </p>
-                      );
-                    })()}
-                  </div>
-                )}
               </div>
-              {selectedInvoice.notes && (
-                <div>
-                  <Label>Notes</Label>
-                  <p>{selectedInvoice.notes}</p>
-                </div>
-              )}
-              <div className="flex justify-end space-x-2">
-                <Button
-                  variant="outline"
-                  onClick={() => handleDownloadPDF(selectedInvoice)}
-                >
-                  <Download className="mr-2 h-4 w-4" />
-                  Download PDF
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => handleSendEmail(selectedInvoice)}
-                >
-                  <Mail className="mr-2 h-4 w-4" />
-                  Send Email
-                </Button>
-                <Button onClick={() => setIsViewDialogOpen(false)}>
-                  Close
-                </Button>
-              </div>
-            </div>
-          )}
+            );
+          })()}
         </DialogContent>
       </Dialog>
 

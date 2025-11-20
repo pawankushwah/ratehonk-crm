@@ -27,6 +27,13 @@ export interface InvoiceData {
   currency: string;
   notes?: string;
   paymentTerms?: string;
+  paymentStatus?: string;
+  paidAmount?: number;
+  installments?: {
+    installmentNumber: number;
+    dueDate: string;
+    amount: string;
+  }[];
 }
 
 interface InvoiceTemplateProps {
@@ -117,6 +124,76 @@ export const ModernTemplate: React.FC<InvoiceTemplateProps> = ({ data }) => (
       </div>
     </div>
 
+    {/* Payment Information */}
+    {(data.paymentStatus || (data.paidAmount || 0) > 0) && (
+      <div className="mb-8 border-t pt-6">
+        <h3 className="font-semibold mb-3 text-gray-800">Payment Information</h3>
+        <div className="bg-gray-50 p-4 rounded-lg space-y-2">
+          {data.paymentStatus && (
+            <div className="flex justify-between items-center">
+              <span className="text-gray-700">Payment Status:</span>
+              <span className="font-semibold text-gray-900 capitalize">{data.paymentStatus}</span>
+            </div>
+          )}
+          {(data.paidAmount || 0) > 0 && (
+            <div className="flex justify-between items-center">
+              <span className="text-gray-700">Amount Paid:</span>
+              <span className="font-semibold text-gray-900">
+                {data.currency}{(data.paidAmount || 0).toFixed(2)}
+              </span>
+            </div>
+          )}
+          <div className="flex justify-between items-center border-t pt-2">
+            <span className="text-gray-700 font-medium">Balance Due:</span>
+            <span className="font-bold text-gray-900">
+              {data.currency}{(data.totalAmount - (data.paidAmount || 0)).toFixed(2)}
+            </span>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Installment Details */}
+    {data.installments && data.installments.length > 0 && (
+      <div className="mb-8">
+        <h3 className="font-semibold mb-3 text-gray-800">Payment Installment Plan</h3>
+        <div className="border border-gray-200 rounded-lg overflow-hidden">
+          <table className="w-full">
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-200">
+                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Installment #</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Due Date</th>
+                <th className="px-4 py-3 text-right text-sm font-semibold text-gray-700">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.installments.map((inst, index) => (
+                <tr key={index} className="border-b border-gray-100">
+                  <td className="px-4 py-3 text-sm text-gray-900">{inst.installmentNumber}</td>
+                  <td className="px-4 py-3 text-sm text-gray-700">
+                    {format(new Date(inst.dueDate), 'MMM dd, yyyy')}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-right font-medium text-gray-900">
+                    {data.currency}{parseFloat(inst.amount).toFixed(2)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="bg-gray-50">
+                <td colSpan={2} className="px-4 py-3 text-right text-sm font-semibold text-gray-700">Total Pending:</td>
+                <td className="px-4 py-3 text-right text-sm font-semibold text-gray-900">
+                  {data.currency}{(
+                    data.totalAmount - (data.paidAmount || 0)
+                  ).toFixed(2)}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+    )}
+
     {/* Footer */}
     {(data.notes || data.paymentTerms) && (
       <div className="border-t pt-6">
@@ -129,7 +206,10 @@ export const ModernTemplate: React.FC<InvoiceTemplateProps> = ({ data }) => (
         {data.notes && (
           <div>
             <h4 className="font-semibold mb-2">Notes:</h4>
-            <p className="text-gray-600">{data.notes}</p>
+            <div 
+              className="text-gray-600 prose prose-sm max-w-none"
+              dangerouslySetInnerHTML={{ __html: data.notes }}
+            />
           </div>
         )}
       </div>
