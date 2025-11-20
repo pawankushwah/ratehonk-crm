@@ -62,4 +62,3 @@ pm2 logs ratehonk-crm --lines 10 --nostream || true
 
 echo "✅ Deployment completed successfully!"
 echo "🌐 Application should be accessible at: https://crm.ratehonk.com"
-

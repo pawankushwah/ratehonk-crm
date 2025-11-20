@@ -1,11 +1,8 @@
-name: Deploy to Production (Simple)
+name: Deploy to Production (Simple) - DISABLED
 
+# This workflow is disabled - use deploy.yml instead
 on:
-  push:
-    branches:
-      - main
-      - master
-  workflow_dispatch: # Allows manual triggering
+  workflow_dispatch: # Only manual trigger, no automatic runs
 
 jobs:
   deploy:
@@ -62,4 +59,3 @@ jobs:
             curl -f http://localhost:5000/health || echo "⚠️ Health check failed, but deployment completed"
             
             echo "✅ Deployment completed!"
-

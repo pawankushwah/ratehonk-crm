@@ -255,6 +255,22 @@ export default function Expenses() {
     queryKey: ["/api/lead-types"],
   });
 
+  // Helper function to normalize tags to an array
+  const normalizeTags = (tags: any): string[] => {
+    if (!tags) return [];
+    if (Array.isArray(tags)) return tags;
+    if (typeof tags === 'string') {
+      try {
+        const parsed = JSON.parse(tags);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        // If it's not JSON, treat as comma-separated string
+        return tags.split(',').map(t => t.trim()).filter(t => t.length > 0);
+      }
+    }
+    return [];
+  };
+
   // Transform and filter expenses
   const expenses = rawExpenses
     .map((expense: any) => ({
@@ -284,7 +300,7 @@ export default function Expenses() {
       approvedBy: expense.approved_by,
       approvedAt: expense.approved_at,
       rejectionReason: expense.rejection_reason,
-      tags: expense.tags || [],
+      tags: normalizeTags(expense.tags),
       notes: expense.notes,
       createdAt: new Date(expense.created_at),
       createdByName: expense.created_by_name,
@@ -436,7 +452,7 @@ export default function Expenses() {
       isRecurring: expense.isRecurring,
       recurringFrequency: expense.recurringFrequency || "",
       status: expense.status,
-      tags: expense.tags,
+      tags: Array.isArray(expense.tags) ? expense.tags : normalizeTags(expense.tags),
       notes: expense.notes || "",
     });
     setEditingExpense(expense);
@@ -794,7 +810,7 @@ export default function Expenses() {
                                   }
                                 </div>
                               )}
-                              {expense.tags.length > 0 && (
+                              {Array.isArray(expense.tags) && expense.tags.length > 0 && (
                                 <div className="flex gap-1 flex-wrap">
                                   {expense.tags.slice(0, 2).map((tag, index) => (
                                     <Badge key={index} variant="secondary" className="text-xs">
@@ -1008,7 +1024,7 @@ export default function Expenses() {
                             </div>
                           )}
                           
-                          {expense.tags.length > 0 && (
+                          {Array.isArray(expense.tags) && expense.tags.length > 0 && (
                             <div className="flex gap-1 flex-wrap">
                               {expense.tags.slice(0, 3).map((tag, index) => (
                                 <Badge key={index} variant="outline" className="text-xs">
