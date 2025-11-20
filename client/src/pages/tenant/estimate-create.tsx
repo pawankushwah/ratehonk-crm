@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Layout } from "@/components/layout/layout";
@@ -6,13 +6,19 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Card, CardContent } from "@/components/ui/card";
 import { Combobox } from "@/components/ui/combobox";
 import { AutocompleteInput } from "@/components/ui/autocomplete-input";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Switch } from "@/components/ui/switch";
-import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Upload, FileText, Image } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Upload, FileText, Image, HelpCircle } from "lucide-react";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useToast } from "@/hooks/use-toast";
+import { EstimateSettingsPanel } from "@/components/estimate-settings-panel";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { auth } from "@/lib/auth";
+import { ModernEstimateTemplate, EstimateData } from "@/components/estimates/estimate-templates";
 
 // Estimate interfaces
 interface LineItem {
@@ -23,6 +29,7 @@ interface LineItem {
   totalPrice: number;
   leadCategory?: string;
   tax?: number;
+  taxRateId?: string;
   discount?: number;
 }
 
@@ -39,6 +46,8 @@ interface EstimateFormData {
   lineItems: LineItem[];
   discountPercentage: string;
   taxPercentage: string;
+  manualTotalPrice: string;
+  manualTaxRateId?: string;
   depositRequired: boolean;
   depositPercentage: string;
   paymentTerms: string;
@@ -83,6 +92,13 @@ export default function EstimateCreate() {
   // Line items visibility toggle
   const [showLineItems, setShowLineItems] = useState(false);
 
+  // Tax inclusive/exclusive toggle
+  const [isTaxInclusive, setIsTaxInclusive] = useState(false);
+
+  // Preview state
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewEstimateData, setPreviewEstimateData] = useState<EstimateData | null>(null);
+
   // Attachment files
   const [attachments, setAttachments] = useState<File[]>([]);
 
@@ -97,20 +113,11 @@ export default function EstimateCreate() {
     invoiceNumber: "",
     currency: "USD",
     validUntil: "",
-    lineItems: [
-      {
-        itemName: "",
-        description: "",
-        quantity: 1,
-        unitPrice: 0,
-        totalPrice: 0,
-        leadCategory: "",
-        tax: 0,
-        discount: 0,
-      },
-    ],
+    lineItems: [],
     discountPercentage: "0",
     taxPercentage: "0",
+    manualTotalPrice: "0",
+    manualTaxRateId: "",
     depositRequired: false,
     depositPercentage: "0",
     paymentTerms: "net30",
@@ -118,15 +125,56 @@ export default function EstimateCreate() {
   });
 
   // Fetch customers
-  const { data: customers = [] } = useQuery<any[]>({
-    queryKey: ["/api/customers"],
+  const { data: customers = [] } = useQuery({
+    queryKey: [`customers-tenant-${tenant?.id}`],
     enabled: !!tenant?.id,
+    queryFn: async () => {
+      const token = auth.getToken();
+      const response = await fetch(
+        `/api/customers?action=get-customers&tenantId=${tenant?.id}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+      if (!response.ok) return [];
+      const result = await response.json();
+      // Handle different response formats
+      if (Array.isArray(result)) {
+        return result;
+      } else if (result.customers && Array.isArray(result.customers)) {
+        return result.customers;
+      } else if (result.data && Array.isArray(result.data)) {
+        return result.data;
+      } else if (result.rows && Array.isArray(result.rows)) {
+        return result.rows;
+      }
+      return [];
+    },
   });
 
   // Fetch leads
-  const { data: leads = [] } = useQuery<any[]>({
-    queryKey: ["/api/leads"],
+  const { data: leads = [] } = useQuery({
+    queryKey: [`/api/leads`, tenant?.id],
     enabled: !!tenant?.id,
+    queryFn: async () => {
+      const token = auth.getToken();
+      const response = await fetch("/api/leads", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) return [];
+      const result = await response.json();
+      // Handle different response formats
+      if (Array.isArray(result)) {
+        return result;
+      } else if (result.leads && Array.isArray(result.leads)) {
+        return result.leads;
+      } else if (result.data && Array.isArray(result.data)) {
+        return result.data;
+      } else if (result.rows && Array.isArray(result.rows)) {
+        return result.rows;
+      }
+      return [];
+    },
   });
 
   // Fetch lead types
@@ -139,6 +187,63 @@ export default function EstimateCreate() {
   const { data: estimates = [] } = useQuery<any[]>({
     queryKey: ["/api/estimates"],
     enabled: !!tenant?.id,
+  });
+
+  // Fetch estimate settings
+  const { data: estimateSettings = {
+    estimateNumberStart: 1,
+    defaultCurrency: "USD",
+    defaultGstSettingId: null,
+    showTax: true,
+    showDiscount: true,
+    showNotes: true,
+    showDeposit: true,
+    showPaymentTerms: true,
+  }, refetch: refetchEstimateSettings } = useQuery({
+    queryKey: ["/api/estimate-settings", tenant?.id],
+    queryFn: async () => {
+      if (!tenant?.id) return null;
+      const token = auth.getToken();
+      const response = await fetch(`/api/estimate-settings/${tenant.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error("Failed to fetch estimate settings");
+      const result = await response.json();
+      return result.data;
+    },
+    enabled: !!tenant?.id,
+    refetchOnMount: true,
+    staleTime: 0,
+  });
+
+  const [selectedTaxSettingId, setSelectedTaxSettingId] = useState<string>("");
+
+  // Update currency and tax setting when settings load
+  useEffect(() => {
+    if (estimateSettings?.defaultCurrency) {
+      setFormData((prev) => ({ ...prev, currency: estimateSettings.defaultCurrency }));
+    }
+    if (estimateSettings?.defaultGstSettingId) {
+      setSelectedTaxSettingId(estimateSettings.defaultGstSettingId.toString());
+    }
+  }, [estimateSettings?.defaultCurrency, estimateSettings?.defaultGstSettingId]);
+
+  // Fetch GST rates based on selected tax setting
+  const { data: gstRates = [] } = useQuery<any[]>({
+    queryKey: ["/api/gst-rates", selectedTaxSettingId],
+    enabled: !!selectedTaxSettingId && !!tenant?.id,
+    queryFn: async () => {
+      const token = auth.getToken();
+      const response = await fetch(
+        `/api/gst-rates?gstSettingId=${selectedTaxSettingId}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      if (!response.ok) return [];
+      const result = await response.json();
+      return Array.isArray(result) ? result : result.rates || [];
+    },
   });
 
   // Extract unique estimate titles for autocomplete
@@ -156,6 +261,28 @@ export default function EstimateCreate() {
       label: title,
     }));
   }, [estimates]);
+
+  // Get currency symbol
+  const getCurrencySymbol = (currencyCode: string): string => {
+    const symbols: Record<string, string> = {
+      USD: "$",
+      EUR: "€",
+      GBP: "£",
+      INR: "₹",
+      AUD: "A$",
+      CAD: "C$",
+      JPY: "¥",
+      CNY: "¥",
+      SGD: "S$",
+      HKD: "HK$",
+      NZD: "NZ$",
+    };
+    return symbols[currencyCode] || currencyCode;
+  };
+
+  // Get current currency from estimate settings
+  const currentCurrency = estimateSettings?.defaultCurrency || formData.currency || "USD";
+  const currencySymbol = getCurrencySymbol(currentCurrency);
 
   const getTravelCategories = () => {
     if (leadTypes && Array.isArray(leadTypes) && leadTypes.length > 0) {
@@ -259,12 +386,10 @@ export default function EstimateCreate() {
   };
 
   const removeLineItem = (index: number) => {
-    if (formData.lineItems.length > 1) {
-      setFormData((prev) => ({
-        ...prev,
-        lineItems: prev.lineItems.filter((_, i) => i !== index),
-      }));
-    }
+    setFormData((prev) => ({
+      ...prev,
+      lineItems: prev.lineItems.filter((_, i) => i !== index),
+    }));
   };
 
   const updateLineItem = (index: number, field: string, value: any) => {
@@ -275,38 +400,221 @@ export default function EstimateCreate() {
     const item = updatedItems[index];
     const unitPrice = parseFloat(item.unitPrice?.toString() || "0") || 0;
     const quantity = parseInt(item.quantity?.toString() || "1") || 1;
-    const tax = parseFloat(item.tax?.toString() || "0") || 0;
+    let tax = 0;
     const discount = parseFloat(item.discount?.toString() || "0") || 0;
+
+    // Calculate tax from tax rate if taxRateId is set
+    if (field === "taxRateId" || field === "unitPrice" || field === "quantity" || field === "discount") {
+      if (item.taxRateId) {
+        const selectedRate = gstRates.find(
+          (rate: any) => rate.id?.toString() === item.taxRateId
+        );
+        if (selectedRate) {
+          const ratePercentage = parseFloat(selectedRate.rate || "0");
+          const subtotal = unitPrice * quantity;
+          const afterDiscount = subtotal - discount;
+          
+          if (isTaxInclusive) {
+            // When tax is inclusive, tax is already in the price
+            // Calculate: subtotal = amount / (1 + rate/100), tax = amount - subtotal
+            const amount = afterDiscount;
+            const baseAmount = amount / (1 + ratePercentage / 100);
+            tax = amount - baseAmount;
+          } else {
+            // When tax is exclusive, calculate tax and add it
+            tax = (afterDiscount * ratePercentage) / 100;
+          }
+          updatedItems[index].tax = tax;
+        }
+      } else {
+        updatedItems[index].tax = 0;
+        tax = 0;
+      }
+    } else {
+      // Use existing tax value if not recalculating
+      tax = parseFloat(item.tax?.toString() || "0") || 0;
+    }
 
     const subtotal = unitPrice * quantity;
     const afterDiscount = subtotal - discount;
-    const total = afterDiscount + tax;
+    const total = isTaxInclusive ? afterDiscount : afterDiscount + tax;
 
     updatedItems[index].totalPrice = total;
 
     setFormData((prev) => ({ ...prev, lineItems: updatedItems }));
   };
 
+  // Recalculate all line items when tax inclusive setting changes
+  useEffect(() => {
+    if (gstRates.length === 0) return;
+    
+    const recalculatedItems = formData.lineItems.map((item) => {
+      const unitPrice = parseFloat(item.unitPrice?.toString() || "0") || 0;
+      const quantity = parseInt(item.quantity?.toString() || "1") || 1;
+      const discount = parseFloat(item.discount?.toString() || "0") || 0;
+      let tax = 0;
+      
+      if (item.taxRateId) {
+        const selectedRate = gstRates.find(
+          (rate: any) => rate.id?.toString() === item.taxRateId
+        );
+        if (selectedRate) {
+          const ratePercentage = parseFloat(selectedRate.rate || "0");
+          const subtotal = unitPrice * quantity;
+          const afterDiscount = subtotal - discount;
+          
+          if (isTaxInclusive) {
+            const amount = afterDiscount;
+            const baseAmount = amount / (1 + ratePercentage / 100);
+            tax = amount - baseAmount;
+          } else {
+            tax = (afterDiscount * ratePercentage) / 100;
+          }
+        }
+      }
+      
+      const subtotal = unitPrice * quantity;
+      const afterDiscount = subtotal - discount;
+      const total = isTaxInclusive ? afterDiscount : afterDiscount + tax;
+      
+      return {
+        ...item,
+        tax: tax,
+        totalPrice: total,
+      };
+    });
+    
+    setFormData((prev) => ({ ...prev, lineItems: recalculatedItems }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTaxInclusive]);
+
   // Calculate totals
   const totals = useMemo(() => {
-    const subtotal = formData.lineItems.reduce(
-      (sum, item) => sum + (item.totalPrice || 0),
-      0,
-    );
-    const discountAmount =
-      (subtotal * parseFloat(formData.discountPercentage || "0")) / 100;
-    const afterDiscount = subtotal - discountAmount;
-    const taxAmount =
-      (afterDiscount * parseFloat(formData.taxPercentage || "0")) / 100;
-    const total = afterDiscount + taxAmount;
+    // If there are no line items, use manual total price
+    if (formData.lineItems.length === 0) {
+      const manualTotal = parseFloat(formData.manualTotalPrice || "0") || 0;
+      
+      // Apply discount percentage to the manual total
+      const discountAmount =
+        (manualTotal * parseFloat(formData.discountPercentage || "0")) / 100;
+      const afterDiscount = manualTotal - discountAmount;
 
-    return {
-      subtotal,
-      discountAmount,
-      taxAmount,
-      total,
-    };
-  }, [formData.lineItems, formData.discountPercentage, formData.taxPercentage]);
+      // Calculate tax based on selected tax rate
+      let taxAmount = 0;
+      if (formData.manualTaxRateId && gstRates.length > 0) {
+        const selectedRate = gstRates.find(
+          (rate: any) => rate.id?.toString() === formData.manualTaxRateId
+        );
+        if (selectedRate) {
+          const ratePercentage = parseFloat(selectedRate.rate || "0");
+          if (isTaxInclusive) {
+            // Tax is already included, so show 0
+            taxAmount = 0;
+          } else {
+            // Calculate tax on the amount after discount
+            taxAmount = (afterDiscount * ratePercentage) / 100;
+          }
+        }
+      }
+
+      const total = isTaxInclusive ? afterDiscount : afterDiscount + taxAmount;
+
+      return {
+        subtotal: afterDiscount,
+        discountAmount,
+        taxAmount,
+        total,
+      };
+    }
+
+    // When there are line items, use existing logic
+    if (isTaxInclusive) {
+      // When tax is inclusive, totalPrice already includes tax
+      // Subtotal = sum of all line items' totalPrice (after item-level discount)
+      const lineItemsTotal = formData.lineItems.reduce((sum, item) => {
+        return sum + (parseFloat(item.totalPrice?.toString() || "0") || 0);
+      }, 0);
+
+      // Apply discount percentage to the total
+      const discountAmount =
+        (lineItemsTotal * parseFloat(formData.discountPercentage || "0")) / 100;
+      const subtotal = lineItemsTotal - discountAmount;
+
+      // Tax is already included in the price, so show 0
+      const taxAmount = 0;
+      const total = subtotal; // Total equals subtotal (tax already included)
+
+      return {
+        subtotal,
+        discountAmount,
+        taxAmount,
+        total,
+      };
+    } else {
+      // When tax is exclusive, calculate subtotal without tax
+      const lineItemsSubtotal = formData.lineItems.reduce((sum, item) => {
+        const unitPrice = parseFloat(item.unitPrice?.toString() || "0") || 0;
+        const quantity = parseInt(item.quantity?.toString() || "1") || 1;
+        const discount = parseFloat(item.discount?.toString() || "0") || 0;
+        const subtotal = unitPrice * quantity;
+        const afterDiscount = subtotal - discount;
+        return sum + afterDiscount;
+      }, 0);
+
+      // Apply discount percentage to subtotal
+      const discountPercentage = parseFloat(formData.discountPercentage || "0");
+      const discountAmount = (lineItemsSubtotal * discountPercentage) / 100;
+      const afterDiscount = lineItemsSubtotal - discountAmount;
+
+      // Recalculate tax on the discounted amount
+      // Tax should be calculated on the amount after discount, not on original prices
+      let taxAmount = 0;
+      if (gstRates.length > 0 && discountPercentage > 0) {
+        // Recalculate tax for each line item based on discounted amount
+        formData.lineItems.forEach((item) => {
+          if (item.taxRateId) {
+            const selectedRate = gstRates.find(
+              (rate: any) => rate.id?.toString() === item.taxRateId
+            );
+            if (selectedRate) {
+              const unitPrice = parseFloat(item.unitPrice?.toString() || "0") || 0;
+              const quantity = parseInt(item.quantity?.toString() || "1") || 1;
+              const itemDiscount = parseFloat(item.discount?.toString() || "0") || 0;
+              const itemSubtotal = unitPrice * quantity;
+              const itemAfterItemDiscount = itemSubtotal - itemDiscount;
+              
+              // Apply summary discount percentage to this item's amount
+              const itemSummaryDiscount = (itemAfterItemDiscount * discountPercentage) / 100;
+              const itemFinalAmount = itemAfterItemDiscount - itemSummaryDiscount;
+              
+              const ratePercentage = parseFloat(selectedRate.rate || "0");
+              taxAmount += (itemFinalAmount * ratePercentage) / 100;
+            }
+          }
+        });
+      } else {
+        // No discount or no rates: use existing tax from line items
+        taxAmount = formData.lineItems.reduce((sum, item) => {
+          return sum + (parseFloat(item.tax?.toString() || "0") || 0);
+        }, 0);
+        
+        // If there's a discount but we're using existing tax, reduce tax proportionally
+        if (discountPercentage > 0 && lineItemsSubtotal > 0) {
+          const discountRatio = afterDiscount / lineItemsSubtotal;
+          taxAmount = taxAmount * discountRatio;
+        }
+      }
+
+      const total = afterDiscount + taxAmount;
+
+      return {
+        subtotal: afterDiscount,
+        discountAmount,
+        taxAmount,
+        total,
+      };
+    }
+  }, [formData.lineItems, formData.discountPercentage, formData.manualTotalPrice, formData.manualTaxRateId, isTaxInclusive, gstRates]);
 
   // Handle file upload
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -340,6 +648,110 @@ export default function EstimateCreate() {
     setAttachments(prev => prev.filter((_, i) => i !== index));
   };
 
+  // Prepare estimate data for preview
+  const prepareEstimateData = (): EstimateData | null => {
+    const selectedCustomer = customers.find((c: any) => c.id.toString() === formData.selectedCustomerId);
+    const selectedLead = leads.find((l: any) => l.id.toString() === formData.selectedLeadId);
+    const customer = selectedCustomer || selectedLead;
+    
+    if (!customer && !formData.customerName) {
+      toast({
+        title: "Error",
+        description: "Please select a customer or enter customer information",
+        variant: "destructive",
+      });
+      return null;
+    }
+
+    // Get company info from tenant or use defaults
+    const companyName = tenant?.companyName || "Company Name";
+    const companyEmail = tenant?.contactEmail || "company@example.com";
+    const companyPhone = tenant?.contactPhone || "";
+
+    // Prepare line items
+    const items = formData.lineItems
+      .filter((item) => {
+        const hasName = item.itemName && item.itemName.trim() !== "";
+        const hasDescription = item.description && item.description.trim() !== "";
+        const hasPrice = parseFloat(item.unitPrice?.toString() || "0") > 0;
+        const hasTotal = parseFloat(item.totalPrice?.toString() || "0") > 0;
+        return hasName || hasDescription || hasPrice || hasTotal;
+      })
+      .map((item) => {
+        const description = item.itemName || item.description || "Service";
+        const quantity = parseInt(item.quantity?.toString() || "1") || 1;
+        const unitPrice = parseFloat(item.unitPrice?.toString() || "0") || 0;
+        const totalPrice = parseFloat(item.totalPrice?.toString() || "0") || (unitPrice * quantity);
+        
+        return {
+          description,
+          quantity,
+          unitPrice,
+          totalPrice,
+        };
+      });
+
+    // If no line items, create a single item from manual total price
+    const finalItems = items.length > 0 ? items : [{
+      description: "Service",
+      quantity: 1,
+      unitPrice: totals.subtotal,
+      totalPrice: totals.subtotal,
+    }];
+
+    const estimateData: EstimateData = {
+      estimateNumber: formData.invoiceNumber || "EST-001",
+      validUntil: formData.validUntil || "",
+      customerName: customer 
+        ? (customer.name || customer.customerName || customer.firstName + " " + customer.lastName || customer.leadName || "Customer")
+        : formData.customerName || "Customer",
+      customerEmail: customer 
+        ? (customer.email || customer.emailAddress || customer.customerEmail || "")
+        : formData.customerEmail || "",
+      customerPhone: customer 
+        ? (customer.phone || customer.phoneNumber || customer.contactNumber || customer.customerPhone || "")
+        : formData.customerPhone || "",
+      customerAddress: customer?.address || customer?.customerAddress || "",
+      companyName: companyName,
+      companyEmail: companyEmail,
+      companyPhone: companyPhone,
+      companyAddress: tenant?.address || "",
+      items: finalItems,
+      subtotal: totals.subtotal,
+      taxAmount: totals.taxAmount,
+      discountAmount: totals.discountAmount,
+      totalAmount: totals.total,
+      currency: currentCurrency,
+      notes: formData.notes || undefined,
+      paymentTerms: formData.paymentTerms || undefined,
+      depositRequired: formData.depositRequired,
+      depositAmount: formData.depositRequired 
+        ? (totals.total * parseFloat(formData.depositPercentage || "0")) / 100
+        : undefined,
+      depositPercentage: formData.depositRequired 
+        ? parseFloat(formData.depositPercentage || "0")
+        : undefined,
+    };
+
+    return estimateData;
+  };
+
+  // Handle preview button click
+  const handlePreview = (e: React.FormEvent) => {
+    e.preventDefault();
+    const estimateData = prepareEstimateData();
+    if (estimateData) {
+      setPreviewEstimateData(estimateData);
+      setShowPreview(true);
+    }
+  };
+
+  // Handle actual save from preview
+  const handleSaveFromPreview = async () => {
+    if (!previewEstimateData) return;
+    createMutation.mutate(formData);
+  };
+
   // Create estimate mutation
   const createMutation = useMutation({
     mutationFn: async (data: EstimateFormData) => {
@@ -359,9 +771,58 @@ export default function EstimateCreate() {
       if (!response.ok) throw new Error("Failed to create estimate");
       return response.json();
     },
-    onSuccess: () => {
+    onSuccess: async (data) => {
       toast({ title: "Success", description: "Estimate created successfully" });
       queryClient.invalidateQueries({ queryKey: ["/api/estimates"] });
+
+      // Send estimate via email/WhatsApp if enabled
+      const selectedCustomer = customers.find((c: any) => c.id.toString() === formData.selectedCustomerId);
+      const selectedLead = leads.find((l: any) => l.id.toString() === formData.selectedLeadId);
+      const customer = selectedCustomer || selectedLead;
+      
+      if (data.estimate?.id && customer && estimateSettings) {
+        try {
+          const token = auth.getToken();
+          
+          // Send via email if enabled
+          if (estimateSettings?.sendEstimateViaEmail && (customer.email || customer.emailAddress || formData.customerEmail)) {
+            try {
+              const email = customer.email || customer.emailAddress || formData.customerEmail;
+              await fetch(`/api/tenants/${tenant?.id}/estimates/${data.estimate.id}/email`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${token}`,
+                },
+              });
+            } catch (error) {
+              console.error("Failed to send estimate via email:", error);
+            }
+          }
+
+          // Send via WhatsApp if enabled
+          if (estimateSettings?.sendEstimateViaWhatsapp && (customer.phone || customer.phoneNumber || customer.contactNumber || formData.customerPhone)) {
+            try {
+              const response = await fetch(`/api/tenants/${tenant?.id}/estimates/${data.estimate.id}/whatsapp`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${token}`,
+                },
+              });
+              const result = await response.json();
+              if (result.whatsappLink) {
+                window.open(result.whatsappLink, '_blank');
+              }
+            } catch (error) {
+              console.error("Failed to send estimate via WhatsApp:", error);
+            }
+          }
+        } catch (error) {
+          console.error("Error sending estimate:", error);
+        }
+      }
+
       setLocation("/estimates");
     },
     onError: (error: any) => {
@@ -375,7 +836,7 @@ export default function EstimateCreate() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    createMutation.mutate(formData);
+    handlePreview(e);
   };
 
   const onCancel = () => {
@@ -383,60 +844,72 @@ export default function EstimateCreate() {
   };
 
   return (
-    <Layout>
-      <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800">
-        <div className="max-w-5xl mx-auto p-4 lg:p-6">
-          {/* Header */}
-          <div className="mb-4 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <Button
-                variant="ghost"
-                onClick={onCancel}
-                className="hover:bg-white/60 dark:hover:bg-gray-800/60"
-                data-testid="button-back-to-estimates"
-              >
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Back
-              </Button>
-              <h1 className="text-2xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 dark:from-white dark:to-gray-300 bg-clip-text text-transparent">
-                Create Estimate
-              </h1>
-            </div>
-            <div className="flex items-center gap-3">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={onCancel}
-                className="h-9 px-4 text-sm"
-                data-testid="button-cancel"
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                form="estimate-form"
-                disabled={createMutation.isPending}
-                className="h-9 px-4 text-sm bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white"
-                data-testid="button-submit"
-              >
-                {createMutation.isPending ? "Creating..." : "Create Estimate"}
-              </Button>
+    <Layout initialSidebarCollapsed={true}>
+      <div className="p-6 max-w-7xl mx-auto">
+        <div className="bg-white rounded-2xl shadow-sm">
+          {/* Top Bar */}
+          <div className="w-full h-[72px] flex items-center bg-white px-[18px] py-4 rounded-t-xl border-b border-[#E3E8EF] shadow-[0px_1px_6px_0px_rgba(0,0,0,0.05)]">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onCancel}
+              data-testid="button-back-to-estimates"
+            >
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Back
+            </Button>
+            <h1 className="ml-4 font-inter font-medium text-[20px] leading-[24px] text-[#121926]">
+              Create Estimate
+            </h1>
+
+            <div className="flex gap-3 ml-auto">
+              {tenant?.id && <EstimateSettingsPanel tenantId={tenant.id} />}
+              <div className="w-10 h-10 flex items-center justify-center rounded-lg border border-gray-200 bg-white shadow-sm">
+                <HelpCircle className="h-5 w-5 text-gray-600" />
+              </div>
             </div>
           </div>
 
           <form id="estimate-form" onSubmit={handleSubmit}>
-            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 p-6">
-              {/* Compact Form Grid */}
-              <div className="space-y-4">
-                {/* Title, Ref No., and Valid Until - Same Row */}
-                <div className="grid grid-cols-1 md:grid-cols-[1fr,180px,160px] gap-3">
+            <Card>
+              <CardContent className="p-6 space-y-6">
+                {/* Title and Ref No. Row */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
                   <div>
-                    <Label className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5 block">
+                    <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
+                      Estimate
+                    </h1>
+                  </div>
+                  <div></div>
+                  <div></div>
+                  <div></div>
+                  <div></div>
+                  <div>
+                    <Label htmlFor="invoiceNumber">Ref No.</Label>
+                    <Input
+                      id="invoiceNumber"
+                      value={formData.invoiceNumber}
+                      onChange={(e) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          invoiceNumber: e.target.value,
+                        }))
+                      }
+                      placeholder="EST-001"
+                    />
+                  </div>
+                </div>
+
+                {/* Title and Valid Until Row */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="lg:col-span-2">
+                    <Label htmlFor="title">
                       Title <span className="text-red-500">*</span>
                     </Label>
                     <AutocompleteInput
                       id="title"
                       suggestions={estimateTitleSuggestions}
+                      allowCustomValue={true}
                       value={formData.title}
                       onValueChange={(value) =>
                         setFormData((prev) => ({
@@ -450,22 +923,9 @@ export default function EstimateCreate() {
                       emptyText="No previous titles found."
                     />
                   </div>
+
                   <div>
-                    <Label className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5 block">Ref No.</Label>
-                    <Input
-                      value={formData.invoiceNumber}
-                      onChange={(e) =>
-                        setFormData((prev) => ({
-                          ...prev,
-                          invoiceNumber: e.target.value,
-                        }))
-                      }
-                      placeholder="INV-001"
-                      className="h-10 text-sm border border-gray-300 dark:border-gray-600 rounded-lg px-3 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5 block">Valid Until</Label>
+                    <Label htmlFor="validUntil">Valid Until</Label>
                     <DatePicker
                       value={formData.validUntil}
                       onChange={(date) =>
@@ -475,15 +935,15 @@ export default function EstimateCreate() {
                         }))
                       }
                       placeholder="Select date"
-                      className="w-full text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:border-cyan-400 dark:hover:border-cyan-500"
+                      className="w-full"
                     />
                   </div>
                 </div>
 
-                {/* Lead & Customer Selection - 2 columns */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                {/* Lead & Customer Selection Row */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div>
-                    <Label className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5 block">Lead (Optional)</Label>
+                    <Label htmlFor="leadId">Lead (Optional)</Label>
                     <Combobox
                       options={[
                         { value: "none", label: "No lead" },
@@ -500,12 +960,11 @@ export default function EstimateCreate() {
                       placeholder="Select lead"
                       searchPlaceholder="Search..."
                       emptyText="No leads found."
-                      className="h-10 text-sm"
                     />
                   </div>
 
                   <div>
-                    <Label className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5 block">Customer (Optional)</Label>
+                    <Label htmlFor="customerId">Customer (Optional)</Label>
                     <Combobox
                       options={[
                         { value: "none", label: "No customer" },
@@ -521,18 +980,18 @@ export default function EstimateCreate() {
                       placeholder="Select customer"
                       searchPlaceholder="Search..."
                       emptyText="No customers found."
-                      className="h-10 text-sm"
                     />
                   </div>
                 </div>
 
-                {/* Customer Information - 3 columns */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+                {/* Customer Information Row */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   <div>
-                    <Label className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5 block">
+                    <Label htmlFor="customerName">
                       Customer Name <span className="text-red-500">*</span>
                     </Label>
                     <Input
+                      id="customerName"
                       value={formData.customerName}
                       onChange={(e) =>
                         setFormData((prev) => ({
@@ -542,15 +1001,15 @@ export default function EstimateCreate() {
                       }
                       required
                       placeholder="John Doe"
-                      className="h-10 text-sm border border-gray-300 dark:border-gray-600 rounded-lg px-3 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
                       data-testid="input-customer-name"
                     />
                   </div>
                   <div>
-                    <Label className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5 block">
+                    <Label htmlFor="customerEmail">
                       Email <span className="text-red-500">*</span>
                     </Label>
                     <Input
+                      id="customerEmail"
                       type="email"
                       value={formData.customerEmail}
                       onChange={(e) =>
@@ -561,13 +1020,13 @@ export default function EstimateCreate() {
                       }
                       required
                       placeholder="john@example.com"
-                      className="h-10 text-sm border border-gray-300 dark:border-gray-600 rounded-lg px-3 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
                       data-testid="input-customer-email"
                     />
                   </div>
                   <div>
-                    <Label className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5 block">Phone</Label>
+                    <Label htmlFor="customerPhone">Phone</Label>
                     <Input
+                      id="customerPhone"
                       value={formData.customerPhone}
                       onChange={(e) =>
                         setFormData((prev) => ({
@@ -576,57 +1035,78 @@ export default function EstimateCreate() {
                         }))
                       }
                       placeholder="+1 (555) 123-4567"
-                      className="h-10 text-sm border border-gray-300 dark:border-gray-600 rounded-lg px-3 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
                     />
                   </div>
                 </div>
 
-              {/* Line Items Section with Toggle */}
-              <div className="pt-4">
+                {/* Line Items Section with Toggle */}
+                <div>
                 <div className="flex items-center justify-between mb-3">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setShowLineItems(!showLineItems)}
-                    className="flex items-center gap-1.5 h-8 px-2 text-xs"
-                  >
-                    {showLineItems ? (
-                      <>
-                        <ChevronUp className="h-3.5 w-3.5" />
-                        Hide Line Items
-                      </>
-                    ) : (
-                      <>
-                        <ChevronDown className="h-3.5 w-3.5" />
-                        Show Line Items
-                      </>
-                    )}
-                  </Button>
-                  {showLineItems && (
+                  <div className="flex items-center gap-2">
                     <Button
                       type="button"
                       size="sm"
                       variant="outline"
-                      onClick={addLineItem}
+                      onClick={() => {
+                        addLineItem();
+                        setShowLineItems(true);
+                      }}
                       className="gap-1 h-8 px-3 text-xs"
                       data-testid="button-add-line-item"
                     >
-                      <Plus className="w-3.5 h-3.5" /> Add
+                      <Plus className="w-3.5 h-3.5" /> Add Line Item
                     </Button>
-                  )}
+                    {formData.lineItems.length > 0 && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setShowLineItems(!showLineItems)}
+                        className="flex items-center gap-1.5 h-8 px-2 text-xs"
+                      >
+                        {showLineItems ? (
+                          <>
+                            <ChevronUp className="h-3.5 w-3.5" />
+                            Hide Line Items
+                          </>
+                        ) : (
+                          <>
+                            <ChevronDown className="h-3.5 w-3.5" />
+                            Show Line Items
+                          </>
+                        )}
+                      </Button>
+                    )}
+                  </div>
                 </div>
 
-                {showLineItems && (
-                  <div className="space-y-3">
-                    {formData.lineItems.map((item, index) => (
-                      <div
-                        key={index}
-                        className="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 space-y-2"
-                      >
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                          <div>
-                            <Label className="text-xs text-gray-600 dark:text-gray-400">Service</Label>
+                {showLineItems && formData.lineItems.length > 0 && (
+                  <div className="border rounded-lg overflow-hidden">
+                    {/* Table Header */}
+                    <div className="grid grid-cols-12 gap-2 bg-gray-100 dark:bg-gray-800 p-3 font-medium text-sm">
+                      <div className="text-center" style={{ width: '40px', minWidth: '40px', maxWidth: '40px' }}>#</div>
+                      <div className="col-span-2">Service</div>
+                      <div className="col-span-1">Qty</div>
+                      <div className="col-span-1">Price</div>
+                      <div className="col-span-2">Tax Rate</div>
+                      <div className="col-span-1">Tax</div>
+                      <div className="col-span-1">Discount</div>
+                      <div className="col-span-2">Total</div>
+                      <div className="col-span-1"></div>
+                    </div>
+
+                    {/* Table Body */}
+                    <div className="divide-y divide-gray-200 dark:divide-gray-700">
+                      {formData.lineItems.map((item, index) => (
+                        <div
+                          key={index}
+                          className="grid grid-cols-12 gap-2 p-3 hover:bg-gray-50 dark:hover:bg-gray-900"
+                        >
+                          <div className="flex items-center justify-center" style={{ width: '40px', minWidth: '40px', maxWidth: '40px' }}>
+                            <span className="font-medium text-sm">{index + 1}</span>
+                          </div>
+
+                          <div className="col-span-2">
                             <Combobox
                               options={getTravelCategories().map((category) => ({
                                 value: category,
@@ -638,11 +1118,10 @@ export default function EstimateCreate() {
                               }
                               placeholder="Category"
                               searchPlaceholder="Search..."
-                              className="h-8 text-sm"
                             />
                           </div>
-                          <div>
-                            <Label className="text-xs text-gray-600 dark:text-gray-400">Qty</Label>
+
+                          <div className="col-span-1">
                             <Input
                               value={item.quantity}
                               onChange={(e) =>
@@ -653,11 +1132,12 @@ export default function EstimateCreate() {
                                 )
                               }
                               onKeyDown={handleNumericKeyDown}
-                              className="h-8 text-sm border border-gray-300 dark:border-gray-600 rounded-lg px-2 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
+                              type="number"
+                              min="1"
                             />
                           </div>
-                          <div>
-                            <Label className="text-xs text-gray-600 dark:text-gray-400">Price</Label>
+
+                          <div className="col-span-1">
                             <Input
                               value={item.unitPrice}
                               onChange={(e) =>
@@ -668,26 +1148,42 @@ export default function EstimateCreate() {
                                 )
                               }
                               onKeyDown={handleNumericKeyDown}
-                              className="h-8 text-sm border border-gray-300 dark:border-gray-600 rounded-lg px-2 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
+                              placeholder="0.00"
                             />
                           </div>
-                          <div>
-                            <Label className="text-xs text-gray-600 dark:text-gray-400">Tax</Label>
-                            <Input
-                              value={item.tax}
-                              onChange={(e) =>
-                                updateLineItem(index, "tax", e.target.value)
-                              }
-                              onKeyDown={handleNumericKeyDown}
-                              placeholder="0"
-                              className="h-8 text-sm border border-gray-300 dark:border-gray-600 rounded-lg px-2 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
-                            />
-                          </div>
-                        </div>
 
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                          <div>
-                            <Label className="text-xs text-gray-600 dark:text-gray-400">Discount</Label>
+                          <div className="col-span-2">
+                            <Select
+                              value={item.taxRateId || "none"}
+                              onValueChange={(value) =>
+                                updateLineItem(index, "taxRateId", value === "none" ? "" : value)
+                              }
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select tax rate" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="none">None</SelectItem>
+                                {gstRates
+                                  .filter((rate: any) => rate.isActive !== false)
+                                  .map((rate: any) => (
+                                    <SelectItem key={rate.id} value={rate.id?.toString()}>
+                                      {rate.rateName || `Rate ${rate.rate}%`} ({rate.rate}%)
+                                    </SelectItem>
+                                  ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <div className="col-span-1">
+                            <Input
+                              readOnly
+                              value={`${currencySymbol}${(parseFloat(item.tax?.toString() || "0") || 0).toFixed(2)}`}
+                              className="bg-gray-50 dark:bg-gray-900 text-gray-600 dark:text-gray-400 cursor-not-allowed"
+                            />
+                          </div>
+
+                          <div className="col-span-1">
                             <Input
                               value={item.discount}
                               onChange={(e) =>
@@ -699,49 +1195,31 @@ export default function EstimateCreate() {
                               }
                               onKeyDown={handleNumericKeyDown}
                               placeholder="0"
-                              className="h-8 text-sm border border-gray-300 dark:border-gray-600 rounded-lg px-2 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
                             />
                           </div>
-                          <div>
-                            <Label className="text-xs text-gray-600 dark:text-gray-400">Total</Label>
+
+                          <div className="col-span-2">
                             <Input
                               readOnly
-                              value={`$${item.totalPrice.toFixed(2)}`}
-                              className="h-8 text-sm border border-gray-300 dark:border-gray-600 rounded-lg px-2 bg-gray-50 dark:bg-gray-900 text-gray-600 dark:text-gray-400 cursor-not-allowed"
+                              value={`${currencySymbol}${item.totalPrice.toFixed(2)}`}
+                              className="bg-gray-50 dark:bg-gray-900 text-gray-600 dark:text-gray-400 cursor-not-allowed"
                             />
                           </div>
-                          {formData.lineItems.length > 1 && (
-                            <div className="flex items-end">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => removeLineItem(index)}
-                                type="button"
-                                className="h-8 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
-                            </div>
-                          )}
-                        </div>
 
-                        <div>
-                          <Textarea
-                            value={item.description}
-                            onChange={(e) =>
-                              updateLineItem(
-                                index,
-                                "description",
-                                e.target.value,
-                              )
-                            }
-                            placeholder="Description (optional)"
-                            rows={2}
-                            className="border border-gray-300 dark:border-gray-600 rounded-lg resize-none text-sm px-3 py-2 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
-                          />
+                          <div className="col-span-1 flex items-center justify-center">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => removeLineItem(index)}
+                              type="button"
+                              className="h-8 w-8 p-0 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
@@ -808,166 +1286,286 @@ export default function EstimateCreate() {
                 )}
               </div>
 
-              {/* Pricing & Payment - 2 columns */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t border-gray-200 dark:border-gray-700 mt-4">
-                {/* Pricing */}
-                <div className="space-y-3">
-                  <div className="grid grid-cols-3 gap-3">
-                    <div>
-                      <Label className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5 block">Currency</Label>
-                      <Combobox
-                        options={[
-                          { value: "USD", label: "USD" },
-                          { value: "EUR", label: "EUR" },
-                          { value: "INR", label: "INR" },
-                          { value: "GBP", label: "GBP" },
-                        ]}
-                        value={formData.currency}
-                        onValueChange={(value) =>
-                          setFormData((prev) => ({ ...prev, currency: value }))
-                        }
-                        placeholder="Select currency"
-                        searchPlaceholder="Search..."
-                        className="h-10 text-sm"
-                      />
-                    </div>
-                    <div>
-                      <Label className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5 block">Total Price</Label>
-                      <Input
-                        value={totals.subtotal}
-                        readOnly
-                        className="h-10 text-sm border border-gray-300 dark:border-gray-600 rounded-lg px-3 bg-gray-50 dark:bg-gray-900 text-gray-600 dark:text-gray-400 cursor-not-allowed"
-                      />
-                    </div>
-                    <div>
-                      <Label className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5 block">Discount (%)</Label>
-                      <Input
-                        value={formData.discountPercentage}
-                        onChange={(e) =>
-                          setFormData((prev) => ({
-                            ...prev,
-                            discountPercentage: e.target.value,
-                          }))
-                        }
-                        onKeyDown={handleNumericKeyDown}
-                        placeholder="0"
-                        className="h-10 text-sm border border-gray-300 dark:border-gray-600 rounded-lg px-3 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
-                      />
-                    </div>
+                {/* Pricing & Payment - 2 columns */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-6 border-t border-gray-200 dark:border-gray-700">
+                  {/* Left Side - Input Fields */}
+                  <div className="space-y-4">
+                    {/* Show these fields only when there are no line items */}
+                    {formData.lineItems.length === 0 && (
+                      <>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <Label htmlFor="totalPrice">Total Price ({currencySymbol})</Label>
+                            <Input
+                              id="totalPrice"
+                              value={formData.manualTotalPrice}
+                              onChange={(e) =>
+                                setFormData((prev) => ({
+                                  ...prev,
+                                  manualTotalPrice: e.target.value,
+                                }))
+                              }
+                              onKeyDown={handleNumericKeyDown}
+                              placeholder="0.00"
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor="discountPercentage">Discount (%)</Label>
+                            <Input
+                              id="discountPercentage"
+                              value={formData.discountPercentage}
+                              onChange={(e) =>
+                                setFormData((prev) => ({
+                                  ...prev,
+                                  discountPercentage: e.target.value,
+                                }))
+                              }
+                              onKeyDown={handleNumericKeyDown}
+                              placeholder="0"
+                            />
+                          </div>
+                        </div>
+
+                        {estimateSettings?.showTax !== false && (
+                          <div>
+                            <Label htmlFor="taxRate">Tax Rate</Label>
+                            <Select
+                              value={formData.manualTaxRateId || "none"}
+                              onValueChange={(value) => {
+                                if (value === "none") {
+                                  setFormData((prev) => ({ ...prev, manualTaxRateId: "" }));
+                                } else {
+                                  setFormData((prev) => ({ ...prev, manualTaxRateId: value }));
+                                }
+                              }}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select tax rate" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="none">None</SelectItem>
+                                {gstRates
+                                  .filter((rate: any) => rate.isActive !== false)
+                                  .map((rate: any) => (
+                                    <SelectItem key={rate.id} value={rate.id?.toString()}>
+                                      {rate.rateName || `Rate ${rate.rate}%`} ({rate.rate}%)
+                                    </SelectItem>
+                                  ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                    {/* Tax Inclusive/Exclusive Toggle */}
+                    {estimateSettings?.showTax !== false && (
+                      <div className="flex items-center justify-between p-3 border rounded-lg">
+                        <div className="flex flex-col">
+                          <Label htmlFor="taxInclusive" className="text-sm font-medium">
+                            Tax Type
+                          </Label>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {isTaxInclusive ? "Tax is included in prices" : "Tax will be added to prices"}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-muted-foreground">Exclusive</span>
+                          <Switch
+                            id="taxInclusive"
+                            checked={isTaxInclusive}
+                            onCheckedChange={setIsTaxInclusive}
+                            data-testid="switch-tax-inclusive"
+                          />
+                          <span className="text-sm text-muted-foreground">Inclusive</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {estimateSettings?.showDeposit !== false && (
+                      <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
+                        <Label htmlFor="depositRequired">Require Deposit</Label>
+                        <Switch
+                          id="depositRequired"
+                          checked={formData.depositRequired}
+                          onCheckedChange={(checked) =>
+                            setFormData((prev) => ({
+                              ...prev,
+                              depositRequired: checked,
+                            }))
+                          }
+                        />
+                      </div>
+                    )}
+
+                    {formData.depositRequired && estimateSettings?.showDeposit !== false && (
+                      <div>
+                        <Label htmlFor="depositPercentage">Deposit (%)</Label>
+                        <Input
+                          id="depositPercentage"
+                          value={formData.depositPercentage}
+                          onChange={(e) =>
+                            setFormData((prev) => ({
+                              ...prev,
+                              depositPercentage: e.target.value,
+                            }))
+                          }
+                          onKeyDown={handleNumericKeyDown}
+                          placeholder="e.g., 50"
+                        />
+                      </div>
+                    )}
+
+                    {estimateSettings?.showPaymentTerms !== false && (
+                      <div>
+                        <Label htmlFor="paymentTerms">Payment Terms</Label>
+                        <Combobox
+                          options={[
+                            { value: "immediate", label: "Immediate" },
+                            { value: "net7", label: "Net 7" },
+                            { value: "net30", label: "Net 30" },
+                            { value: "net60", label: "Net 60" },
+                          ]}
+                          value={formData.paymentTerms}
+                          onValueChange={(value) =>
+                            setFormData((prev) => ({
+                              ...prev,
+                              paymentTerms: value,
+                            }))
+                          }
+                          placeholder="Select terms"
+                          searchPlaceholder="Search..."
+                        />
+                      </div>
+                    )}
                   </div>
-                  <div className="grid grid-cols-1 gap-3">
-                    <div>
-                      <Label className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5 block">Tax (%)</Label>
-                      <Input
-                        value={formData.taxPercentage}
-                        onChange={(e) =>
-                          setFormData((prev) => ({
-                            ...prev,
-                            taxPercentage: e.target.value,
-                          }))
-                        }
-                        onKeyDown={handleNumericKeyDown}
-                        placeholder="0"
-                        className="h-10 text-sm border border-gray-300 dark:border-gray-600 rounded-lg px-3 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all max-w-[200px]"
-                      />
-                    </div>
-                  </div>
-                  <div className="pt-2 space-y-1.5 text-xs">
-                    <div className="flex justify-between">
-                      <span className="text-gray-600 dark:text-gray-400">Subtotal:</span>
-                      <span className="font-medium">${totals.subtotal.toFixed(2)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600 dark:text-gray-400">Discount:</span>
-                      <span className="font-medium">-${totals.discountAmount.toFixed(2)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600 dark:text-gray-400">Tax:</span>
-                      <span className="font-medium">${totals.taxAmount.toFixed(2)}</span>
-                    </div>
-                    <div className="flex justify-between font-bold text-sm text-cyan-600 dark:text-cyan-400 pt-1.5 border-t border-gray-200 dark:border-gray-700">
-                      <span>Total:</span>
-                      <span>${totals.total.toFixed(2)}</span>
+
+                  {/* Right Side - Summary */}
+                  <div className="space-y-3">
+                    <div className="p-4 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
+                      <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+                        Summary
+                      </h3>
+                      <div className="space-y-3">
+                        <div className="flex justify-between items-center py-2 border-b border-gray-200 dark:border-gray-700">
+                          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Subtotal:</span>
+                          <span className="text-base font-semibold text-gray-900 dark:text-white">
+                            {currencySymbol}{totals.subtotal.toFixed(2)}
+                          </span>
+                        </div>
+                        {estimateSettings?.showDiscount !== false && (
+                          <div className="flex justify-between items-center py-2 border-b border-gray-200 dark:border-gray-700">
+                            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Discount:</span>
+                            <span className="text-base font-semibold text-red-600 dark:text-red-400">
+                              -{currencySymbol}{totals.discountAmount.toFixed(2)}
+                            </span>
+                          </div>
+                        )}
+                        {estimateSettings?.showTax !== false && (
+                          <div className="flex justify-between items-center py-2 border-b border-gray-200 dark:border-gray-700">
+                            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Tax:</span>
+                            <span className="text-base font-semibold text-blue-600 dark:text-blue-400">
+                              {currencySymbol}{isTaxInclusive ? "0.00" : totals.taxAmount.toFixed(2)}
+                            </span>
+                          </div>
+                        )}
+                        <div className="flex justify-between items-center py-3 border-t-2 border-gray-300 dark:border-gray-600 mt-2">
+                          <span className="text-lg font-bold text-gray-900 dark:text-white">Total:</span>
+                          <span className="text-xl font-bold text-cyan-600 dark:text-cyan-400">
+                            {currencySymbol}{totals.total.toFixed(2)}
+                          </span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                {/* Deposit Settings & Payment Terms */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-                    <Label className="text-xs font-semibold text-gray-700 dark:text-gray-300">Require Deposit</Label>
-                    <Switch
-                      checked={formData.depositRequired}
-                      onCheckedChange={(checked) =>
-                        setFormData((prev) => ({
-                          ...prev,
-                          depositRequired: checked,
-                        }))
-                      }
-                    />
-                  </div>
-                  {formData.depositRequired && (
+                {/* Notes - Left Side */}
+                {estimateSettings?.showNotes !== false && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div>
-                      <Label className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5 block">Deposit (%)</Label>
-                      <Input
-                        value={formData.depositPercentage}
+                      <Label htmlFor="notes">Notes</Label>
+                      <Textarea
+                        id="notes"
+                        value={formData.notes}
                         onChange={(e) =>
                           setFormData((prev) => ({
                             ...prev,
-                            depositPercentage: e.target.value,
+                            notes: e.target.value,
                           }))
                         }
-                        onKeyDown={handleNumericKeyDown}
-                        placeholder="e.g., 50"
-                        className="h-10 text-sm border border-gray-300 dark:border-gray-600 rounded-lg px-3 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all max-w-[200px]"
+                        placeholder="Add any additional notes or special instructions here..."
+                        rows={3}
+                        className="min-h-[100px]"
                       />
                     </div>
-                  )}
-                  <div>
-                    <Label className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5 block">Payment Terms</Label>
-                    <Combobox
-                      options={[
-                        { value: "immediate", label: "Immediate" },
-                        { value: "net7", label: "Net 7" },
-                        { value: "net30", label: "Net 30" },
-                        { value: "net60", label: "Net 60" },
-                      ]}
-                      value={formData.paymentTerms}
-                      onValueChange={(value) =>
-                        setFormData((prev) => ({
-                          ...prev,
-                          paymentTerms: value,
-                        }))
-                      }
-                      placeholder="Select terms"
-                      searchPlaceholder="Search..."
-                      className="max-w-[200px] h-10 text-sm"
-                    />
+                    <div></div>
                   </div>
-                </div>
-              </div>
+                )}
+              </CardContent>
+            </Card>
 
-              {/* Notes */}
-              <div className="pt-4 border-t border-gray-200 dark:border-gray-700 mt-4">
-                <Label className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5 block">Notes</Label>
-                <Textarea
-                  value={formData.notes}
-                  onChange={(e) =>
-                    setFormData((prev) => ({
-                      ...prev,
-                      notes: e.target.value,
-                    }))
-                  }
-                  placeholder="Add any additional notes or special instructions here..."
-                  rows={4}
-                  className="border border-gray-300 dark:border-gray-600 rounded-lg resize-none text-sm px-3 py-2 focus:ring-2 focus:ring-cyan-500 focus:border-transparent transition-all"
-                />
-              </div>
+            {/* Action Buttons */}
+            <div className="flex justify-end gap-3 mt-6">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onCancel}
+                className="h-10 px-6"
+                data-testid="button-cancel"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                form="estimate-form"
+                disabled={createMutation.isPending}
+                className="h-10 px-6 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white"
+                data-testid="button-submit"
+              >
+                {createMutation.isPending ? "Creating..." : "Create Estimate"}
+              </Button>
             </div>
-          </div>
           </form>
         </div>
       </div>
+
+      {/* Estimate Preview Dialog */}
+      <Dialog open={showPreview} onOpenChange={setShowPreview}>
+        <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Estimate Preview</DialogTitle>
+            <DialogDescription>
+              Review your estimate before saving. All estimate data will be displayed as shown below.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="mt-4">
+            {previewEstimateData && (
+              <>
+                {/* Use actual estimate template */}
+                <ModernEstimateTemplate data={previewEstimateData} />
+              </>
+            )}
+          </div>
+          <div className="flex justify-end gap-2 pt-4 border-t mt-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowPreview(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={handleSaveFromPreview}
+              disabled={createMutation.isPending}
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              {createMutation.isPending ? "Creating..." : "Create Estimate"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Layout>
   );
 }

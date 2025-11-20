@@ -1041,6 +1041,58 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Expense Settings Routes
+  app.get("/api/expense-settings/:tenantId", async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId);
+      const settings = await simpleStorage.getExpenseSettings(tenantId);
+      res.json({ success: true, data: settings });
+    } catch (error: any) {
+      console.error("Error getting expense settings:", error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  app.post("/api/expense-settings", async (req, res) => {
+    try {
+      const { tenantId, ...settings } = req.body;
+      const updated = await simpleStorage.upsertExpenseSettings(
+        tenantId,
+        settings,
+      );
+      res.json({ success: true, data: updated });
+    } catch (error: any) {
+      console.error("Error updating expense settings:", error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  // Estimate Settings API Endpoints
+  app.get("/api/estimate-settings/:tenantId", async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId);
+      const settings = await simpleStorage.getEstimateSettings(tenantId);
+      res.json({ success: true, data: settings });
+    } catch (error: any) {
+      console.error("Error getting estimate settings:", error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  app.post("/api/estimate-settings", async (req, res) => {
+    try {
+      const { tenantId, ...settings } = req.body;
+      const updated = await simpleStorage.upsertEstimateSettings(
+        tenantId,
+        settings,
+      );
+      res.json({ success: true, data: updated });
+    } catch (error: any) {
+      console.error("Error updating estimate settings:", error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
   app.post("/api/invoice-settings", async (req, res) => {
     try {
       const { tenantId, ...settings } = req.body;
@@ -2835,6 +2887,169 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
       });
     } catch (error: any) {
       console.error("Error sending invoice via WhatsApp:", error);
+      return res.status(500).json({ 
+        error: "Internal server error", 
+        message: error.message 
+      });
+    }
+  });
+
+  // Send estimate via email
+  app.post("/api/tenants/:tenantId/estimates/:estimateId/email", authenticateToken, async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId);
+      const estimateId = parseInt(req.params.estimateId);
+
+      // Verify user has access to this tenant
+      if (req.user.tenantId !== tenantId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      // Get estimate details
+      const estimate = await simpleStorage.getEstimate(estimateId, tenantId);
+      if (!estimate) {
+        return res.status(404).json({ error: "Estimate not found" });
+      }
+
+      if (!estimate.customer_email) {
+        return res.status(400).json({ error: "Customer email not found" });
+      }
+
+      // Get tenant details for company info
+      const tenants = await sql`
+        SELECT * FROM tenants WHERE id = ${tenantId}
+      `;
+      const tenant = tenants[0] || null;
+
+      // Generate estimate HTML for email
+      const estimateHtml = `
+        <html>
+        <head>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 20px; color: #333; }
+            .header { margin-bottom: 30px; border-bottom: 2px solid #333; padding-bottom: 20px; }
+            .estimate-info { display: flex; justify-content: space-between; margin-bottom: 30px; }
+            .info-section { flex: 1; }
+            .totals { margin-top: 30px; margin-left: auto; width: 300px; }
+            .totals-row { display: flex; justify-content: space-between; padding: 8px 0; }
+            .totals-row.total { font-size: 18px; font-weight: bold; border-top: 2px solid #333; padding-top: 10px; margin-top: 10px; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>ESTIMATE</h1>
+            <p>Estimate #: ${estimate.estimate_number || `EST-${estimate.id}`}</p>
+          </div>
+          <div class="estimate-info">
+            <div class="info-section">
+              <h3>Bill To:</h3>
+              <p><strong>${estimate.customer_name || 'N/A'}</strong></p>
+              ${estimate.customer_email ? `<p>${estimate.customer_email}</p>` : ''}
+              ${estimate.customer_phone ? `<p>${estimate.customer_phone}</p>` : ''}
+            </div>
+            <div class="info-section">
+              <h3>Estimate Details:</h3>
+              <p><strong>Valid Until:</strong> ${estimate.valid_until ? new Date(estimate.valid_until).toLocaleDateString() : 'N/A'}</p>
+              <p><strong>Status:</strong> ${estimate.status || 'N/A'}</p>
+            </div>
+          </div>
+          <div class="totals">
+            <div class="totals-row">
+              <span>Subtotal:</span>
+              <span>${estimate.currency === 'USD' ? '$' : '₹'}${parseFloat(estimate.subtotal?.toString() || "0").toFixed(2)}</span>
+            </div>
+            ${estimate.discount_amount > 0 ? `
+              <div class="totals-row">
+                <span>Discount:</span>
+                <span>-${estimate.currency === 'USD' ? '$' : '₹'}${parseFloat(estimate.discount_amount?.toString() || "0").toFixed(2)}</span>
+              </div>
+            ` : ''}
+            ${estimate.tax_amount > 0 ? `
+              <div class="totals-row">
+                <span>Tax:</span>
+                <span>${estimate.currency === 'USD' ? '$' : '₹'}${parseFloat(estimate.tax_amount?.toString() || "0").toFixed(2)}</span>
+              </div>
+            ` : ''}
+            <div class="totals-row total">
+              <span>Total Amount:</span>
+              <span>${estimate.currency === 'USD' ? '$' : '₹'}${parseFloat(estimate.total_amount?.toString() || "0").toFixed(2)}</span>
+            </div>
+          </div>
+          ${estimate.notes ? `<p><strong>Notes:</strong> ${estimate.notes}</p>` : ''}
+        </body>
+        </html>
+      `;
+
+      // Send email using tenant email service
+      try {
+        const { tenantEmailService } = await import("./tenant-email-service.js");
+        await tenantEmailService.sendCustomerEmail({
+          to: estimate.customer_email,
+          subject: `Estimate ${estimate.estimate_number || `EST-${estimate.id}`} from ${tenant?.company_name || tenant?.name || 'Company'}`,
+          body: `Please find attached estimate ${estimate.estimate_number || `EST-${estimate.id}`}. Total amount: ${estimate.currency === 'USD' ? '$' : '₹'}${parseFloat(estimate.total_amount?.toString() || "0").toFixed(2)}`,
+          htmlBody: estimateHtml,
+          tenantId: tenantId,
+        });
+
+        return res.json({ 
+          success: true, 
+          message: "Estimate sent via email successfully" 
+        });
+      } catch (emailError: any) {
+        console.error("Failed to send estimate email:", emailError);
+        return res.status(500).json({ 
+          error: "Failed to send email", 
+          message: emailError.message 
+        });
+      }
+    } catch (error: any) {
+      console.error("Error sending estimate email:", error);
+      return res.status(500).json({ 
+        error: "Internal server error", 
+        message: error.message 
+      });
+    }
+  });
+
+  // Send estimate via WhatsApp
+  app.post("/api/tenants/:tenantId/estimates/:estimateId/whatsapp", authenticateToken, async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId);
+      const estimateId = parseInt(req.params.estimateId);
+
+      // Verify user has access to this tenant
+      if (req.user.tenantId !== tenantId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      // Get estimate details
+      const estimate = await simpleStorage.getEstimate(estimateId, tenantId);
+      if (!estimate) {
+        return res.status(404).json({ error: "Estimate not found" });
+      }
+
+      if (!estimate.customer_phone) {
+        return res.status(400).json({ error: "Customer phone number not found" });
+      }
+
+      // Generate WhatsApp message
+      const message = `*Estimate ${estimate.estimate_number || `EST-${estimate.id}`}*\n\n` +
+        `Total Amount: ${estimate.currency === 'USD' ? '$' : '₹'}${parseFloat(estimate.total_amount?.toString() || "0").toFixed(2)}\n` +
+        `Valid Until: ${estimate.valid_until ? new Date(estimate.valid_until).toLocaleDateString() : 'N/A'}\n` +
+        `Status: ${estimate.status || 'N/A'}\n\n` +
+        `Please review the estimate and let us know if you have any questions. Thank you!`;
+
+      // For now, return a WhatsApp link (in production, integrate with WhatsApp Business API)
+      const whatsappLink = `https://wa.me/${estimate.customer_phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(message)}`;
+
+      return res.json({ 
+        success: true, 
+        message: "WhatsApp link generated",
+        whatsappLink: whatsappLink,
+        phone: estimate.customer_phone
+      });
+    } catch (error: any) {
+      console.error("Error sending estimate via WhatsApp:", error);
       return res.status(500).json({ 
         error: "Internal server error", 
         message: error.message 
