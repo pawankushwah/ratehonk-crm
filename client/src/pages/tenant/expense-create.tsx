@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Layout } from "@/components/layout/layout";
 import { Button } from "@/components/ui/button";
@@ -386,33 +386,33 @@ export default function ExpenseCreate() {
     }));
   };
 
-  // Build dynamic grid template based on visible fields
-  const getGridTemplate = () => {
+  // Build dynamic grid template based on visible fields - matching invoice-create design
+  const getGridTemplate = useMemo(() => {
     const cols: string[] = [];
     
-    cols.push("40px"); // # column (fixed width)
-    if (expenseSettings?.showCategory !== false) cols.push("1fr"); // Category
-    cols.push("1.5fr"); // Title (always visible)
-    if (expenseSettings?.showVendor !== false) cols.push("1fr"); // Vendor
-    if (expenseSettings?.showLeadType !== false) cols.push("1fr"); // Lead Type
-    cols.push("1fr"); // Amount (always visible)
+    cols.push("30px"); // # column - smaller (fixed)
+    if (expenseSettings?.showCategory !== false) cols.push("minmax(250px, 2fr)"); // Category - bigger (flexible, min 250px)
+    cols.push("minmax(150px, 1.5fr)"); // Title (flexible, min 150px)
+    if (expenseSettings?.showVendor !== false) cols.push("minmax(250px, 2fr)"); // Vendor - bigger (flexible, min 250px)
+    if (expenseSettings?.showLeadType !== false) cols.push("minmax(250px, 2fr)"); // Lead Type/Provider - bigger (flexible, min 250px)
+    cols.push("minmax(130px, 1fr)"); // Amount - small (flexible, min 130px)
     if (expenseSettings?.showTax !== false) {
-      cols.push("1fr"); // Tax Rate (dropdown)
-      cols.push("1fr"); // Tax Amt
+      cols.push("minmax(100px, 1fr)"); // Tax Rate - small (flexible, min 100px)
+      cols.push("minmax(100px, 1fr)"); // Tax Amt - small (flexible, min 100px)
     }
-    cols.push("1fr"); // Total (always visible)
-    if (expenseSettings?.showPaymentStatus !== false) cols.push("1fr"); // Status
+    cols.push("minmax(100px, 1fr)"); // Total - small (flexible, min 100px)
+    if (expenseSettings?.showPaymentStatus !== false) cols.push("minmax(100px, 1fr)"); // Status - small (flexible, min 100px)
     if (expenseSettings?.showPaymentStatus !== false) {
-      cols.push("1fr"); // Paid
-      cols.push("1fr"); // Due
+      cols.push("minmax(100px, 1fr)"); // Paid - small (flexible, min 100px)
+      cols.push("minmax(100px, 1fr)"); // Due - small (flexible, min 100px)
     }
-    if (expenseSettings?.showPaymentMethod !== false) cols.push("1fr"); // Payment
-    cols.push("50px"); // Delete button (fixed width)
+    if (expenseSettings?.showPaymentMethod !== false) cols.push("minmax(100px, 1fr)"); // Payment - small (flexible, min 100px)
+    cols.push("50px"); // Delete button - small (fixed)
     
     return cols.join(" ");
-  };
+  }, [expenseSettings?.showCategory, expenseSettings?.showVendor, expenseSettings?.showLeadType, expenseSettings?.showTax, expenseSettings?.showPaymentStatus, expenseSettings?.showPaymentMethod]);
   
-  const gridTemplate = getGridTemplate();
+  const gridTemplate = getGridTemplate;
 
   // Get currency symbol
   const getCurrencySymbol = () => {
@@ -518,22 +518,25 @@ export default function ExpenseCreate() {
 
   return (
     <Layout initialSidebarCollapsed={true}>
-      <div className="p-6 max-w-[1600px] mx-auto">
+      <div className="p-3 sm:p-4 md:p-6 mx-auto">
         <div className="bg-white rounded-2xl shadow-sm">
           <div className="">
-            <div className=" w-full h-[72px] flex items-center bg-white px-[18px] py-4 rounded-t-xl border-b border-[#E3E8EF] shadow-[0px_1px_6px_0px_rgba(0,0,0,0.05)]">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => navigate("/expenses")}
-                data-testid="button-back"
-              >
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Back
-              </Button>
-              <h1 className="ml-4 font-inter font-medium text-[20px] leading-[24px] text-[#121926]">
-                Create Expenses
-              </h1>
+            <div className="w-full min-h-[72px] flex flex-col sm:flex-row items-start sm:items-center bg-white px-3 sm:px-4 md:px-[18px] py-3 sm:py-4 rounded-t-xl border-b border-[#E3E8EF] shadow-[0px_1px_6px_0px_rgba(0,0,0,0.05)] gap-3 sm:gap-0">
+              <div className="flex items-center gap-2 sm:gap-0">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigate("/expenses")}
+                  data-testid="button-back"
+                  className="flex-shrink-0"
+                >
+                  <ArrowLeft className="h-4 w-4 sm:mr-2" />
+                  <span className="hidden sm:inline">Back</span>
+                </Button>
+                <h1 className="ml-2 sm:ml-4 font-inter font-medium text-base sm:text-[20px] leading-[24px] text-[#121926] truncate">
+                  Create Expenses
+                </h1>
+              </div>
 
               <div className="flex gap-3 ml-auto">
                 {tenant?.id && <ExpenseSettingsPanel tenantId={tenant.id} />}
@@ -566,7 +569,7 @@ export default function ExpenseCreate() {
               <div className="border rounded-lg overflow-hidden">
                 {/* Table Header */}
                 <div 
-                  className="grid gap-2 bg-gray-100 dark:bg-gray-800 p-3 font-medium text-sm"
+                  className="grid gap-2 p-3 font-medium text-sm border-b"
                   style={{ gridTemplateColumns: gridTemplate }}
                 >
                   <div className="text-center flex items-center justify-center">#</div>
@@ -586,11 +589,11 @@ export default function ExpenseCreate() {
                 </div>
 
                 {/* Table Body */}
-                <div className="divide-y divide-gray-200 dark:divide-gray-700">
+                <div className="divide-y">
                   {expenseItems.map((item, index) => (
                     <div
                       key={index}
-                      className="grid gap-2 p-3 hover:bg-gray-50 dark:hover:bg-gray-900"
+                      className="grid gap-2 p-3"
                       style={{ gridTemplateColumns: gridTemplate }}
                     >
                       <div className="flex items-center justify-center">
@@ -710,7 +713,7 @@ export default function ExpenseCreate() {
                           <Input
                             value={item.taxAmount}
                             readOnly
-                            className="bg-gray-50 dark:bg-gray-900 text-xs"
+                            className="text-xs"
                           />
                         </div>
                       )}
@@ -719,7 +722,7 @@ export default function ExpenseCreate() {
                         <Input
                           value={item.totalAmount.toFixed(2)}
                           readOnly
-                          className="bg-gray-50 dark:bg-gray-900 font-semibold text-xs"
+                          className="font-semibold text-xs"
                         />
                       </div>
 
@@ -823,7 +826,7 @@ export default function ExpenseCreate() {
                 </div>
 
                 {/* Add New Line Button */}
-                <div className="p-3 bg-gray-50 dark:bg-gray-900 border-t">
+                <div className="p-3 border-t">
                   <Button
                     type="button"
                     variant="outline"
@@ -902,7 +905,7 @@ export default function ExpenseCreate() {
                 )}
 
                 {/* Calculation Summary */}
-                <div className="border rounded-lg p-6 bg-gradient-to-r from-gray-50 to-slate-50 dark:from-gray-900 dark:to-slate-900">
+                <div className="border rounded-lg p-6">
                   <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
                     Summary
                   </h3>
