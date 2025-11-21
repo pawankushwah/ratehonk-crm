@@ -13253,14 +13253,32 @@ Please improve this email.`;
           return res.status(400).json({ message: "Invalid tenant ID" });
         }
 
-        console.log("📋 Calling getInvoicesByTenant with ID:", tenantIdNum);
+        // Extract query parameters
+        // Handle customerId as array (multiple selection)
+        let customerId: number | number[] | undefined = undefined;
+        if (req.query.customerId) {
+          if (Array.isArray(req.query.customerId)) {
+            customerId = (req.query.customerId as string[]).map(id => parseInt(id));
+          } else {
+            customerId = parseInt(req.query.customerId as string);
+          }
+        }
 
-        const invoices = await simpleStorage.getInvoicesByTenant(tenantIdNum);
-        console.log("📋 Retrieved invoices count:", invoices?.length || 0);
+        const filters = {
+          customerId: customerId,
+          vendorId: req.query.vendorId ? parseInt(req.query.vendorId as string) : undefined,
+          providerId: req.query.providerId ? parseInt(req.query.providerId as string) : undefined,
+          leadTypeId: req.query.leadTypeId ? parseInt(req.query.leadTypeId as string) : undefined,
+          status: req.query.status as string | undefined,
+          search: req.query.search as string | undefined,
+          page: req.query.page ? parseInt(req.query.page as string) : 1,
+          pageSize: req.query.pageSize ? parseInt(req.query.pageSize as string) : 10,
+        };
 
-        // Ensure we return an array
-        const result = Array.isArray(invoices) ? invoices : [];
-        console.log("📋 Returning:", result.length, "invoices");
+        console.log("📋 Calling getInvoicesByTenant with ID:", tenantIdNum, "filters:", filters);
+
+        const result = await simpleStorage.getInvoicesByTenant(tenantIdNum, filters);
+        console.log("📋 Retrieved invoices count:", result?.data?.length || 0, "total:", result?.pagination?.total || 0);
 
         res.json(result);
       } catch (error) {
@@ -16226,6 +16244,37 @@ Please improve this email.`;
       res.status(500).json({ message: "Failed to fetch vendors" });
     }
   });
+
+  // Get all vendors for a tenant (tenant-specific endpoint)
+  app.get(
+    "/api/tenants/:tenantId/vendors",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        const { tenantId } = req.params;
+        const tenantIdNum = parseInt(tenantId);
+
+        if (isNaN(tenantIdNum)) {
+          return res.status(400).json({ message: "Invalid tenant ID" });
+        }
+
+        const vendors = await sql`
+          SELECT 
+            v.*,
+            u.first_name || ' ' || u.last_name as created_by_name
+          FROM vendors v
+          LEFT JOIN users u ON v.created_by = u.id
+          WHERE v.tenant_id = ${tenantIdNum}
+          ORDER BY v.name ASC
+        `;
+
+        res.json(vendors);
+      } catch (error: any) {
+        console.error("Error fetching vendors:", error);
+        res.status(500).json({ message: "Failed to fetch vendors" });
+      }
+    },
+  );
 
   // Create new vendor
   app.post("/api/vendors", authenticateVendor, async (req: any, res) => {

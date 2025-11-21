@@ -3811,14 +3811,88 @@ export class SimpleStorage {
     }
   }
 
-  async getInvoicesByTenant(tenantId: number) {
+  async getInvoicesByTenant(
+    tenantId: number,
+    filters?: {
+      customerId?: number;
+      vendorId?: number;
+      providerId?: number;
+      leadTypeId?: number;
+      status?: string;
+      search?: string;
+      page?: number;
+      pageSize?: number;
+    }
+  ) {
     try {
-      // Simplified query without JOINs to avoid the column error
-      const invoices = await sql`
-        SELECT * FROM invoices 
-        WHERE tenant_id = ${tenantId}
-        ORDER BY created_at DESC
-      `;
+      const page = filters?.page || 1;
+      const pageSize = filters?.pageSize || 10;
+      const offset = (page - 1) * pageSize;
+      
+      // Initialize filters object if not provided
+      const filterParams = filters || {};
+      
+      console.log("🔍 getInvoicesByTenant - Filters received:", JSON.stringify(filterParams, null, 2));
+
+      // Build WHERE clause dynamically
+      let whereClause = sql`tenant_id = ${tenantId}`;
+      
+      // Handle customer filter - can be single ID or array of IDs
+      if (filterParams?.customerId) {
+        if (Array.isArray(filterParams.customerId)) {
+          if (filterParams.customerId.length > 0) {
+            console.log("🔍 Applying customer filter (array):", filterParams.customerId);
+            whereClause = sql`${whereClause} AND customer_id = ANY(${sql.array(filterParams.customerId)})`;
+          }
+        } else {
+          console.log("🔍 Applying customer filter (single):", filterParams.customerId);
+          whereClause = sql`${whereClause} AND customer_id = ${filterParams.customerId}`;
+        }
+      }
+
+      if (filterParams?.status && filterParams.status !== "all") {
+        console.log("🔍 Applying status filter:", filterParams.status);
+        whereClause = sql`${whereClause} AND status = ${filterParams.status}`;
+      }
+
+      if (filterParams?.search) {
+        const searchPattern = `%${filterParams.search}%`;
+        whereClause = sql`${whereClause} AND invoice_number ILIKE ${searchPattern}`;
+      }
+
+      // Note: If vendorId, providerId, or leadTypeId filters are present,
+      // we'll need to filter after fetching due to line items structure
+      const shouldFilterAfterFetch = filterParams?.vendorId || filterParams?.providerId || filterParams?.leadTypeId;
+      
+      let invoices;
+      if (shouldFilterAfterFetch) {
+        // Fetch all matching invoices (without pagination limit) to filter by line items
+        // Then apply pagination after filtering
+        invoices = await sql`
+          SELECT * FROM invoices 
+          WHERE ${whereClause}
+          ORDER BY created_at DESC
+        `;
+      } else {
+        // Apply pagination in SQL for better performance when no line item filters
+        invoices = await sql`
+          SELECT * FROM invoices 
+          WHERE ${whereClause}
+          ORDER BY created_at DESC
+          LIMIT ${pageSize} OFFSET ${offset}
+        `;
+      }
+      
+      // Get total count - will be recalculated after filtering if needed
+      let totalCount = 0;
+      if (!shouldFilterAfterFetch) {
+        // For simple filters, count directly from SQL
+        const countResult = await sql`
+          SELECT COUNT(*) as total FROM invoices 
+          WHERE ${whereClause}
+        `;
+        totalCount = parseInt(countResult[0]?.total || "0");
+      }
 
       // Fetch customer and booking details separately for each invoice
       const invoicesWithDetails = await Promise.all(
@@ -3855,6 +3929,51 @@ export class SimpleStorage {
             console.warn("Error fetching invoice details:", joinError);
           }
 
+          // Parse line items from JSON string if present
+          let lineItems = [];
+          if (invoice.line_items) {
+            try {
+              if (typeof invoice.line_items === 'string') {
+                lineItems = JSON.parse(invoice.line_items);
+              } else if (Array.isArray(invoice.line_items)) {
+                lineItems = invoice.line_items;
+              }
+            } catch (parseError) {
+              console.warn("Error parsing line_items JSON:", parseError);
+            }
+          }
+
+          // Filter by vendor or provider if specified (check line items)
+          if (filterParams?.vendorId || filterParams?.providerId) {
+            const hasMatchingItem = lineItems.some((item: any) => {
+              // Check vendor filter - handle both string and number comparisons
+              if (filterParams?.vendorId) {
+                const itemVendor = item.vendor?.toString() || item.vendorId?.toString();
+                const filterVendor = filterParams.vendorId.toString();
+                if (itemVendor !== filterVendor) {
+                  return false;
+                }
+              }
+              // Check provider filter - handle both string and number comparisons
+              if (filterParams?.providerId) {
+                const itemProvider = item.serviceProviderId?.toString() || item.providerId?.toString();
+                const filterProvider = filterParams.providerId.toString();
+                if (itemProvider !== filterProvider) {
+                  return false;
+                }
+              }
+              return true;
+            });
+
+            if (!hasMatchingItem && lineItems.length > 0) {
+              return null; // Skip this invoice if it has line items but none match
+            }
+            // If no line items and filter is specified, exclude the invoice
+            if (!hasMatchingItem && lineItems.length === 0) {
+              return null;
+            }
+          }
+
           return {
             id: invoice.id,
             tenantId: invoice.tenant_id,
@@ -3864,10 +3983,15 @@ export class SimpleStorage {
             status: invoice.status,
             issueDate: invoice.issue_date,
             dueDate: invoice.due_date,
-            subtotal: parseFloat(invoice.subtotal),
+            subtotal: parseFloat(invoice.subtotal || "0"),
             taxAmount: parseFloat(invoice.tax_amount || "0"),
-            totalAmount: parseFloat(invoice.total_amount),
+            discountAmount: parseFloat(invoice.discount_amount || "0"),
+            totalAmount: parseFloat(invoice.total_amount || "0"),
+            paidAmount: parseFloat(invoice.paid_amount || invoice.amount_paid || "0"),
+            currency: invoice.currency || "USD",
+            paymentTerms: invoice.payment_terms || null,
             notes: invoice.notes,
+            lineItems: lineItems,
             createdAt: invoice.created_at,
             customerName: customerName,
             customerEmail: customerEmail,
@@ -3876,7 +4000,59 @@ export class SimpleStorage {
         }),
       );
 
-      return invoicesWithDetails;
+      // Filter out null values
+      let filteredInvoices = invoicesWithDetails.filter((inv) => inv !== null);
+
+      // Apply lead type filter (requires checking service providers)
+      if (filterParams?.leadTypeId) {
+        const filtered = await Promise.all(
+          filteredInvoices.map(async (invoice) => {
+            if (!invoice.lineItems || invoice.lineItems.length === 0) {
+              return null;
+            }
+
+            // Check if any line item has a provider with the specified lead type
+            for (const item of invoice.lineItems) {
+              const providerId = item.serviceProviderId || item.providerId;
+              if (providerId) {
+                try {
+                  const providers = await sql`
+                    SELECT lead_type_id FROM service_providers 
+                    WHERE id = ${parseInt(providerId.toString())} AND tenant_id = ${tenantId}
+                  `;
+                  if (providers.length > 0 && providers[0].lead_type_id === filterParams.leadTypeId) {
+                    return invoice;
+                  }
+                } catch (error) {
+                  console.warn(`Error checking provider ${providerId} for lead type:`, error);
+                }
+              }
+            }
+            return null;
+          })
+        );
+        filteredInvoices = filtered.filter((inv) => inv !== null);
+      }
+
+      // Recalculate total count after all filtering if we filtered after fetch
+      if (shouldFilterAfterFetch) {
+        totalCount = filteredInvoices.length;
+        // Apply pagination to filtered results
+        const startIndex = (page - 1) * pageSize;
+        const endIndex = startIndex + pageSize;
+        filteredInvoices = filteredInvoices.slice(startIndex, endIndex);
+      }
+
+      // Always return new format with pagination for consistency
+      return {
+        data: filteredInvoices,
+        pagination: {
+          page,
+          pageSize,
+          total: totalCount,
+          totalPages: Math.ceil(totalCount / pageSize),
+        },
+      };
     } catch (error) {
       console.error("getInvoicesByTenant error:", error);
       throw error;
