@@ -936,6 +936,8 @@ export const consulationFormTemplates = pgTable("consulation_form_templates", {
     type: string;
     required?: boolean;
   }>>().notNull(),
+  defaultValues: json("default_values").$type<Record<string, string>>().default({}),
+  formType: varchar("form_type", { length: 50 }).default("consulation").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -951,6 +953,7 @@ export const consulationFormSubmissions = pgTable("consulation_form_submissions"
     type: string;
   }>>().notNull(),
   responses: json("responses").$type<Record<string, string>>().notNull(),
+  formType: varchar("form_type", { length: 50 }).default("consulation").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

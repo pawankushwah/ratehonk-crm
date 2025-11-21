@@ -4,7 +4,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
+// import { Loader2, CheckCircle2, Eye, X, Camera, Image as ImageIcon } from "lucide-react";
 import { Loader2, CheckCircle2, Eye, X, Camera, Image as ImageIcon, FileText } from "lucide-react";
+
 import { apiRequest } from "@/lib/queryClient";
 import {
   Dialog,
@@ -22,7 +24,7 @@ interface ConsulationField {
   required?: boolean;
 }
 
-export default function ConsulationForm() {
+export default function PaymentForm() {
   const [location, setLocation] = useLocation();
   const { toast } = useToast();
   const [fields, setFields] = useState<ConsulationField[]>([]);
@@ -32,7 +34,7 @@ export default function ConsulationForm() {
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [tenantId, setTenantId] = useState<number | null>(null);
   const [customerId, setCustomerId] = useState<number | null>(null);
-  const [formType, setFormType] = useState<string>('consulation');
+  const [formType, setFormType] = useState<string>('payment');
   const [imageFiles, setImageFiles] = useState<Record<string, File[]>>({});
   const [imagePreviews, setImagePreviews] = useState<Record<string, string[]>>({}); // Blob URLs for uploaded files
   const [defaultImageUrls, setDefaultImageUrls] = useState<Record<string, string[]>>({}); // URLs for default images
@@ -65,7 +67,7 @@ export default function ConsulationForm() {
     const params = new URLSearchParams(window.location.search);
     const tenantIdParam = params.get("tenantId");
     const customerIdParam = params.get("customerId");
-    const formTypeParam = params.get("formType") || 'consulation';
+    const formTypeParam = params.get("formType") || 'payment';
 
     if (tenantIdParam) {
       setTenantId(parseInt(tenantIdParam));
@@ -88,7 +90,7 @@ export default function ConsulationForm() {
     }
   }, []);
 
-  const loadFormFields = async (tenantId: number, formType: string = 'consulation') => {
+  const loadFormFields = async (tenantId: number, formType: string = 'payment') => {
     console.log("🔍 loadFormFields called with tenantId:", tenantId, "formType:", formType);
     try {
       setIsLoading(true);
@@ -219,7 +221,7 @@ export default function ConsulationForm() {
       console.error("Error loading form fields:", error);
       toast({
         title: "Error loading form",
-        description: error?.message || "Failed to load consulation form. Please try again.",
+        description: error?.message || "Failed to load payment form. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -479,57 +481,17 @@ export default function ConsulationForm() {
             setIsSubmitting(false);
             return;
           }
-        } else if (field.type === "file" && fileFiles[field.id] && fileFiles[field.id].length > 0) {
-          try {
-            const formData = new FormData();
-            fileFiles[field.id].forEach((file) => {
-              formData.append('attachments', file);
-            });
-
-            const uploadResponse = await fetch('/api/consulation-form/upload-images', {
-              method: 'POST',
-              body: formData,
-            });
-
-            if (!uploadResponse.ok) {
-              const errorData = await uploadResponse.json().catch(() => ({ message: 'Failed to upload files' }));
-              throw new Error(errorData.message || 'Failed to upload files');
-            }
-
-            const uploadResult = await uploadResponse.json();
-            const uploadedFiles = uploadResult.files || [];
-            uploadedFileUrls[field.id] = uploadedFiles
-              .filter((f: any) => f.path)
-              .map((f: any) => f.path);
-          } catch (error: any) {
-            console.error(`Error uploading files for field ${field.id}:`, error);
-            toast({
-              title: "Upload Error",
-              description: `Failed to upload files for ${field.label}: ${error.message}`,
-              variant: "destructive",
-            });
-            setIsSubmitting(false);
-            return;
-          }
         }
       }
 
-      // Prepare responses with image and file URLs
-      // Include default image/file URLs for fields with defaults
+      // Prepare responses with image URLs
+      // Include default image URLs for fields with defaults
       const responses: Record<string, string> = { ...formValues };
       for (const field of fields) {
         if (field.type === "image") {
           // Use defaultImageUrls for default images (not imagePreviews which is for blob URLs)
           const defaultUrls = fieldsWithDefaults.has(field.id) ? (defaultImageUrls[field.id] || []) : [];
           const newUrls = uploadedImageUrls[field.id] || [];
-          const allUrls = [...defaultUrls, ...newUrls].filter((url, index, self) => self.indexOf(url) === index);
-          if (allUrls.length > 0) {
-            responses[field.id] = allUrls.join(", ");
-          }
-        } else if (field.type === "file") {
-          // Use defaultFileUrls for default files
-          const defaultUrls = fieldsWithDefaults.has(field.id) ? (defaultFileUrls[field.id] || []) : [];
-          const newUrls = uploadedFileUrls[field.id] || [];
           const allUrls = [...defaultUrls, ...newUrls].filter((url, index, self) => self.indexOf(url) === index);
           if (allUrls.length > 0) {
             responses[field.id] = allUrls.join(", ");
@@ -556,7 +518,7 @@ export default function ConsulationForm() {
         setIsSubmitted(true);
         toast({
           title: "Form submitted successfully",
-          description: "Thank you for completing the consulation form!",
+          description: "Thank you for completing the payment form!",
         });
       } else {
         throw new Error(data?.message || "Failed to submit form");
@@ -860,7 +822,7 @@ export default function ConsulationForm() {
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
           <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-blue-600" />
-          <p className="text-gray-600">Loading consulation form...</p>
+          <p className="text-gray-600">Loading payment form...</p>
         </div>
       </div>
     );
@@ -873,7 +835,7 @@ export default function ConsulationForm() {
           <CheckCircle2 className="h-16 w-16 text-green-500 mx-auto mb-4" />
           <h1 className="text-2xl font-bold text-gray-900 mb-2">Thank You!</h1>
           <p className="text-gray-600 mb-6">
-            Your consulation form has been submitted successfully.
+            Your payment form has been submitted successfully.
           </p>
           <p className="text-sm text-gray-500">
             We will review your submission and get back to you soon.
@@ -888,10 +850,10 @@ export default function ConsulationForm() {
       <div className="max-w-2xl mx-auto">
         <div className="bg-white rounded-lg shadow-md p-6 md:p-8">
           <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-2 text-center">
-            Consulation Form
+            Payment Form
           </h1>
           <p className="text-gray-600 mb-6 text-center">
-            Please fill out the form below to help us prepare for your consulation.
+            Please fill out the form below to help us process your payment.
           </p>
 
           <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -1059,7 +1021,6 @@ export default function ConsulationForm() {
     </CardContent>
   </Card>
 );
-
             })}
           </div>
         </DialogContent>
@@ -1174,3 +1135,4 @@ export default function ConsulationForm() {
     </div>
   );
 }
+

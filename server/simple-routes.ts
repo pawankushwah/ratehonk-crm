@@ -2287,17 +2287,19 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
         }
 
         const baseUrl = getBaseUrl();
-        const formUrl = `${baseUrl}/consulation-form?tenantId=${tenantId}&customerId=${customerId}`;
+        const formType = req.body?.formType || 'consulation';
+        const formPath = formType === 'payment' ? 'payment-form' : 'consulation-form';
+        const formUrl = `${baseUrl}/${formPath}?tenantId=${tenantId}&customerId=${customerId}&formType=${formType}`;
         const customerName = customer.name || customer.email || "there";
         const toastTenantName =
           req.user?.tenantName || req.user?.companyName || "RateHonk CRM";
 
-        // Fetch form fields from database
+        // Fetch form fields from database based on formType
         let formFields: Array<{ id: string; label: string; type: string; required?: boolean }> = [];
         try {
           const [formTemplate] = await sql`
             SELECT fields FROM consulation_form_templates
-            WHERE tenant_id = ${tenantId}
+            WHERE tenant_id = ${tenantId} AND form_type = ${formType}
             ORDER BY created_at DESC
             LIMIT 1
           `;
@@ -2305,30 +2307,39 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
             formFields = formTemplate.fields;
           }
         } catch (dbError) {
-          console.log("No form template found in database, using empty fields list");
+          console.log(`No ${formType} form template found in database, using empty fields list`);
         }
 
+        // Get method from request body (email, whatsapp, or both)
+        const method = req.body?.method || 'both';
+        const shouldSendEmail = (method === 'email' || method === 'both') && customer.email;
+        const shouldSendWhatsApp = (method === 'whatsapp' || method === 'both') && customer.phone;
+
+        const formName = formType === 'payment' ? 'payment' : 'consulation';
+        const activityTitle = formType === 'payment' ? 'Payment Form Link Sent' : 'Consulation Form Link Sent';
+
         let emailSent = false;
-        if (customer.email) {
+        if (shouldSendEmail) {
           emailSent = await emailService.sendConsulationFormEmail({
             to: customer.email,
             customerName,
             formUrl,
             tenantName: toastTenantName,
+            formType: formType as 'consulation' | 'payment',
           });
         }
 
         let whatsappResult: { success: boolean; message?: string; error?: string } | null =
           null;
-        if (customer.phone) {
-          const whatsappMessage = `Hello ${customerName}, please complete your consulation form here: ${formUrl}`;
+        if (shouldSendWhatsApp) {
+          const whatsappMessage = `Hello ${customerName}, please complete your ${formName} form here: ${formUrl}`;
           whatsappResult = await sendWhatsAppCustomMessage({
             tenantId,
             phoneNumber: customer.phone,
             message: whatsappMessage,
             userId: req.user?.id,
             customerId,
-            activityTitle: "Consulation Form Link Sent",
+            activityTitle: activityTitle,
           });
         }
 
@@ -2369,12 +2380,15 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
           return res.status(403).json({ message: "Unauthorized" });
         }
 
-        const { fields } = req.body;
+        const { fields, defaultValues, formType = "consulation" } = req.body;
 
         console.log("💾 Saving consulation form template:", {
           tenantId,
+          formType,
           fieldsCount: fields?.length,
           fields: fields,
+          defaultValues: defaultValues,
+          defaultValuesCount: defaultValues ? Object.keys(defaultValues).length : 0,
         });
 
         if (!fields || !Array.isArray(fields)) {
@@ -2384,45 +2398,59 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
           });
         }
 
-        // Check if template already exists for this tenant
+        // Check if template already exists for this tenant and form type
         const [existingTemplate] = await sql`
           SELECT id FROM consulation_form_templates
-          WHERE tenant_id = ${tenantId}
+          WHERE tenant_id = ${tenantId} AND form_type = ${formType}
           ORDER BY created_at DESC
           LIMIT 1
         `;
 
         const fieldsJson = JSON.stringify(fields);
+        // Convert defaultValues to JSONB, default to empty object if not provided
+        const defaultValuesJson = defaultValues ? JSON.stringify(defaultValues) : JSON.stringify({});
         console.log("💾 Fields JSON to save:", fieldsJson);
+        console.log("💾 Default Values JSON to save:", defaultValuesJson);
 
         if (existingTemplate) {
           // Update existing template
           const updateResult = await sql`
             UPDATE consulation_form_templates
             SET fields = ${fieldsJson}::jsonb,
+                default_values = ${defaultValuesJson}::jsonb,
                 updated_at = NOW()
-            WHERE id = ${existingTemplate.id}
-            RETURNING id, tenant_id, fields
+            WHERE id = ${existingTemplate.id} AND form_type = ${formType}
+            RETURNING id, tenant_id, fields, default_values, form_type
           `;
-          console.log("✅ Updated existing template:", updateResult[0]);
+          console.log("✅ Updated existing template:", {
+            id: updateResult[0]?.id,
+            tenantId: updateResult[0]?.tenant_id,
+            fieldsCount: Array.isArray(updateResult[0]?.fields) ? updateResult[0].fields.length : 0,
+            defaultValuesKeys: updateResult[0]?.default_values ? Object.keys(updateResult[0].default_values).length : 0,
+          });
         } else {
           // Create new template
           const insertResult = await sql`
             INSERT INTO consulation_form_templates (
-              tenant_id, fields, created_at, updated_at
+              tenant_id, fields, default_values, form_type, created_at, updated_at
             )
             VALUES (
-              ${tenantId}, ${fieldsJson}::jsonb, NOW(), NOW()
+              ${tenantId}, ${fieldsJson}::jsonb, ${defaultValuesJson}::jsonb, ${formType}, NOW(), NOW()
             )
-            RETURNING id, tenant_id, fields
+            RETURNING id, tenant_id, fields, default_values, form_type
           `;
-          console.log("✅ Created new template:", insertResult[0]);
+          console.log("✅ Created new template:", {
+            id: insertResult[0]?.id,
+            tenantId: insertResult[0]?.tenant_id,
+            fieldsCount: Array.isArray(insertResult[0]?.fields) ? insertResult[0].fields.length : 0,
+            defaultValuesKeys: insertResult[0]?.default_values ? Object.keys(insertResult[0].default_values).length : 0,
+          });
         }
 
         // Verify the save by reading it back
         const [verifyTemplate] = await sql`
           SELECT fields FROM consulation_form_templates
-          WHERE tenant_id = ${tenantId}
+          WHERE tenant_id = ${tenantId} AND form_type = ${formType}
           ORDER BY created_at DESC
           LIMIT 1
         `;
@@ -2471,6 +2499,9 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
           });
         }
 
+        // Get formType from query parameter, default to 'consulation'
+        const formType = req.query?.formType || "consulation";
+
         // Try to get form fields from database
         try {
           // Query JSONB field - explicitly cast to ensure proper retrieval
@@ -2480,10 +2511,13 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
               tenant_id,
               fields::text as fields_text,
               fields as fields_jsonb,
+              default_values::text as default_values_text,
+              default_values as default_values_jsonb,
+              form_type,
               created_at,
               updated_at
             FROM consulation_form_templates
-            WHERE tenant_id = ${tenantId}
+            WHERE tenant_id = ${tenantId} AND form_type = ${formType}
             ORDER BY created_at DESC
             LIMIT 1
           `;
@@ -2589,12 +2623,52 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
               }
             }
 
+            // Parse default_values similar to fields
+            let parsedDefaultValues = formTemplate.default_values_jsonb;
+            
+            // If default_values_jsonb is not an object, try parsing the text version
+            if (!parsedDefaultValues || (typeof parsedDefaultValues !== 'object' && typeof parsedDefaultValues !== 'string')) {
+              const textToParse = formTemplate.default_values_text || formTemplate.default_values_jsonb;
+              if (textToParse && typeof textToParse === 'string') {
+                try {
+                  parsedDefaultValues = JSON.parse(textToParse);
+                  console.log("✅ Parsed default_values from text");
+                } catch (parseError: any) {
+                  console.error("❌ Failed to parse default_values:", parseError?.message);
+                  parsedDefaultValues = {};
+                }
+              } else {
+                parsedDefaultValues = {};
+              }
+            } else if (typeof parsedDefaultValues === 'string') {
+              try {
+                parsedDefaultValues = JSON.parse(parsedDefaultValues);
+                console.log("✅ Parsed default_values from JSON string");
+              } catch (parseError: any) {
+                console.error("❌ Failed to parse default_values JSON string:", parseError?.message);
+                parsedDefaultValues = {};
+              }
+            }
+            
+            // Ensure it's an object
+            if (!parsedDefaultValues || typeof parsedDefaultValues !== 'object' || Array.isArray(parsedDefaultValues)) {
+              parsedDefaultValues = {};
+            }
+            
+            console.log("📋 Parsed default_values:", {
+              type: typeof parsedDefaultValues,
+              isObject: typeof parsedDefaultValues === 'object' && !Array.isArray(parsedDefaultValues),
+              keysCount: Object.keys(parsedDefaultValues).length,
+              keys: Object.keys(parsedDefaultValues),
+            });
+
             // Ensure it's an array and return it
             if (parsedFields && Array.isArray(parsedFields) && parsedFields.length > 0) {
               console.log("✅ Returning", parsedFields.length, "fields:", JSON.stringify(parsedFields, null, 2));
               return res.json({
                 success: true,
                 fields: parsedFields,
+                defaultValues: parsedDefaultValues,
               });
             } else {
               console.log("⚠️ Fields is not a valid array or is empty:", {
@@ -2621,6 +2695,7 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
         return res.json({
           success: true,
           fields: [],
+          defaultValues: {},
         });
       } catch (error: any) {
         console.error("❌ Error getting consulation form:", error);
@@ -2668,7 +2743,7 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
           });
         }
 
-        const { fields, responses } = req.body;
+        const { fields, responses, formType = 'consulation' } = req.body;
 
         if (!fields || !Array.isArray(fields) || !responses) {
           return res.status(400).json({
@@ -2677,16 +2752,38 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
           });
         }
 
-        // Save submission to database
-        const [submission] = await sql`
-          INSERT INTO consulation_form_submissions (
-            tenant_id, customer_id, form_fields, responses, created_at, updated_at
-          )
-          VALUES (
-            ${tenantId}, ${customerId}, ${JSON.stringify(fields)}::jsonb, ${JSON.stringify(responses)}::jsonb, NOW(), NOW()
-          )
-          RETURNING *
-        `;
+        // Save submission to database (with form_type if column exists, otherwise without)
+        let submission;
+        try {
+          // Try to insert with form_type column
+          [submission] = await sql`
+            INSERT INTO consulation_form_submissions (
+              tenant_id, customer_id, form_fields, responses, form_type, created_at, updated_at
+            )
+            VALUES (
+              ${tenantId}, ${customerId}, ${JSON.stringify(fields)}::jsonb, ${JSON.stringify(responses)}::jsonb, ${formType}, NOW(), NOW()
+            )
+            RETURNING *
+          `;
+        } catch (error: any) {
+          // If form_type column doesn't exist, insert without it
+          if (error?.message?.includes('form_type') || error?.code === '42703') {
+            [submission] = await sql`
+              INSERT INTO consulation_form_submissions (
+                tenant_id, customer_id, form_fields, responses, created_at, updated_at
+              )
+              VALUES (
+                ${tenantId}, ${customerId}, ${JSON.stringify(fields)}::jsonb, ${JSON.stringify(responses)}::jsonb, NOW(), NOW()
+              )
+              RETURNING *
+            `;
+          } else {
+            throw error;
+          }
+        }
+
+        const formName = formType === 'payment' ? 'payment' : 'consulation';
+        const activityTitle = formType === 'payment' ? 'Payment Form Submitted' : 'Consulation Form Submitted';
 
         // Create customer activity for the submission
         try {
@@ -2694,13 +2791,15 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
             tenantId,
             customerId,
             userId: null, // No user since it's a public form
-            activityType: 12, // Consulation Form Submitted (you may need to add this type)
-            activityTitle: "Consulation Form Submitted",
-            activityDescription: `Customer submitted consulation form with ${fields.length} fields`,
+            activityType: 12, // Form Submitted
+            activityTitle: activityTitle,
+            activityDescription: `Customer submitted ${formName} form with ${fields.length} fields`,
             activityStatus: 1,
+            activityTableId: submission.id,
+            activityTableName: 'consulation_form_submissions',
           });
         } catch (activityError) {
-          console.warn("⚠️ Failed to log consulation form activity:", activityError);
+          console.warn("⚠️ Failed to log form activity:", activityError);
           // Don't fail the submission if activity logging fails
         }
 
@@ -2748,27 +2847,76 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
           return res.status(403).json({ message: "Unauthorized" });
         }
 
+        // Get formType from query parameter (optional, defaults to all)
+        const formType = req.query?.formType;
+
         // Fetch submissions from database
-        const submissions = await sql`
-          SELECT 
-            id,
-            tenant_id,
-            customer_id,
-            form_fields::text as form_fields_text,
-            form_fields as form_fields_jsonb,
-            responses::text as responses_text,
-            responses as responses_jsonb,
-            created_at,
-            updated_at
-          FROM consulation_form_submissions
-          WHERE tenant_id = ${tenantId} AND customer_id = ${customerId}
-          ORDER BY created_at DESC
-        `;
+        let submissions;
+        if (formType) {
+          // Filter by formType if provided
+          try {
+            submissions = await sql`
+              SELECT 
+                id,
+                tenant_id,
+                customer_id,
+                form_fields::text as form_fields_text,
+                form_fields as form_fields_jsonb,
+                responses::text as responses_text,
+                responses as responses_jsonb,
+                form_type,
+                created_at,
+                updated_at
+              FROM consulation_form_submissions
+              WHERE tenant_id = ${tenantId} AND customer_id = ${customerId} AND form_type = ${formType}
+              ORDER BY created_at DESC
+            `;
+          } catch (error: any) {
+            // If form_type column doesn't exist, fall back to querying all
+            if (error?.message?.includes('form_type') || error?.code === '42703') {
+              submissions = await sql`
+                SELECT 
+                  id,
+                  tenant_id,
+                  customer_id,
+                  form_fields::text as form_fields_text,
+                  form_fields as form_fields_jsonb,
+                  responses::text as responses_text,
+                  responses as responses_jsonb,
+                  created_at,
+                  updated_at
+                FROM consulation_form_submissions
+                WHERE tenant_id = ${tenantId} AND customer_id = ${customerId}
+                ORDER BY created_at DESC
+              `;
+            } else {
+              throw error;
+            }
+          }
+        } else {
+          // No formType filter - get all submissions
+          submissions = await sql`
+            SELECT 
+              id,
+              tenant_id,
+              customer_id,
+              form_fields::text as form_fields_text,
+              form_fields as form_fields_jsonb,
+              responses::text as responses_text,
+              responses as responses_jsonb,
+              created_at,
+              updated_at
+            FROM consulation_form_submissions
+            WHERE tenant_id = ${tenantId} AND customer_id = ${customerId}
+            ORDER BY created_at DESC
+          `;
+        }
 
         // Parse JSONB fields
         const parsedSubmissions = submissions.map((submission: any) => {
           let formFields = submission.form_fields_jsonb;
           let responses = submission.responses_jsonb;
+          const formType = submission.form_type || 'consulation'; // Default to consulation for backward compatibility
 
           // Parse form_fields if it's a string
           if (typeof formFields === 'string') {
@@ -2808,6 +2956,7 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
             customerId: submission.customer_id,
             formFields: formFields || [],
             responses: responses || {},
+            formType: formType,
             createdAt: submission.created_at,
             updatedAt: submission.updated_at,
           };
@@ -18145,6 +18294,99 @@ Please improve this email.`;
       res.status(404).json({ message: "File not found" });
     }
   });
+
+  // Consulation form file upload endpoint (public - no auth required)
+  // Accepts both images and PDFs
+  const consulationFormImageUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+      fileSize: 10 * 1024 * 1024, // 10MB limit per file
+    },
+    fileFilter: (req, file, cb) => {
+      // Allow image files and PDFs
+      const allowedTypes = [
+        "image/jpeg",
+        "image/jpg",
+        "image/png",
+        "image/gif",
+        "image/webp",
+        "application/pdf",
+      ];
+      if (allowedTypes.includes(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(new Error("Only image files (JPEG, PNG, GIF, WebP) and PDFs are allowed"));
+      }
+    },
+  });
+
+  app.post(
+    "/api/consulation-form/upload-images",
+    // No authentication - this is a public endpoint for consulation forms
+    consulationFormImageUpload.array("attachments", 10), // Allow up to 10 files (images and PDFs)
+    async (req: any, res) => {
+      try {
+        if (!req.files || !Array.isArray(req.files) || req.files.length === 0) {
+          return res.status(400).json({ message: "No files uploaded" });
+        }
+
+        const { ObjectStorageService } = await import("./objectStorage.js");
+        const objectStorage = new ObjectStorageService();
+
+        const uploadedFiles = [];
+
+        for (const file of req.files) {
+          // Sanitize filename to prevent issues with spaces and special characters
+          const sanitizeFilename = (name: string): string => {
+            const ext = path.extname(name);
+            const baseName = path.basename(name, ext);
+            // Keep alphanumeric, spaces, dashes, underscores, dots, and parentheses
+            const sanitized = baseName
+              .replace(/[^a-zA-Z0-9._\s()-]/g, '') // Remove dangerous chars but keep parentheses
+              .replace(/\s+/g, ' ') // Normalize spaces
+              .trim()
+              .substring(0, 100); // Limit length
+            return `${sanitized}${ext}`;
+          };
+
+          const sanitizedOriginalName = sanitizeFilename(file.originalname);
+          const file_ext = path.extname(file.originalname);
+          const timestamp = Date.now();
+          const randomSuffix = Math.random().toString(36).substring(2, 8);
+          const safeFileName = `consulation_${timestamp}_${randomSuffix}${file_ext}`;
+          const fileName = `consulation-forms/${safeFileName}`;
+
+          try {
+            const url = await objectStorage.uploadFile(
+              fileName,
+              file.buffer,
+              file.mimetype,
+            );
+
+            uploadedFiles.push({
+              filename: file.originalname, // Keep original for display
+              path: url, // This will be the sanitized path
+              size: file.size,
+              mimetype: file.mimetype,
+            });
+          } catch (uploadError) {
+            console.error(
+              `Error uploading consulation form image ${file.originalname}:`,
+              uploadError,
+            );
+            throw uploadError;
+          }
+        }
+
+        res.json({ files: uploadedFiles });
+      } catch (error: any) {
+        console.error("Error uploading consulation form images:", error);
+        res
+          .status(500)
+          .json({ message: error.message || "Failed to upload files" });
+      }
+    },
+  );
 
   // Email attachment upload endpoint
   app.post(

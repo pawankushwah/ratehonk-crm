@@ -415,6 +415,7 @@ class EmailService {
     customerName: string;
     formUrl: string;
     tenantName?: string;
+    formType?: 'consulation' | 'payment';
   }) {
     try {
       if (!this.transporter) {
@@ -427,11 +428,19 @@ class EmailService {
         "support@vanitechnologies.in";
       const fromEmail = process.env.EMAIL_FROM || smtpUser;
       const formUrl = data.formUrl || `${getBaseUrl()}/consulation-form`;
+      const formType = data.formType || 'consulation';
+      const formName = formType === 'payment' ? 'Payment' : 'Consulation';
+      const formNameLower = formType === 'payment' ? 'payment' : 'consulation';
+      const emailSubject = `${formName} Form - RateHonk CRM`;
+      const emailTitle = `${formName} Form`;
+      const emailDescription = formType === 'payment' 
+        ? 'To help us process your payment, please take a moment to complete the form using the link below:'
+        : 'To help us prepare for your upcoming consulation, please take a moment to complete the form using the link below:';
 
       const mailOptions = {
         from: fromEmail,
         to: data.to,
-        subject: "Consulation Form - RateHonk CRM",
+        subject: emailSubject,
         html: `
           <!DOCTYPE html>
           <html>
@@ -446,11 +455,11 @@ class EmailService {
                   <table role="presentation" style="width: 100%; max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
                     <tr>
                       <td style="padding: 30px 20px;">
-                        <h2 style="color: #333; margin: 0 0 20px 0; font-size: 24px;">Consulation Form</h2>
+                        <h2 style="color: #333; margin: 0 0 20px 0; font-size: 24px;">${emailTitle}</h2>
                         <p style="color: #666; margin: 0 0 15px 0; font-size: 16px; line-height: 1.5;">Hi ${data.customerName || "there"},</p>
-                        <p style="color: #666; margin: 0 0 30px 0; font-size: 16px; line-height: 1.5;">To help us prepare for your upcoming consulation, please take a moment to complete the form using the link below:</p>
+                        <p style="color: #666; margin: 0 0 30px 0; font-size: 16px; line-height: 1.5;">${emailDescription}</p>
                         <div style="text-align: center; margin: 30px 0;">
-                          <a href="${formUrl}" style="background-color: #0E76BC; color: white; padding: 14px 28px; text-decoration: none; border-radius: 5px; display: inline-block; font-size: 16px; font-weight: 600; min-width: 200px; box-sizing: border-box;">Open Consulation Form</a>
+                          <a href="${formUrl}" style="background-color: #0E76BC; color: white; padding: 14px 28px; text-decoration: none; border-radius: 5px; display: inline-block; font-size: 16px; font-weight: 600; min-width: 200px; box-sizing: border-box;">Open ${formName} Form</a>
                         </div>
                         <p style="color: #666; margin: 30px 0 15px 0; font-size: 14px; line-height: 1.5;">If the button above does not work, copy and paste this link into your browser:</p>
                         <p style="margin: 0 0 30px 0; word-break: break-all;">
