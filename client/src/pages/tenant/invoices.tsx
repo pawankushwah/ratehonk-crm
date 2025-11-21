@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Layout } from "@/components/layout/layout";
 import { Button } from "@/components/ui/button";
@@ -75,6 +75,15 @@ import { EnhancedTable, TableColumn } from "@/components/ui/enhanced-table";
 import type { Invoice } from "@shared/schema";
 import { Link, useLocation } from "wouter";
 import { ModernTemplate, InvoiceData } from "@/components/invoices/invoice-templates";
+import { Combobox } from "@/components/ui/combobox";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { Check, X } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 const invoiceStatuses = [
   { value: "draft", label: "Draft", color: "bg-gray-100 text-gray-800" },
@@ -98,8 +107,24 @@ export default function Invoices() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
+  // Local filter states (not applied until "Apply Filters" is clicked)
+  const [localSearchTerm, setLocalSearchTerm] = useState("");
+  const [localStatusFilter, setLocalStatusFilter] = useState("all");
+  const [localCustomerFilter, setLocalCustomerFilter] = useState<string[]>([]);
+  const [localVendorFilter, setLocalVendorFilter] = useState<string>("all");
+  const [localProviderFilter, setLocalProviderFilter] = useState<string>("all");
+  const [localLeadTypeFilter, setLocalLeadTypeFilter] = useState<string>("all");
+  
+  // Applied filter states (used for API calls)
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [customerFilter, setCustomerFilter] = useState<string[]>([]);
+  const [vendorFilter, setVendorFilter] = useState<string>("all");
+  const [providerFilter, setProviderFilter] = useState<string>("all");
+  const [leadTypeFilter, setLeadTypeFilter] = useState<string>("all");
+  
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize] = useState(10);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
@@ -591,16 +616,34 @@ export default function Invoices() {
 
   // Fetch vendors for dropdown
   const { data: vendors = [] } = useQuery<any[]>({
-    queryKey: [`/api/vendors`],
+    queryKey: [`/api/tenants/${tenant?.id}/vendors`],
     enabled: !!tenant?.id,
     queryFn: async () => {
       const token = auth.getToken();
-      const response = await fetch("/api/vendors", {
+      const response = await fetch(`/api/tenants/${tenant?.id}/vendors`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!response.ok) return [];
       const result = await response.json();
       return Array.isArray(result) ? result : result.vendors || [];
+    },
+  });
+
+  // Fetch service providers for dropdown (filtered by lead type)
+  const { data: serviceProviders = [] } = useQuery<any[]>({
+    queryKey: [`/api/tenants/${tenant?.id}/service-providers`, leadTypeFilter],
+    enabled: !!tenant?.id,
+    queryFn: async () => {
+      const token = auth.getToken();
+      const url = leadTypeFilter && leadTypeFilter !== "all"
+        ? `/api/tenants/${tenant?.id}/service-providers?leadTypeId=${leadTypeFilter}`
+        : `/api/tenants/${tenant?.id}/service-providers`;
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) return [];
+      const result = await response.json();
+      return Array.isArray(result) ? result : result.providers || [];
     },
   });
 
@@ -645,13 +688,13 @@ export default function Invoices() {
     },
   });
 
-  // Fetch invoices
+  // Fetch invoices with filters and pagination
   const {
-    data: invoices = [],
+    data: invoicesResponse,
     isLoading,
     error,
-  } = useQuery<Invoice[]>({
-    queryKey: [`/api/tenants/${tenant?.id}/invoices`],
+  } = useQuery<{ data: Invoice[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }>({
+    queryKey: [`/api/tenants/${tenant?.id}/invoices`, currentPage, statusFilter, customerFilter, vendorFilter, providerFilter, leadTypeFilter, searchTerm],
     enabled: !!tenant?.id,
     refetchOnWindowFocus: true,
     refetchInterval: 30000,
@@ -659,9 +702,33 @@ export default function Invoices() {
     gcTime: 0,
     queryFn: async () => {
       const token = auth.getToken();
-      const timestamp = Date.now();
+      const params = new URLSearchParams();
+      params.append("page", currentPage.toString());
+      params.append("pageSize", pageSize.toString());
+      
+      if (statusFilter && statusFilter !== "all") {
+        params.append("status", statusFilter);
+      }
+      if (customerFilter && customerFilter.length > 0) {
+        customerFilter.forEach((customerId) => {
+          params.append("customerId", customerId);
+        });
+      }
+      if (vendorFilter && vendorFilter !== "all") {
+        params.append("vendorId", vendorFilter);
+      }
+      if (providerFilter && providerFilter !== "all") {
+        params.append("providerId", providerFilter);
+      }
+      if (leadTypeFilter && leadTypeFilter !== "all") {
+        params.append("leadTypeId", leadTypeFilter);
+      }
+      if (searchTerm) {
+        params.append("search", searchTerm);
+      }
+
       const response = await fetch(
-        `/api/tenants/${tenant?.id}/invoices?_t=${timestamp}`,
+        `/api/tenants/${tenant?.id}/invoices?${params.toString()}`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -671,12 +738,39 @@ export default function Invoices() {
       );
       if (!response.ok) {
         console.error("Invoices API Error:", response.status);
-        return [];
+        return { data: [], pagination: { page: 1, pageSize: 10, total: 0, totalPages: 0 } };
       }
       const result = await response.json();
-      return Array.isArray(result) ? result : result.invoices || [];
+      
+      // Handle both old format (array) and new format (object with data and pagination)
+      if (Array.isArray(result)) {
+        return { data: result, pagination: { page: 1, pageSize: result.length, total: result.length, totalPages: 1 } };
+      }
+      return result;
     },
   });
+
+  const invoices = invoicesResponse?.data || [];
+  const pagination = invoicesResponse?.pagination || { page: 1, pageSize: 10, total: 0, totalPages: 0 };
+
+  // Helper function to get currency symbol
+  const getCurrencySymbol = (currencyCode: string): string => {
+    const symbols: { [key: string]: string } = {
+      USD: "$",
+      INR: "₹",
+      EUR: "€",
+      GBP: "£",
+      JPY: "¥",
+      AUD: "A$",
+      CAD: "C$",
+      CHF: "CHF",
+      CNY: "¥",
+      SGD: "S$",
+      HKD: "HK$",
+      NZD: "NZ$",
+    };
+    return symbols[currencyCode] || currencyCode;
+  };
 
   // Column definitions for the enhanced table
   const invoiceColumns: TableColumn<Invoice>[] = [
@@ -706,23 +800,70 @@ export default function Invoices() {
         </div>
       ),
     },
+    // Booking column hidden as per request
+    // {
+    //   key: "bookingNumber",
+    //   label: "Booking",
+    //   sortable: true,
+    //   render: (_, invoice) => {
+    //     const booking = bookings.find((b) => b.id === invoice.bookingId);
+    //     return (
+    //       <div className="flex flex-col">
+    //         <div className="font-medium">
+    //           {booking ? booking.bookingNumber || `BK-${booking.id}` : "-"}
+    //         </div>
+    //         {booking && (
+    //           <div className="text-sm text-gray-500 flex items-center mt-1">
+    //             <Calendar className="h-3 w-3 mr-1" />
+    //             {booking.travelDate
+    //               ? new Date(booking.travelDate).toLocaleDateString()
+    //               : "No date"}
+    //           </div>
+    //         )}
+    //       </div>
+    //     );
+    //   },
+    // },
     {
-      key: "bookingNumber",
-      label: "Booking",
-      sortable: true,
+      key: "invoiceVoucherNumbers",
+      label: "Invoice/Voucher #",
+      sortable: false,
       render: (_, invoice) => {
-        const booking = bookings.find((b) => b.id === invoice.bookingId);
+        const invoiceData = invoice as any;
+        let lineItems: any[] = [];
+        
+        // Parse line items
+        if (invoiceData.lineItems) {
+          if (typeof invoiceData.lineItems === "string") {
+            try {
+              lineItems = JSON.parse(invoiceData.lineItems);
+            } catch (e) {
+              console.warn("Failed to parse line items:", e);
+            }
+          } else if (Array.isArray(invoiceData.lineItems)) {
+            lineItems = invoiceData.lineItems;
+          }
+        }
+        
+        // Extract invoice/voucher numbers from line items
+        const numbers = lineItems
+          .map((item) => item.invoiceNumber || item.voucherNumber)
+          .filter((num) => num && num.trim() !== "");
+        
+        if (numbers.length === 0) {
+          return <div className="text-gray-400">-</div>;
+        }
+        
         return (
-          <div className="flex flex-col">
-            <div className="font-medium">
-              {booking ? booking.bookingNumber || `BK-${booking.id}` : "-"}
-            </div>
-            {booking && (
-              <div className="text-sm text-gray-500 flex items-center mt-1">
-                <Calendar className="h-3 w-3 mr-1" />
-                {booking.travelDate
-                  ? new Date(booking.travelDate).toLocaleDateString()
-                  : "No date"}
+          <div className="flex flex-col gap-1">
+            {numbers.slice(0, 3).map((num, idx) => (
+              <div key={idx} className="text-sm font-medium">
+                {num}
+              </div>
+            ))}
+            {numbers.length > 3 && (
+              <div className="text-xs text-gray-500">
+                +{numbers.length - 3} more
               </div>
             )}
           </div>
@@ -766,16 +907,21 @@ export default function Invoices() {
       key: "totalAmount",
       label: "Total Amount",
       sortable: true,
-      render: (totalAmount) => (
-        <div className="flex items-center font-semibold">
-          <IndianRupee className="h-4 w-4 mr-1 text-gray-400" />
-          <span>
-            {totalAmount
-              ? parseFloat(totalAmount.toString()).toLocaleString()
-              : "0"}
-          </span>
-        </div>
-      ),
+      render: (totalAmount, invoice) => {
+        const invoiceData = invoice as any;
+        const currency = invoiceData.currency || "USD";
+        const currencySymbol = getCurrencySymbol(currency);
+        return (
+          <div className="flex items-center font-semibold">
+            <span className="mr-1">{currencySymbol}</span>
+            <span>
+              {totalAmount
+                ? parseFloat(totalAmount.toString()).toLocaleString()
+                : "0"}
+            </span>
+          </div>
+        );
+      },
     },
     {
       key: "paidAmount",
@@ -784,9 +930,11 @@ export default function Invoices() {
       render: (_, invoice) => {
         const invoiceData = invoice as any;
         const paidAmount = invoiceData.paidAmount || 0;
+        const currency = invoiceData.currency || "USD";
+        const currencySymbol = getCurrencySymbol(currency);
         return (
           <div className="flex items-center font-semibold text-green-600">
-            <IndianRupee className="h-4 w-4 mr-1 text-gray-400" />
+            <span className="mr-1">{currencySymbol}</span>
             <span>{parseFloat(paidAmount.toString()).toLocaleString()}</span>
           </div>
         );
@@ -879,36 +1027,150 @@ export default function Invoices() {
     },
   ];
 
-  // Filter invoices based on search term and status
-  const filteredInvoices = invoices.filter((invoice) => {
-    const searchableText = (
-      (invoice.invoiceNumber || `INV-${invoice.id}`) +
-      " " +
-      (invoice.customerName || "") +
-      " " +
-      (customers.find((c) => c.id === invoice.customerId)?.name || "") +
-      " " +
-      (customers.find((c) => c.id === invoice.customerId)?.email || "") +
-      " " +
-      (invoice.notes || "")
-    ).toLowerCase();
+  // Reset to page 1 when applied filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [statusFilter, customerFilter, vendorFilter, providerFilter, leadTypeFilter, searchTerm]);
 
-    const matchesSearch = searchableText.includes(searchTerm.toLowerCase());
-    
-    let matchesStatus = false;
-    if (statusFilter === "all") {
-      matchesStatus = true;
-    } else if (statusFilter === "partial") {
-      // Partial payment: paidAmount > 0 and paidAmount < totalAmount
-      const paidAmount = parseFloat(invoice.paidAmount?.toString() || invoice.amountPaid?.toString() || "0");
-      const totalAmount = parseFloat(invoice.totalAmount?.toString() || "0");
-      matchesStatus = paidAmount > 0 && paidAmount < totalAmount;
-    } else {
-      matchesStatus = invoice.status === statusFilter;
-    }
-    
-    return matchesSearch && matchesStatus;
-  });
+  // Apply filters function
+  const handleApplyFilters = () => {
+    setSearchTerm(localSearchTerm);
+    setStatusFilter(localStatusFilter);
+    setCustomerFilter([...localCustomerFilter]);
+    setVendorFilter(localVendorFilter);
+    setProviderFilter(localProviderFilter);
+    setLeadTypeFilter(localLeadTypeFilter);
+    setCurrentPage(1);
+  };
+
+  // Reset filters function
+  const handleResetFilters = () => {
+    setLocalSearchTerm("");
+    setLocalStatusFilter("all");
+    setLocalCustomerFilter([]);
+    setLocalVendorFilter("all");
+    setLocalProviderFilter("all");
+    setLocalLeadTypeFilter("all");
+    setSearchTerm("");
+    setStatusFilter("all");
+    setCustomerFilter([]);
+    setVendorFilter("all");
+    setProviderFilter("all");
+    setLeadTypeFilter("all");
+    setCurrentPage(1);
+  };
+
+  // Multi-select customer component
+  const MultiSelectCustomer = ({ customers, selectedCustomers, onSelectionChange }: {
+    customers: any[];
+    selectedCustomers: string[];
+    onSelectionChange: (selected: string[]) => void;
+  }) => {
+    const [open, setOpen] = useState(false);
+    const [searchQuery, setSearchQuery] = useState("");
+
+    const filteredCustomers = customers.filter((customer) => {
+      if (!searchQuery) return true;
+      const name = (customer.name || customer.customerName || "").toLowerCase();
+      const email = (customer.email || "").toLowerCase();
+      return name.includes(searchQuery.toLowerCase()) || email.includes(searchQuery.toLowerCase());
+    });
+
+    const toggleCustomer = (customerId: string) => {
+      if (selectedCustomers.includes(customerId)) {
+        onSelectionChange(selectedCustomers.filter((id) => id !== customerId));
+      } else {
+        onSelectionChange([...selectedCustomers, customerId]);
+      }
+    };
+
+    const displayText = selectedCustomers.length === 0
+      ? "Customer"
+      : selectedCustomers.length === 1
+      ? customers.find((c) => c.id.toString() === selectedCustomers[0])?.name || 
+        customers.find((c) => c.id.toString() === selectedCustomers[0])?.customerName || 
+        "1 selected"
+      : `${selectedCustomers.length} selected`;
+
+    return (
+      <div>
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              variant="outline"
+              role="combobox"
+              aria-expanded={open}
+              className="w-full justify-between h-9 text-sm"
+            >
+              <span className="truncate text-xs">{displayText}</span>
+              <Search className="ml-2 h-3 w-3 shrink-0 opacity-50" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-full p-0" align="start">
+            <Command>
+              <CommandInput
+                placeholder="Search customers..."
+                value={searchQuery}
+                onValueChange={setSearchQuery}
+              />
+              <CommandList>
+                <CommandEmpty>No customers found.</CommandEmpty>
+                <CommandGroup>
+                  {filteredCustomers.map((customer) => {
+                    const isSelected = selectedCustomers.includes(customer.id.toString());
+                    return (
+                      <CommandItem
+                        key={customer.id}
+                        onSelect={() => toggleCustomer(customer.id.toString())}
+                        className="cursor-pointer"
+                      >
+                        <Check
+                          className={cn(
+                            "mr-2 h-4 w-4",
+                            isSelected ? "opacity-100" : "opacity-0"
+                          )}
+                        />
+                        <div className="flex-1">
+                          <div>{customer.name || customer.customerName || "Unknown"}</div>
+                          {customer.email && (
+                            <div className="text-xs text-gray-500">{customer.email}</div>
+                          )}
+                        </div>
+                      </CommandItem>
+                    );
+                  })}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+        {selectedCustomers.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {selectedCustomers.map((customerId) => {
+              const customer = customers.find((c) => c.id.toString() === customerId);
+              return (
+                <span
+                  key={customerId}
+                  className="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-800 rounded-md text-xs"
+                >
+                  {customer?.name || customer?.customerName || "Unknown"}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onSelectionChange(selectedCustomers.filter((id) => id !== customerId));
+                    }}
+                    className="hover:text-blue-600"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   // Create invoice mutation
   const createInvoiceMutation = useMutation({
@@ -1316,26 +1578,26 @@ export default function Invoices() {
 
         {/* Filters */}
         <Card>
-          <CardHeader>
-            <CardTitle>Filter Invoices</CardTitle>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Filter Invoices</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 mb-3">
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+                <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400 h-3 w-3" />
                 <Input
-                  placeholder="Search invoices..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10"
+                  placeholder="Search..."
+                  value={localSearchTerm}
+                  onChange={(e) => setLocalSearchTerm(e.target.value)}
+                  className="pl-7 h-9 text-sm"
                 />
               </div>
               <Select
-                value={statusFilter}
-                onValueChange={setStatusFilter}
+                value={localStatusFilter}
+                onValueChange={setLocalStatusFilter}
               >
-                <SelectTrigger>
-                  <SelectValue placeholder="Filter by status" />
+                <SelectTrigger className="h-9 text-sm">
+                  <SelectValue placeholder="Status" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Status</SelectItem>
@@ -1346,9 +1608,83 @@ export default function Invoices() {
                   ))}
                 </SelectContent>
               </Select>
-              <div className="text-sm text-gray-500 flex items-center">
-                Showing {filteredInvoices.length} of {invoices.length}{" "}
-                invoices
+              <div className="min-w-[150px]">
+                <MultiSelectCustomer
+                  customers={customers}
+                  selectedCustomers={localCustomerFilter}
+                  onSelectionChange={setLocalCustomerFilter}
+                />
+              </div>
+              <Select
+                value={localVendorFilter}
+                onValueChange={setLocalVendorFilter}
+              >
+                <SelectTrigger className="h-9 text-sm">
+                  <SelectValue placeholder="Vendor" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Vendors</SelectItem>
+                  {vendors.map((vendor) => (
+                    <SelectItem key={vendor.id} value={vendor.id.toString()}>
+                      {vendor.name || vendor.vendorName || "Unknown"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={localProviderFilter}
+                onValueChange={setLocalProviderFilter}
+              >
+                <SelectTrigger className="h-9 text-sm">
+                  <SelectValue placeholder="Provider" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Providers</SelectItem>
+                  {serviceProviders.map((provider) => (
+                    <SelectItem key={provider.id} value={provider.id.toString()}>
+                      {provider.name || provider.providerName || "Unknown"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={localLeadTypeFilter}
+                onValueChange={setLocalLeadTypeFilter}
+              >
+                <SelectTrigger className="h-9 text-sm">
+                  <SelectValue placeholder="Lead Type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Lead Types</SelectItem>
+                  {leadTypes.map((leadType) => (
+                    <SelectItem key={leadType.id} value={leadType.id.toString()}>
+                      {leadType.name || leadType.leadTypeName || "Unknown"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center justify-between mt-3 pt-3 border-t">
+              <div className="text-xs text-gray-500">
+                Showing {invoices.length} of {pagination.total} invoices
+                {pagination.totalPages > 1 && ` (Page ${pagination.page} of ${pagination.totalPages})`}
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleResetFilters}
+                  className="h-8 text-xs"
+                >
+                  Reset
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleApplyFilters}
+                  className="h-8 text-xs"
+                >
+                  Apply Filters
+                </Button>
               </div>
             </div>
           </CardContent>
@@ -1361,14 +1697,41 @@ export default function Invoices() {
           </CardHeader>
           <CardContent>
             <EnhancedTable
-              data={filteredInvoices}
+              data={invoices}
               columns={invoiceColumns}
-              searchTerm={searchTerm}
               isLoading={isLoading}
-              showPagination={true}
-              pageSize={10}
+              showPagination={false}
               emptyMessage="No invoices found. Create your first invoice to get started."
             />
+            {/* Backend Pagination Controls */}
+            {pagination.totalPages > 1 && (
+              <div className="flex items-center justify-between mt-4 pt-4 border-t">
+                <div className="text-sm text-gray-500">
+                  Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, pagination.total)} of {pagination.total} invoices
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={currentPage === 1}
+                    onClick={() => setCurrentPage(currentPage - 1)}
+                  >
+                    Previous
+                  </Button>
+                  <span className="text-sm text-gray-700">
+                    Page {currentPage} of {pagination.totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={currentPage >= pagination.totalPages}
+                    onClick={() => setCurrentPage(currentPage + 1)}
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -1835,7 +2198,7 @@ export default function Invoices() {
 
       {/* View Invoice Dialog - Preview */}
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Invoice Preview</DialogTitle>
             <DialogDescription>
@@ -1865,6 +2228,8 @@ export default function Invoices() {
             // Parse line items
             const invoiceData = selectedInvoice as any;
             let lineItems: any[] = [];
+            
+            // Try multiple ways to get line items
             if (invoiceData.lineItems) {
               if (typeof invoiceData.lineItems === "string") {
                 try {
@@ -1876,6 +2241,25 @@ export default function Invoices() {
                 lineItems = invoiceData.lineItems;
               }
             }
+            
+            // Also check for line_items (snake_case) or items
+            if (lineItems.length === 0) {
+              if (invoiceData.line_items) {
+                if (typeof invoiceData.line_items === "string") {
+                  try {
+                    lineItems = JSON.parse(invoiceData.line_items);
+                  } catch (e) {
+                    console.warn("Failed to parse line_items:", e);
+                  }
+                } else if (Array.isArray(invoiceData.line_items)) {
+                  lineItems = invoiceData.line_items;
+                }
+              } else if (invoiceData.items && Array.isArray(invoiceData.items)) {
+                lineItems = invoiceData.items;
+              }
+            }
+            
+            console.log("📋 Parsed line items for preview:", lineItems);
 
             // Get customer data
             const customer = customers.find(
@@ -1904,38 +2288,73 @@ export default function Invoices() {
               companyEmail: companyEmail,
               companyPhone: companyPhone,
               companyAddress: tenant?.address || "",
-              items: lineItems
-                .map((item, index) => {
-                  const sellingPrice = parseFloat(item.sellingPrice || item.unitPrice || "0");
-                  const quantity = parseInt(item.quantity || "1");
-                  const totalAmount = parseFloat(item.totalAmount?.toString() || "0");
-                  const hasTitle = item.itemTitle && item.itemTitle.trim() !== "";
-                  const hasPrice = sellingPrice > 0;
-                  const hasTotal = totalAmount > 0;
-                  const hasCategory = item.travelCategory && item.travelCategory.trim() !== "";
-                  
-                  // Include items that have any meaningful data
-                  if (!hasTitle && !hasPrice && !hasTotal && !hasCategory) {
-                    return null;
-                  }
-                  
-                  // Build description from available data
-                  let description = item.itemTitle?.trim();
-                  if (!description && hasCategory) {
-                    description = item.travelCategory;
-                  }
-                  if (!description) {
-                    description = `Item ${index + 1}`;
-                  }
-                  
-                  return {
-                    description: description,
-                    quantity: quantity || 1,
-                    unitPrice: sellingPrice,
-                    totalPrice: totalAmount > 0 ? totalAmount : (sellingPrice * quantity),
-                  };
-                })
-                .filter((item) => item !== null) as { description: string; quantity: number; unitPrice: number; totalPrice: number; }[],
+              items: lineItems.length > 0
+                ? lineItems
+                    .map((item, index) => {
+                      const sellingPrice = parseFloat(
+                        item.sellingPrice?.toString() || 
+                        item.unitPrice?.toString() || 
+                        item.price?.toString() || 
+                        "0"
+                      );
+                      const quantity = parseInt(
+                        item.quantity?.toString() || 
+                        item.qty?.toString() || 
+                        "1"
+                      );
+                      const totalAmount = parseFloat(
+                        item.totalAmount?.toString() || 
+                        item.totalPrice?.toString() || 
+                        item.amount?.toString() || 
+                        "0"
+                      );
+                      const hasTitle = item.itemTitle && item.itemTitle.trim() !== "";
+                      const hasPrice = sellingPrice > 0;
+                      const hasTotal = totalAmount > 0;
+                      const hasCategory = item.travelCategory && item.travelCategory.trim() !== "";
+                      const hasDescription = item.description && item.description.trim() !== "";
+                      
+                      // Include items that have any meaningful data
+                      if (!hasTitle && !hasPrice && !hasTotal && !hasCategory && !hasDescription) {
+                        return null;
+                      }
+                      
+                      // Build description from available data
+                      let description = item.itemTitle?.trim() || item.description?.trim();
+                      if (!description && hasCategory) {
+                        description = item.travelCategory;
+                      }
+                      if (!description && item.name) {
+                        description = item.name;
+                      }
+                      if (!description) {
+                        description = `Item ${index + 1}`;
+                      }
+                      
+                      // Calculate total if not provided
+                      const calculatedTotal = totalAmount > 0 
+                        ? totalAmount 
+                        : (sellingPrice * quantity);
+                      
+                      return {
+                        description: description,
+                        quantity: quantity || 1,
+                        unitPrice: sellingPrice || 0,
+                        totalPrice: calculatedTotal || 0,
+                        invoiceNumber: item.invoiceNumber || item.invoice_number || undefined,
+                        voucherNumber: item.voucherNumber || item.voucher_number || undefined,
+                      };
+                    })
+                    .filter((item) => item !== null) as { description: string; quantity: number; unitPrice: number; totalPrice: number; invoiceNumber?: string; voucherNumber?: string; }[]
+                : [
+                    // Fallback: show at least one item if no line items found
+                    {
+                      description: "No line items available",
+                      quantity: 1,
+                      unitPrice: 0,
+                      totalPrice: 0,
+                    }
+                  ],
               subtotal: parseFloat((invoiceData.subtotal || invoiceData.totalAmount || 0).toString()),
               taxAmount: parseFloat((invoiceData.taxAmount || 0).toString()),
               discountAmount: parseFloat((invoiceData.discountAmount || 0).toString()),

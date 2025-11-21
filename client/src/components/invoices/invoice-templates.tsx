@@ -19,6 +19,8 @@ export interface InvoiceData {
     quantity: number;
     unitPrice: number;
     totalPrice: number;
+    invoiceNumber?: string;
+    voucherNumber?: string;
   }[];
   subtotal: number;
   taxAmount: number;
@@ -88,7 +90,16 @@ export const ModernTemplate: React.FC<InvoiceTemplateProps> = ({ data }) => (
         <tbody>
           {data.items.map((item, index) => (
             <tr key={index} className="border-b border-gray-200">
-              <td className="p-3">{item.description}</td>
+              <td className="p-3">
+                <div>{item.description}</div>
+                {(item.invoiceNumber || item.voucherNumber) && (
+                  <div className="text-xs text-gray-500 mt-1">
+                    {item.invoiceNumber && <span>Invoice: {item.invoiceNumber}</span>}
+                    {item.invoiceNumber && item.voucherNumber && <span className="mx-2">|</span>}
+                    {item.voucherNumber && <span>Voucher: {item.voucherNumber}</span>}
+                  </div>
+                )}
+              </td>
               <td className="p-3 text-center">{item.quantity}</td>
               <td className="p-3 text-right">{data.currency} {item.unitPrice.toFixed(2)}</td>
               <td className="p-3 text-right">{data.currency} {item.totalPrice.toFixed(2)}</td>

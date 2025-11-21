@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Layout } from "@/components/layout/layout";
 import { Button } from "@/components/ui/button";
@@ -1272,6 +1272,25 @@ export default function InvoiceCreate() {
     }
   }, [invoiceSettings?.defaultCurrency]);
 
+  // Calculate grid template columns dynamically (must be before any conditional returns)
+  const gridTemplate = useMemo(() => {
+    const columns = [
+      '30px', // # column - smaller (fixed)
+      'minmax(250px, 2fr)', // Category - bigger (flexible, min 150px)
+      ...(invoiceSettings?.showVendor ? ['minmax(250px, 2fr)'] : []), // Vendor - bigger (flexible, min 150px)
+      ...(invoiceSettings?.showProvider ? ['minmax(250px, 2fr)'] : []), // Provider - bigger (flexible, min 150px)
+      'minmax(60px, 1fr)', // Pax - small (flexible, min 60px)
+      ...(invoiceSettings?.showUnitPrice ? ['minmax(130px, 1fr)'] : []), // Unit Price - small (flexible, min 100px)
+      'minmax(130px, 1fr)', // Selling Price - small (flexible, min 100px)
+      'minmax(130px, 1fr)', // Purchase Price - small (flexible, min 100px)
+      ...(invoiceSettings?.showTax ? ['minmax(100px, 1fr)'] : []), // Tax - small (flexible, min 100px)
+      'minmax(100px, 1fr)', // Amount - small (flexible, min 100px)
+      ...(invoiceSettings?.showVoucherInvoice ? ['minmax(100px, 1fr)'] : []), // Invoice/Voucher - small (flexible, min 100px)
+      '50px', // Delete button - small (fixed)
+    ];
+    return columns.join(' ');
+  }, [invoiceSettings?.showVendor, invoiceSettings?.showProvider, invoiceSettings?.showUnitPrice, invoiceSettings?.showTax, invoiceSettings?.showVoucherInvoice]);
+
   // Show loading state when fetching invoice data
   if (isEditMode && isLoadingInvoice) {
     return (
@@ -1287,29 +1306,32 @@ export default function InvoiceCreate() {
 
   return (
     <Layout initialSidebarCollapsed={true}>
-      <div className="p-6 max-w-7xl mx-auto">
+      <div className="p-3 sm:p-4 md:p-6 mx-auto">
         <div className="bg-white rounded-2xl shadow-sm">
           <div className="">
-            <div className=" w-full h-[72px] flex items-center bg-white px-[18px] py-4 rounded-t-xl border-b border-[#E3E8EF] shadow-[0px_1px_6px_0px_rgba(0,0,0,0.05)]">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => navigate("/invoices")}
-                data-testid="button-back"
-              >
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Back
-              </Button>
-              {isEditMode && (
-                <h1 className="ml-4 font-inter font-medium text-[20px] leading-[24px] text-[#121926]">
-                  Edit Invoice
-                </h1>
-              )}
+            <div className="w-full min-h-[72px] flex flex-col sm:flex-row items-start sm:items-center bg-white px-3 sm:px-4 md:px-[18px] py-3 sm:py-4 rounded-t-xl border-b border-[#E3E8EF] shadow-[0px_1px_6px_0px_rgba(0,0,0,0.05)] gap-3 sm:gap-0">
+              <div className="flex items-center gap-2 sm:gap-0">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigate("/invoices")}
+                  data-testid="button-back"
+                  className="flex-shrink-0"
+                >
+                  <ArrowLeft className="h-4 w-4 sm:mr-2" />
+                  <span className="hidden sm:inline">Back</span>
+                </Button>
+                {isEditMode && (
+                  <h1 className="ml-2 sm:ml-4 font-inter font-medium text-base sm:text-[20px] leading-[24px] text-[#121926] truncate">
+                    Edit Invoice
+                  </h1>
+                )}
+              </div>
               {/* <h1 className="font-inter font-medium text-[20px] leading-[24px] text-[#121926]">
                   Leads
                 </h1> */}
 
-              <div className="flex gap-3 ml-auto">
+              <div className="flex gap-2 sm:gap-3 ml-auto">
                 {" "}
                 {tenant?.id && <InvoiceSettingsPanel tenantId={tenant.id} />}
                 <div className="w-10 h-10 flex items-center justify-center rounded-lg border border-gray-200 bg-white shadow-sm">
@@ -1339,10 +1361,10 @@ export default function InvoiceCreate() {
 
         <form onSubmit={handlePreview}>
           <Card>
-            <CardContent className="p-6 space-y-6">
+            <CardContent className="p-3 sm:p-4 md:p-6 space-y-4 sm:space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
                 <div>
-                  <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
+                  <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">
                     Invoice
                   </h1>
                   {/* <p className="text-gray-600 dark:text-gray-400">
@@ -1399,7 +1421,7 @@ export default function InvoiceCreate() {
                       <div className="flex items-center gap-1 mb-1.5">
                         <Label htmlFor="paymentTerms">Terms *</Label>
                         <TooltipTrigger asChild>
-                          <HelpCircle className="h-4 w-4 text-blue-500 cursor-help" />
+                          <HelpCircle className="h-4 w-4 text-gray-900 dark:text-white cursor-help" />
                         </TooltipTrigger>
                       </div>
                       <TooltipContent>
@@ -1499,39 +1521,43 @@ export default function InvoiceCreate() {
                 </div>
               </div>
 
-
-
-
               {/* Line Items */}
               <div className="border rounded-lg overflow-hidden">
                 {/* Table Header - Show labels only once */}
-                <div className="grid grid-cols-12 gap-2 bg-gray-100 dark:bg-gray-800 p-3 font-medium text-sm">
-                  <div className="text-center" style={{ width: '40px', minWidth: '40px', maxWidth: '40px' }}>#</div>
-                  <div className="col-span-1">Category *</div>
-                  {invoiceSettings?.showVendor && <div className="col-span-1">Vendor</div>}
-                  {invoiceSettings?.showProvider && <div className="col-span-1">Provider</div>}
-                  <div className="col-span-1">Pax *</div>
-                  {invoiceSettings?.showUnitPrice && <div className="col-span-1">Unit Price ({currencySymbol}) *</div>}
-                  <div className="col-span-1">Selling Price ({currencySymbol}) *</div>
-                  <div className="col-span-1">Purchase Price ({currencySymbol}) *</div>
-                  {invoiceSettings?.showTax && <div className="col-span-1">Tax ({currencySymbol})</div>}
-                  <div className="col-span-1">Amount ({currencySymbol})</div>
-                  {invoiceSettings?.showVoucherInvoice && <div className="col-span-1">Invoice/Voucher</div>}
-                  <div className="col-span-1"></div>
+                <div className="overflow-x-auto">
+                  <div 
+                    className="grid gap-2 border-b p-3 font-medium text-sm min-w-[800px]"
+                    style={{ gridTemplateColumns: gridTemplate }}
+                  >
+                  <div className="text-center flex items-center justify-center">#</div>
+                  <div className="flex items-center">Category *</div>
+                  {invoiceSettings?.showVendor && <div className="flex items-center">Vendor</div>}
+                  {invoiceSettings?.showProvider && <div className="flex items-center">Provider</div>}
+                  <div className="flex items-center">Pax *</div>
+                  {invoiceSettings?.showUnitPrice && <div className="flex items-center">Unit Price ({currencySymbol}) *</div>}
+                  <div className="flex items-center">Selling Price ({currencySymbol}) *</div>
+                  <div className="flex items-center">Purchase Price ({currencySymbol}) *</div>
+                  {invoiceSettings?.showTax && <div className="flex items-center">Tax ({currencySymbol})</div>}
+                  <div className="flex items-center">Amount ({currencySymbol})</div>
+                  {invoiceSettings?.showVoucherInvoice && <div className="flex items-center">Invoice/Voucher</div>}
+                  <div className="flex items-center"></div>
+                </div>
                 </div>
 
                 {/* Table Body */}
                 <div className="divide-y divide-gray-200 dark:divide-gray-700">
-                  {lineItems.map((item, index) => (
-                    <div
-                      key={index}
-                      className="grid grid-cols-12 gap-2 p-3 hover:bg-gray-50 dark:hover:bg-gray-900"
-                    >
-                      <div className="flex items-center justify-center" style={{ width: '40px', minWidth: '40px', maxWidth: '40px' }}>
+                  <div className="overflow-x-auto">
+                    {lineItems.map((item, index) => (
+                      <div
+                        key={index}
+                        className="grid gap-2 p-3 min-w-[800px]"
+                        style={{ gridTemplateColumns: gridTemplate }}
+                      >
+                      <div className="flex items-center justify-center">
                         <span className="font-medium text-sm">{index + 1}</span>
                       </div>
 
-                      <div className="col-span-1">
+                      <div>
                         <AutocompleteInput
                           data-testid={`autocomplete-category-${index}`}
                           suggestions={getTravelCategories()}
@@ -1545,7 +1571,7 @@ export default function InvoiceCreate() {
                       </div>
 
                       {invoiceSettings?.showVendor && (
-                        <div className="col-span-1">
+                        <div>
                           <AutocompleteInput
                             data-testid={`autocomplete-vendor-${index}`}
                             suggestions={getVendorOptions()}
@@ -1560,7 +1586,7 @@ export default function InvoiceCreate() {
                       )}
 
                       {invoiceSettings?.showProvider && (
-                        <div className="col-span-1">
+                        <div>
                           <AutocompleteInput
                             data-testid={`autocomplete-service-provider-${index}`}
                             suggestions={getServiceProviderOptions(
@@ -1576,7 +1602,7 @@ export default function InvoiceCreate() {
                         </div>
                       )}
 
-                      <div className="col-span-1">
+                      <div>
                         <Input
                           data-testid={`input-quantity-${index}`}
                           value={item.quantity}
@@ -1589,7 +1615,7 @@ export default function InvoiceCreate() {
                       </div>
 
                       {invoiceSettings?.showUnitPrice && (
-                        <div className="col-span-1">
+                        <div>
                           <Input
                             data-testid={`input-unit-price-${index}`}
                             value={item.unitPrice}
@@ -1602,7 +1628,7 @@ export default function InvoiceCreate() {
                         </div>
                       )}
 
-                      <div className="col-span-1">
+                      <div>
                         <Input
                           data-testid={`input-selling-price-${index}`}
                           value={item.sellingPrice}
@@ -1618,7 +1644,7 @@ export default function InvoiceCreate() {
                         />
                       </div>
 
-                      <div className="col-span-1">
+                      <div>
                         <Input
                           data-testid={`input-purchase-price-${index}`}
                           value={item.purchasePrice}
@@ -1635,7 +1661,7 @@ export default function InvoiceCreate() {
                       </div>
 
                       {invoiceSettings?.showTax && (
-                        <div className="col-span-1">
+                        <div>
                           <Select
                             value={item.taxRateId || "none"}
                             onValueChange={(value) =>
@@ -1671,17 +1697,17 @@ export default function InvoiceCreate() {
                         </div>
                       )}
 
-                      <div className="col-span-1">
+                      <div>
                         <Input
                           data-testid={`input-total-amount-${index}`}
                           value={item.totalAmount.toFixed(2)}
                           readOnly
-                          className="bg-gray-100 dark:bg-gray-800"
+                          className="bg-transparent"
                         />
                       </div>
 
                       {invoiceSettings?.showVoucherInvoice && (
-                        <div className="col-span-1">
+                        <div>
                           <Input
                             data-testid={`input-line-invoice-number-${index}`}
                             value={item.invoiceNumber}
@@ -1697,7 +1723,7 @@ export default function InvoiceCreate() {
                         </div>
                       )}
 
-                      <div className="col-span-1 flex items-center justify-center">
+                      <div className="flex items-center justify-center">
                         {lineItems.length > 1 && (
                           <Button
                             type="button"
@@ -1706,12 +1732,13 @@ export default function InvoiceCreate() {
                             onClick={() => removeLineItem(index)}
                             data-testid={`button-remove-item-${index}`}
                           >
-                            <Trash2 className="h-4 w-4 text-red-500" />
+                            <Trash2 className="h-4 w-4 text-gray-900 dark:text-white" />
                           </Button>
                         )}
                       </div>
                     </div>
                   ))}
+                  </div>
                 </div>
               </div>
 
@@ -1768,10 +1795,10 @@ export default function InvoiceCreate() {
                       </div>
                     )}
                     {/* Payment Reminder Section */}
-                    <div className="border rounded-lg p-4 bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-950/20 dark:to-cyan-950/20">
+                    <div className="border rounded-lg p-4">
                       <div className="flex items-center justify-between mb-4">
                         <div className="flex items-center gap-2">
-                          <Bell className="h-5 w-5 text-blue-600" />
+                          <Bell className="h-5 w-5 text-gray-900 dark:text-white" />
                           <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
                             Payment Reminder
                           </h3>
@@ -1837,14 +1864,14 @@ export default function InvoiceCreate() {
                     </div>
                     {/* Notes Section with Rich Text Editor */}
                     {invoiceSettings?.showNotes && (
-                      <div className="rounded-lg p-4">
-                        <Label htmlFor="notes" className="text-lg font-semibold mb-3 block">
+                      <div className="rounded-lg p-2 sm:p-4">
+                        <Label htmlFor="notes" className="text-base sm:text-lg font-semibold mb-2 sm:mb-3 block">
                           Notes
                         </Label>
-                        <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+                        <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-2 sm:mb-3">
                           Add any additional notes, attachments, or information. Supports text, images, videos, and paste functionality.
                         </p>
-                         <div className="bg-white dark:bg-gray-900 rounded-lg" data-testid="rich-text-editor-notes">
+                         <div className="bg-white dark:bg-gray-900 rounded-lg overflow-x-auto" data-testid="rich-text-editor-notes">
                            <ReactQuill
                              theme="snow"
                              value={notesContent}
@@ -1877,14 +1904,14 @@ export default function InvoiceCreate() {
                     )}
 
                     {invoiceSettings?.showNotes && (
-                      <div className="rounded-lg p-4">
-                        <Label htmlFor="notes" className="text-lg font-semibold mb-3 block">
+                      <div className="rounded-lg p-2 sm:p-4">
+                        <Label htmlFor="notes" className="text-base sm:text-lg font-semibold mb-2 sm:mb-3 block">
                           Additional Notes (It will be hidden to the invoice)
                         </Label>
-                        <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+                        <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-2 sm:mb-3">
                           Add any additional notes, attachments, or information. Supports text, images, videos, and paste functionality.
                         </p>
-                        <div className="bg-white dark:bg-gray-900 rounded-lg" data-testid="rich-text-editor-additional-notes">
+                        <div className="bg-white dark:bg-gray-900 rounded-lg overflow-x-auto" data-testid="rich-text-editor-additional-notes">
                           <ReactQuill
                             theme="snow"
                             value={additionalNotesContent}
@@ -1943,15 +1970,15 @@ export default function InvoiceCreate() {
                     {invoiceSettings?.showDiscount && (
                       <div className="flex justify-between items-center py-2 border-b">
                         <span className="text-gray-700 dark:text-gray-300">Discount:</span>
-                        <span className="font-medium text-red-600" data-testid="text-discount">
+                        <span className="font-medium text-gray-900 dark:text-white" data-testid="text-discount">
                           -{currencySymbol}{parseFloat(discountAmount || "0").toFixed(2)}
                         </span>
                       </div>
                     )}
 
-                    <div className="flex justify-between items-center py-3 bg-cyan-50 dark:bg-cyan-950/20 px-3 rounded-lg">
+                    <div className="flex justify-between items-center py-3 border px-3 rounded-lg">
                       <span className="text-lg font-semibold text-gray-900 dark:text-white">Total Amount:</span>
-                      <span className="text-lg font-bold text-cyan-600" data-testid="text-total-amount">
+                      <span className="text-lg font-bold text-gray-900 dark:text-white" data-testid="text-total-amount">
                         {currencySymbol}{calculateGrandTotal().toFixed(2)}
                       </span>
                     </div>
@@ -2000,7 +2027,7 @@ export default function InvoiceCreate() {
                       </div>
 
                       {enableInstallments && (
-                        <div className="space-y-3 bg-blue-50 dark:bg-blue-950/20 p-4 rounded-lg">
+                        <div className="space-y-3 border p-4 rounded-lg">
                           <div className="grid grid-cols-2 gap-3">
                             <div>
                               <Label className="text-sm">Number of Installments</Label>
@@ -2058,7 +2085,7 @@ export default function InvoiceCreate() {
                                 </table>
                                 <div className="mt-3 pt-2 border-t flex justify-between font-semibold">
                                   <span>Total Pending:</span>
-                                  <span className="text-cyan-600">
+                                  <span className="text-gray-900 dark:text-white">
                                     {currencySymbol}{(
                                       calculateGrandTotal() - 
                                       (isEditMode ? existingPaidAmount + parseFloat(amountPaid || "0") : parseFloat(amountPaid || "0"))
@@ -2079,7 +2106,7 @@ export default function InvoiceCreate() {
                 <div className="border-t pt-6 space-y-4">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <Receipt className="h-5 w-5 text-cyan-600" />
+                      <Receipt className="h-5 w-5 text-gray-900 dark:text-white" />
                       <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
                         Expenses ({getAllExpenses().length})
                       </h3>
@@ -2099,10 +2126,10 @@ export default function InvoiceCreate() {
                     Auto-generated expenses from purchase prices and manually added expenses
                   </p>
 
-                  <div className="overflow-x-auto">
-                    <table className="w-full border-collapse">
+                  <div className="overflow-x-auto -mx-3 sm:mx-0">
+                    <table className="w-full border-collapse min-w-[600px]">
                       <thead>
-                        <tr className="bg-gray-100 dark:bg-gray-800">
+                        <tr className="border-b">
                           <th className="px-4 py-2 text-left text-sm font-medium">
                             Item
                           </th>
@@ -2131,7 +2158,7 @@ export default function InvoiceCreate() {
                           expense.expenseType === "manual" ? (
                             <tr
                               key={idx}
-                              className="border-t border-gray-200 dark:border-gray-700 bg-blue-50 dark:bg-blue-900/20"
+                              className="border-t border-gray-200 dark:border-gray-700"
                             >
                               <td className="px-4 py-3 text-sm">
                                 {expense.itemIndex}
@@ -2227,7 +2254,7 @@ export default function InvoiceCreate() {
                                       )
                                     }
                                   >
-                                    <Trash2 className="h-4 w-4 text-red-500" />
+                                    <Trash2 className="h-4 w-4 text-gray-900 dark:text-white" />
                                   </Button>
                                 </div>
                               </td>
@@ -2244,7 +2271,7 @@ export default function InvoiceCreate() {
                                 {expense.title}
                               </td>
                               <td className="px-4 py-3 text-sm">
-                                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200">
+                                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs border text-gray-900 dark:text-white">
                                   {expense.category}
                                 </span>
                               </td>
@@ -2263,7 +2290,7 @@ export default function InvoiceCreate() {
                             </tr>
                           ),
                         )}
-                        <tr className="border-t-2 border-gray-300 dark:border-gray-600 font-semibold bg-gray-50 dark:bg-gray-900">
+                        <tr className="border-t-2 border-gray-300 dark:border-gray-600 font-semibold">
                           <td
                             colSpan={6}
                             className="px-4 py-3 text-sm text-right"
@@ -2282,12 +2309,12 @@ export default function InvoiceCreate() {
 
                   {/* Profit Calculation Section */}
                   <div className="mt-6 border-t-2 pt-4">
-                    <div className="bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-950/20 dark:to-emerald-950/20 rounded-lg p-6">
+                    <div className="border rounded-lg p-6">
                       <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
-                        <span className="text-green-600">💰</span> Profit Analysis
+                        <span className="text-gray-900 dark:text-white">💰</span> Profit Analysis
                       </h3>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
                         {/* Left Side - Values */}
                         <div className="space-y-3">
                           <div className="flex justify-between items-center py-2 border-b border-green-200 dark:border-green-800">
@@ -2297,20 +2324,20 @@ export default function InvoiceCreate() {
                             </span>
                           </div>
 
-                          <div className="flex justify-between items-center py-2 border-b border-green-200 dark:border-green-800">
+                          <div className="flex justify-between items-center py-2 border-b border-gray-200 dark:border-gray-700">
                             <span className="text-gray-700 dark:text-gray-300 font-medium">Total Expenses:</span>
-                            <span className="font-semibold text-lg text-red-600">
-                              -{currency === "INR" ? "₹" : currency === "USD" ? "$" : "€"}
+                            <span className="font-semibold text-lg text-gray-900 dark:text-white">
+                              -{currencySymbol}
                               {getAllExpenses()
                                 .reduce((sum, exp) => sum + exp.amount, 0)
                                 .toFixed(2)}
                             </span>
                           </div>
 
-                          <div className="flex justify-between items-center py-2 border-b border-green-200 dark:border-green-800">
+                          <div className="flex justify-between items-center py-2 border-b border-gray-200 dark:border-gray-700">
                             <span className="text-gray-700 dark:text-gray-300 font-medium">Tax Amount:</span>
-                            <span className="font-semibold text-lg text-blue-600">
-                              {currency === "INR" ? "₹" : currency === "USD" ? "$" : "€"}
+                            <span className="font-semibold text-lg text-gray-900 dark:text-white">
+                              {currencySymbol}
                               {lineItems.reduce(
                                 (total, item) => total + parseFloat(item.tax || "0"),
                                 0
@@ -2321,9 +2348,9 @@ export default function InvoiceCreate() {
 
                         {/* Right Side - Profit Display */}
                         <div className="flex items-center justify-center">
-                          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-md border-2 border-green-500 w-full">
+                          <div className="border rounded-lg p-6 shadow-md w-full">
                             <p className="text-sm text-gray-600 dark:text-gray-400 mb-2 text-center">Net Profit</p>
-                            <p className="text-3xl font-bold text-center text-green-600">
+                            <p className="text-3xl font-bold text-center text-gray-900 dark:text-white">
                               {currencySymbol}{(
                                 calculateGrandTotal() -
                                 getAllExpenses().reduce((sum, exp) => sum + exp.amount, 0)
@@ -2339,7 +2366,7 @@ export default function InvoiceCreate() {
                   </div>
                 </div>
               )}
-              <div className="flex justify-end space-x-2 pt-4">
+              <div className="flex flex-col sm:flex-row justify-end gap-2 sm:space-x-2 pt-4">
                 <Button
                   type="button"
                   variant="outline"
@@ -2393,7 +2420,7 @@ export default function InvoiceCreate() {
               type="button"
               onClick={handleSaveFromPreview}
               disabled={isEditMode ? updateInvoiceMutation.isPending : createInvoiceMutation.isPending}
-              className="bg-blue-600 hover:bg-blue-700"
+              className="bg-gray-900 hover:bg-gray-800 dark:bg-gray-100 dark:hover:bg-gray-200 text-white dark:text-gray-900"
             >
               {isEditMode 
                 ? (updateInvoiceMutation.isPending ? "Updating..." : "Update Invoice")

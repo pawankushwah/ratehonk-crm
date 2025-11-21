@@ -246,6 +246,23 @@ export default function EstimateCreate() {
     },
   });
 
+  // Calculate grid template columns dynamically (matching invoice-create design)
+  const gridTemplate = useMemo(() => {
+    const columns = [
+      '30px', // # column - smaller (fixed)
+      'minmax(250px, 2fr)', // Category - bigger (flexible, min 250px)
+      'minmax(250px, 2fr)', // Service/Description - bigger (flexible, min 250px)
+      'minmax(60px, 1fr)', // Qty - small (flexible, min 60px)
+      'minmax(130px, 1fr)', // Price - small (flexible, min 130px)
+      'minmax(100px, 1fr)', // Tax Rate - small (flexible, min 100px)
+      'minmax(100px, 1fr)', // Tax - small (flexible, min 100px)
+      'minmax(100px, 1fr)', // Discount - small (flexible, min 100px)
+      'minmax(100px, 1fr)', // Total - small (flexible, min 100px)
+      '50px', // Delete button - small (fixed)
+    ];
+    return columns.join(' ');
+  }, []);
+
   // Extract unique estimate titles for autocomplete
   const estimateTitleSuggestions = useMemo(() => {
     if (!estimates || !Array.isArray(estimates)) return [];
@@ -845,10 +862,10 @@ export default function EstimateCreate() {
 
   return (
     <Layout initialSidebarCollapsed={true}>
-      <div className="p-6 max-w-7xl mx-auto">
+      <div className="p-3 sm:p-4 md:p-6 mx-auto">
         <div className="bg-white rounded-2xl shadow-sm">
           {/* Top Bar */}
-          <div className="w-full h-[72px] flex items-center bg-white px-[18px] py-4 rounded-t-xl border-b border-[#E3E8EF] shadow-[0px_1px_6px_0px_rgba(0,0,0,0.05)]">
+          <div className="w-full min-h-[72px] flex flex-col sm:flex-row items-start sm:items-center bg-white px-3 sm:px-4 md:px-[18px] py-3 sm:py-4 rounded-t-xl border-b border-[#E3E8EF] shadow-[0px_1px_6px_0px_rgba(0,0,0,0.05)] gap-3 sm:gap-0">
             <Button
               variant="outline"
               size="sm"
@@ -1083,30 +1100,32 @@ export default function EstimateCreate() {
                 {showLineItems && formData.lineItems.length > 0 && (
                   <div className="border rounded-lg overflow-hidden">
                     {/* Table Header */}
-                    <div className="grid grid-cols-12 gap-2 bg-gray-100 dark:bg-gray-800 p-3 font-medium text-sm">
-                      <div className="text-center" style={{ width: '40px', minWidth: '40px', maxWidth: '40px' }}>#</div>
-                      <div className="col-span-2">Service</div>
-                      <div className="col-span-1">Qty</div>
-                      <div className="col-span-1">Price</div>
-                      <div className="col-span-2">Tax Rate</div>
-                      <div className="col-span-1">Tax</div>
-                      <div className="col-span-1">Discount</div>
-                      <div className="col-span-2">Total</div>
-                      <div className="col-span-1"></div>
+                    <div className="grid gap-2 p-3 font-medium text-sm border-b" style={{ gridTemplateColumns: gridTemplate }}>
+                      <div className="text-center flex items-center justify-center">#</div>
+                      <div className="flex items-center">Category</div>
+                      <div className="flex items-center">Service</div>
+                      <div className="flex items-center">Qty</div>
+                      <div className="flex items-center">Price</div>
+                      <div className="flex items-center">Tax Rate</div>
+                      <div className="flex items-center">Tax</div>
+                      <div className="flex items-center">Discount</div>
+                      <div className="flex items-center">Total</div>
+                      <div></div>
                     </div>
 
                     {/* Table Body */}
-                    <div className="divide-y divide-gray-200 dark:divide-gray-700">
+                    <div className="divide-y">
                       {formData.lineItems.map((item, index) => (
                         <div
                           key={index}
-                          className="grid grid-cols-12 gap-2 p-3 hover:bg-gray-50 dark:hover:bg-gray-900"
+                          className="grid gap-2 p-3"
+                          style={{ gridTemplateColumns: gridTemplate }}
                         >
-                          <div className="flex items-center justify-center" style={{ width: '40px', minWidth: '40px', maxWidth: '40px' }}>
+                          <div className="flex items-center justify-center">
                             <span className="font-medium text-sm">{index + 1}</span>
                           </div>
 
-                          <div className="col-span-2">
+                          <div>
                             <Combobox
                               options={getTravelCategories().map((category) => ({
                                 value: category,
@@ -1121,7 +1140,21 @@ export default function EstimateCreate() {
                             />
                           </div>
 
-                          <div className="col-span-1">
+                          <div>
+                            <Input
+                              value={item.itemName || item.description || ""}
+                              onChange={(e) =>
+                                updateLineItem(
+                                  index,
+                                  "itemName",
+                                  e.target.value,
+                                )
+                              }
+                              placeholder="Service description"
+                            />
+                          </div>
+
+                          <div>
                             <Input
                               value={item.quantity}
                               onChange={(e) =>
@@ -1137,7 +1170,7 @@ export default function EstimateCreate() {
                             />
                           </div>
 
-                          <div className="col-span-1">
+                          <div>
                             <Input
                               value={item.unitPrice}
                               onChange={(e) =>
@@ -1152,7 +1185,7 @@ export default function EstimateCreate() {
                             />
                           </div>
 
-                          <div className="col-span-2">
+                          <div>
                             <Select
                               value={item.taxRateId || "none"}
                               onValueChange={(value) =>
@@ -1175,15 +1208,15 @@ export default function EstimateCreate() {
                             </Select>
                           </div>
 
-                          <div className="col-span-1">
+                          <div>
                             <Input
                               readOnly
                               value={`${currencySymbol}${(parseFloat(item.tax?.toString() || "0") || 0).toFixed(2)}`}
-                              className="bg-gray-50 dark:bg-gray-900 text-gray-600 dark:text-gray-400 cursor-not-allowed"
+                              className="text-gray-600 dark:text-gray-400 cursor-not-allowed"
                             />
                           </div>
 
-                          <div className="col-span-1">
+                          <div>
                             <Input
                               value={item.discount}
                               onChange={(e) =>
@@ -1198,21 +1231,21 @@ export default function EstimateCreate() {
                             />
                           </div>
 
-                          <div className="col-span-2">
+                          <div>
                             <Input
                               readOnly
                               value={`${currencySymbol}${item.totalPrice.toFixed(2)}`}
-                              className="bg-gray-50 dark:bg-gray-900 text-gray-600 dark:text-gray-400 cursor-not-allowed"
+                              className="text-gray-600 dark:text-gray-400 cursor-not-allowed"
                             />
                           </div>
 
-                          <div className="col-span-1 flex items-center justify-center">
+                          <div className="flex items-center justify-center">
                             <Button
                               variant="ghost"
                               size="sm"
                               onClick={() => removeLineItem(index)}
                               type="button"
-                              className="h-8 w-8 p-0 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+                              className="h-8 w-8 p-0 text-red-500 hover:text-red-700"
                             >
                               <Trash2 className="w-4 h-4" />
                             </Button>
@@ -1254,7 +1287,7 @@ export default function EstimateCreate() {
                     {attachments.map((file, index) => (
                       <div
                         key={index}
-                        className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-900 rounded border border-gray-200 dark:border-gray-700"
+                        className="flex items-center justify-between p-2 rounded border border-gray-200 dark:border-gray-700"
                       >
                         <div className="flex items-center gap-2">
                           {file.type === 'application/pdf' ? (
@@ -1383,7 +1416,7 @@ export default function EstimateCreate() {
                     )}
 
                     {estimateSettings?.showDeposit !== false && (
-                      <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
+                      <div className="flex items-center justify-between p-3 rounded-lg border border-gray-200 dark:border-gray-700">
                         <Label htmlFor="depositRequired">Require Deposit</Label>
                         <Switch
                           id="depositRequired"
@@ -1442,7 +1475,7 @@ export default function EstimateCreate() {
 
                   {/* Right Side - Summary */}
                   <div className="space-y-3">
-                    <div className="p-4 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
+                    <div className="p-4 rounded-lg border border-gray-200 dark:border-gray-700">
                       <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
                         Summary
                       </h3>
