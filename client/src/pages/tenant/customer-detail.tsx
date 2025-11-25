@@ -163,7 +163,7 @@ const FIELD_TYPE_LABELS: Record<ConsulationFieldType, string> = {
   textarea: "Text Area",
   phone: "Phone Number",
   image: "Image Upload",
-  file: "File Upload (PDF & Images)",
+ // file: "File Upload (PDF & Images)",
   "image-or-text": "Image or Text (Upload images or enter text)",
   "authorization-form": "Authorization Form (Credit Card Authorization)",
 };
