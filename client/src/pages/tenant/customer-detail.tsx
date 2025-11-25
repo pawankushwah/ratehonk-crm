@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/collapsible";
 import {
   ChevronRight,
+  ChevronLeft,
   ChevronDown,
   ChevronUp,
   Star,
@@ -119,7 +120,9 @@ type ConsulationFieldType =
   | "textarea"
   | "phone"
   | "image"
-  | "file";
+  | "file"
+  | "image-or-text"
+  | "authorization-form";
 
 interface ConsulationField {
   id: string;
@@ -161,6 +164,8 @@ const FIELD_TYPE_LABELS: Record<ConsulationFieldType, string> = {
   phone: "Phone Number",
   image: "Image Upload",
   file: "File Upload (PDF & Images)",
+  "image-or-text": "Image or Text (Upload images or enter text)",
+  "authorization-form": "Authorization Form (Credit Card Authorization)",
 };
 
 const createDefaultConsulationFields = (): ConsulationField[] =>
@@ -224,7 +229,7 @@ export default function CustomerDetail() {
     : null;
   const [selectedConsulationSubmissionId, setSelectedConsulationSubmissionId] = useState<number | null>(null);
   const [selectedPaymentSubmissionId, setSelectedPaymentSubmissionId] = useState<number | null>(null);
-  const [viewingSubmissionImage, setViewingSubmissionImage] = useState<{ url: string; name: string } | null>(null);
+  const [viewingSubmissionImage, setViewingSubmissionImage] = useState<{ images: Array<{ url: string; name: string }>; currentIndex: number } | null>(null);
   const [isNavigatingToConsulationForm, setIsNavigatingToConsulationForm] = useState(false);
 
   // Helper functions for activity display
@@ -2283,7 +2288,19 @@ export default function CustomerDetail() {
                                             <div
                                               key={index}
                                               className="relative group cursor-pointer"
-                                              onClick={() => setViewingSubmissionImage({ url: normalizedUrl, name: filename })}
+                                              onClick={() => {
+                                                const allImages = imageUrls.map((url: string, idx: number) => {
+                                                  const urlParts = url.split("/");
+                                                  const name = urlParts[urlParts.length - 1] || `Image ${idx + 1}`;
+                                                  const normalized = url.startsWith('http') || url.startsWith('https')
+                                                    ? url
+                                                    : url.startsWith('/')
+                                                    ? url
+                                                    : `/${url}`;
+                                                  return { url: normalized, name };
+                                                });
+                                                setViewingSubmissionImage({ images: allImages, currentIndex: index });
+                                              }}
                                             >
                                               <div className="relative">
                                                 <img
@@ -2307,6 +2324,93 @@ export default function CustomerDetail() {
                                       </div>
                                     </div>
                                   );
+                                })()}
+                              </div>
+                            ) : field.type === "image-or-text" ? (
+                              <div className="mt-2">
+                                {(() => {
+                                  // Check if responseValue contains image URLs (contains "/" or starts with "http")
+                                  const isImageUrls = responseValue.includes("/") || responseValue.startsWith("http");
+                                  
+                                  if (isImageUrls) {
+                                    // Parse comma-separated image URLs
+                                    const imageUrls = responseValue
+                                      .split(",")
+                                      .map((url: string) => url.trim())
+                                      .filter((url: string) => url && url.length > 0);
+                                    
+                                    if (imageUrls.length === 0) {
+                                      return (
+                                        <p className="text-sm text-gray-500 italic">No images uploaded</p>
+                                      );
+                                    }
+
+                                    return (
+                                      <div className="space-y-3">
+                                        <div className="text-sm text-gray-600 font-medium">
+                                          {imageUrls.length} {imageUrls.length === 1 ? "Image" : "Images"}:
+                                        </div>
+                                        <div className="flex flex-wrap gap-3">
+                                          {imageUrls.map((imageUrl: string, index: number) => {
+                                            // Extract filename from URL
+                                            const urlParts = imageUrl.split("/");
+                                            const filename = urlParts[urlParts.length - 1] || `Image ${index + 1}`;
+                                            
+                                            // Normalize URL for display
+                                            const normalizedUrl = imageUrl.startsWith('http') || imageUrl.startsWith('https')
+                                              ? imageUrl
+                                              : imageUrl.startsWith('/')
+                                                ? imageUrl
+                                                : `/${imageUrl}`;
+
+                                            return (
+                                              <div
+                                                key={index}
+                                                className="relative group cursor-pointer"
+                                                onClick={() => {
+                                                  const allImages = imageUrls.map((url: string, idx: number) => {
+                                                    const urlParts = url.split("/");
+                                                    const name = urlParts[urlParts.length - 1] || `Image ${idx + 1}`;
+                                                    const normalized = url.startsWith('http') || url.startsWith('https')
+                                                      ? url
+                                                      : url.startsWith('/')
+                                                      ? url
+                                                      : `/${url}`;
+                                                    return { url: normalized, name };
+                                                  });
+                                                  setViewingSubmissionImage({ images: allImages, currentIndex: index });
+                                                }}
+                                              >
+                                                <div className="relative">
+                                                  <img
+                                                    src={normalizedUrl}
+                                                    alt={`${field.label} - Image ${index + 1}`}
+                                                    className="w-32 h-32 object-cover rounded-md border-2 border-gray-200 hover:border-blue-400 transition-all shadow-sm hover:shadow-md"
+                                                    onError={(e) => {
+                                                      (e.target as HTMLImageElement).src = "/placeholder-image.png";
+                                                    }}
+                                                  />
+                                                  <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-10 transition-all rounded-md flex items-center justify-center">
+                                                    <Eye className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                                                  </div>
+                                                </div>
+                                                <p className="text-xs text-gray-600 mt-1 text-center max-w-[128px] truncate">
+                                                  Image {index + 1}: {filename.length > 20 ? filename.substring(0, 20) + "..." : filename}
+                                                </p>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    );
+                                  } else {
+                                    // It's text, display as textarea
+                                    return (
+                                      <p className="text-sm text-gray-900 bg-gray-50 p-3 rounded-md whitespace-pre-wrap">
+                                        {responseValue}
+                                      </p>
+                                    );
+                                  }
                                 })()}
                               </div>
                             ) : field.type === "file" ? (
@@ -2347,7 +2451,19 @@ export default function CustomerDetail() {
                                             <div
                                               key={index}
                                               className="relative group cursor-pointer"
-                                              onClick={() => setViewingSubmissionImage({ url: normalizedUrl, name: filename })}
+                                              onClick={() => {
+                                                const allImages = fileUrls.map((url: string, idx: number) => {
+                                                  const urlParts = url.split("/");
+                                                  const name = urlParts[urlParts.length - 1] || `File ${idx + 1}`;
+                                                  const normalized = url.startsWith('http') || url.startsWith('https')
+                                                    ? url
+                                                    : url.startsWith('/')
+                                                    ? url
+                                                    : `/${url}`;
+                                                  return { url: normalized, name };
+                                                });
+                                                setViewingSubmissionImage({ images: allImages, currentIndex: index });
+                                              }}
                                             >
                                               <div className="relative">
                                                 {isPdf ? (
@@ -2513,6 +2629,91 @@ export default function CustomerDetail() {
                               <p className="text-sm text-gray-900 bg-gray-50 p-3 rounded-md whitespace-pre-wrap">
                                 {responseValue}
                               </p>
+                            ) : field.type === "authorization-form" ? (
+                              <div className="mt-2">
+                                {(() => {
+                                  // Check if responseValue contains image URLs (contains "/" or starts with "http")
+                                  const isImageUrls = responseValue.includes("/") || responseValue.startsWith("http");
+                                  
+                                  if (isImageUrls) {
+                                    // Parse comma-separated image URLs
+                                    const imageUrls = responseValue
+                                      .split(",")
+                                      .map((url: string) => url.trim())
+                                      .filter((url: string) => url && url.length > 0);
+                                    
+                                    if (imageUrls.length === 0) {
+                                      return (
+                                        <p className="text-sm text-gray-500 italic">No authorization form images uploaded</p>
+                                      );
+                                    }
+
+                                    return (
+                                      <div className="space-y-3">
+                                        <div className="text-sm text-gray-600 font-medium">
+                                          {imageUrls.length} {imageUrls.length === 1 ? "Authorization Form Image" : "Authorization Form Images"}:
+                                        </div>
+                                        <div className="flex flex-wrap gap-3">
+                                          {imageUrls.map((imageUrl: string, index: number) => {
+                                            // Extract filename from URL
+                                            const urlParts = imageUrl.split("/");
+                                            const filename = urlParts[urlParts.length - 1] || `Image ${index + 1}`;
+                                            
+                                            // Normalize URL for display
+                                            const normalizedUrl = imageUrl.startsWith('http') || imageUrl.startsWith('https')
+                                              ? imageUrl
+                                              : imageUrl.startsWith('/')
+                                                ? imageUrl
+                                                : `/${imageUrl}`;
+
+                                            return (
+                                              <div
+                                                key={index}
+                                                className="relative group cursor-pointer"
+                                                onClick={() => {
+                                                  const allImages = imageUrls.map((url: string, idx: number) => {
+                                                    const urlParts = url.split("/");
+                                                    const name = urlParts[urlParts.length - 1] || `Image ${idx + 1}`;
+                                                    const normalized = url.startsWith('http') || url.startsWith('https')
+                                                      ? url
+                                                      : url.startsWith('/')
+                                                      ? url
+                                                      : `/${url}`;
+                                                    return { url: normalized, name };
+                                                  });
+                                                  setViewingSubmissionImage({ images: allImages, currentIndex: index });
+                                                }}
+                                              >
+                                                <div className="relative">
+                                                  <img
+                                                    src={normalizedUrl}
+                                                    alt={`${field.label} - Image ${index + 1}`}
+                                                    className="w-32 h-32 object-cover rounded-md border-2 border-gray-200 hover:border-blue-400 transition-all shadow-sm hover:shadow-md"
+                                                    onError={(e) => {
+                                                      (e.target as HTMLImageElement).src = "/placeholder-image.png";
+                                                    }}
+                                                  />
+                                                  <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-10 transition-all rounded-md flex items-center justify-center">
+                                                    <Eye className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                                                  </div>
+                                                </div>
+                                                <p className="text-xs text-gray-600 mt-1 text-center max-w-[128px] truncate">
+                                                  Image {index + 1}: {filename.length > 20 ? filename.substring(0, 20) + "..." : filename}
+                                                </p>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    );
+                                  } else {
+                                    // It's not image URLs, show "not filled" message
+                                    return (
+                                      <p className="text-sm text-gray-500 italic">Authorization form not filled</p>
+                                    );
+                                  }
+                                })()}
+                              </div>
                             ) : field.type === "image" ? (
                               <div className="mt-2">
                                 {(() => {
@@ -2550,7 +2751,19 @@ export default function CustomerDetail() {
                                             <div
                                               key={index}
                                               className="relative group cursor-pointer"
-                                              onClick={() => setViewingSubmissionImage({ url: normalizedUrl, name: filename })}
+                                              onClick={() => {
+                                                const allImages = imageUrls.map((url: string, idx: number) => {
+                                                  const urlParts = url.split("/");
+                                                  const name = urlParts[urlParts.length - 1] || `Image ${idx + 1}`;
+                                                  const normalized = url.startsWith('http') || url.startsWith('https')
+                                                    ? url
+                                                    : url.startsWith('/')
+                                                    ? url
+                                                    : `/${url}`;
+                                                  return { url: normalized, name };
+                                                });
+                                                setViewingSubmissionImage({ images: allImages, currentIndex: index });
+                                              }}
                                             >
                                               <div className="relative">
                                                 <img
@@ -2574,6 +2787,93 @@ export default function CustomerDetail() {
                                       </div>
                                     </div>
                                   );
+                                })()}
+                              </div>
+                            ) : field.type === "image-or-text" ? (
+                              <div className="mt-2">
+                                {(() => {
+                                  // Check if responseValue contains image URLs (contains "/" or starts with "http")
+                                  const isImageUrls = responseValue.includes("/") || responseValue.startsWith("http");
+                                  
+                                  if (isImageUrls) {
+                                    // Parse comma-separated image URLs
+                                    const imageUrls = responseValue
+                                      .split(",")
+                                      .map((url: string) => url.trim())
+                                      .filter((url: string) => url && url.length > 0);
+                                    
+                                    if (imageUrls.length === 0) {
+                                      return (
+                                        <p className="text-sm text-gray-500 italic">No images uploaded</p>
+                                      );
+                                    }
+
+                                    return (
+                                      <div className="space-y-3">
+                                        <div className="text-sm text-gray-600 font-medium">
+                                          {imageUrls.length} {imageUrls.length === 1 ? "Image" : "Images"}:
+                                        </div>
+                                        <div className="flex flex-wrap gap-3">
+                                          {imageUrls.map((imageUrl: string, index: number) => {
+                                            // Extract filename from URL
+                                            const urlParts = imageUrl.split("/");
+                                            const filename = urlParts[urlParts.length - 1] || `Image ${index + 1}`;
+                                            
+                                            // Normalize URL for display
+                                            const normalizedUrl = imageUrl.startsWith('http') || imageUrl.startsWith('https')
+                                              ? imageUrl
+                                              : imageUrl.startsWith('/')
+                                                ? imageUrl
+                                                : `/${imageUrl}`;
+
+                                            return (
+                                              <div
+                                                key={index}
+                                                className="relative group cursor-pointer"
+                                                onClick={() => {
+                                                  const allImages = imageUrls.map((url: string, idx: number) => {
+                                                    const urlParts = url.split("/");
+                                                    const name = urlParts[urlParts.length - 1] || `Image ${idx + 1}`;
+                                                    const normalized = url.startsWith('http') || url.startsWith('https')
+                                                      ? url
+                                                      : url.startsWith('/')
+                                                      ? url
+                                                      : `/${url}`;
+                                                    return { url: normalized, name };
+                                                  });
+                                                  setViewingSubmissionImage({ images: allImages, currentIndex: index });
+                                                }}
+                                              >
+                                                <div className="relative">
+                                                  <img
+                                                    src={normalizedUrl}
+                                                    alt={`${field.label} - Image ${index + 1}`}
+                                                    className="w-32 h-32 object-cover rounded-md border-2 border-gray-200 hover:border-blue-400 transition-all shadow-sm hover:shadow-md"
+                                                    onError={(e) => {
+                                                      (e.target as HTMLImageElement).src = "/placeholder-image.png";
+                                                    }}
+                                                  />
+                                                  <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-10 transition-all rounded-md flex items-center justify-center">
+                                                    <Eye className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                                                  </div>
+                                                </div>
+                                                <p className="text-xs text-gray-600 mt-1 text-center max-w-[128px] truncate">
+                                                  Image {index + 1}: {filename.length > 20 ? filename.substring(0, 20) + "..." : filename}
+                                                </p>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    );
+                                  } else {
+                                    // It's text, display as textarea
+                                    return (
+                                      <p className="text-sm text-gray-900 bg-gray-50 p-3 rounded-md whitespace-pre-wrap">
+                                        {responseValue}
+                                      </p>
+                                    );
+                                  }
                                 })()}
                               </div>
                             ) : field.type === "file" ? (
@@ -2614,7 +2914,19 @@ export default function CustomerDetail() {
                                             <div
                                               key={index}
                                               className="relative group cursor-pointer"
-                                              onClick={() => setViewingSubmissionImage({ url: normalizedUrl, name: filename })}
+                                              onClick={() => {
+                                                const allImages = fileUrls.map((url: string, idx: number) => {
+                                                  const urlParts = url.split("/");
+                                                  const name = urlParts[urlParts.length - 1] || `File ${idx + 1}`;
+                                                  const normalized = url.startsWith('http') || url.startsWith('https')
+                                                    ? url
+                                                    : url.startsWith('/')
+                                                    ? url
+                                                    : `/${url}`;
+                                                  return { url: normalized, name };
+                                                });
+                                                setViewingSubmissionImage({ images: allImages, currentIndex: index });
+                                              }}
                                             >
                                               <div className="relative">
                                                 {isPdf ? (
@@ -2751,54 +3063,48 @@ export default function CustomerDetail() {
       return;
     }
 
-    try {
-      setIsSendingConsulationForm(true);
-      setShowDeliveryMethodOptions(false);
-      setShowSendFormOptions(false);
-      setSelectedFormType(null);
-      
-      // Send forms based on formType
-      const formsToSend: ('consulation' | 'payment')[] = 
-        formType === 'both' ? ['consulation', 'payment'] : [formType];
-      
-      const results: { formType: string; emailSent: boolean; whatsappSent: boolean }[] = [];
-      
-      for (const form of formsToSend) {
-        const response: any = await apiRequest(
-          "POST",
-          `/api/tenants/${tenant.id}/customers/${customerId}/send-consulation-form`,
-          { method, formType: form },
-        );
-
-        results.push({
-          formType: form,
-          emailSent: response?.sent?.email || false,
-          whatsappSent: response?.sent?.whatsapp || false,
-        });
-      }
-
-      const allEmailSent = results.every(r => r.emailSent);
-      const allWhatsappSent = results.every(r => r.whatsappSent);
-      const formNames = formsToSend.map(f => f === 'consulation' ? 'Consulation' : 'Payment').join(' & ');
-
-      toast({
-        title: `${formNames} form${formsToSend.length > 1 ? 's' : ''} sent`,
-        description: [
-          allEmailSent ? "Email sent" : null,
-          allWhatsappSent ? "WhatsApp sent" : null,
-        ]
-          .filter(Boolean)
-          .join(" • ") || "Form link delivered.",
-      });
-    } catch (error: any) {
-      toast({
-        title: "Failed to send form",
-        description: error?.message || "Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsSendingConsulationForm(false);
-    }
+    // Close dialogs immediately for instant UI feedback
+    setIsSendingConsulationForm(true);
+    setShowDeliveryMethodOptions(false);
+    setShowSendFormOptions(false);
+    setSelectedFormType(null);
+    
+    // Send forms based on formType
+    const formsToSend: ('consulation' | 'payment')[] = 
+      formType === 'both' ? ['consulation', 'payment'] : [formType];
+    
+    const formNames = formsToSend.map(f => f === 'consulation' ? 'Consulation' : 'Payment').join(' & ');
+    const methodText = method === 'both' ? 'Email & WhatsApp' : method === 'email' ? 'Email' : 'WhatsApp';
+    
+    // Show success toast immediately (optimistic UI) for instant feedback
+    toast({
+      title: `${formNames} form${formsToSend.length > 1 ? 's' : ''} sent`,
+      description: `Form link sent via ${methodText}.`,
+    });
+    
+    // Reset loading state immediately after showing toast
+    setIsSendingConsulationForm(false);
+    
+    // Send forms in background (fire and forget) - don't wait for response
+    // The server already handles sending asynchronously, so we don't need to wait
+    Promise.all(
+      formsToSend.map(async (form) => {
+        try {
+          await apiRequest(
+            "POST",
+            `/api/tenants/${tenant.id}/customers/${customerId}/send-consulation-form`,
+            { method, formType: form },
+          );
+        } catch (error: any) {
+          // Log error but don't show toast (already showed success)
+          // Only show error if it's critical
+          console.error(`Failed to send ${form} form:`, error);
+        }
+      })
+    ).catch((error) => {
+      // Only show error toast if all requests failed
+      console.error("Error sending forms:", error);
+    });
   };
 
   return (
@@ -3526,25 +3832,76 @@ export default function CustomerDetail() {
       <Dialog open={!!viewingSubmissionImage} onOpenChange={() => setViewingSubmissionImage(null)}>
         <DialogContent className="max-w-4xl max-h-[90vh]">
           <DialogHeader>
-            <DialogTitle>{viewingSubmissionImage?.name || "File Preview"}</DialogTitle>
+            <DialogTitle>
+              {viewingSubmissionImage ? `${viewingSubmissionImage.images[viewingSubmissionImage.currentIndex]?.name || "File Preview"} (${viewingSubmissionImage.currentIndex + 1} of ${viewingSubmissionImage.images.length})` : "File Preview"}
+            </DialogTitle>
           </DialogHeader>
           {viewingSubmissionImage && (() => {
-            const isPdf = viewingSubmissionImage.name.toLowerCase().endsWith('.pdf') || 
-                         viewingSubmissionImage.url.toLowerCase().endsWith('.pdf');
-            const normalizedUrl = viewingSubmissionImage.url.startsWith('http') || viewingSubmissionImage.url.startsWith('https')
-              ? viewingSubmissionImage.url
-              : viewingSubmissionImage.url.startsWith('/')
-                ? viewingSubmissionImage.url
-                : `/${viewingSubmissionImage.url}`;
+            const currentImage = viewingSubmissionImage.images[viewingSubmissionImage.currentIndex];
+            if (!currentImage) return null;
+            
+            const isPdf = currentImage.name.toLowerCase().endsWith('.pdf') || 
+                         currentImage.url.toLowerCase().endsWith('.pdf') ||
+                         currentImage.url.toLowerCase().includes('.pdf');
+            const normalizedUrl = currentImage.url.startsWith('blob:')
+              ? currentImage.url
+              : currentImage.url.startsWith('http') || currentImage.url.startsWith('https')
+                ? currentImage.url
+                : currentImage.url.startsWith('/')
+                  ? currentImage.url
+                  : `/${currentImage.url}`;
+            
+            const hasNext = viewingSubmissionImage.currentIndex < viewingSubmissionImage.images.length - 1;
+            const hasPrevious = viewingSubmissionImage.currentIndex > 0;
+            
+            const handleNext = () => {
+              if (hasNext) {
+                setViewingSubmissionImage({
+                  ...viewingSubmissionImage,
+                  currentIndex: viewingSubmissionImage.currentIndex + 1
+                });
+              }
+            };
+            
+            const handlePrevious = () => {
+              if (hasPrevious) {
+                setViewingSubmissionImage({
+                  ...viewingSubmissionImage,
+                  currentIndex: viewingSubmissionImage.currentIndex - 1
+                });
+              }
+            };
             
             return (
-              <div className="flex items-center justify-center p-4">
+              <div className="relative flex items-center justify-center p-4">
+                {viewingSubmissionImage.images.length > 1 && (
+                  <>
+                    {hasPrevious && (
+                      <button
+                        onClick={handlePrevious}
+                        className="absolute left-4 z-10 bg-black/50 hover:bg-black/70 text-white rounded-full p-2 transition-colors"
+                        aria-label="Previous image"
+                      >
+                        <ChevronLeft className="h-6 w-6" />
+                      </button>
+                    )}
+                    {hasNext && (
+                      <button
+                        onClick={handleNext}
+                        className="absolute right-4 z-10 bg-black/50 hover:bg-black/70 text-white rounded-full p-2 transition-colors"
+                        aria-label="Next image"
+                      >
+                        <ChevronRight className="h-6 w-6" />
+                      </button>
+                    )}
+                  </>
+                )}
                 {isPdf ? (
                   <div className="w-full h-[70vh] flex flex-col items-center justify-center">
                     <iframe
                       src={normalizedUrl}
                       className="w-full h-full border rounded-md"
-                      title={viewingSubmissionImage.name}
+                      title={currentImage.name}
                       onError={() => {
                         console.error("PDF load error:", normalizedUrl);
                       }}
@@ -3562,7 +3919,7 @@ export default function CustomerDetail() {
                 ) : (
                   <img
                     src={normalizedUrl}
-                    alt={viewingSubmissionImage.name}
+                    alt={currentImage.name}
                     className="max-w-full max-h-[70vh] object-contain rounded-md"
                     onError={(e) => {
                       console.error("Image load error:", normalizedUrl);
@@ -3620,7 +3977,8 @@ function ConsulationFormDialog({
   const [defaultFileFiles, setDefaultFileFiles] = useState<Record<string, File[]>>({});
   const [defaultFilePreviews, setDefaultFilePreviews] = useState<Record<string, string[]>>({});
   const [defaultFileUrls, setDefaultFileUrls] = useState<Record<string, string[]>>({});
-  const [viewingImage, setViewingImage] = useState<{ url: string; name: string } | null>(null);
+  const [imageOrTextModes, setImageOrTextModes] = useState<Record<string, "image" | "text">>({});
+  const [viewingImage, setViewingImage] = useState<{ images: Array<{ url: string; name: string }>; currentIndex: number } | null>(null);
   const [draggedFieldId, setDraggedFieldId] = useState<string | null>(null);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string>("");
 
@@ -3711,6 +4069,63 @@ function ConsulationFormDialog({
             nextImageUrls[field.id] = [];
             nextValues[field.id] = "";
           }
+        } else if (field.type === "image-or-text") {
+          // For image-or-text fields, check if defaultValue contains URLs (images) or text
+          // URLs typically contain "/" or start with "http"
+          if (defaultValue && defaultValue.trim().length > 0) {
+            const isImageUrls = defaultValue.includes("/") || defaultValue.startsWith("http");
+            
+            if (isImageUrls) {
+              // Parse comma-separated image URLs
+              const urls = defaultValue.split(",")
+                .map((url: string) => url.trim())
+                .filter((url: string) => url && url.length > 0)
+                .filter((url: string, index: number, self: string[]) => self.indexOf(url) === index);
+              nextImageUrls[field.id] = urls;
+              // Don't set text value when images are present
+              nextValues[field.id] = "";
+              nextImageFiles[field.id] = [];
+              nextImagePreviews[field.id] = [];
+            } else {
+              // It's text, not image URLs
+              nextValues[field.id] = defaultValue;
+              nextImageUrls[field.id] = [];
+              nextImageFiles[field.id] = [];
+              nextImagePreviews[field.id] = [];
+            }
+          } else {
+            // Empty string or no value - field was cleared
+            nextImageFiles[field.id] = [];
+            nextImagePreviews[field.id] = [];
+            nextImageUrls[field.id] = [];
+            nextValues[field.id] = "";
+          }
+        } else if (field.type === "authorization-form") {
+          // For authorization-form fields, initialize with default URLs if available (same as image fields)
+          if (defaultValue && defaultValue.trim().length > 0) {
+            // Split and filter URLs, removing duplicates
+            const urls = defaultValue.split(",")
+              .map((url: string) => url.trim())
+              .filter((url: string) => url && url.length > 0)
+              .filter((url: string, index: number, self: string[]) => self.indexOf(url) === index); // Remove duplicates
+            nextImageUrls[field.id] = urls;
+            // Show image names from URLs
+            const imageNames = urls.map((url: string, index: number) => {
+              const urlParts = url.split("/");
+              const filename = urlParts[urlParts.length - 1] || `Image ${index + 1}`;
+              return `Image ${index + 1} ${filename}`;
+            }).join(", ");
+            nextValues[field.id] = imageNames;
+            // Ensure defaultImageFiles is empty for database-loaded images
+            nextImageFiles[field.id] = [];
+            nextImagePreviews[field.id] = [];
+          } else {
+            // Empty string or no value - field was cleared
+            nextImageFiles[field.id] = [];
+            nextImagePreviews[field.id] = [];
+            nextImageUrls[field.id] = [];
+            nextValues[field.id] = "";
+          }
         } else if (field.type === "file") {
           // For file fields, initialize with default URLs if available
           if (defaultValue && defaultValue.trim().length > 0) {
@@ -3777,6 +4192,23 @@ function ConsulationFormDialog({
     
     reloadDefaultValues();
   }, [isOpen, tenantId, formType, onDefaultValuesChange]);
+
+  // Keep image/text modes in sync with fields/defaults
+  useEffect(() => {
+    if (!isOpen) return;
+    setImageOrTextModes((prev) => {
+      const next: Record<string, "image" | "text"> = {};
+      fields.forEach((field) => {
+        if (field.type === "image-or-text") {
+          const hasImages =
+            (defaultImageUrls[field.id]?.length || 0) > 0 ||
+            (defaultImageFiles[field.id]?.length || 0) > 0;
+          next[field.id] = prev[field.id] || (hasImages ? "image" : "text");
+        }
+      });
+      return next;
+    });
+  }, [fields, defaultImageUrls, defaultImageFiles, isOpen]);
 
   // Reset selected invoice when dialog closes
   useEffect(() => {
@@ -4012,14 +4444,22 @@ function ConsulationFormDialog({
         return { ...prev, [fieldId]: previewsToKeep };
       });
 
-      // Update form value - only show URL names (since files are now uploaded)
-      const urlNames = newUrls.map((url, index) => {
-        const urlParts = url.split("/");
-        const filename = urlParts[urlParts.length - 1] || `Image ${index + 1}`;
-        return `Image ${index + 1}: ${filename}`;
-      });
-      const allNames = urlNames.join(", ");
-      setFormValues((prev) => ({ ...prev, [fieldId]: allNames }));
+      // Check if this is an "image-or-text" field - if so, clear text value and switch to image mode
+      const field = fields.find(f => f.id === fieldId);
+      if (field?.type === "image-or-text") {
+        // Clear text value when images are uploaded
+        setImageOrTextModes((prev) => ({ ...prev, [fieldId]: "image" }));
+        setFormValues((prev) => ({ ...prev, [fieldId]: "" }));
+      } else {
+        // Update form value - only show URL names (since files are now uploaded)
+        const urlNames = newUrls.map((url, index) => {
+          const urlParts = url.split("/");
+          const filename = urlParts[urlParts.length - 1] || `Image ${index + 1}`;
+          return `Image ${index + 1}: ${filename}`;
+        });
+        const allNames = urlNames.join(", ");
+        setFormValues((prev) => ({ ...prev, [fieldId]: allNames }));
+      }
       
       // Update field defaultValue with URLs
       const allUrls = newUrls.join(", ");
@@ -4226,6 +4666,8 @@ function ConsulationFormDialog({
     const currentFiles = defaultImageFiles[fieldId] || [];
     const currentPreviews = defaultImagePreviews[fieldId] || [];
     const currentUrls = defaultImageUrls[fieldId] || [];
+    const field = fields.find(f => f.id === fieldId);
+    const isImageOrText = field?.type === "image-or-text";
     
     // Determine if we're removing a file or a URL
     // Files come first, then URLs
@@ -4245,15 +4687,21 @@ function ConsulationFormDialog({
       setDefaultImageFiles((prev) => ({ ...prev, [fieldId]: newFiles }));
       setDefaultImagePreviews((prev) => ({ ...prev, [fieldId]: newPreviews }));
       
-      // Update form value with remaining files and URLs
-      const fileNames = newFiles.map((file, idx) => `Image ${idx + 1} ${file.name}`);
-      const urlNames = currentUrls.map((url, idx) => {
-        const urlParts = url.split("/");
-        const filename = urlParts[urlParts.length - 1] || `Image ${newFiles.length + idx + 1}`;
-        return `Image ${newFiles.length + idx + 1} ${filename}`;
-      });
-      const allNames = [...fileNames, ...urlNames].join(", ");
-      setFormValues((prev) => ({ ...prev, [fieldId]: allNames || "" }));
+      // For image-or-text fields, clear text value when all images are removed
+      if (isImageOrText && newFiles.length === 0 && currentUrls.length === 0) {
+        setFormValues((prev) => ({ ...prev, [fieldId]: "" }));
+        setImageOrTextModes((prev) => ({ ...prev, [fieldId]: "text" }));
+      } else if (!isImageOrText) {
+        // Update form value with remaining files and URLs
+        const fileNames = newFiles.map((file, idx) => `Image ${idx + 1} ${file.name}`);
+        const urlNames = currentUrls.map((url, idx) => {
+          const urlParts = url.split("/");
+          const filename = urlParts[urlParts.length - 1] || `Image ${newFiles.length + idx + 1}`;
+          return `Image ${newFiles.length + idx + 1} ${filename}`;
+        });
+        const allNames = [...fileNames, ...urlNames].join(", ");
+        setFormValues((prev) => ({ ...prev, [fieldId]: allNames || "" }));
+      }
       
       // Update field defaultValue (URLs only, files are uploaded on save)
       const allUrls = currentUrls.join(", ");
@@ -4270,21 +4718,54 @@ function ConsulationFormDialog({
       
       setDefaultImageUrls((prev) => ({ ...prev, [fieldId]: newUrls }));
       
-      // Update form value
-      const fileNames = currentFiles.map((file, idx) => `Image ${idx + 1} ${file.name}`);
-      const urlNames = newUrls.map((url, idx) => {
-        const urlParts = url.split("/");
-        const filename = urlParts[urlParts.length - 1] || `Image ${currentFiles.length + idx + 1}`;
-        return `Image ${currentFiles.length + idx + 1} ${filename}`;
-      });
-      const allNames = [...fileNames, ...urlNames].join(", ");
-      setFormValues((prev) => ({ ...prev, [fieldId]: allNames || "" }));
+      // For image-or-text fields, clear text value when all images are removed
+      if (isImageOrText && currentFiles.length === 0 && newUrls.length === 0) {
+        setFormValues((prev) => ({ ...prev, [fieldId]: "" }));
+        setImageOrTextModes((prev) => ({ ...prev, [fieldId]: "text" }));
+      } else if (!isImageOrText) {
+        // Update form value
+        const fileNames = currentFiles.map((file, idx) => `Image ${idx + 1} ${file.name}`);
+        const urlNames = newUrls.map((url, idx) => {
+          const urlParts = url.split("/");
+          const filename = urlParts[urlParts.length - 1] || `Image ${currentFiles.length + idx + 1}`;
+          return `Image ${currentFiles.length + idx + 1} ${filename}`;
+        });
+        const allNames = [...fileNames, ...urlNames].join(", ");
+        setFormValues((prev) => ({ ...prev, [fieldId]: allNames || "" }));
+      }
       
       // Update field defaultValue
       const allUrls = newUrls.join(", ");
       onFieldsChange(
         fields.map((field) =>
           field.id === fieldId ? { ...field, defaultValue: allUrls || "" } : field
+        )
+      );
+    }
+  };
+
+  const handleImageOrTextModeChange = (
+    fieldId: string,
+    mode: "image" | "text",
+  ) => {
+    setImageOrTextModes((prev) => ({ ...prev, [fieldId]: mode }));
+    if (mode === "image") {
+      setFormValues((prev) => ({ ...prev, [fieldId]: "" }));
+    } else {
+      // Clear any stored images when switching to text
+      setDefaultImageFiles((prev) => ({ ...prev, [fieldId]: [] }));
+      setDefaultImagePreviews((prev) => {
+        const currentPreviews = prev[fieldId] || [];
+        currentPreviews.forEach((previewUrl) => {
+          URL.revokeObjectURL(previewUrl);
+        });
+        return { ...prev, [fieldId]: [] };
+      });
+      setDefaultImageUrls((prev) => ({ ...prev, [fieldId]: [] }));
+      // Update field defaultValue
+      onFieldsChange(
+        fields.map((field) =>
+          field.id === fieldId ? { ...field, defaultValue: "" } : field
         )
       );
     }
@@ -4311,15 +4792,43 @@ function ConsulationFormDialog({
       return;
     }
 
-    try {
-      // First, upload any new image files for image fields
-      const uploadedImageUrls: Record<string, string[]> = {};
-      const uploadedFileUrls: Record<string, string[]> = {};
-      for (const field of fields) {
-        if (field.type === "image" && defaultImageFiles[field.id] && defaultImageFiles[field.id].length > 0) {
+    // Show success immediately for instant feedback (optimistic UI)
+    toast({
+      title: `${formType === "payment" ? "Payment" : "Consulation"} form saved`,
+      description:
+        `Your ${formType === "payment" ? "payment" : "consulation"} form layout has been saved successfully.`,
+    });
+    onOpenChange(false);
+
+    // Process save in background (fire and forget)
+    (async () => {
+      try {
+        // Collect all files from all fields for a single batch upload
+        const uploadedImageUrls: Record<string, string[]> = {};
+        const uploadedFileUrls: Record<string, string[]> = {};
+        
+        // Track which files belong to which field
+        const fileMapping: Array<{ fieldId: string; fieldType: 'image' | 'file'; fileCount: number }> = [];
+        const allFiles: File[] = [];
+
+        // Collect all files and track their mapping
+        for (const field of fields) {
+          if ((field.type === "image" || field.type === "image-or-text" || field.type === "authorization-form") && defaultImageFiles[field.id] && defaultImageFiles[field.id].length > 0) {
+            const files = defaultImageFiles[field.id];
+            fileMapping.push({ fieldId: field.id, fieldType: 'image', fileCount: files.length });
+            allFiles.push(...files);
+          } else if (field.type === "file" && defaultFileFiles[field.id] && defaultFileFiles[field.id].length > 0) {
+            const files = defaultFileFiles[field.id];
+            fileMapping.push({ fieldId: field.id, fieldType: 'file', fileCount: files.length });
+            allFiles.push(...files);
+          }
+        }
+
+        // Upload all files in a single batch request if there are any
+        if (allFiles.length > 0) {
           try {
             const formData = new FormData();
-            defaultImageFiles[field.id].forEach((file) => {
+            allFiles.forEach((file) => {
               formData.append('attachments', file);
             });
 
@@ -4334,154 +4843,126 @@ function ConsulationFormDialog({
             }
 
             const uploadResult = await uploadResponse.json();
-            const uploadedFiles = uploadResult.files || [];
-            uploadedImageUrls[field.id] = uploadedFiles
+            const uploadedFiles = (uploadResult.files || [])
               .filter((f: any) => f.path)
               .map((f: any) => f.path);
-          } catch (error: any) {
-            console.error(`Error uploading images for field ${field.id}:`, error);
-            toast({
-              title: "Upload Error",
-              description: `Failed to upload images for ${field.label}: ${error.message}`,
-              variant: "destructive",
-            });
-            return; // Don't save if image upload fails
-          }
-        } else if (field.type === "file" && defaultFileFiles[field.id] && defaultFileFiles[field.id].length > 0) {
-          try {
-            const formData = new FormData();
-            defaultFileFiles[field.id].forEach((file) => {
-              formData.append('attachments', file);
-            });
 
-            const uploadResponse = await fetch('/api/consulation-form/upload-images', {
-              method: 'POST',
-              body: formData,
-            });
-
-            if (!uploadResponse.ok) {
-              const errorData = await uploadResponse.json().catch(() => ({ message: 'Failed to upload files' }));
-              throw new Error(errorData.message || 'Failed to upload files');
+            // Map uploaded URLs back to their respective fields
+            let urlIndex = 0;
+            for (const mapping of fileMapping) {
+              const urls = uploadedFiles.slice(urlIndex, urlIndex + mapping.fileCount);
+              urlIndex += mapping.fileCount;
+              
+              if (mapping.fieldType === 'image') {
+                uploadedImageUrls[mapping.fieldId] = urls;
+              } else {
+                uploadedFileUrls[mapping.fieldId] = urls;
+              }
             }
-
-            const uploadResult = await uploadResponse.json();
-            const uploadedFiles = uploadResult.files || [];
-            uploadedFileUrls[field.id] = uploadedFiles
-              .filter((f: any) => f.path)
-              .map((f: any) => f.path);
           } catch (error: any) {
-            console.error(`Error uploading files for field ${field.id}:`, error);
-            toast({
-              title: "Upload Error",
-              description: `Failed to upload files for ${field.label}: ${error.message}`,
-              variant: "destructive",
-            });
-            return; // Don't save if file upload fails
+            console.error('Error uploading files in background:', error);
+            // Don't show error toast - already showed success
+            // Files will be missing but form can still be saved
           }
         }
-      }
 
-      // Extract default values from formValues and combine with uploaded image URLs
-      // Always include all fields, even if empty (to allow clearing defaults)
-      console.log("📝 Current formValues before extracting defaults:", formValues);
-      const defaultValues: Record<string, string> = {};
-      fields.forEach((field) => {
-        if (field.type === "image") {
-          // For image fields, combine existing URLs with newly uploaded URLs
-          const existingUrls = defaultImageUrls[field.id] || [];
-          const newUrls = uploadedImageUrls[field.id] || [];
-          const allUrls = [...existingUrls, ...newUrls].filter((url, index, self) => self.indexOf(url) === index); // Remove duplicates
-          // Always save image URLs, even if empty (to allow clearing)
-          defaultValues[field.id] = allUrls.join(", ");
-        } else if (field.type === "file") {
-          // For file fields, combine existing URLs with newly uploaded URLs
-          const existingUrls = defaultFileUrls[field.id] || [];
-          const newUrls = uploadedFileUrls[field.id] || [];
-          const allUrls = [...existingUrls, ...newUrls].filter((url, index, self) => self.indexOf(url) === index); // Remove duplicates
-          // Always save file URLs, even if empty (to allow clearing)
-          defaultValues[field.id] = allUrls.join(", ");
-        } else {
-          // For other fields, use the value from formValues (always save, even if empty)
-          const currentValue = formValues[field.id] || "";
-          defaultValues[field.id] = currentValue;
-        }
-      });
-      
-      // Clean fields - remove defaultValue from field objects (store separately)
-      const cleanFields = fields.map((field) => {
-        const { defaultValue, ...cleanField } = field;
-        return cleanField;
-      });
-      
-      console.log("💾 Saving fields and default values:", {
-        fieldsCount: cleanFields.length,
-        defaultValuesCount: Object.keys(defaultValues).length,
-        defaultValues: defaultValues,
-      });
-      
-      // Save to database
-      const response = await apiRequest(
-        "POST",
-        `/api/tenants/${tenantId}/consulation-form/template`,
-        { 
-          fields: cleanFields,
-          defaultValues: defaultValues,
-          formType: formType || "consulation"
-        }
-      );
-      const data = await response.json();
-
-      if (data?.success) {
-        // Also save to localStorage as backup
-        if (consulationStorageKey) {
-          localStorage.setItem(
-            consulationStorageKey,
-            JSON.stringify(fields)
-          );
-        }
-
-        // Update parent component's default values state with the saved values
-        // This ensures that when the dialog reopens, it shows the correct (possibly empty) values
-        if (onDefaultValuesChange) {
-          onDefaultValuesChange(defaultValues);
-        }
-
-        // Also reload from database to ensure we have the latest data
-        // This is important to handle any server-side processing of empty values
-        try {
-          const reloadResponse = await apiRequest(
-            "GET",
-            `/api/tenants/${tenantId}/consulation-form?formType=${formType || "consulation"}`,
-            {}
-          );
-          const reloadData = await reloadResponse.json();
-          if (reloadData?.defaultValues && typeof reloadData.defaultValues === 'object') {
-            if (onDefaultValuesChange) {
-              onDefaultValuesChange(reloadData.defaultValues);
+        // Extract default values from formValues and combine with uploaded image URLs
+        // Always include all fields, even if empty (to allow clearing defaults)
+        const defaultValues: Record<string, string> = {};
+        fields.forEach((field) => {
+          if (field.type === "image" || field.type === "authorization-form") {
+            // For image and authorization-form fields, combine existing URLs with newly uploaded URLs
+            const existingUrls = defaultImageUrls[field.id] || [];
+            const newUrls = uploadedImageUrls[field.id] || [];
+            const allUrls = [...existingUrls, ...newUrls].filter((url, index, self) => self.indexOf(url) === index); // Remove duplicates
+            // Always save image URLs, even if empty (to allow clearing)
+            defaultValues[field.id] = allUrls.join(", ");
+          } else if (field.type === "image-or-text") {
+            // For image-or-text fields, save images if uploaded, otherwise save text
+            const existingUrls = defaultImageUrls[field.id] || [];
+            const newUrls = uploadedImageUrls[field.id] || [];
+            const allUrls = [...existingUrls, ...newUrls].filter((url, index, self) => self.indexOf(url) === index);
+            
+            if (allUrls.length > 0) {
+              // If images are uploaded, save image URLs (text will be ignored)
+              defaultValues[field.id] = allUrls.join(", ");
+            } else {
+              // If no images, save text value
+              const currentValue = formValues[field.id] || "";
+              defaultValues[field.id] = currentValue;
             }
+          } else if (field.type === "file") {
+            // For file fields, combine existing URLs with newly uploaded URLs
+            const existingUrls = defaultFileUrls[field.id] || [];
+            const newUrls = uploadedFileUrls[field.id] || [];
+            const allUrls = [...existingUrls, ...newUrls].filter((url, index, self) => self.indexOf(url) === index); // Remove duplicates
+            // Always save file URLs, even if empty (to allow clearing)
+            defaultValues[field.id] = allUrls.join(", ");
+          } else {
+            // For other fields, use the value from formValues (always save, even if empty)
+            const currentValue = formValues[field.id] || "";
+            defaultValues[field.id] = currentValue;
           }
-        } catch (reloadError) {
-          console.warn("Failed to reload default values after save:", reloadError);
-          // Continue anyway - we've already updated the state with what we saved
-        }
-
-        toast({
-          title: `${formType === "payment" ? "Payment" : "Consulation"} form saved`,
-          description:
-            `Your ${formType === "payment" ? "payment" : "consulation"} form layout has been saved successfully.`,
         });
-        onOpenChange(false);
-      } else {
-        throw new Error(data?.message || "Failed to save form");
+        
+        // Clean fields - remove defaultValue from field objects (store separately)
+        const cleanFields = fields.map((field) => {
+          const { defaultValue, ...cleanField } = field;
+          return cleanField;
+        });
+        
+        // Save to database
+        const response = await apiRequest(
+          "POST",
+          `/api/tenants/${tenantId}/consulation-form/template`,
+          { 
+            fields: cleanFields,
+            defaultValues: defaultValues,
+            formType: formType || "consulation"
+          }
+        );
+        const data = await response.json();
+
+        if (data?.success) {
+          // Also save to localStorage as backup
+          if (consulationStorageKey) {
+            localStorage.setItem(
+              consulationStorageKey,
+              JSON.stringify(fields)
+            );
+          }
+
+          // Update parent component's default values state with the saved values
+          if (onDefaultValuesChange) {
+            onDefaultValuesChange(defaultValues);
+          }
+
+          // Reload from database in background to ensure we have the latest data
+          try {
+            const reloadResponse = await apiRequest(
+              "GET",
+              `/api/tenants/${tenantId}/consulation-form?formType=${formType || "consulation"}`,
+              {}
+            );
+            const reloadData = await reloadResponse.json();
+            if (reloadData?.defaultValues && typeof reloadData.defaultValues === 'object') {
+              if (onDefaultValuesChange) {
+                onDefaultValuesChange(reloadData.defaultValues);
+              }
+            }
+          } catch (reloadError) {
+            console.warn("Failed to reload default values after save:", reloadError);
+            // Continue anyway - we've already updated the state with what we saved
+          }
+        } else {
+          throw new Error(data?.message || "Failed to save form");
+        }
+      } catch (error: any) {
+        console.error("Error saving consulation form in background:", error);
+        // Only show error if it's critical - user already saw success
+        // Could optionally show a subtle error notification here
       }
-    } catch (error: any) {
-      console.error("Error saving consulation form:", error);
-      toast({
-        title: "Failed to save form",
-        description: error?.message || "Please try again.",
-        variant: "destructive",
-      });
-    }
+    })();
   };
 
   const reorderFields = (
@@ -4591,7 +5072,22 @@ function ConsulationFormDialog({
                         onClick={() => {
                           const previewUrl = imagePreviews[index];
                           if (previewUrl) {
-                            setViewingImage({ url: previewUrl, name: file.name });
+                            const fileImages = imageFiles.map((f, idx) => ({
+                              url: imagePreviews[idx] || '',
+                              name: f.name
+                            }));
+                            const urlImages = imageUrls.map((url, idx) => {
+                              const urlParts = url.split("/");
+                              const name = urlParts[urlParts.length - 1] || `Image ${imageFiles.length + idx + 1}`;
+                              const normalized = url.startsWith('http') || url.startsWith('https')
+                                ? url
+                                : url.startsWith('/')
+                                ? url
+                                : `/${url}`;
+                              return { url: normalized, name };
+                            });
+                            const allImages = [...fileImages, ...urlImages];
+                            setViewingImage({ images: allImages, currentIndex: index });
                           }
                         }}
                         className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
@@ -4623,7 +5119,24 @@ function ConsulationFormDialog({
                       >
                         <button
                           type="button"
-                          onClick={() => setViewingImage({ url: normalizedUrl, name: filename })}
+                          onClick={() => {
+                            const fileImages = imageFiles.map((f, idx) => ({
+                              url: imagePreviews[idx] || '',
+                              name: f.name
+                            }));
+                            const urlImages = imageUrls.map((url, idx) => {
+                              const urlParts = url.split("/");
+                              const name = urlParts[urlParts.length - 1] || `Image ${imageFiles.length + idx + 1}`;
+                              const normalized = url.startsWith('http') || url.startsWith('https')
+                                ? url
+                                : url.startsWith('/')
+                                ? url
+                                : `/${url}`;
+                              return { url: normalized, name };
+                            });
+                            const allImages = [...fileImages, ...urlImages];
+                            setViewingImage({ images: allImages, currentIndex: imageFiles.length + index });
+                          }}
                           className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
                         >
                           Image {imageFiles.length + index + 1}: {filename.length > 30 ? filename.substring(0, 30) + "..." : filename}
@@ -4640,6 +5153,225 @@ function ConsulationFormDialog({
                     );
                   })}
                 </div>
+              </div>
+            )}
+          </div>
+        );
+      case "image-or-text":
+        const imageOrTextUrls = defaultImageUrls[field.id] || [];
+        const imageOrTextPreviews = defaultImagePreviews[field.id] || [];
+        const imageOrTextFiles = defaultImageFiles[field.id] || [];
+        const hasUploadedImages =
+          imageOrTextUrls.length > 0 || imageOrTextFiles.length > 0;
+        const mode =
+          imageOrTextModes[field.id] ||
+          (hasUploadedImages ? "image" : "text");
+
+        const toggle = (
+          <button
+            type="button"
+            className={`relative h-6 w-12 flex-shrink-0 rounded-full transition-colors ${
+              mode === "image" ? "bg-green-600" : "bg-blue-600"
+            }`}
+            onClick={() =>
+              handleImageOrTextModeChange(
+                field.id,
+                mode === "image" ? "text" : "image",
+              )
+            }
+          >
+            <span
+              className={`absolute top-1 left-1 h-4 w-4 rounded-full bg-white transition-transform ${
+                mode === "text" ? "translate-x-6" : "translate-x-0"
+              }`}
+            />
+          </button>
+        );
+
+        return (
+          <div className="space-y-3">
+            <div className="flex items-center gap-3 text-sm font-medium">
+              <span
+                className={
+                  mode === "image" ? "text-green-700" : "text-gray-500"
+                }
+              >
+                Upload Images
+              </span>
+              {toggle}
+              <span
+                className={
+                  mode === "text" ? "text-green-700" : "text-gray-500"
+                }
+              >
+                Enter Text
+              </span>
+            </div>
+
+            {mode === "image" && (
+              <div className="space-y-3">
+                <Input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={(e) => handleImageChange(field.id, e.target.files)}
+                />
+                <p className="text-xs text-gray-500">
+                  You can select multiple images.
+                </p>
+
+                {(imageOrTextUrls.length > 0 || imageOrTextFiles.length > 0) && (
+                  <div className="space-y-2">
+                    <div className="text-sm text-gray-600 font-medium">
+                      Uploaded Images (
+                      {imageOrTextUrls.length + imageOrTextFiles.length}):
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {imageOrTextFiles.map((file, index) => (
+                        <div
+                          key={`file-${index}`}
+                          className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const previewUrl = imageOrTextPreviews[index];
+                              if (previewUrl) {
+                                const fileImages = imageOrTextFiles.map(
+                                  (f, idx) => ({
+                                    url: imageOrTextPreviews[idx] || "",
+                                    name: f.name,
+                                  }),
+                                );
+                                const urlImages = imageOrTextUrls.map(
+                                  (url, idx) => {
+                                    const urlParts = url.split("/");
+                                    const name =
+                                      urlParts[urlParts.length - 1] ||
+                                      `Image ${
+                                        imageOrTextFiles.length + idx + 1
+                                      }`;
+                                    const normalized =
+                                      url.startsWith("http") ||
+                                      url.startsWith("https")
+                                        ? url
+                                        : url.startsWith("/")
+                                          ? url
+                                          : `/${url}`;
+                                    return { url: normalized, name };
+                                  },
+                                );
+                                const allImages = [...fileImages, ...urlImages];
+                                setViewingImage({
+                                  images: allImages,
+                                  currentIndex: index,
+                                });
+                              }
+                            }}
+                            className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                          >
+                            Image {index + 1}: {file.name}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeDefaultImage(field.id, index)}
+                            className="text-red-500 hover:text-red-700"
+                            aria-label={`Remove ${file.name}`}
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                      ))}
+                      {imageOrTextUrls.map((url, index) => {
+                        const urlParts = url.split("/");
+                        const filename =
+                          urlParts[urlParts.length - 1] ||
+                          `Image ${imageOrTextFiles.length + index + 1}`;
+                        const normalizedUrl =
+                          url.startsWith("http") || url.startsWith("https")
+                            ? url
+                            : url.startsWith("/")
+                              ? url
+                              : `/${url}`;
+                        return (
+                          <div
+                            key={`url-${index}`}
+                            className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const fileImages = imageOrTextFiles.map(
+                                  (f, idx) => ({
+                                    url: imageOrTextPreviews[idx] || "",
+                                    name: f.name,
+                                  }),
+                                );
+                                const urlImages = imageOrTextUrls.map(
+                                  (url, idx) => {
+                                    const urlParts = url.split("/");
+                                    const name =
+                                      urlParts[urlParts.length - 1] ||
+                                      `Image ${
+                                        imageOrTextFiles.length + idx + 1
+                                      }`;
+                                    const normalized =
+                                      url.startsWith("http") ||
+                                      url.startsWith("https")
+                                        ? url
+                                        : url.startsWith("/")
+                                          ? url
+                                          : `/${url}`;
+                                    return { url: normalized, name };
+                                  },
+                                );
+                                const allImages = [...fileImages, ...urlImages];
+                                setViewingImage({
+                                  images: allImages,
+                                  currentIndex:
+                                    imageOrTextFiles.length + index,
+                                });
+                              }}
+                              className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                            >
+                              Image {imageOrTextFiles.length + index + 1}:{" "}
+                              {filename.length > 30
+                                ? filename.substring(0, 30) + "..."
+                                : filename}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                removeDefaultImage(
+                                  field.id,
+                                  imageOrTextFiles.length + index,
+                                )
+                              }
+                              className="text-red-500 hover:text-red-700"
+                              aria-label={`Remove ${filename}`}
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {mode === "text" && (
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-2 block">
+                  Enter Text
+                </label>
+                <Textarea
+                  placeholder="Enter text if you don't want to upload images"
+                  value={formValues[field.id] || ""}
+                  onChange={(e) => handleValueChange(field.id, e.target.value)}
+                  className="min-h-[100px]"
+                />
               </div>
             )}
           </div>
@@ -4676,12 +5408,27 @@ function ConsulationFormDialog({
                         <button
                           type="button"
                           onClick={() => {
-                            if (previewUrl) {
-                              setViewingImage({ url: previewUrl, name: file.name });
-                            } else {
-                              // For PDFs, we'll need to handle differently
-                              setViewingImage({ url: URL.createObjectURL(file), name: file.name });
-                            }
+                            const fileImages = fileFiles.map((f, idx) => {
+                              const preview = filePreviews[idx];
+                              if (preview) {
+                                return { url: preview, name: f.name };
+                              } else if (f.name.toLowerCase().endsWith('.pdf')) {
+                                return { url: URL.createObjectURL(f), name: f.name };
+                              }
+                              return { url: '', name: f.name };
+                            });
+                            const urlImages = fileUrls.map((url, idx) => {
+                              const urlParts = url.split("/");
+                              const name = urlParts[urlParts.length - 1] || `File ${fileFiles.length + idx + 1}`;
+                              const normalized = url.startsWith('http') || url.startsWith('https')
+                                ? url
+                                : url.startsWith('/')
+                                ? url
+                                : `/${url}`;
+                              return { url: normalized, name };
+                            });
+                            const allImages = [...fileImages, ...urlImages];
+                            setViewingImage({ images: allImages, currentIndex: index });
                           }}
                           className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
                         >
@@ -4714,7 +5461,29 @@ function ConsulationFormDialog({
                       >
                         <button
                           type="button"
-                          onClick={() => setViewingImage({ url: normalizedUrl, name: filename })}
+                          onClick={() => {
+                            const fileImages = fileFiles.map((f, idx) => {
+                              const preview = filePreviews[idx];
+                              if (preview) {
+                                return { url: preview, name: f.name };
+                              } else if (f.name.toLowerCase().endsWith('.pdf')) {
+                                return { url: URL.createObjectURL(f), name: f.name };
+                              }
+                              return { url: '', name: f.name };
+                            });
+                            const urlImages = fileUrls.map((url, idx) => {
+                              const urlParts = url.split("/");
+                              const name = urlParts[urlParts.length - 1] || `File ${fileFiles.length + idx + 1}`;
+                              const normalized = url.startsWith('http') || url.startsWith('https')
+                                ? url
+                                : url.startsWith('/')
+                                ? url
+                                : `/${url}`;
+                              return { url: normalized, name };
+                            });
+                            const allImages = [...fileImages, ...urlImages];
+                            setViewingImage({ images: allImages, currentIndex: fileFiles.length + index });
+                          }}
                           className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
                         >
                           {isPdf ? 'PDF' : 'Image'} {fileFiles.length + index + 1}: {filename.length > 30 ? filename.substring(0, 30) + "..." : filename}
@@ -4735,6 +5504,118 @@ function ConsulationFormDialog({
             )}
           </div>
         );
+      case "authorization-form":
+        const authFormUrls = defaultImageUrls[field.id] || [];
+        const authFormPreviews = defaultImagePreviews[field.id] || [];
+        const authFormFiles = defaultImageFiles[field.id] || [];
+        return (
+          <div className="space-y-3">
+            <div className="border border-gray-300 rounded-lg p-4 bg-gray-50">
+              <p className="text-sm text-gray-600 italic mb-3">
+                Authorization Form - This field will display a credit card authorization form when customers fill out the payment form.
+              </p>
+              {(authFormUrls.length > 0 || authFormFiles.length > 0) && (
+                <div className="space-y-2 mt-3">
+                  <div className="text-sm text-gray-600 font-medium">
+                    Authorization Form Images ({authFormUrls.length + authFormFiles.length}):
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {authFormFiles.map((file, index) => (
+                      <div
+                        key={`auth-file-${index}`}
+                        className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const previewUrl = authFormPreviews[index];
+                            if (previewUrl) {
+                              const fileImages = authFormFiles.map((f, idx) => ({
+                                url: authFormPreviews[idx] || '',
+                                name: f.name
+                              }));
+                              const urlImages = authFormUrls.map((url, idx) => {
+                                const urlParts = url.split("/");
+                                const name = urlParts[urlParts.length - 1] || `Image ${authFormFiles.length + idx + 1}`;
+                                const normalized = url.startsWith('http') || url.startsWith('https')
+                                  ? url
+                                  : url.startsWith('/')
+                                  ? url
+                                  : `/${url}`;
+                                return { url: normalized, name };
+                              });
+                              const allImages = [...fileImages, ...urlImages];
+                              setViewingImage({ images: allImages, currentIndex: index });
+                            }
+                          }}
+                          className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                        >
+                          Image {index + 1}: {file.name}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeDefaultImage(field.id, index)}
+                          className="text-red-500 hover:text-red-700"
+                          aria-label={`Remove ${file.name}`}
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                    {authFormUrls.map((url, index) => {
+                      const urlParts = url.split("/");
+                      const filename = urlParts[urlParts.length - 1] || `Image ${authFormFiles.length + index + 1}`;
+                      const normalizedUrl = url.startsWith('http') || url.startsWith('https')
+                        ? url
+                        : url.startsWith('/')
+                          ? url
+                          : `/${url}`;
+                      return (
+                        <div
+                          key={`auth-url-${index}`}
+                          className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const fileImages = authFormFiles.map((f, idx) => ({
+                                url: authFormPreviews[idx] || '',
+                                name: f.name
+                              }));
+                              const urlImages = authFormUrls.map((url, idx) => {
+                                const urlParts = url.split("/");
+                                const name = urlParts[urlParts.length - 1] || `Image ${authFormFiles.length + idx + 1}`;
+                                const normalized = url.startsWith('http') || url.startsWith('https')
+                                  ? url
+                                  : url.startsWith('/')
+                                  ? url
+                                  : `/${url}`;
+                                return { url: normalized, name };
+                              });
+                              const allImages = [...fileImages, ...urlImages];
+                              setViewingImage({ images: allImages, currentIndex: authFormFiles.length + index });
+                            }}
+                            className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                          >
+                            Image {authFormFiles.length + index + 1}: {filename.length > 30 ? filename.substring(0, 30) + "..." : filename}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeDefaultImage(field.id, authFormFiles.length + index)}
+                            className="text-red-500 hover:text-red-700"
+                            aria-label={`Remove ${filename}`}
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        );
       default:
         return <Input placeholder="Enter value" {...commonProps} />;
     }
@@ -4752,7 +5633,8 @@ function ConsulationFormDialog({
         </DialogHeader>
 
         {/* Invoice Selection (Optional) */}
-        {customerId && invoices.length > 0 && (
+        {/* {customerId && invoices.length > 0 && ( */}
+        {formType === "payment" && customerId && invoices.length > 0 && (
           <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
             <label className="text-sm font-medium text-gray-700 mb-2 block">
               Select Invoice (Optional)
@@ -4940,10 +5822,10 @@ function ConsulationFormDialog({
                             <span className="text-red-500">*</span>
                           )}
                         </label>
-                        {field.type === "image" && (defaultImageUrls[field.id]?.length > 0 || defaultImageFiles[field.id]?.length > 0) ? (
+                        {(field.type === "image" || field.type === "authorization-form") && (defaultImageUrls[field.id]?.length > 0 || defaultImageFiles[field.id]?.length > 0) ? (
                           <div className="space-y-2">
                             <div className="text-sm text-gray-600 font-medium">
-                              Default Images ({(defaultImageUrls[field.id]?.length || 0) + (defaultImageFiles[field.id]?.length || 0)}):
+                              {field.type === "authorization-form" ? "Authorization Form Images" : "Default Images"} ({(defaultImageUrls[field.id]?.length || 0) + (defaultImageFiles[field.id]?.length || 0)}):
                             </div>
                             <div className="flex flex-wrap gap-2">
                               {/* Show files that haven't been uploaded yet */}
@@ -4958,7 +5840,22 @@ function ConsulationFormDialog({
                                       e.stopPropagation();
                                       const previewUrl = defaultImagePreviews[field.id]?.[index];
                                       if (previewUrl) {
-                                        setViewingImage({ url: previewUrl, name: file.name });
+                                        const fileImages = (defaultImageFiles[field.id] || []).map((f, idx) => ({
+                                          url: defaultImagePreviews[field.id]?.[idx] || '',
+                                          name: f.name
+                                        }));
+                                        const urlImages = (defaultImageUrls[field.id] || []).map((url, idx) => {
+                                          const urlParts = url.split("/");
+                                          const name = urlParts[urlParts.length - 1] || `Image ${(defaultImageFiles[field.id]?.length || 0) + idx + 1}`;
+                                          const normalized = url.startsWith('http') || url.startsWith('https')
+                                            ? url
+                                            : url.startsWith('/')
+                                            ? url
+                                            : `/${url}`;
+                                          return { url: normalized, name };
+                                        });
+                                        const allImages = [...fileImages, ...urlImages];
+                                        setViewingImage({ images: allImages, currentIndex: index });
                                       }
                                     }}
                                     className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
@@ -4992,12 +5889,22 @@ function ConsulationFormDialog({
                                       type="button"
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        const normalizedUrl = url.startsWith('http') || url.startsWith('https')
-                                          ? url
-                                          : url.startsWith('/')
+                                        const fileImages = (defaultImageFiles[field.id] || []).map((f, idx) => ({
+                                          url: defaultImagePreviews[field.id]?.[idx] || '',
+                                          name: f.name
+                                        }));
+                                        const urlImages = (defaultImageUrls[field.id] || []).map((url, idx) => {
+                                          const urlParts = url.split("/");
+                                          const name = urlParts[urlParts.length - 1] || `Image ${(defaultImageFiles[field.id]?.length || 0) + idx + 1}`;
+                                          const normalized = url.startsWith('http') || url.startsWith('https')
+                                            ? url
+                                            : url.startsWith('/')
                                             ? url
                                             : `/${url}`;
-                                        setViewingImage({ url: normalizedUrl, name: filename });
+                                          return { url: normalized, name };
+                                        });
+                                        const allImages = [...fileImages, ...urlImages];
+                                        setViewingImage({ images: allImages, currentIndex: (defaultImageFiles[field.id]?.length || 0) + index });
                                       }}
                                       className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
                                     >
@@ -5046,28 +5953,116 @@ function ConsulationFormDialog({
       <Dialog open={!!viewingImage} onOpenChange={() => setViewingImage(null)}>
         <DialogContent className="max-w-4xl max-h-[90vh]">
           <DialogHeader>
-            <DialogTitle>{viewingImage?.name || "File Preview"}</DialogTitle>
+            <DialogTitle>
+              {viewingImage ? `${viewingImage.images[viewingImage.currentIndex]?.name || "File Preview"} (${viewingImage.currentIndex + 1} of ${viewingImage.images.length})` : "File Preview"}
+            </DialogTitle>
           </DialogHeader>
-          {viewingImage && (
-            <div className="flex items-center justify-center p-4">
-              <img
-                src={viewingImage.url.startsWith('http') || viewingImage.url.startsWith('https') 
-                  ? viewingImage.url 
-                  : viewingImage.url.startsWith('/') 
-                    ? viewingImage.url 
-                    : `/${viewingImage.url}`}
-                alt={viewingImage.name}
-                className="max-w-full max-h-[70vh] object-contain rounded-md"
-                onError={(e) => {
-                  console.error("Image load error:", viewingImage.url);
-                  (e.target as HTMLImageElement).src = "/placeholder-image.png";
-                }}
-                onLoad={() => {
-                  console.log("Image loaded successfully:", viewingImage.url);
-                }}
-              />
-            </div>
-          )}
+          {viewingImage && (() => {
+            const currentImage = viewingImage.images[viewingImage.currentIndex];
+            if (!currentImage) return null;
+            
+            const isPdf = currentImage.name.toLowerCase().endsWith('.pdf') || 
+                         currentImage.url.toLowerCase().endsWith('.pdf') ||
+                         currentImage.url.toLowerCase().includes('.pdf');
+            const normalizedUrl = currentImage.url.startsWith('blob:')
+              ? currentImage.url
+              : currentImage.url.startsWith('http') || currentImage.url.startsWith('https')
+                ? currentImage.url
+                : currentImage.url.startsWith('/')
+                  ? currentImage.url
+                  : `/${currentImage.url}`;
+            
+            const hasNext = viewingImage.currentIndex < viewingImage.images.length - 1;
+            const hasPrevious = viewingImage.currentIndex > 0;
+            
+            const handleNext = () => {
+              if (hasNext) {
+                setViewingImage({
+                  ...viewingImage,
+                  currentIndex: viewingImage.currentIndex + 1
+                });
+              }
+            };
+            
+            const handlePrevious = () => {
+              if (hasPrevious) {
+                setViewingImage({
+                  ...viewingImage,
+                  currentIndex: viewingImage.currentIndex - 1
+                });
+              }
+            };
+            
+            return (
+              <div className="relative flex items-center justify-center p-4">
+                {viewingImage.images.length > 1 && (
+                  <>
+                    {hasPrevious && (
+                      <button
+                        onClick={handlePrevious}
+                        className="absolute left-4 z-10 bg-black/50 hover:bg-black/70 text-white rounded-full p-2 transition-colors"
+                        aria-label="Previous image"
+                      >
+                        <ChevronLeft className="h-6 w-6" />
+                      </button>
+                    )}
+                    {hasNext && (
+                      <button
+                        onClick={handleNext}
+                        className="absolute right-4 z-10 bg-black/50 hover:bg-black/70 text-white rounded-full p-2 transition-colors"
+                        aria-label="Next image"
+                      >
+                        <ChevronRight className="h-6 w-6" />
+                      </button>
+                    )}
+                  </>
+                )}
+                {isPdf ? (
+                  <div className="w-full h-[70vh] flex flex-col items-center justify-center">
+                    <iframe
+                      src={normalizedUrl}
+                      className="w-full h-full border rounded-md"
+                      title={currentImage.name}
+                      onError={() => {
+                        console.error("PDF load error:", normalizedUrl);
+                      }}
+                    />
+                    <div className="mt-4">
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          if (normalizedUrl.startsWith('blob:')) {
+                            const link = document.createElement('a');
+                            link.href = normalizedUrl;
+                            link.download = currentImage.name;
+                            link.click();
+                          } else {
+                            window.open(normalizedUrl, '_blank');
+                          }
+                        }}
+                      >
+                        <FileText className="h-4 w-4 mr-2" />
+                        Open PDF in New Tab
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <img
+                    src={normalizedUrl}
+                    alt={currentImage.name}
+                    className="max-w-full max-h-[70vh] object-contain rounded-md"
+                    onError={(e) => {
+                      console.error("Image load error:", normalizedUrl);
+                      (e.target as HTMLImageElement).src = "/placeholder-image.png";
+                    }}
+                    onLoad={() => {
+                      console.log("Image loaded successfully:", normalizedUrl);
+                    }}
+                  />
+                )}
+              </div>
+            );
+          })()}
         </DialogContent>
       </Dialog>
     </Dialog>

@@ -24,3 +24,5 @@ CREATE INDEX IF NOT EXISTS idx_consulation_form_submissions_tenant_id ON consula
 CREATE INDEX IF NOT EXISTS idx_consulation_form_submissions_customer_id ON consulation_form_submissions(customer_id);
 CREATE INDEX IF NOT EXISTS idx_consulation_form_submissions_created_at ON consulation_form_submissions(created_at);
 
+
+

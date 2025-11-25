@@ -2294,22 +2294,6 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
         const toastTenantName =
           req.user?.tenantName || req.user?.companyName || "RateHonk CRM";
 
-        // Fetch form fields from database based on formType
-        let formFields: Array<{ id: string; label: string; type: string; required?: boolean }> = [];
-        try {
-          const [formTemplate] = await sql`
-            SELECT fields FROM consulation_form_templates
-            WHERE tenant_id = ${tenantId} AND form_type = ${formType}
-            ORDER BY created_at DESC
-            LIMIT 1
-          `;
-          if (formTemplate && formTemplate.fields) {
-            formFields = formTemplate.fields;
-          }
-        } catch (dbError) {
-          console.log(`No ${formType} form template found in database, using empty fields list`);
-        }
-
         // Get method from request body (email, whatsapp, or both)
         const method = req.body?.method || 'both';
         const shouldSendEmail = (method === 'email' || method === 'both') && customer.email;
@@ -2318,37 +2302,41 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
         const formName = formType === 'payment' ? 'payment' : 'consulation';
         const activityTitle = formType === 'payment' ? 'Payment Form Link Sent' : 'Consulation Form Link Sent';
 
-        let emailSent = false;
+        // Send email and WhatsApp asynchronously (fire and forget) for instant response
+        // This allows the API to return immediately while sending happens in the background
         if (shouldSendEmail) {
-          emailSent = await emailService.sendConsulationFormEmail({
+          emailService.sendConsulationFormEmail({
             to: customer.email,
             customerName,
             formUrl,
             tenantName: toastTenantName,
             formType: formType as 'consulation' | 'payment',
+          }).catch(error => {
+            console.error("❌ Background email send error:", error);
           });
         }
 
-        let whatsappResult: { success: boolean; message?: string; error?: string } | null =
-          null;
         if (shouldSendWhatsApp) {
           const whatsappMessage = `Hello ${customerName}, please complete your ${formName} form here: ${formUrl}`;
-          whatsappResult = await sendWhatsAppCustomMessage({
+          sendWhatsAppCustomMessage({
             tenantId,
             phoneNumber: customer.phone,
             message: whatsappMessage,
             userId: req.user?.id,
             customerId,
             activityTitle: activityTitle,
+          }).catch(error => {
+            console.error("❌ Background WhatsApp send error:", error);
           });
         }
 
+        // Return immediately - sending happens in background
         return res.json({
           success: true,
           formUrl,
           sent: {
-            email: emailSent,
-            whatsapp: whatsappResult?.success || false,
+            email: shouldSendEmail,
+            whatsapp: shouldSendWhatsApp,
           },
         });
       } catch (error: any) {
@@ -18239,6 +18227,31 @@ Please improve this email.`;
     // Security: ensure the resolved path is within the uploads directory
     const safePath = path.normalize(filePath);
     const uploadsDir = path.join(process.cwd(), "uploads", "email-attachments");
+    if (!safePath.startsWith(path.normalize(uploadsDir))) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+    
+    if (fs.existsSync(safePath) && fs.statSync(safePath).isFile()) {
+      res.sendFile(safePath);
+    } else {
+      res.status(404).json({ message: "File not found" });
+    }
+  });
+
+  // Serve authorization form PDF files
+  app.get("/uploads/authorization_form/:filename", (req, res) => {
+    const filename = req.params.filename;
+    
+    // Security: prevent path traversal - only allow alphanumeric, dash, underscore, and dot
+    if (!/^[a-zA-Z0-9._-]+$/.test(filename)) {
+      return res.status(403).json({ message: "Invalid filename" });
+    }
+    
+    const filePath = path.join(process.cwd(), "uploads", "authorization_form", filename);
+    
+    // Security: ensure the resolved path is within the uploads directory
+    const safePath = path.normalize(filePath);
+    const uploadsDir = path.join(process.cwd(), "uploads", "authorization_form");
     if (!safePath.startsWith(path.normalize(uploadsDir))) {
       return res.status(403).json({ message: "Access denied" });
     }

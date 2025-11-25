@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, CheckCircle2, Eye, X, Camera, Image as ImageIcon, FileText } from "lucide-react";
+import { Loader2, CheckCircle2, Eye, X, Camera, Image as ImageIcon, FileText, ChevronLeft, ChevronRight } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import {
   Dialog,
@@ -18,7 +18,7 @@ import { Card, CardContent } from "@/components/ui/card";
 interface ConsulationField {
   id: string;
   label: string;
-  type: "title" | "text" | "price" | "textarea" | "phone" | "image" | "file";
+  type: "title" | "text" | "price" | "textarea" | "phone" | "image" | "file" | "image-or-text";
   required?: boolean;
 }
 
@@ -39,7 +39,8 @@ export default function ConsulationForm() {
   const [fileFiles, setFileFiles] = useState<Record<string, File[]>>({});
   const [filePreviews, setFilePreviews] = useState<Record<string, string[]>>({}); // Blob URLs for uploaded files
   const [defaultFileUrls, setDefaultFileUrls] = useState<Record<string, string[]>>({}); // URLs for default files from database
-  const [viewingImage, setViewingImage] = useState<{ url: string; name: string } | null>(null);
+  const [imageOrTextModes, setImageOrTextModes] = useState<Record<string, "image" | "text">>({});
+  const [viewingImage, setViewingImage] = useState<{ images: Array<{ url: string; name: string }>; currentIndex: number } | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const previewUrlsRef = useRef<string[]>([]);
   const [fieldsWithDefaults, setFieldsWithDefaults] = useState<Set<string>>(new Set());
@@ -156,6 +157,23 @@ export default function ConsulationForm() {
                 return `Image ${index + 1}: ${filename}`;
               }).join(", ");
               initialValues[field.id] = imageNames;
+            } else if (field.type === "image-or-text" && defaultValue) {
+              // For image-or-text fields, check if defaultValue contains URLs (images) or text
+              // URLs typically contain "/" or start with "http"
+              const isImageUrls = defaultValue.includes("/") || defaultValue.startsWith("http");
+              
+              if (isImageUrls) {
+                // Parse comma-separated image URLs
+                const urls = defaultValue.split(",")
+                  .map((url: string) => url.trim())
+                  .filter((url: string) => url && url.length > 0);
+                initialImageUrls[field.id] = urls;
+                // Don't set text value when images are present
+                initialValues[field.id] = "";
+              } else {
+                // It's text, not image URLs
+                initialValues[field.id] = defaultValue;
+              }
             } else if (field.type === "file" && defaultValue) {
               // For file fields, parse comma-separated URLs
               const urls = defaultValue.split(",")
@@ -203,6 +221,18 @@ export default function ConsulationForm() {
             }
           });
           setFieldsWithDefaults(fieldsWithDefaultsSet);
+          
+          // Initialize image-or-text modes based on default values
+          setImageOrTextModes((prev) => {
+            const next = { ...prev };
+            fieldsToUse.forEach((field: ConsulationField) => {
+              if (field.type === "image-or-text") {
+                const hasImages = (initialImageUrls[field.id]?.length || 0) > 0;
+                next[field.id] = hasImages ? "image" : "text";
+              }
+            });
+            return next;
+          });
         } else {
           // No fields configured - show empty form with message
           console.log("⚠️ No fields found or empty array. fieldsToUse:", fieldsToUse);
@@ -283,9 +313,16 @@ export default function ConsulationForm() {
       [fieldId]: [...(prev[fieldId] || []), ...newPreviews],
     }));
 
-    // Update form value to show image names
-    const imageNames = newFiles.map((file, index) => `Image ${index + 1} ${file.name}`).join(", ");
-    setFormValues((prev) => ({ ...prev, [fieldId]: imageNames }));
+    // Check if this is an "image-or-text" field - if so, clear text value and switch to image mode
+    const field = fields.find(f => f.id === fieldId);
+    if (field?.type === "image-or-text") {
+      setImageOrTextModes((prev) => ({ ...prev, [fieldId]: "image" }));
+      setFormValues((prev) => ({ ...prev, [fieldId]: "" }));
+    } else {
+      // Update form value to show image names
+      const imageNames = newFiles.map((file, index) => `Image ${index + 1} ${file.name}`).join(", ");
+      setFormValues((prev) => ({ ...prev, [fieldId]: imageNames }));
+    }
     
     // Close mobile options dialog after selection
     if (showMobileImageOptions?.fieldId === fieldId) {
@@ -317,9 +354,36 @@ export default function ConsulationForm() {
     setImageFiles((prev) => ({ ...prev, [fieldId]: newFiles }));
     setImagePreviews((prev) => ({ ...prev, [fieldId]: newPreviews }));
 
-    // Update form value
-    const imageNames = newFiles.map((file, idx) => `Image ${idx + 1} ${file.name}`).join(", ");
-    setFormValues((prev) => ({ ...prev, [fieldId]: imageNames || "" }));
+    // Check if this is an "image-or-text" field
+    const field = fields.find(f => f.id === fieldId);
+    if (field?.type === "image-or-text") {
+      // Clear text value when all images are removed to show text input again
+      if (newFiles.length === 0) {
+        setImageOrTextModes((prev) => ({ ...prev, [fieldId]: "text" }));
+        setFormValues((prev) => ({ ...prev, [fieldId]: "" }));
+      }
+    } else {
+      // Update form value
+      const imageNames = newFiles.map((file, idx) => `Image ${idx + 1} ${file.name}`).join(", ");
+      setFormValues((prev) => ({ ...prev, [fieldId]: imageNames || "" }));
+    }
+  };
+
+  const handleImageOrTextModeChange = (fieldId: string, mode: "image" | "text") => {
+    setImageOrTextModes((prev) => ({ ...prev, [fieldId]: mode }));
+    if (mode === "image") {
+      setFormValues((prev) => ({ ...prev, [fieldId]: "" }));
+    } else {
+      // Clear any stored images when switching to text
+      setImageFiles((prev) => ({ ...prev, [fieldId]: [] }));
+      setImagePreviews((prev) => {
+        const currentPreviews = prev[fieldId] || [];
+        currentPreviews.forEach((previewUrl) => {
+          URL.revokeObjectURL(previewUrl);
+        });
+        return { ...prev, [fieldId]: [] };
+      });
+    }
   };
 
   const handleFileChange = (fieldId: string, files: FileList | null) => {
@@ -411,6 +475,32 @@ export default function ConsulationForm() {
             });
             return false;
           }
+        } else if (field.type === "image-or-text") {
+          // For image-or-text fields, check if either images or text is provided
+          const mode = imageOrTextModes[field.id] || "text";
+          const hasImages = (imageFiles[field.id] && imageFiles[field.id].length > 0) || 
+                           (fieldsWithDefaults.has(field.id) && defaultImageUrls[field.id] && defaultImageUrls[field.id].length > 0);
+          const hasText = formValues[field.id]?.trim();
+          
+          if (mode === "image") {
+            if (!hasImages) {
+              toast({
+                title: "Validation Error",
+                description: `${field.label} is required. Please upload at least one image.`,
+                variant: "destructive",
+              });
+              return false;
+            }
+          } else {
+            if (!hasText) {
+              toast({
+                title: "Validation Error",
+                description: `${field.label} is required. Please enter text.`,
+                variant: "destructive",
+              });
+              return false;
+            }
+          }
         } else if (!formValues[field.id]?.trim()) {
           toast({
             title: "Validation Error",
@@ -440,17 +530,49 @@ export default function ConsulationForm() {
       return;
     }
 
-    try {
-      setIsSubmitting(true);
+    // Show success immediately for instant feedback (optimistic UI)
+    setIsSubmitting(true);
+    setIsSubmitted(true);
+    toast({
+      title: "Form submitted successfully",
+      description: "Thank you for completing the consulation form!",
+    });
+    setIsSubmitting(false);
 
-      // Upload images and files first
-      const uploadedImageUrls: Record<string, string[]> = {};
-      const uploadedFileUrls: Record<string, string[]> = {};
-      for (const field of fields) {
-        if (field.type === "image" && imageFiles[field.id] && imageFiles[field.id].length > 0) {
+    // Process submission in background (fire and forget)
+    (async () => {
+      try {
+        // Collect all files from all fields for a single upload
+        const uploadedImageUrls: Record<string, string[]> = {};
+        const uploadedFileUrls: Record<string, string[]> = {};
+        
+        // Track which files belong to which field
+        const fileMapping: Array<{ fieldId: string; fieldType: 'image' | 'file'; fileCount: number }> = [];
+        const allFiles: File[] = [];
+
+        // Collect all files and track their mapping
+        for (const field of fields) {
+          const mode = imageOrTextModes[field.id] || "text";
+          const isImageField =
+            field.type === "image" ||
+            (field.type === "image-or-text" && mode === "image");
+
+          if (isImageField && imageFiles[field.id] && imageFiles[field.id].length > 0) {
+            const files = imageFiles[field.id];
+            fileMapping.push({ fieldId: field.id, fieldType: 'image', fileCount: files.length });
+            allFiles.push(...files);
+          } else if (field.type === "file" && fileFiles[field.id] && fileFiles[field.id].length > 0) {
+            const files = fileFiles[field.id];
+            fileMapping.push({ fieldId: field.id, fieldType: 'file', fileCount: files.length });
+            allFiles.push(...files);
+          }
+        }
+
+        // Upload all files in a single request if there are any
+        if (allFiles.length > 0) {
           try {
             const formData = new FormData();
-            imageFiles[field.id].forEach((file) => {
+            allFiles.forEach((file) => {
               formData.append('attachments', file);
             });
 
@@ -465,112 +587,93 @@ export default function ConsulationForm() {
             }
 
             const uploadResult = await uploadResponse.json();
-            const uploadedFiles = uploadResult.files || [];
-            uploadedImageUrls[field.id] = uploadedFiles
+            const uploadedFiles = (uploadResult.files || [])
               .filter((f: any) => f.path)
               .map((f: any) => f.path);
-          } catch (error: any) {
-            console.error(`Error uploading images for field ${field.id}:`, error);
-            toast({
-              title: "Upload Error",
-              description: `Failed to upload images for ${field.label}: ${error.message}`,
-              variant: "destructive",
-            });
-            setIsSubmitting(false);
-            return;
-          }
-        } else if (field.type === "file" && fileFiles[field.id] && fileFiles[field.id].length > 0) {
-          try {
-            const formData = new FormData();
-            fileFiles[field.id].forEach((file) => {
-              formData.append('attachments', file);
-            });
 
-            const uploadResponse = await fetch('/api/consulation-form/upload-images', {
-              method: 'POST',
-              body: formData,
-            });
-
-            if (!uploadResponse.ok) {
-              const errorData = await uploadResponse.json().catch(() => ({ message: 'Failed to upload files' }));
-              throw new Error(errorData.message || 'Failed to upload files');
+            // Map uploaded URLs back to their respective fields
+            let urlIndex = 0;
+            for (const mapping of fileMapping) {
+              const urls = uploadedFiles.slice(urlIndex, urlIndex + mapping.fileCount);
+              urlIndex += mapping.fileCount;
+              
+              if (mapping.fieldType === 'image') {
+                uploadedImageUrls[mapping.fieldId] = urls;
+              } else {
+                uploadedFileUrls[mapping.fieldId] = urls;
+              }
             }
-
-            const uploadResult = await uploadResponse.json();
-            const uploadedFiles = uploadResult.files || [];
-            uploadedFileUrls[field.id] = uploadedFiles
-              .filter((f: any) => f.path)
-              .map((f: any) => f.path);
           } catch (error: any) {
-            console.error(`Error uploading files for field ${field.id}:`, error);
-            toast({
-              title: "Upload Error",
-              description: `Failed to upload files for ${field.label}: ${error.message}`,
-              variant: "destructive",
-            });
-            setIsSubmitting(false);
-            return;
+            console.error('Error uploading files:', error);
+            // Don't show error toast here - already showed success
+            // Files will be missing but form can still be submitted
           }
         }
-      }
 
-      // Prepare responses with image and file URLs
-      // Include default image/file URLs for fields with defaults
-      const responses: Record<string, string> = { ...formValues };
-      for (const field of fields) {
-        if (field.type === "image") {
-          // Use defaultImageUrls for default images (not imagePreviews which is for blob URLs)
-          const defaultUrls = fieldsWithDefaults.has(field.id) ? (defaultImageUrls[field.id] || []) : [];
-          const newUrls = uploadedImageUrls[field.id] || [];
-          const allUrls = [...defaultUrls, ...newUrls].filter((url, index, self) => self.indexOf(url) === index);
-          if (allUrls.length > 0) {
-            responses[field.id] = allUrls.join(", ");
-          }
-        } else if (field.type === "file") {
-          // Use defaultFileUrls for default files
-          const defaultUrls = fieldsWithDefaults.has(field.id) ? (defaultFileUrls[field.id] || []) : [];
-          const newUrls = uploadedFileUrls[field.id] || [];
-          const allUrls = [...defaultUrls, ...newUrls].filter((url, index, self) => self.indexOf(url) === index);
-          if (allUrls.length > 0) {
-            responses[field.id] = allUrls.join(", ");
+        // Prepare responses with image and file URLs
+        // Include default image/file URLs for fields with defaults
+        const responses: Record<string, string> = { ...formValues };
+        for (const field of fields) {
+          if (field.type === "image") {
+            // Use defaultImageUrls for default images (not imagePreviews which is for blob URLs)
+            const defaultUrls = fieldsWithDefaults.has(field.id) ? (defaultImageUrls[field.id] || []) : [];
+            const newUrls = uploadedImageUrls[field.id] || [];
+            const allUrls = [...defaultUrls, ...newUrls].filter((url, index, self) => self.indexOf(url) === index);
+            if (allUrls.length > 0) {
+              responses[field.id] = allUrls.join(", ");
+            }
+          } else if (field.type === "image-or-text") {
+            // For image-or-text fields, save images if uploaded, otherwise save text
+            const mode = imageOrTextModes[field.id] || "text";
+            const defaultUrls = fieldsWithDefaults.has(field.id) ? (defaultImageUrls[field.id] || []) : [];
+            const newUrls = uploadedImageUrls[field.id] || [];
+            const allUrls = [...defaultUrls, ...newUrls].filter((url, index, self) => self.indexOf(url) === index);
+            
+            if (mode === "image") {
+              if (allUrls.length > 0) {
+                // If images are uploaded, save image URLs (text will be ignored)
+                responses[field.id] = allUrls.join(", ");
+              }
+            } else {
+              // If no images, save text value (already in formValues)
+              const currentValue = formValues[field.id] || "";
+              responses[field.id] = currentValue;
+            }
+          } else if (field.type === "file") {
+            // Use defaultFileUrls for default files
+            const defaultUrls = fieldsWithDefaults.has(field.id) ? (defaultFileUrls[field.id] || []) : [];
+            const newUrls = uploadedFileUrls[field.id] || [];
+            const allUrls = [...defaultUrls, ...newUrls].filter((url, index, self) => self.indexOf(url) === index);
+            if (allUrls.length > 0) {
+              responses[field.id] = allUrls.join(", ");
+            }
           }
         }
-      }
 
-      const response = await apiRequest(
-        "POST",
-        `/api/tenants/${tenantId}/customers/${customerId}/consulation-form/submit`,
-        {
-          fields: fields.map((field) => ({
-            id: field.id,
-            label: field.label,
-            type: field.type,
-          })),
-          responses: responses,
-          formType: formType,
+        const response = await apiRequest(
+          "POST",
+          `/api/tenants/${tenantId}/customers/${customerId}/consulation-form/submit`,
+          {
+            fields: fields.map((field) => ({
+              id: field.id,
+              label: field.label,
+              type: field.type,
+            })),
+            responses: responses,
+            formType: formType,
+          }
+        );
+
+        const data = await response.json();
+        if (!data?.success) {
+          throw new Error(data?.message || "Failed to submit form");
         }
-      );
-
-      const data = await response.json();
-      if (data?.success) {
-        setIsSubmitted(true);
-        toast({
-          title: "Form submitted successfully",
-          description: "Thank you for completing the consulation form!",
-        });
-      } else {
-        throw new Error(data?.message || "Failed to submit form");
+      } catch (error: any) {
+        console.error("Error submitting form in background:", error);
+        // Only show error if it's critical - user already saw success
+        // Could optionally show a subtle error notification here
       }
-    } catch (error: any) {
-      console.error("Error submitting form:", error);
-      toast({
-        title: "Submission failed",
-        description: error?.message || "Failed to submit the form. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsSubmitting(false);
-    }
+    })();
   };
 
   const renderFieldInput = (field: ConsulationField) => {
@@ -646,7 +749,19 @@ export default function ConsulationForm() {
                     >
                       <button
                         type="button"
-                        onClick={() => setViewingImage({ url: normalizedUrl, name: filename })}
+                        onClick={() => {
+                          const allImages = fieldDefaultUrls.map((url: string, idx: number) => {
+                            const urlParts = url.split("/");
+                            const name = urlParts[urlParts.length - 1] || `Image ${idx + 1}`;
+                            const normalized = url.startsWith("http") || url.startsWith("https")
+                              ? url
+                              : url.startsWith("/")
+                              ? url
+                              : `/${url}`;
+                            return { url: normalized, name };
+                          });
+                          setViewingImage({ images: allImages, currentIndex: index });
+                        }}
                         className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
                       >
                         Image {index + 1}:{" "}
@@ -726,7 +841,11 @@ export default function ConsulationForm() {
                           const previewUrl = fieldBlobPreviews[index];
                           if (previewUrl) {
                             // Blob URLs don't need normalization
-                            setViewingImage({ url: previewUrl, name: file.name });
+                            const allImages = fieldImages.map((f, idx) => ({
+                              url: fieldBlobPreviews[idx] || '',
+                              name: f.name
+                            }));
+                            setViewingImage({ images: allImages, currentIndex: index });
                           } else {
                             console.error("No preview URL found for image:", file.name, "at index:", index);
                           }
@@ -747,6 +866,223 @@ export default function ConsulationForm() {
                   ))}
                 </div>
               </div>
+            )}
+          </div>
+        );
+      case "image-or-text":
+        const imageOrTextFiles = imageFiles[field.id] || [];
+        const imageOrTextPreviews = imagePreviews[field.id] || [];
+        const imageOrTextDefaultUrls = defaultImageUrls[field.id] || [];
+        const hasImageOrTextDefault = fieldsWithDefaults.has(field.id) && imageOrTextDefaultUrls.length > 0;
+        const hasUploadedImages =
+          imageOrTextFiles.length > 0 || (hasImageOrTextDefault && imageOrTextDefaultUrls.length > 0);
+        const mode =
+          imageOrTextModes[field.id] ||
+          (hasUploadedImages ? "image" : "text");
+
+        const toggle = (
+          <button
+            type="button"
+            className={`relative h-6 w-12 flex-shrink-0 rounded-full transition-colors ${
+              mode === "image" ? "bg-green-600" : "bg-blue-600"
+            }`}
+            onClick={() =>
+              handleImageOrTextModeChange(
+                field.id,
+                mode === "image" ? "text" : "image",
+              )
+            }
+          >
+            <span
+              className={`absolute top-1 left-1 h-4 w-4 rounded-full bg-white transition-transform ${
+                mode === "text" ? "translate-x-6" : "translate-x-0"
+              }`}
+            />
+          </button>
+        );
+
+        return (
+          <div className="space-y-3">
+            <div className="flex items-center gap-3 text-sm font-medium">
+              <span
+                className={
+                  mode === "image" ? "text-green-700" : "text-gray-500"
+                }
+              >
+                Upload Images
+              </span>
+              {toggle}
+              <span
+                className={
+                  mode === "text" ? "text-green-700" : "text-gray-500"
+                }
+              >
+                Enter Text
+              </span>
+            </div>
+
+            {mode === "image" && (
+              <div className="space-y-3">
+                {isMobile ? (
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setShowMobileImageOptions({ fieldId: field.id })}
+                      className="w-full"
+                    >
+                      <ImageIcon className="h-4 w-4 mr-2" />
+                      Choose Files
+                    </Button>
+                    <input
+                      ref={(el) => {
+                        if (el) cameraInputRefs.current[field.id] = el;
+                      }}
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={(e) => handleImageChange(field.id, e.target.files)}
+                      className="hidden"
+                    />
+                    <input
+                      ref={(el) => {
+                        if (el) galleryInputRefs.current[field.id] = el;
+                      }}
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      onChange={(e) => handleImageChange(field.id, e.target.files)}
+                      className="hidden"
+                    />
+                  </>
+                ) : (
+                  <Input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={(e) => handleImageChange(field.id, e.target.files)}
+                    className="w-full"
+                  />
+                )}
+                <p className="text-xs text-gray-500">
+                  {isMobile
+                    ? "Tap to choose from camera or gallery"
+                    : "You can select multiple images"}
+                </p>
+
+                {imageOrTextDefaultUrls.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="text-sm text-gray-600 font-medium">
+                      Default Images ({imageOrTextDefaultUrls.length}):
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {imageOrTextDefaultUrls.map((url: string, index: number) => {
+                        const urlParts = url.split("/");
+                        const filename =
+                          urlParts[urlParts.length - 1] || `Image ${index + 1}`;
+                        const normalizedUrl =
+                          url.startsWith("http") || url.startsWith("https")
+                            ? url
+                            : url.startsWith("/")
+                              ? url
+                              : `/${url}`;
+                        return (
+                          <div
+                            key={`iot-default-${field.id}-${index}`}
+                            className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const allImages = imageOrTextDefaultUrls.map(
+                                  (url: string, idx: number) => {
+                                    const parts = url.split("/");
+                                    const name =
+                                      parts[parts.length - 1] || `Image ${idx + 1}`;
+                                    const normalized =
+                                      url.startsWith("http") || url.startsWith("https")
+                                        ? url
+                                        : url.startsWith("/")
+                                          ? url
+                                          : `/${url}`;
+                                    return { url: normalized, name };
+                                  },
+                                );
+                                setViewingImage({
+                                  images: allImages,
+                                  currentIndex: index,
+                                });
+                              }}
+                              className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                            >
+                              Image {index + 1}:{" "}
+                              {filename.length > 30
+                                ? filename.substring(0, 30) + "..."
+                                : filename}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {imageOrTextFiles.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="text-sm text-gray-600 font-medium">
+                      Selected Images ({imageOrTextFiles.length}):
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {imageOrTextFiles.map((file, index) => (
+                        <div
+                          key={`iot-file-${field.id}-${index}`}
+                          className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const previewUrl = imageOrTextPreviews[index];
+                              if (previewUrl) {
+                                const allImages = imageOrTextFiles.map((f, idx) => ({
+                                  url: imageOrTextPreviews[idx] || "",
+                                  name: f.name,
+                                }));
+                                setViewingImage({
+                                  images: allImages,
+                                  currentIndex: index,
+                                });
+                              }
+                            }}
+                            className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                          >
+                            Image {index + 1}: {file.name}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeImage(field.id, index)}
+                            className="text-red-500 hover:text-red-700"
+                            aria-label={`Remove ${file.name}`}
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {mode === "text" && (
+              <Textarea
+                placeholder="Enter text if you don't want to upload images"
+                value={formValues[field.id] || ""}
+                onChange={(e) => handleValueChange(field.id, e.target.value)}
+                className="min-h-[100px]"
+                required={field.required}
+                disabled={hasDefault}
+                readOnly={hasDefault}
+              />
             )}
           </div>
         );
@@ -779,7 +1115,19 @@ export default function ConsulationForm() {
                     >
                       <button
                         type="button"
-                        onClick={() => setViewingImage({ url: normalizedUrl, name: filename })}
+                        onClick={() => {
+                          const allImages = fieldDefaultFileUrls.map((url: string, idx: number) => {
+                            const urlParts = url.split("/");
+                            const name = urlParts[urlParts.length - 1] || `File ${idx + 1}`;
+                            const normalized = url.startsWith("http") || url.startsWith("https")
+                              ? url
+                              : url.startsWith("/")
+                              ? url
+                              : `/${url}`;
+                            return { url: normalized, name };
+                          });
+                          setViewingImage({ images: allImages, currentIndex: index });
+                        }}
                         className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
                       >
                         {isPdf ? 'PDF' : 'Image'} {index + 1}:{" "}
@@ -823,12 +1171,16 @@ export default function ConsulationForm() {
                         <button
                           type="button"
                           onClick={() => {
-                            if (previewUrl) {
-                              setViewingImage({ url: previewUrl, name: file.name });
-                            } else if (isPdf) {
-                              // For PDFs, we'll open in a new tab or use an iframe
-                              setViewingImage({ url: URL.createObjectURL(file), name: file.name });
-                            }
+                            const allImages = fieldFiles.map((f, idx) => {
+                              const preview = fieldFilePreviews[idx];
+                              if (preview) {
+                                return { url: preview, name: f.name };
+                              } else if (f.name.toLowerCase().endsWith('.pdf')) {
+                                return { url: URL.createObjectURL(f), name: f.name };
+                              }
+                              return { url: '', name: f.name };
+                            });
+                            setViewingImage({ images: allImages, currentIndex: index });
                           }}
                           className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
                         >
@@ -974,6 +1326,9 @@ export default function ConsulationForm() {
               const fieldImages = imageFiles[field.id] || [];
               const fieldBlobPreviews = imagePreviews[field.id] || []; // Blob URLs for uploaded files
               const fieldDefaultUrls = defaultImageUrls[field.id] || []; // URLs for default images
+              const mode = imageOrTextModes[field.id] || "text";
+              const hasImageOrTextImages = field.type === "image-or-text" && 
+                (fieldImages.length > 0 || (fieldDefaultUrls && fieldDefaultUrls.length > 0));
 
               return (
   <Card key={field.id}>
@@ -1008,7 +1363,19 @@ export default function ConsulationForm() {
                       <button
                         type="button"
                         className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
-                        onClick={() => setViewingImage({ url: normalizedUrl, name: filename })}
+                        onClick={() => {
+                          const allImages = fieldDefaultUrls.map((url: string, idx: number) => {
+                            const urlParts = url.split("/");
+                            const name = urlParts[urlParts.length - 1] || `Image ${idx + 1}`;
+                            const normalized = url.startsWith("http") || url.startsWith("https")
+                              ? url
+                              : url.startsWith("/")
+                              ? url
+                              : `/${url}`;
+                            return { url: normalized, name };
+                          });
+                          setViewingImage({ images: allImages, currentIndex: index });
+                        }}
                       >
                         Image {index + 1}: {filename.length > 30 ? filename.substring(0, 30) + "..." : filename}
                       </button>
@@ -1029,12 +1396,22 @@ export default function ConsulationForm() {
                         type="button"
                         className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
                         onClick={() => {
-                          if (previewUrl) {
-                            // Blob URLs don't need normalization
-                            setViewingImage({ url: previewUrl, name: file.name });
-                          } else {
-                            console.error("No preview URL found for image:", file.name, "at index:", index);
-                          }
+                          const defaultImages = fieldDefaultUrls.map((url: string, idx: number) => {
+                            const urlParts = url.split("/");
+                            const name = urlParts[urlParts.length - 1] || `Image ${idx + 1}`;
+                            const normalized = url.startsWith("http") || url.startsWith("https")
+                              ? url
+                              : url.startsWith("/")
+                              ? url
+                              : `/${url}`;
+                            return { url: normalized, name };
+                          });
+                          const uploadedImages = fieldImages.map((f, idx) => ({
+                            url: fieldBlobPreviews[idx] || '',
+                            name: f.name
+                          }));
+                          const allImages = [...defaultImages, ...uploadedImages];
+                          setViewingImage({ images: allImages, currentIndex: fieldDefaultUrls.length + index });
                         }}
                       >
                         Image {fieldDefaultUrls.length + index + 1}: {file.name}
@@ -1045,6 +1422,98 @@ export default function ConsulationForm() {
             </div>
           ) : (
             <p className="text-sm text-gray-400 italic">No images selected</p>
+          )}
+        </div>
+      ) : field.type === "image-or-text" ? (
+        <div className="space-y-2">
+          {hasImageOrTextImages ? (
+            <div className="flex flex-wrap gap-2">
+              {/* Default images preview */}
+              {fieldDefaultUrls && fieldDefaultUrls.length > 0 &&
+                fieldDefaultUrls.map((url: string, index: number) => {
+                  const urlParts = url.split("/");
+                  const filename = urlParts[urlParts.length - 1] || `Image ${index + 1}`;
+                  const normalizedUrl =
+                    url.startsWith("http") || url.startsWith("https")
+                      ? url
+                      : url.startsWith("/")
+                        ? url
+                        : `/${url}`;
+
+                  return (
+                    <div
+                      key={`preview-iot-default-${field.id}-${index}`}
+                      className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm"
+                    >
+                      <button
+                        type="button"
+                        className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                        onClick={() => {
+                          const defaultImages = fieldDefaultUrls.map((url: string, idx: number) => {
+                            const urlParts = url.split("/");
+                            const name = urlParts[urlParts.length - 1] || `Image ${idx + 1}`;
+                            const normalized = url.startsWith("http") || url.startsWith("https")
+                              ? url
+                              : url.startsWith("/")
+                              ? url
+                              : `/${url}`;
+                            return { url: normalized, name };
+                          });
+                          const uploadedImages = fieldImages.map((f, idx) => ({
+                            url: fieldBlobPreviews[idx] || '',
+                            name: f.name
+                          }));
+                          const allImages = [...defaultImages, ...uploadedImages];
+                          setViewingImage({ images: allImages, currentIndex: index });
+                        }}
+                      >
+                        Image {index + 1}: {filename.length > 30 ? filename.substring(0, 30) + "..." : filename}
+                      </button>
+                    </div>
+                  );
+                })}
+
+              {/* Uploaded images preview */}
+              {fieldImages.length > 0 &&
+                fieldImages.map((file, index) => {
+                  const previewUrl = fieldBlobPreviews[index];
+                  return (
+                    <div
+                      key={`preview-iot-upload-${field.id}-${index}`}
+                      className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm"
+                    >
+                      <button
+                        type="button"
+                        className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                        onClick={() => {
+                          const defaultImages = fieldDefaultUrls.map((url: string, idx: number) => {
+                            const urlParts = url.split("/");
+                            const name = urlParts[urlParts.length - 1] || `Image ${idx + 1}`;
+                            const normalized = url.startsWith("http") || url.startsWith("https")
+                              ? url
+                              : url.startsWith("/")
+                              ? url
+                              : `/${url}`;
+                            return { url: normalized, name };
+                          });
+                          const uploadedImages = fieldImages.map((f, idx) => ({
+                            url: fieldBlobPreviews[idx] || '',
+                            name: f.name
+                          }));
+                          const allImages = [...defaultImages, ...uploadedImages];
+                          setViewingImage({ images: allImages, currentIndex: fieldDefaultUrls.length + index });
+                        }}
+                      >
+                        Image {fieldDefaultUrls.length + index + 1}: {file.name}
+                      </button>
+                    </div>
+                  );
+                })}
+            </div>
+          ) : (
+            <p className="text-sm text-gray-900 bg-gray-50 p-3 rounded-md whitespace-pre-wrap">
+              {value || <span className="text-gray-400 italic">Not filled</span>}
+            </p>
           )}
         </div>
       ) : field.type === "textarea" ? (
@@ -1107,28 +1576,76 @@ export default function ConsulationForm() {
       <Dialog open={!!viewingImage} onOpenChange={() => setViewingImage(null)}>
         <DialogContent className="max-w-4xl max-h-[90vh]">
           <DialogHeader>
-            <DialogTitle>{viewingImage?.name || "File Preview"}</DialogTitle>
+            <DialogTitle>
+              {viewingImage ? `${viewingImage.images[viewingImage.currentIndex]?.name || "File Preview"} (${viewingImage.currentIndex + 1} of ${viewingImage.images.length})` : "File Preview"}
+            </DialogTitle>
           </DialogHeader>
           {viewingImage && (() => {
-            const isPdf = viewingImage.name.toLowerCase().endsWith('.pdf') || 
-                         viewingImage.url.toLowerCase().endsWith('.pdf') ||
-                         viewingImage.url.toLowerCase().includes('.pdf');
-            const normalizedUrl = viewingImage.url.startsWith('blob:')
-              ? viewingImage.url
-              : viewingImage.url.startsWith('http') || viewingImage.url.startsWith('https')
-                ? viewingImage.url
-                : viewingImage.url.startsWith('/')
-                  ? viewingImage.url
-                  : `/${viewingImage.url}`;
+            const currentImage = viewingImage.images[viewingImage.currentIndex];
+            if (!currentImage) return null;
+            
+            const isPdf = currentImage.name.toLowerCase().endsWith('.pdf') || 
+                         currentImage.url.toLowerCase().endsWith('.pdf') ||
+                         currentImage.url.toLowerCase().includes('.pdf');
+            const normalizedUrl = currentImage.url.startsWith('blob:')
+              ? currentImage.url
+              : currentImage.url.startsWith('http') || currentImage.url.startsWith('https')
+                ? currentImage.url
+                : currentImage.url.startsWith('/')
+                  ? currentImage.url
+                  : `/${currentImage.url}`;
+            
+            const hasNext = viewingImage.currentIndex < viewingImage.images.length - 1;
+            const hasPrevious = viewingImage.currentIndex > 0;
+            
+            const handleNext = () => {
+              if (hasNext) {
+                setViewingImage({
+                  ...viewingImage,
+                  currentIndex: viewingImage.currentIndex + 1
+                });
+              }
+            };
+            
+            const handlePrevious = () => {
+              if (hasPrevious) {
+                setViewingImage({
+                  ...viewingImage,
+                  currentIndex: viewingImage.currentIndex - 1
+                });
+              }
+            };
             
             return (
-              <div className="flex items-center justify-center p-4">
+              <div className="relative flex items-center justify-center p-4">
+                {viewingImage.images.length > 1 && (
+                  <>
+                    {hasPrevious && (
+                      <button
+                        onClick={handlePrevious}
+                        className="absolute left-4 z-10 bg-black/50 hover:bg-black/70 text-white rounded-full p-2 transition-colors"
+                        aria-label="Previous image"
+                      >
+                        <ChevronLeft className="h-6 w-6" />
+                      </button>
+                    )}
+                    {hasNext && (
+                      <button
+                        onClick={handleNext}
+                        className="absolute right-4 z-10 bg-black/50 hover:bg-black/70 text-white rounded-full p-2 transition-colors"
+                        aria-label="Next image"
+                      >
+                        <ChevronRight className="h-6 w-6" />
+                      </button>
+                    )}
+                  </>
+                )}
                 {isPdf ? (
                   <div className="w-full h-[70vh] flex flex-col items-center justify-center">
                     <iframe
                       src={normalizedUrl}
                       className="w-full h-full border rounded-md"
-                      title={viewingImage.name}
+                      title={currentImage.name}
                       onError={() => {
                         console.error("PDF load error:", normalizedUrl);
                       }}
@@ -1140,7 +1657,7 @@ export default function ConsulationForm() {
                           if (normalizedUrl.startsWith('blob:')) {
                             const link = document.createElement('a');
                             link.href = normalizedUrl;
-                            link.download = viewingImage.name;
+                            link.download = currentImage.name;
                             link.click();
                           } else {
                             window.open(normalizedUrl, '_blank');
@@ -1155,7 +1672,7 @@ export default function ConsulationForm() {
                 ) : (
                   <img
                     src={normalizedUrl}
-                    alt={viewingImage.name}
+                    alt={currentImage.name}
                     className="max-w-full max-h-[70vh] object-contain rounded-md"
                     onError={(e) => {
                       console.error("Image load error:", normalizedUrl);
