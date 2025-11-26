@@ -163,7 +163,7 @@ const FIELD_TYPE_LABELS: Record<ConsulationFieldType, string> = {
   textarea: "Text Area",
   phone: "Phone Number",
   image: "Image Upload",
- // file: "File Upload (PDF & Images)",
+  file: "File Upload (PDF & Images)",
   "image-or-text": "Image or Text (Upload images or enter text)",
   "authorization-form": "Authorization Form (Credit Card Authorization)",
 };
@@ -2333,44 +2333,45 @@ export default function CustomerDetail() {
                                   const isImageUrls = responseValue.includes("/") || responseValue.startsWith("http");
                                   
                                   if (isImageUrls) {
-                                    // Parse comma-separated image URLs
-                                    const imageUrls = responseValue
+                                    // Parse comma-separated file URLs
+                                    const fileUrls = responseValue
                                       .split(",")
                                       .map((url: string) => url.trim())
                                       .filter((url: string) => url && url.length > 0);
                                     
-                                    if (imageUrls.length === 0) {
+                                    if (fileUrls.length === 0) {
                                       return (
-                                        <p className="text-sm text-gray-500 italic">No images uploaded</p>
+                                        <p className="text-sm text-gray-500 italic">No files uploaded</p>
                                       );
                                     }
 
                                     return (
                                       <div className="space-y-3">
                                         <div className="text-sm text-gray-600 font-medium">
-                                          {imageUrls.length} {imageUrls.length === 1 ? "Image" : "Images"}:
+                                          {fileUrls.length} {fileUrls.length === 1 ? "File" : "Files"}:
                                         </div>
                                         <div className="flex flex-wrap gap-3">
-                                          {imageUrls.map((imageUrl: string, index: number) => {
+                                          {fileUrls.map((fileUrl: string, index: number) => {
                                             // Extract filename from URL
-                                            const urlParts = imageUrl.split("/");
-                                            const filename = urlParts[urlParts.length - 1] || `Image ${index + 1}`;
+                                            const urlParts = fileUrl.split("/");
+                                            const filename = urlParts[urlParts.length - 1] || `File ${index + 1}`;
+                                            const isPdf = filename.toLowerCase().endsWith('.pdf');
                                             
                                             // Normalize URL for display
-                                            const normalizedUrl = imageUrl.startsWith('http') || imageUrl.startsWith('https')
-                                              ? imageUrl
-                                              : imageUrl.startsWith('/')
-                                                ? imageUrl
-                                                : `/${imageUrl}`;
+                                            const normalizedUrl = fileUrl.startsWith('http') || fileUrl.startsWith('https')
+                                              ? fileUrl
+                                              : fileUrl.startsWith('/')
+                                                ? fileUrl
+                                                : `/${fileUrl}`;
 
                                             return (
                                               <div
                                                 key={index}
                                                 className="relative group cursor-pointer"
                                                 onClick={() => {
-                                                  const allImages = imageUrls.map((url: string, idx: number) => {
+                                                  const allImages = fileUrls.map((url: string, idx: number) => {
                                                     const urlParts = url.split("/");
-                                                    const name = urlParts[urlParts.length - 1] || `Image ${idx + 1}`;
+                                                    const name = urlParts[urlParts.length - 1] || `File ${idx + 1}`;
                                                     const normalized = url.startsWith('http') || url.startsWith('https')
                                                       ? url
                                                       : url.startsWith('/')
@@ -2382,20 +2383,29 @@ export default function CustomerDetail() {
                                                 }}
                                               >
                                                 <div className="relative">
-                                                  <img
-                                                    src={normalizedUrl}
-                                                    alt={`${field.label} - Image ${index + 1}`}
-                                                    className="w-32 h-32 object-cover rounded-md border-2 border-gray-200 hover:border-blue-400 transition-all shadow-sm hover:shadow-md"
-                                                    onError={(e) => {
-                                                      (e.target as HTMLImageElement).src = "/placeholder-image.png";
-                                                    }}
-                                                  />
+                                                  {isPdf ? (
+                                                    <div className="w-32 h-32 bg-red-50 border-2 border-red-200 rounded-md hover:border-red-400 transition-all shadow-sm hover:shadow-md flex items-center justify-center">
+                                                      <div className="text-center p-2">
+                                                        <FileText className="h-12 w-12 text-red-600 mx-auto mb-1" />
+                                                        <p className="text-xs text-red-700 font-medium">PDF</p>
+                                                      </div>
+                                                    </div>
+                                                  ) : (
+                                                    <img
+                                                      src={normalizedUrl}
+                                                      alt={`${field.label} - ${isPdf ? 'PDF' : 'Image'} ${index + 1}`}
+                                                      className="w-32 h-32 object-cover rounded-md border-2 border-gray-200 hover:border-blue-400 transition-all shadow-sm hover:shadow-md"
+                                                      onError={(e) => {
+                                                        (e.target as HTMLImageElement).src = "/placeholder-image.png";
+                                                      }}
+                                                    />
+                                                  )}
                                                   <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-10 transition-all rounded-md flex items-center justify-center">
                                                     <Eye className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
                                                   </div>
                                                 </div>
                                                 <p className="text-xs text-gray-600 mt-1 text-center max-w-[128px] truncate">
-                                                  Image {index + 1}: {filename.length > 20 ? filename.substring(0, 20) + "..." : filename}
+                                                  {isPdf ? 'PDF' : 'Image'} {index + 1}: {filename.length > 20 ? filename.substring(0, 20) + "..." : filename}
                                                 </p>
                                               </div>
                                             );
@@ -2632,48 +2642,49 @@ export default function CustomerDetail() {
                             ) : field.type === "authorization-form" ? (
                               <div className="mt-2">
                                 {(() => {
-                                  // Check if responseValue contains image URLs (contains "/" or starts with "http")
-                                  const isImageUrls = responseValue.includes("/") || responseValue.startsWith("http");
+                                  // Check if responseValue contains file URLs (contains "/" or starts with "http")
+                                  const isFileUrls = responseValue.includes("/") || responseValue.startsWith("http");
                                   
-                                  if (isImageUrls) {
-                                    // Parse comma-separated image URLs
-                                    const imageUrls = responseValue
+                                  if (isFileUrls) {
+                                    // Parse comma-separated file URLs
+                                    const fileUrls = responseValue
                                       .split(",")
                                       .map((url: string) => url.trim())
                                       .filter((url: string) => url && url.length > 0);
                                     
-                                    if (imageUrls.length === 0) {
+                                    if (fileUrls.length === 0) {
                                       return (
-                                        <p className="text-sm text-gray-500 italic">No authorization form images uploaded</p>
+                                        <p className="text-sm text-gray-500 italic">No authorization form files uploaded</p>
                                       );
                                     }
 
                                     return (
                                       <div className="space-y-3">
                                         <div className="text-sm text-gray-600 font-medium">
-                                          {imageUrls.length} {imageUrls.length === 1 ? "Authorization Form Image" : "Authorization Form Images"}:
+                                          {fileUrls.length} {fileUrls.length === 1 ? "Authorization Form File" : "Authorization Form Files"}:
                                         </div>
                                         <div className="flex flex-wrap gap-3">
-                                          {imageUrls.map((imageUrl: string, index: number) => {
+                                          {fileUrls.map((fileUrl: string, index: number) => {
                                             // Extract filename from URL
-                                            const urlParts = imageUrl.split("/");
-                                            const filename = urlParts[urlParts.length - 1] || `Image ${index + 1}`;
+                                            const urlParts = fileUrl.split("/");
+                                            const filename = urlParts[urlParts.length - 1] || `File ${index + 1}`;
+                                            const isPdf = filename.toLowerCase().endsWith('.pdf');
                                             
                                             // Normalize URL for display
-                                            const normalizedUrl = imageUrl.startsWith('http') || imageUrl.startsWith('https')
-                                              ? imageUrl
-                                              : imageUrl.startsWith('/')
-                                                ? imageUrl
-                                                : `/${imageUrl}`;
+                                            const normalizedUrl = fileUrl.startsWith('http') || fileUrl.startsWith('https')
+                                              ? fileUrl
+                                              : fileUrl.startsWith('/')
+                                                ? fileUrl
+                                                : `/${fileUrl}`;
 
                                             return (
                                               <div
                                                 key={index}
                                                 className="relative group cursor-pointer"
                                                 onClick={() => {
-                                                  const allImages = imageUrls.map((url: string, idx: number) => {
+                                                  const allImages = fileUrls.map((url: string, idx: number) => {
                                                     const urlParts = url.split("/");
-                                                    const name = urlParts[urlParts.length - 1] || `Image ${idx + 1}`;
+                                                    const name = urlParts[urlParts.length - 1] || `File ${idx + 1}`;
                                                     const normalized = url.startsWith('http') || url.startsWith('https')
                                                       ? url
                                                       : url.startsWith('/')
@@ -2685,20 +2696,29 @@ export default function CustomerDetail() {
                                                 }}
                                               >
                                                 <div className="relative">
-                                                  <img
-                                                    src={normalizedUrl}
-                                                    alt={`${field.label} - Image ${index + 1}`}
-                                                    className="w-32 h-32 object-cover rounded-md border-2 border-gray-200 hover:border-blue-400 transition-all shadow-sm hover:shadow-md"
-                                                    onError={(e) => {
-                                                      (e.target as HTMLImageElement).src = "/placeholder-image.png";
-                                                    }}
-                                                  />
+                                                  {isPdf ? (
+                                                    <div className="w-32 h-32 bg-red-50 border-2 border-red-200 rounded-md hover:border-red-400 transition-all shadow-sm hover:shadow-md flex items-center justify-center">
+                                                      <div className="text-center p-2">
+                                                        <FileText className="h-12 w-12 text-red-600 mx-auto mb-1" />
+                                                        <p className="text-xs text-red-700 font-medium">PDF</p>
+                                                      </div>
+                                                    </div>
+                                                  ) : (
+                                                    <img
+                                                      src={normalizedUrl}
+                                                      alt={`${field.label} - ${isPdf ? 'PDF' : 'Image'} ${index + 1}`}
+                                                      className="w-32 h-32 object-cover rounded-md border-2 border-gray-200 hover:border-blue-400 transition-all shadow-sm hover:shadow-md"
+                                                      onError={(e) => {
+                                                        (e.target as HTMLImageElement).src = "/placeholder-image.png";
+                                                      }}
+                                                    />
+                                                  )}
                                                   <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-10 transition-all rounded-md flex items-center justify-center">
                                                     <Eye className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
                                                   </div>
                                                 </div>
                                                 <p className="text-xs text-gray-600 mt-1 text-center max-w-[128px] truncate">
-                                                  Image {index + 1}: {filename.length > 20 ? filename.substring(0, 20) + "..." : filename}
+                                                  {isPdf ? 'PDF' : 'Image'} {index + 1}: {filename.length > 20 ? filename.substring(0, 20) + "..." : filename}
                                                 </p>
                                               </div>
                                             );
@@ -2707,7 +2727,7 @@ export default function CustomerDetail() {
                                       </div>
                                     );
                                   } else {
-                                    // It's not image URLs, show "not filled" message
+                                    // It's not file URLs, show "not filled" message
                                     return (
                                       <p className="text-sm text-gray-500 italic">Authorization form not filled</p>
                                     );
@@ -2796,44 +2816,45 @@ export default function CustomerDetail() {
                                   const isImageUrls = responseValue.includes("/") || responseValue.startsWith("http");
                                   
                                   if (isImageUrls) {
-                                    // Parse comma-separated image URLs
-                                    const imageUrls = responseValue
+                                    // Parse comma-separated file URLs
+                                    const fileUrls = responseValue
                                       .split(",")
                                       .map((url: string) => url.trim())
                                       .filter((url: string) => url && url.length > 0);
                                     
-                                    if (imageUrls.length === 0) {
+                                    if (fileUrls.length === 0) {
                                       return (
-                                        <p className="text-sm text-gray-500 italic">No images uploaded</p>
+                                        <p className="text-sm text-gray-500 italic">No files uploaded</p>
                                       );
                                     }
 
                                     return (
                                       <div className="space-y-3">
                                         <div className="text-sm text-gray-600 font-medium">
-                                          {imageUrls.length} {imageUrls.length === 1 ? "Image" : "Images"}:
+                                          {fileUrls.length} {fileUrls.length === 1 ? "File" : "Files"}:
                                         </div>
                                         <div className="flex flex-wrap gap-3">
-                                          {imageUrls.map((imageUrl: string, index: number) => {
+                                          {fileUrls.map((fileUrl: string, index: number) => {
                                             // Extract filename from URL
-                                            const urlParts = imageUrl.split("/");
-                                            const filename = urlParts[urlParts.length - 1] || `Image ${index + 1}`;
+                                            const urlParts = fileUrl.split("/");
+                                            const filename = urlParts[urlParts.length - 1] || `File ${index + 1}`;
+                                            const isPdf = filename.toLowerCase().endsWith('.pdf');
                                             
                                             // Normalize URL for display
-                                            const normalizedUrl = imageUrl.startsWith('http') || imageUrl.startsWith('https')
-                                              ? imageUrl
-                                              : imageUrl.startsWith('/')
-                                                ? imageUrl
-                                                : `/${imageUrl}`;
+                                            const normalizedUrl = fileUrl.startsWith('http') || fileUrl.startsWith('https')
+                                              ? fileUrl
+                                              : fileUrl.startsWith('/')
+                                                ? fileUrl
+                                                : `/${fileUrl}`;
 
                                             return (
                                               <div
                                                 key={index}
                                                 className="relative group cursor-pointer"
                                                 onClick={() => {
-                                                  const allImages = imageUrls.map((url: string, idx: number) => {
+                                                  const allImages = fileUrls.map((url: string, idx: number) => {
                                                     const urlParts = url.split("/");
-                                                    const name = urlParts[urlParts.length - 1] || `Image ${idx + 1}`;
+                                                    const name = urlParts[urlParts.length - 1] || `File ${idx + 1}`;
                                                     const normalized = url.startsWith('http') || url.startsWith('https')
                                                       ? url
                                                       : url.startsWith('/')
@@ -2845,20 +2866,29 @@ export default function CustomerDetail() {
                                                 }}
                                               >
                                                 <div className="relative">
-                                                  <img
-                                                    src={normalizedUrl}
-                                                    alt={`${field.label} - Image ${index + 1}`}
-                                                    className="w-32 h-32 object-cover rounded-md border-2 border-gray-200 hover:border-blue-400 transition-all shadow-sm hover:shadow-md"
-                                                    onError={(e) => {
-                                                      (e.target as HTMLImageElement).src = "/placeholder-image.png";
-                                                    }}
-                                                  />
+                                                  {isPdf ? (
+                                                    <div className="w-32 h-32 bg-red-50 border-2 border-red-200 rounded-md hover:border-red-400 transition-all shadow-sm hover:shadow-md flex items-center justify-center">
+                                                      <div className="text-center p-2">
+                                                        <FileText className="h-12 w-12 text-red-600 mx-auto mb-1" />
+                                                        <p className="text-xs text-red-700 font-medium">PDF</p>
+                                                      </div>
+                                                    </div>
+                                                  ) : (
+                                                    <img
+                                                      src={normalizedUrl}
+                                                      alt={`${field.label} - ${isPdf ? 'PDF' : 'Image'} ${index + 1}`}
+                                                      className="w-32 h-32 object-cover rounded-md border-2 border-gray-200 hover:border-blue-400 transition-all shadow-sm hover:shadow-md"
+                                                      onError={(e) => {
+                                                        (e.target as HTMLImageElement).src = "/placeholder-image.png";
+                                                      }}
+                                                    />
+                                                  )}
                                                   <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-10 transition-all rounded-md flex items-center justify-center">
                                                     <Eye className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
                                                   </div>
                                                 </div>
                                                 <p className="text-xs text-gray-600 mt-1 text-center max-w-[128px] truncate">
-                                                  Image {index + 1}: {filename.length > 20 ? filename.substring(0, 20) + "..." : filename}
+                                                  {isPdf ? 'PDF' : 'Image'} {index + 1}: {filename.length > 20 ? filename.substring(0, 20) + "..." : filename}
                                                 </p>
                                               </div>
                                             );
@@ -4377,8 +4407,17 @@ function ConsulationFormDialog({
     const newFiles = [...(defaultImageFiles[fieldId] || []), ...fileArray];
     setDefaultImageFiles((prev) => ({ ...prev, [fieldId]: newFiles }));
 
-    // Create preview URLs
-    const newPreviews = fileArray.map((file) => URL.createObjectURL(file));
+    // Create preview URLs - for images create blob URL, for PDFs create blob URL
+    const newPreviews = fileArray.map((file) => {
+      if (file.type.startsWith('image/')) {
+        return URL.createObjectURL(file);
+      } else if (file.name.toLowerCase().endsWith('.pdf')) {
+        // For PDFs, create blob URL for preview
+        return URL.createObjectURL(file);
+      } else {
+        return '';
+      }
+    });
     setDefaultImagePreviews((prev) => ({
       ...prev,
       [fieldId]: [...(prev[fieldId] || []), ...newPreviews],
@@ -4454,8 +4493,9 @@ function ConsulationFormDialog({
         // Update form value - only show URL names (since files are now uploaded)
         const urlNames = newUrls.map((url, index) => {
           const urlParts = url.split("/");
-          const filename = urlParts[urlParts.length - 1] || `Image ${index + 1}`;
-          return `Image ${index + 1}: ${filename}`;
+          const filename = urlParts[urlParts.length - 1] || `File ${index + 1}`;
+          const isPdf = filename.toLowerCase().endsWith('.pdf');
+          return `${isPdf ? 'PDF' : 'Image'} ${index + 1}: ${filename}`;
         });
         const allNames = urlNames.join(", ");
         setFormValues((prev) => ({ ...prev, [fieldId]: allNames }));
@@ -5049,12 +5089,12 @@ function ConsulationFormDialog({
           <div className="space-y-3">
             <Input
               type="file"
-              accept="image/*"
+              accept="image/*,.pdf"
               multiple
               onChange={(e) => handleImageChange(field.id, e.target.files)}
             />
             <p className="text-xs text-gray-500">
-              You can select multiple images
+              You can select multiple images and PDFs
             </p>
             {(imageUrls.length > 0 || imageFiles.length > 0) && (
               <div className="space-y-2">
@@ -5196,7 +5236,7 @@ function ConsulationFormDialog({
                   mode === "image" ? "text-green-700" : "text-gray-500"
                 }
               >
-                Upload Images
+                Upload Files
               </span>
               {toggle}
               <span
@@ -5212,81 +5252,118 @@ function ConsulationFormDialog({
               <div className="space-y-3">
                 <Input
                   type="file"
-                  accept="image/*"
+                  accept="image/*,.pdf"
                   multiple
                   onChange={(e) => handleImageChange(field.id, e.target.files)}
                 />
                 <p className="text-xs text-gray-500">
-                  You can select multiple images.
+                  You can select multiple images and PDFs.
                 </p>
 
                 {(imageOrTextUrls.length > 0 || imageOrTextFiles.length > 0) && (
                   <div className="space-y-2">
                     <div className="text-sm text-gray-600 font-medium">
-                      Uploaded Images (
+                      Uploaded Files (
                       {imageOrTextUrls.length + imageOrTextFiles.length}):
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      {imageOrTextFiles.map((file, index) => (
-                        <div
-                          key={`file-${index}`}
-                          className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm"
-                        >
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const previewUrl = imageOrTextPreviews[index];
-                              if (previewUrl) {
-                                const fileImages = imageOrTextFiles.map(
-                                  (f, idx) => ({
-                                    url: imageOrTextPreviews[idx] || "",
-                                    name: f.name,
-                                  }),
-                                );
-                                const urlImages = imageOrTextUrls.map(
-                                  (url, idx) => {
-                                    const urlParts = url.split("/");
-                                    const name =
-                                      urlParts[urlParts.length - 1] ||
-                                      `Image ${
-                                        imageOrTextFiles.length + idx + 1
-                                      }`;
-                                    const normalized =
-                                      url.startsWith("http") ||
-                                      url.startsWith("https")
-                                        ? url
-                                        : url.startsWith("/")
+                      {imageOrTextFiles.map((file, index) => {
+                        const isPdf = file.name.toLowerCase().endsWith('.pdf');
+                        return (
+                          <div
+                            key={`file-${index}`}
+                            className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const previewUrl = imageOrTextPreviews[index];
+                                if (previewUrl) {
+                                  const fileImages = imageOrTextFiles.map(
+                                    (f, idx) => ({
+                                      url: imageOrTextPreviews[idx] || "",
+                                      name: f.name,
+                                    }),
+                                  );
+                                  const urlImages = imageOrTextUrls.map(
+                                    (url, idx) => {
+                                      const urlParts = url.split("/");
+                                      const name =
+                                        urlParts[urlParts.length - 1] ||
+                                        `File ${
+                                          imageOrTextFiles.length + idx + 1
+                                        }`;
+                                      const normalized =
+                                        url.startsWith("http") ||
+                                        url.startsWith("https")
                                           ? url
-                                          : `/${url}`;
-                                    return { url: normalized, name };
-                                  },
-                                );
-                                const allImages = [...fileImages, ...urlImages];
-                                setViewingImage({
-                                  images: allImages,
-                                  currentIndex: index,
-                                });
-                              }
-                            }}
-                            className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
-                          >
-                            Image {index + 1}: {file.name}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => removeDefaultImage(field.id, index)}
-                            className="text-red-500 hover:text-red-700"
-                            aria-label={`Remove ${file.name}`}
-                          >
-                            <X className="h-4 w-4" />
-                          </button>
-                        </div>
-                      ))}
+                                          : url.startsWith("/")
+                                            ? url
+                                            : `/${url}`;
+                                      return { url: normalized, name };
+                                    },
+                                  );
+                                  const allImages = [...fileImages, ...urlImages];
+                                  setViewingImage({
+                                    images: allImages,
+                                    currentIndex: index,
+                                  });
+                                } else if (file.name.toLowerCase().endsWith('.pdf')) {
+                                  // For PDFs without preview, create blob URL
+                                  const fileImages = imageOrTextFiles.map(
+                                    (f, idx) => {
+                                      if (f.name.toLowerCase().endsWith('.pdf')) {
+                                        return { url: URL.createObjectURL(f), name: f.name };
+                                      }
+                                      return { url: imageOrTextPreviews[idx] || "", name: f.name };
+                                    },
+                                  );
+                                  const urlImages = imageOrTextUrls.map(
+                                    (url, idx) => {
+                                      const urlParts = url.split("/");
+                                      const name =
+                                        urlParts[urlParts.length - 1] ||
+                                        `File ${
+                                          imageOrTextFiles.length + idx + 1
+                                        }`;
+                                      const normalized =
+                                        url.startsWith("http") ||
+                                        url.startsWith("https")
+                                          ? url
+                                          : url.startsWith("/")
+                                            ? url
+                                            : `/${url}`;
+                                      return { url: normalized, name };
+                                    },
+                                  );
+                                  const allImages = [...fileImages, ...urlImages];
+                                  setViewingImage({
+                                    images: allImages,
+                                    currentIndex: index,
+                                  });
+                                }
+                              }}
+                              className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                            >
+                              {isPdf ? 'PDF' : 'Image'} {index + 1}: {file.name}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => removeDefaultImage(field.id, index)}
+                              className="text-red-500 hover:text-red-700"
+                              aria-label={`Remove ${file.name}`}
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
+                        );
+                      })}
                       {imageOrTextUrls.map((url, index) => {
                         const urlParts = url.split("/");
                         const filename =
                           urlParts[urlParts.length - 1] ||
-                          `Image ${imageOrTextFiles.length + index + 1}`;
+                          `File ${imageOrTextFiles.length + index + 1}`;
+                        const isPdf = filename.toLowerCase().endsWith('.pdf');
                         const normalizedUrl =
                           url.startsWith("http") || url.startsWith("https")
                             ? url
@@ -5302,17 +5379,19 @@ function ConsulationFormDialog({
                               type="button"
                               onClick={() => {
                                 const fileImages = imageOrTextFiles.map(
-                                  (f, idx) => ({
-                                    url: imageOrTextPreviews[idx] || "",
-                                    name: f.name,
-                                  }),
+                                  (f, idx) => {
+                                    if (f.name.toLowerCase().endsWith('.pdf')) {
+                                      return { url: URL.createObjectURL(f), name: f.name };
+                                    }
+                                    return { url: imageOrTextPreviews[idx] || "", name: f.name };
+                                  },
                                 );
                                 const urlImages = imageOrTextUrls.map(
                                   (url, idx) => {
                                     const urlParts = url.split("/");
                                     const name =
                                       urlParts[urlParts.length - 1] ||
-                                      `Image ${
+                                      `File ${
                                         imageOrTextFiles.length + idx + 1
                                       }`;
                                     const normalized =
@@ -5334,7 +5413,7 @@ function ConsulationFormDialog({
                               }}
                               className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
                             >
-                              Image {imageOrTextFiles.length + index + 1}:{" "}
+                              {isPdf ? 'PDF' : 'Image'} {imageOrTextFiles.length + index + 1}:{" "}
                               {filename.length > 30
                                 ? filename.substring(0, 30) + "..."
                                 : filename}
@@ -5517,54 +5596,83 @@ function ConsulationFormDialog({
               {(authFormUrls.length > 0 || authFormFiles.length > 0) && (
                 <div className="space-y-2 mt-3">
                   <div className="text-sm text-gray-600 font-medium">
-                    Authorization Form Images ({authFormUrls.length + authFormFiles.length}):
+                    Authorization Form Files ({authFormUrls.length + authFormFiles.length}):
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {authFormFiles.map((file, index) => (
-                      <div
-                        key={`auth-file-${index}`}
-                        className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm"
-                      >
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const previewUrl = authFormPreviews[index];
-                            if (previewUrl) {
-                              const fileImages = authFormFiles.map((f, idx) => ({
-                                url: authFormPreviews[idx] || '',
-                                name: f.name
-                              }));
-                              const urlImages = authFormUrls.map((url, idx) => {
-                                const urlParts = url.split("/");
-                                const name = urlParts[urlParts.length - 1] || `Image ${authFormFiles.length + idx + 1}`;
-                                const normalized = url.startsWith('http') || url.startsWith('https')
-                                  ? url
-                                  : url.startsWith('/')
-                                  ? url
-                                  : `/${url}`;
-                                return { url: normalized, name };
-                              });
-                              const allImages = [...fileImages, ...urlImages];
-                              setViewingImage({ images: allImages, currentIndex: index });
-                            }
-                          }}
-                          className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                    {authFormFiles.map((file, index) => {
+                      const isPdf = file.name.toLowerCase().endsWith('.pdf');
+                      return (
+                        <div
+                          key={`auth-file-${index}`}
+                          className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm"
                         >
-                          Image {index + 1}: {file.name}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => removeDefaultImage(field.id, index)}
-                          className="text-red-500 hover:text-red-700"
-                          aria-label={`Remove ${file.name}`}
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
-                      </div>
-                    ))}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const previewUrl = authFormPreviews[index];
+                              if (previewUrl) {
+                                const fileImages = authFormFiles.map((f, idx) => {
+                                  const preview = authFormPreviews[idx];
+                                  if (preview) {
+                                    return { url: preview, name: f.name };
+                                  } else if (f.name.toLowerCase().endsWith('.pdf')) {
+                                    return { url: URL.createObjectURL(f), name: f.name };
+                                  }
+                                  return { url: '', name: f.name };
+                                });
+                                const urlImages = authFormUrls.map((url, idx) => {
+                                  const urlParts = url.split("/");
+                                  const name = urlParts[urlParts.length - 1] || `File ${authFormFiles.length + idx + 1}`;
+                                  const normalized = url.startsWith('http') || url.startsWith('https')
+                                    ? url
+                                    : url.startsWith('/')
+                                    ? url
+                                    : `/${url}`;
+                                  return { url: normalized, name };
+                                });
+                                const allImages = [...fileImages, ...urlImages];
+                                setViewingImage({ images: allImages, currentIndex: index });
+                              } else if (file.name.toLowerCase().endsWith('.pdf')) {
+                                // For PDFs without preview, create blob URL
+                                const fileImages = authFormFiles.map((f, idx) => {
+                                  if (f.name.toLowerCase().endsWith('.pdf')) {
+                                    return { url: URL.createObjectURL(f), name: f.name };
+                                  }
+                                  return { url: authFormPreviews[idx] || '', name: f.name };
+                                });
+                                const urlImages = authFormUrls.map((url, idx) => {
+                                  const urlParts = url.split("/");
+                                  const name = urlParts[urlParts.length - 1] || `File ${authFormFiles.length + idx + 1}`;
+                                  const normalized = url.startsWith('http') || url.startsWith('https')
+                                    ? url
+                                    : url.startsWith('/')
+                                    ? url
+                                    : `/${url}`;
+                                  return { url: normalized, name };
+                                });
+                                const allImages = [...fileImages, ...urlImages];
+                                setViewingImage({ images: allImages, currentIndex: index });
+                              }
+                            }}
+                            className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                          >
+                            {isPdf ? 'PDF' : 'Image'} {index + 1}: {file.name}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeDefaultImage(field.id, index)}
+                            className="text-red-500 hover:text-red-700"
+                            aria-label={`Remove ${file.name}`}
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                      );
+                    })}
                     {authFormUrls.map((url, index) => {
                       const urlParts = url.split("/");
-                      const filename = urlParts[urlParts.length - 1] || `Image ${authFormFiles.length + index + 1}`;
+                      const filename = urlParts[urlParts.length - 1] || `File ${authFormFiles.length + index + 1}`;
+                      const isPdf = filename.toLowerCase().endsWith('.pdf');
                       const normalizedUrl = url.startsWith('http') || url.startsWith('https')
                         ? url
                         : url.startsWith('/')
@@ -5578,13 +5686,15 @@ function ConsulationFormDialog({
                           <button
                             type="button"
                             onClick={() => {
-                              const fileImages = authFormFiles.map((f, idx) => ({
-                                url: authFormPreviews[idx] || '',
-                                name: f.name
-                              }));
+                              const fileImages = authFormFiles.map((f, idx) => {
+                                if (f.name.toLowerCase().endsWith('.pdf')) {
+                                  return { url: URL.createObjectURL(f), name: f.name };
+                                }
+                                return { url: authFormPreviews[idx] || '', name: f.name };
+                              });
                               const urlImages = authFormUrls.map((url, idx) => {
                                 const urlParts = url.split("/");
-                                const name = urlParts[urlParts.length - 1] || `Image ${authFormFiles.length + idx + 1}`;
+                                const name = urlParts[urlParts.length - 1] || `File ${authFormFiles.length + idx + 1}`;
                                 const normalized = url.startsWith('http') || url.startsWith('https')
                                   ? url
                                   : url.startsWith('/')
@@ -5597,7 +5707,7 @@ function ConsulationFormDialog({
                             }}
                             className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
                           >
-                            Image {authFormFiles.length + index + 1}: {filename.length > 30 ? filename.substring(0, 30) + "..." : filename}
+                            {isPdf ? 'PDF' : 'Image'} {authFormFiles.length + index + 1}: {filename.length > 30 ? filename.substring(0, 30) + "..." : filename}
                           </button>
                           <button
                             type="button"
@@ -5829,57 +5939,86 @@ function ConsulationFormDialog({
                             </div>
                             <div className="flex flex-wrap gap-2">
                               {/* Show files that haven't been uploaded yet */}
-                              {defaultImageFiles[field.id]?.map((file, index) => (
-                                <div
-                                  key={`preview-file-${index}`}
-                                  className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm"
-                                >
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      const previewUrl = defaultImagePreviews[field.id]?.[index];
-                                      if (previewUrl) {
-                                        const fileImages = (defaultImageFiles[field.id] || []).map((f, idx) => ({
-                                          url: defaultImagePreviews[field.id]?.[idx] || '',
-                                          name: f.name
-                                        }));
-                                        const urlImages = (defaultImageUrls[field.id] || []).map((url, idx) => {
-                                          const urlParts = url.split("/");
-                                          const name = urlParts[urlParts.length - 1] || `Image ${(defaultImageFiles[field.id]?.length || 0) + idx + 1}`;
-                                          const normalized = url.startsWith('http') || url.startsWith('https')
-                                            ? url
-                                            : url.startsWith('/')
-                                            ? url
-                                            : `/${url}`;
-                                          return { url: normalized, name };
-                                        });
-                                        const allImages = [...fileImages, ...urlImages];
-                                        setViewingImage({ images: allImages, currentIndex: index });
-                                      }
-                                    }}
-                                    className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                              {defaultImageFiles[field.id]?.map((file, index) => {
+                                const isPdf = file.name.toLowerCase().endsWith('.pdf');
+                                return (
+                                  <div
+                                    key={`preview-file-${index}`}
+                                    className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm"
                                   >
-                                    Image {index + 1}: {file.name}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      removeDefaultImage(field.id, index);
-                                    }}
-                                    className="text-red-500 hover:text-red-700 ml-1"
-                                    aria-label={`Remove ${file.name}`}
-                                  >
-                                    <X className="h-4 w-4" />
-                                  </button>
-                                </div>
-                              ))}
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const previewUrl = defaultImagePreviews[field.id]?.[index];
+                                        if (previewUrl) {
+                                          const fileImages = (defaultImageFiles[field.id] || []).map((f, idx) => {
+                                            const preview = defaultImagePreviews[field.id]?.[idx];
+                                            if (preview) {
+                                              return { url: preview, name: f.name };
+                                            } else if (f.name.toLowerCase().endsWith('.pdf')) {
+                                              return { url: URL.createObjectURL(f), name: f.name };
+                                            }
+                                            return { url: '', name: f.name };
+                                          });
+                                          const urlImages = (defaultImageUrls[field.id] || []).map((url, idx) => {
+                                            const urlParts = url.split("/");
+                                            const name = urlParts[urlParts.length - 1] || `File ${(defaultImageFiles[field.id]?.length || 0) + idx + 1}`;
+                                            const normalized = url.startsWith('http') || url.startsWith('https')
+                                              ? url
+                                              : url.startsWith('/')
+                                              ? url
+                                              : `/${url}`;
+                                            return { url: normalized, name };
+                                          });
+                                          const allImages = [...fileImages, ...urlImages];
+                                          setViewingImage({ images: allImages, currentIndex: index });
+                                        } else if (file.name.toLowerCase().endsWith('.pdf')) {
+                                          // For PDFs without preview, create blob URL
+                                          const fileImages = (defaultImageFiles[field.id] || []).map((f, idx) => {
+                                            if (f.name.toLowerCase().endsWith('.pdf')) {
+                                              return { url: URL.createObjectURL(f), name: f.name };
+                                            }
+                                            return { url: defaultImagePreviews[field.id]?.[idx] || '', name: f.name };
+                                          });
+                                          const urlImages = (defaultImageUrls[field.id] || []).map((url, idx) => {
+                                            const urlParts = url.split("/");
+                                            const name = urlParts[urlParts.length - 1] || `File ${(defaultImageFiles[field.id]?.length || 0) + idx + 1}`;
+                                            const normalized = url.startsWith('http') || url.startsWith('https')
+                                              ? url
+                                              : url.startsWith('/')
+                                              ? url
+                                              : `/${url}`;
+                                            return { url: normalized, name };
+                                          });
+                                          const allImages = [...fileImages, ...urlImages];
+                                          setViewingImage({ images: allImages, currentIndex: index });
+                                        }
+                                      }}
+                                      className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                                    >
+                                      {isPdf ? 'PDF' : 'Image'} {index + 1}: {file.name}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        removeDefaultImage(field.id, index);
+                                      }}
+                                      className="text-red-500 hover:text-red-700 ml-1"
+                                      aria-label={`Remove ${file.name}`}
+                                    >
+                                      <X className="h-4 w-4" />
+                                    </button>
+                                  </div>
+                                );
+                              })}
                               {/* Show URLs (uploaded images) */}
                               {defaultImageUrls[field.id]?.map((url, index) => {
                                 const urlParts = url.split("/");
-                                const filename = urlParts[urlParts.length - 1] || `Image ${(defaultImageFiles[field.id]?.length || 0) + index + 1}`;
-                                const imageIndex = (defaultImageFiles[field.id]?.length || 0) + index + 1;
+                                const filename = urlParts[urlParts.length - 1] || `File ${(defaultImageFiles[field.id]?.length || 0) + index + 1}`;
+                                const isPdf = filename.toLowerCase().endsWith('.pdf');
+                                const fileIndex = (defaultImageFiles[field.id]?.length || 0) + index + 1;
                                 return (
                                   <div
                                     key={`preview-url-${index}`}
@@ -5889,13 +6028,15 @@ function ConsulationFormDialog({
                                       type="button"
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        const fileImages = (defaultImageFiles[field.id] || []).map((f, idx) => ({
-                                          url: defaultImagePreviews[field.id]?.[idx] || '',
-                                          name: f.name
-                                        }));
+                                        const fileImages = (defaultImageFiles[field.id] || []).map((f, idx) => {
+                                          if (f.name.toLowerCase().endsWith('.pdf')) {
+                                            return { url: URL.createObjectURL(f), name: f.name };
+                                          }
+                                          return { url: defaultImagePreviews[field.id]?.[idx] || '', name: f.name };
+                                        });
                                         const urlImages = (defaultImageUrls[field.id] || []).map((url, idx) => {
                                           const urlParts = url.split("/");
-                                          const name = urlParts[urlParts.length - 1] || `Image ${(defaultImageFiles[field.id]?.length || 0) + idx + 1}`;
+                                          const name = urlParts[urlParts.length - 1] || `File ${(defaultImageFiles[field.id]?.length || 0) + idx + 1}`;
                                           const normalized = url.startsWith('http') || url.startsWith('https')
                                             ? url
                                             : url.startsWith('/')
@@ -5908,7 +6049,7 @@ function ConsulationFormDialog({
                                       }}
                                       className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
                                     >
-                                      Image {imageIndex}: {filename.length > 20 ? filename.substring(0, 20) + "..." : filename}
+                                      {isPdf ? 'PDF' : 'Image'} {fileIndex}: {filename.length > 20 ? filename.substring(0, 20) + "..." : filename}
                                     </button>
                                     <button
                                       type="button"
@@ -5927,6 +6068,138 @@ function ConsulationFormDialog({
                             </div>
                             <p className="text-xs text-gray-500">
                               Click image names to view. These are default values that will be pre-filled in the form.
+                            </p>
+                          </div>
+                        ) : field.type === "file" && (defaultFileUrls[field.id]?.length > 0 || defaultFileFiles[field.id]?.length > 0) ? (
+                          <div className="space-y-2">
+                            <div className="text-sm text-gray-600 font-medium">
+                              Default Files ({(defaultFileUrls[field.id]?.length || 0) + (defaultFileFiles[field.id]?.length || 0)}):
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {/* Show files that haven't been uploaded yet */}
+                              {defaultFileFiles[field.id]?.map((file, index) => {
+                                const isPdf = file.name.toLowerCase().endsWith('.pdf');
+                                return (
+                                  <div
+                                    key={`preview-file-file-${index}`}
+                                    className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm"
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const previewUrl = defaultFilePreviews[field.id]?.[index];
+                                        if (previewUrl) {
+                                          const fileImages = (defaultFileFiles[field.id] || []).map((f, idx) => ({
+                                            url: defaultFilePreviews[field.id]?.[idx] || '',
+                                            name: f.name
+                                          }));
+                                          const urlImages = (defaultFileUrls[field.id] || []).map((url, idx) => {
+                                            const urlParts = url.split("/");
+                                            const name = urlParts[urlParts.length - 1] || `File ${(defaultFileFiles[field.id]?.length || 0) + idx + 1}`;
+                                            const normalized = url.startsWith('http') || url.startsWith('https')
+                                              ? url
+                                              : url.startsWith('/')
+                                              ? url
+                                              : `/${url}`;
+                                            return { url: normalized, name };
+                                          });
+                                          const allFiles = [...fileImages, ...urlImages];
+                                          setViewingImage({ images: allFiles, currentIndex: index });
+                                        } else if (file.name.toLowerCase().endsWith('.pdf')) {
+                                          const fileImages = (defaultFileFiles[field.id] || []).map((f, idx) => {
+                                            if (f.name.toLowerCase().endsWith('.pdf')) {
+                                              return { url: URL.createObjectURL(f), name: f.name };
+                                            }
+                                            return { url: defaultFilePreviews[field.id]?.[idx] || '', name: f.name };
+                                          });
+                                          const urlImages = (defaultFileUrls[field.id] || []).map((url, idx) => {
+                                            const urlParts = url.split("/");
+                                            const name = urlParts[urlParts.length - 1] || `File ${(defaultFileFiles[field.id]?.length || 0) + idx + 1}`;
+                                            const normalized = url.startsWith('http') || url.startsWith('https')
+                                              ? url
+                                              : url.startsWith('/')
+                                              ? url
+                                              : `/${url}`;
+                                            return { url: normalized, name };
+                                          });
+                                          const allFiles = [...fileImages, ...urlImages];
+                                          setViewingImage({ images: allFiles, currentIndex: index });
+                                        }
+                                      }}
+                                      className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                                    >
+                                      {isPdf ? 'PDF' : 'Image'} {index + 1}: {file.name}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        removeDefaultFile(field.id, index);
+                                      }}
+                                      className="text-red-500 hover:text-red-700 ml-1"
+                                      aria-label={`Remove ${file.name}`}
+                                    >
+                                      <X className="h-4 w-4" />
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                              {/* Show URLs (uploaded files) */}
+                              {defaultFileUrls[field.id]?.map((url, index) => {
+                                const urlParts = url.split("/");
+                                const filename = urlParts[urlParts.length - 1] || `File ${(defaultFileFiles[field.id]?.length || 0) + index + 1}`;
+                                const fileIndex = (defaultFileFiles[field.id]?.length || 0) + index + 1;
+                                const isPdf = filename.toLowerCase().endsWith('.pdf');
+                                return (
+                                  <div
+                                    key={`preview-file-url-${index}`}
+                                    className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm"
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const fileImages = (defaultFileFiles[field.id] || []).map((f, idx) => {
+                                          if (f.name.toLowerCase().endsWith('.pdf')) {
+                                            return { url: URL.createObjectURL(f), name: f.name };
+                                          }
+                                          return { url: defaultFilePreviews[field.id]?.[idx] || '', name: f.name };
+                                        });
+                                        const urlImages = (defaultFileUrls[field.id] || []).map((url, idx) => {
+                                          const urlParts = url.split("/");
+                                          const name = urlParts[urlParts.length - 1] || `File ${(defaultFileFiles[field.id]?.length || 0) + idx + 1}`;
+                                          const normalized = url.startsWith('http') || url.startsWith('https')
+                                            ? url
+                                            : url.startsWith('/')
+                                            ? url
+                                            : `/${url}`;
+                                          return { url: normalized, name };
+                                        });
+                                        const allFiles = [...fileImages, ...urlImages];
+                                        setViewingImage({ images: allFiles, currentIndex: (defaultFileFiles[field.id]?.length || 0) + index });
+                                      }}
+                                      className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                                    >
+                                      {isPdf ? 'PDF' : 'Image'} {fileIndex}: {filename.length > 20 ? filename.substring(0, 20) + "..." : filename}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        removeDefaultFile(field.id, (defaultFileFiles[field.id]?.length || 0) + index);
+                                      }}
+                                      className="text-red-500 hover:text-red-700 ml-1"
+                                      aria-label={`Remove ${filename}`}
+                                    >
+                                      <X className="h-4 w-4" />
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            <p className="text-xs text-gray-500">
+                              Click file names to view. These are default values that will be pre-filled in the form.
                             </p>
                           </div>
                         ) : (
