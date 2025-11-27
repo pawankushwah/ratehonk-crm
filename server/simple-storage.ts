@@ -3811,7 +3811,7 @@ export class SimpleStorage {
     }
   }
 
-   async getInvoicesByTenant(
+ async getInvoicesByTenant(
     tenantId: number,
     filters?: {
       customerId?: number;
@@ -3858,7 +3858,6 @@ export class SimpleStorage {
       } else {
         console.log("🔍 No customer filter applied");
       }
-    };
 
       if (filterParams?.status && filterParams.status !== "all") {
         console.log("🔍 Applying status filter:", filterParams.status);
@@ -3951,28 +3950,54 @@ export class SimpleStorage {
         }
       }
 
-    // 2️⃣ Fetch invoice_items table rows
-    const invoiceItems = await sql`
-      SELECT * FROM invoice_items
-      WHERE invoice_id = ANY(${invoiceIds})
-    `;
+      // Fetch customer and booking details separately for each invoice
+      const invoicesWithDetails = await Promise.all(
+        invoices.map(async (invoice) => {
+          let customerName = null;
+          let customerEmail = null;
+          let bookingNumber = null;
 
-    const itemMap: any = {};
-    invoiceItems.forEach(item => {
-      if (!itemMap[item.invoice_id]) itemMap[item.invoice_id] = [];
-      itemMap[item.invoice_id].push(item);
-    });
+          try {
+            if (invoice.customer_id) {
+              const customers = await sql`
+              SELECT name, email 
+              FROM customers 
+              WHERE id = ${invoice.customer_id}
+            `;
+              if (customers.length > 0) {
+                const customer = customers[0];
+                customerName = customer.name || null;
+                customerEmail = customer.email;
+              }
+            }
 
-    // 3️⃣ Extract provider/vendor IDs from JSON lineItems
-    const allJsonLineItems = invoices.flatMap(inv => parseJsonSafe(inv.line_items));
+            if (invoice.booking_id) {
+              const bookings = await sql`
+              SELECT booking_number 
+              FROM bookings 
+              WHERE id = ${invoice.booking_id}
+            `;
+              if (bookings.length > 0) {
+                bookingNumber = bookings[0].booking_number;
+              }
+            }
+          } catch (joinError) {
+            console.warn("Error fetching invoice details:", joinError);
+          }
 
-    const providerIds = [
-      ...new Set(
-        allJsonLineItems
-          .map(li => Number(li.serviceProviderId))
-          .filter(id => !isNaN(id))
-      ),
-    ];
+          // Parse line items from JSON string if present
+          let lineItems = [];
+          if (invoice.line_items) {
+            try {
+              if (typeof invoice.line_items === 'string') {
+                lineItems = JSON.parse(invoice.line_items);
+              } else if (Array.isArray(invoice.line_items)) {
+                lineItems = invoice.line_items;
+              }
+            } catch (parseError) {
+              console.warn("Error parsing line_items JSON:", parseError);
+            }
+          }
 
           // Filter by search term in line items (invoice/voucher numbers)
           // Note: Invoice number and customer name are already filtered in SQL WHERE clause
@@ -4040,22 +4065,42 @@ export class SimpleStorage {
             console.log("🔍 Including invoice ID:", invoice.id, "- vendor/provider match found");
           }
 
-    const providerMap = Object.fromEntries(
-      providers.map(p => [p.id, p])
-    );
+          return {
+            id: invoice.id,
+            tenantId: invoice.tenant_id,
+            customerId: invoice.customer_id,
+            bookingId: invoice.booking_id,
+            invoiceNumber: invoice.invoice_number,
+            status: invoice.status,
+            issueDate: invoice.issue_date,
+            dueDate: invoice.due_date,
+            subtotal: parseFloat(invoice.subtotal || "0"),
+            taxAmount: parseFloat(invoice.tax_amount || "0"),
+            discountAmount: parseFloat(invoice.discount_amount || "0"),
+            totalAmount: parseFloat(invoice.total_amount || "0"),
+            paidAmount: parseFloat(invoice.paid_amount || invoice.amount_paid || "0"),
+            currency: invoice.currency || "USD",
+            paymentTerms: invoice.payment_terms || null,
+            notes: invoice.notes,
+            lineItems: lineItems,
+            createdAt: invoice.created_at,
+            customerName: customerName,
+            customerEmail: customerEmail,
+            bookingNumber: bookingNumber,
+          };
+        }),
+      );
 
-    // 5️⃣ Fetch vendors
-    const vendors = vendorIds.length
-      ? await sql`
-          SELECT id, name
-          FROM vendors
-          WHERE id = ANY(${vendorIds})
-        `
-      : [];
+      // Filter out null values
+      let filteredInvoices = invoicesWithDetails.filter((inv) => inv !== null);
 
-    const vendorMap = Object.fromEntries(
-      vendors.map(v => [v.id, v])
-    );
+      // Apply lead type filter (requires checking service providers)
+      if (filterParams?.leadTypeId) {
+        const filtered = await Promise.all(
+          filteredInvoices.map(async (invoice) => {
+            if (!invoice.lineItems || invoice.lineItems.length === 0) {
+              return null;
+            }
 
             // Check if any line item has a provider with the specified lead type
             for (const item of invoice.lineItems) {
@@ -4115,11 +4160,6 @@ export class SimpleStorage {
       throw error;
     }
   }
-}
-
-
-
-
 
 
   async createInvoice(invoiceData: any) {
