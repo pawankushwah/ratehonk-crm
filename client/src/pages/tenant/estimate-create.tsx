@@ -1098,29 +1098,30 @@ export default function EstimateCreate() {
                 </div>
 
                 {showLineItems && formData.lineItems.length > 0 && (
-                  <div className="border rounded-lg overflow-hidden">
-                    {/* Table Header */}
-                    <div className="grid gap-2 p-3 font-medium text-sm border-b" style={{ gridTemplateColumns: gridTemplate }}>
-                      <div className="text-center flex items-center justify-center">#</div>
-                      <div className="flex items-center">Category</div>
-                      <div className="flex items-center">Service</div>
-                      <div className="flex items-center">Qty</div>
-                      <div className="flex items-center">Price</div>
-                      <div className="flex items-center">Tax Rate</div>
-                      <div className="flex items-center">Tax</div>
-                      <div className="flex items-center">Discount</div>
-                      <div className="flex items-center">Total</div>
-                      <div></div>
-                    </div>
+                  <div className="border rounded-lg overflow-x-auto">
+                    <div className="min-w-[1100px]">
+                      {/* Table Header */}
+                      <div className="grid gap-2 p-3 font-medium text-sm border-b bg-gray-50" style={{ gridTemplateColumns: gridTemplate }}>
+                        <div className="text-center flex items-center justify-center">#</div>
+                        <div className="flex items-center">Category</div>
+                        <div className="flex items-center">Service</div>
+                        <div className="flex items-center">Qty</div>
+                        <div className="flex items-center">Price</div>
+                        <div className="flex items-center">Tax Rate</div>
+                        <div className="flex items-center">Tax</div>
+                        <div className="flex items-center">Discount</div>
+                        <div className="flex items-center">Total</div>
+                        <div></div>
+                      </div>
 
-                    {/* Table Body */}
-                    <div className="divide-y">
-                      {formData.lineItems.map((item, index) => (
-                        <div
-                          key={index}
-                          className="grid gap-2 p-3"
-                          style={{ gridTemplateColumns: gridTemplate }}
-                        >
+                      {/* Table Body */}
+                      <div>
+                        {formData.lineItems.map((item, index) => (
+                          <div
+                            key={index}
+                            className="grid gap-2 p-3 border-b last:border-b-0"
+                            style={{ gridTemplateColumns: gridTemplate }}
+                          >
                           <div className="flex items-center justify-center">
                             <span className="font-medium text-sm">{index + 1}</span>
                           </div>
@@ -1252,6 +1253,7 @@ export default function EstimateCreate() {
                           </div>
                         </div>
                       ))}
+                      </div>
                     </div>
                   </div>
                 )}

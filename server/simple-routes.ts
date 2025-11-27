@@ -2412,7 +2412,7 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
   app.get("/api/tenants/:tenantId/invoices", authenticateToken, async (req, res) => {
     try {
       const tenantId = parseInt(req.params.tenantId);
-      const invoices = await simpleStorage.getInvoicesByTenant(tenantId);
+      const invoices = await simpleStorage.getInvoicesByTenant(tenantId, req.query);
       return res.json(invoices);
     } catch (error: any) {
       console.error("Get invoices error:", error);
@@ -16806,35 +16806,70 @@ Please improve this email.`;
       const expenseId = parseInt(req.params.id);
       const expenseData = req.body;
 
+      // First, get the existing expense to use as defaults for partial updates
+      const [existingExpense] = await sql`
+        SELECT * FROM expenses 
+        WHERE id = ${expenseId} AND tenant_id = ${req.user.tenantId}
+      `;
+
+      if (!existingExpense) {
+        return res.status(404).json({ message: "Expense not found" });
+      }
+
+      // Build update query - only update fields that are provided, otherwise keep existing values
       const [expense] = await sql`
         UPDATE expenses SET
-          title = ${expenseData.title},
-          description = ${expenseData.description},
-          amount = ${expenseData.amount},
-          currency = ${expenseData.currency},
-          category = ${expenseData.category},
-          subcategory = ${expenseData.subcategory},
-          expense_date = ${expenseData.expenseDate},
-          payment_method = ${expenseData.paymentMethod},
-          payment_reference = ${expenseData.paymentReference},
-          vendor_id = ${expenseData.vendorId || null},
-          lead_type_id = ${expenseData.leadTypeId || null},
-          expense_type = ${expenseData.expenseType || "purchase"},
-          receipt_url = ${expenseData.receiptUrl},
-          tax_amount = ${expenseData.taxAmount || 0},
-          tax_rate = ${expenseData.taxRate || 0},
-          is_reimbursable = ${expenseData.isReimbursable || false},
-          is_recurring = ${expenseData.isRecurring || false},
-          recurring_frequency = ${expenseData.recurringFrequency},
-          status = ${expenseData.status},
-          approved_by = ${expenseData.approvedBy || null},
-          approved_at = ${expenseData.approvedAt || null},
-          rejection_reason = ${expenseData.rejectionReason},
-          tags = ${JSON.stringify(expenseData.tags || [])},
-          notes = ${expenseData.notes},
+          title = ${expenseData.title !== undefined ? expenseData.title : existingExpense.title},
+          description = ${expenseData.description !== undefined ? expenseData.description : existingExpense.description},
+          amount = ${expenseData.amount !== undefined ? expenseData.amount : existingExpense.amount},
+          currency = ${expenseData.currency !== undefined ? expenseData.currency : existingExpense.currency},
+          category = ${expenseData.category !== undefined ? expenseData.category : existingExpense.category},
+          subcategory = ${expenseData.subcategory !== undefined ? expenseData.subcategory : existingExpense.subcategory},
+          expense_date = ${expenseData.expenseDate !== undefined ? expenseData.expenseDate : existingExpense.expense_date},
+          payment_method = ${expenseData.paymentMethod !== undefined ? expenseData.paymentMethod : existingExpense.payment_method},
+          payment_reference = ${expenseData.paymentReference !== undefined ? expenseData.paymentReference : existingExpense.payment_reference},
+          vendor_id = ${expenseData.vendorId !== undefined ? (expenseData.vendorId || null) : existingExpense.vendor_id},
+          lead_type_id = ${expenseData.leadTypeId !== undefined ? (expenseData.leadTypeId || null) : existingExpense.lead_type_id},
+          expense_type = ${expenseData.expenseType !== undefined ? (expenseData.expenseType || "purchase") : existingExpense.expense_type},
+          receipt_url = ${expenseData.receiptUrl !== undefined ? expenseData.receiptUrl : existingExpense.receipt_url},
+          tax_amount = ${expenseData.taxAmount !== undefined ? (expenseData.taxAmount || 0) : existingExpense.tax_amount},
+          tax_rate = ${expenseData.taxRate !== undefined ? (expenseData.taxRate || 0) : existingExpense.tax_rate},
+          is_reimbursable = ${expenseData.isReimbursable !== undefined ? (expenseData.isReimbursable || false) : existingExpense.is_reimbursable},
+          is_recurring = ${expenseData.isRecurring !== undefined ? (expenseData.isRecurring || false) : existingExpense.is_recurring},
+          recurring_frequency = ${expenseData.recurringFrequency !== undefined ? (expenseData.recurringFrequency || null) : existingExpense.recurring_frequency},
+          status = ${expenseData.status !== undefined ? expenseData.status : existingExpense.status},
+          approved_by = ${expenseData.approvedBy !== undefined ? (expenseData.approvedBy || null) : existingExpense.approved_by},
+          approved_at = ${expenseData.approvedAt !== undefined ? (expenseData.approvedAt || null) : existingExpense.approved_at},
+          rejection_reason = ${expenseData.rejectionReason !== undefined ? (expenseData.rejectionReason || null) : existingExpense.rejection_reason},
+          tags = ${expenseData.tags !== undefined ? JSON.stringify(expenseData.tags || []) : existingExpense.tags},
+          notes = ${expenseData.notes !== undefined ? (expenseData.notes || null) : existingExpense.notes},
           updated_at = NOW()
         WHERE id = ${expenseId} AND tenant_id = ${req.user.tenantId}
         RETURNING *
+      `;
+
+      res.json(expense);
+    } catch (error: unknown) {
+      console.error("💰 Error updating expense:", error);
+      res.status(500).json({ message: "Failed to update expense" });
+    }
+  });
+
+  // Get single expense by ID
+  app.get("/api/expenses/:id", authenticateVendor, async (req: any, res) => {
+    try {
+      const expenseId = parseInt(req.params.id);
+      
+      const [expense] = await sql`
+        SELECT 
+          e.*,
+          v.name as vendor_name,
+          lt.name as lead_type_name,
+          lt.color as lead_type_color
+        FROM expenses e
+        LEFT JOIN vendors v ON e.vendor_id = v.id
+        LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+        WHERE e.id = ${expenseId} AND e.tenant_id = ${req.user.tenantId}
       `;
 
       if (!expense) {
@@ -16843,8 +16878,8 @@ Please improve this email.`;
 
       res.json(expense);
     } catch (error: unknown) {
-      console.error("💰 Error updating expense:", error);
-      res.status(500).json({ message: "Failed to update expense" });
+      console.error("💰 Error fetching expense:", error);
+      res.status(500).json({ message: "Failed to fetch expense" });
     }
   });
 

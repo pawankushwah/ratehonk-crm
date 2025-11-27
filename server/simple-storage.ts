@@ -3828,7 +3828,7 @@ export class SimpleStorage {
       const page = filters?.page || 1;
       const pageSize = filters?.pageSize || 10;
       const offset = (page - 1) * pageSize;
-      
+      console.log("🔍 getInvoicesByTenant - filters:",filters);
       // Initialize filters object if not provided
       const filterParams = filters || {};
       
@@ -3836,23 +3836,23 @@ export class SimpleStorage {
       console.log("🔍 getInvoicesByTenant - Tenant ID:", tenantId);
       console.log("🔍 getInvoicesByTenant - Page:", page, "PageSize:", pageSize, "Offset:", offset);
 
-      // Build WHERE clause dynamically
-      let whereClause = sql`tenant_id = ${tenantId}`;
+      // Build WHERE clause dynamically - always use table prefix to avoid ambiguity
+      let whereClause = sql`invoices.tenant_id = ${tenantId}`;
       let needsJoin = false;
       
-      console.log("🔍 Initial WHERE clause: tenant_id =", tenantId);
+      console.log("🔍 Initial WHERE clause: invoices.tenant_id =", tenantId);
       
       // Handle customer filter - can be single ID or array of IDs
       if (filterParams?.customerId) {
         if (Array.isArray(filterParams.customerId)) {
           if (filterParams.customerId.length > 0) {
             console.log("🔍 Applying customer filter (array):", filterParams.customerId);
-            whereClause = sql`${whereClause} AND customer_id = ANY(${sql.array(filterParams.customerId)})`;
+            whereClause = sql`${whereClause} AND invoices.customer_id = ANY(${sql.array(filterParams.customerId)})`;
             console.log("🔍 WHERE clause after customer filter (array)");
           }
         } else {
           console.log("🔍 Applying customer filter (single):", filterParams.customerId);
-          whereClause = sql`${whereClause} AND customer_id = ${filterParams.customerId}`;
+          whereClause = sql`${whereClause} AND invoices.customer_id = ${filterParams.customerId}`;
           console.log("🔍 WHERE clause after customer filter (single)");
         }
       } else {
@@ -3861,7 +3861,7 @@ export class SimpleStorage {
 
       if (filterParams?.status && filterParams.status !== "all") {
         console.log("🔍 Applying status filter:", filterParams.status);
-        whereClause = sql`${whereClause} AND status = ${filterParams.status}`;
+        whereClause = sql`${whereClause} AND invoices.status = ${filterParams.status}`;
         console.log("🔍 WHERE clause after status filter");
       } else {
         console.log("🔍 No status filter applied (status:", filterParams?.status, ")");
@@ -3869,18 +3869,24 @@ export class SimpleStorage {
 
       // Build JOIN clause for search if needed
       let joinClause = sql``;
-      if (filterParams?.search && filterParams.search.trim() !== "") {
-        const searchPattern = `%${filterParams.search.trim()}%`;
-        console.log("🔍 Applying search filter:", filterParams.search);
+      const hasSearch = filterParams?.search && filterParams.search.trim() !== "";
+      const shouldFilterAfterFetch = filterParams?.vendorId || filterParams?.providerId || filterParams?.leadTypeId || hasSearch;
+      
+      // Only apply search in SQL WHERE clause if we're NOT filtering after fetch
+      // (i.e., when we don't need to check line items)
+      // If we need to check line items, we'll filter in JavaScript after fetching
+      if (hasSearch && !shouldFilterAfterFetch) {
+        const searchPattern = `%${filterParams.search!.trim()}%`;
+        console.log("🔍 Applying search filter in SQL:", filterParams.search);
         needsJoin = true;
         joinClause = sql`LEFT JOIN customers c ON invoices.customer_id = c.id`;
         whereClause = sql`${whereClause} AND (invoices.invoice_number ILIKE ${searchPattern} OR c.name ILIKE ${searchPattern})`;
+      } else if (hasSearch) {
+        // When filtering after fetch, we still need the JOIN for customer name search
+        console.log("🔍 Search will be applied after fetch (to check line items):", filterParams.search);
+        needsJoin = true;
+        joinClause = sql`LEFT JOIN customers c ON invoices.customer_id = c.id`;
       }
-
-      // Note: If vendorId, providerId, leadTypeId, or search (for line items) filters are present,
-      // we'll need to filter after fetching due to line items structure
-      // Search needs to check line items for invoice/voucher numbers, so we filter after fetch
-      const shouldFilterAfterFetch = filterParams?.vendorId || filterParams?.providerId || filterParams?.leadTypeId || (filterParams?.search && filterParams.search.trim() !== "");
       
       console.log("🔍 shouldFilterAfterFetch:", shouldFilterAfterFetch);
       console.log("🔍 Filter breakdown:");
@@ -3999,13 +4005,18 @@ export class SimpleStorage {
             }
           }
 
-          // Filter by search term in line items (invoice/voucher numbers)
-          // Note: Invoice number and customer name are already filtered in SQL WHERE clause
-          // Here we check line items' invoice/voucher numbers
-          // If invoice number matched in SQL, we keep it. If not, we check line items.
+          // Filter by search term - check main invoice number, customer name, and line items
+          // When shouldFilterAfterFetch is true, we fetch all invoices and filter here
+          // to allow searching in line items' invoice/voucher numbers
           if (filterParams?.search && filterParams.search.trim() !== "") {
             const searchTerm = filterParams.search.trim().toLowerCase();
-            console.log("🔍 Checking search in line items for invoice ID:", invoice.id, "Search term:", searchTerm);
+            console.log("🔍 Checking search for invoice ID:", invoice.id, "Search term:", searchTerm);
+            
+            // Check main invoice number
+            const invoiceNumberMatch = invoice.invoice_number?.toLowerCase().includes(searchTerm);
+            
+            // Check customer name
+            const customerNameMatch = customerName?.toLowerCase().includes(searchTerm);
             
             // Check if search matches any line item's invoice/voucher number
             const lineItemMatch = lineItems.some((item: any) => {
@@ -4018,12 +4029,10 @@ export class SimpleStorage {
               return matches;
             });
             
-            // If invoice number matched in SQL, we already have it (it passed the WHERE clause)
-            // If invoice number didn't match, check if any line item matches
-            // If neither matches, skip this invoice
-            const invoiceNumberMatch = invoice.invoice_number?.toLowerCase().includes(searchTerm);
-            console.log("🔍 Invoice ID:", invoice.id, "invoiceNumberMatch:", invoiceNumberMatch, "lineItemMatch:", lineItemMatch);
-            if (!invoiceNumberMatch && !lineItemMatch) {
+            // Include invoice if it matches in invoice number, customer name, or line items
+            const hasMatch = invoiceNumberMatch || customerNameMatch || lineItemMatch;
+            console.log("🔍 Invoice ID:", invoice.id, "invoiceNumberMatch:", invoiceNumberMatch, "customerNameMatch:", customerNameMatch, "lineItemMatch:", lineItemMatch);
+            if (!hasMatch) {
               console.log("🔍 Excluding invoice ID:", invoice.id, "- no match found");
               return null;
             }

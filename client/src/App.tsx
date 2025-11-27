@@ -540,7 +540,7 @@ function Router() {
           </ProtectedRoute>
         </Route>
 
-        <Route path="/expenses/create">
+        <Route path="/expenses/create/:id?">
           <ProtectedRoute>
             <ExpenseCreate />
           </ProtectedRoute>

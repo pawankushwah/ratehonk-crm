@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -12,12 +12,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { EnhancedTable, TableColumn } from "@/components/ui/enhanced-table";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { Layout } from "@/components/layout/layout";
 import { DateFilter } from "@/components/ui/date-filter";
 import { buildDateFilters } from "@/lib/date-filter-helpers";
+import { useAuth } from "@/components/auth/auth-provider";
+import { auth } from "@/lib/auth";
 import { 
   Plus, DollarSign, Receipt, Building2, Calendar, CreditCard, 
   Search, Filter, Grid, List, MoreHorizontal, Trash2, 
@@ -121,8 +124,10 @@ const STATUS_OPTIONS = [
 ];
 
 export default function Expenses() {
+  const { tenant } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [, navigate] = useLocation();
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -388,6 +393,48 @@ export default function Expenses() {
     }
   });
 
+  // Status update mutation
+  const updateStatusMutation = useMutation({
+    mutationFn: async ({ expenseId, status }: { expenseId: number; status: string }) => {
+      const token = auth.getToken();
+      const response = await fetch(`/api/expenses/${expenseId}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ status }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `Failed to update expense status: ${response.status} - ${errorText}`,
+        );
+      }
+
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Status Updated",
+        description: "Expense status has been updated successfully.",
+      });
+
+      queryClient.invalidateQueries({
+        queryKey: ["/api/expenses"],
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Status Update Failed",
+        description:
+          error.message || "Failed to update expense status. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
   // Helper functions
   const resetForm = () => {
     setFormData({
@@ -432,31 +479,8 @@ export default function Expenses() {
   };
 
   const handleEdit = (expense: Expense) => {
-    setFormData({
-      title: expense.title,
-      description: expense.description || "",
-      amount: expense.amount,
-      currency: expense.currency,
-      category: expense.category,
-      subcategory: expense.subcategory || "",
-      expenseDate: expense.expenseDate.split('T')[0],
-      paymentMethod: expense.paymentMethod,
-      paymentReference: expense.paymentReference || "",
-      vendorId: expense.vendorId?.toString() || "none",
-      leadTypeId: expense.leadTypeId?.toString() || "none",
-      expenseType: expense.expenseType || "purchase",
-      receiptUrl: expense.receiptUrl || "",
-      taxAmount: expense.taxAmount,
-      taxRate: expense.taxRate,
-      isReimbursable: expense.isReimbursable,
-      isRecurring: expense.isRecurring,
-      recurringFrequency: expense.recurringFrequency || "",
-      status: expense.status,
-      tags: Array.isArray(expense.tags) ? expense.tags : normalizeTags(expense.tags),
-      notes: expense.notes || "",
-    });
-    setEditingExpense(expense);
-    setShowCreateDialog(true);
+    // Navigate to expense create page with ID for editing
+    navigate(`/expenses/create/${expense.id}`);
   };
 
   const handleDelete = (id: number) => {
@@ -485,6 +509,180 @@ export default function Expenses() {
   const getPaymentMethodConfig = (method: string) => {
     return PAYMENT_METHODS.find(pm => pm.value === method) || PAYMENT_METHODS[0];
   };
+
+  // Column definitions for the enhanced table
+  const expenseColumns: TableColumn<Expense>[] = [
+    {
+      key: "title",
+      label: "Expense Details",
+      sortable: true,
+      render: (title, expense) => (
+        <div className="space-y-1">
+          <div className="font-medium">{title}</div>
+          {expense.description && (
+            <div className="text-sm text-muted-foreground">
+              {expense.description.length > 50 
+                ? `${expense.description.substring(0, 50)}...` 
+                : expense.description
+              }
+            </div>
+          )}
+          {Array.isArray(expense.tags) && expense.tags.length > 0 && (
+            <div className="flex gap-1 flex-wrap">
+              {expense.tags.slice(0, 2).map((tag, index) => (
+                <Badge key={index} variant="secondary" className="text-xs">
+                  {tag}
+                </Badge>
+              ))}
+              {expense.tags.length > 2 && (
+                <Badge variant="secondary" className="text-xs">
+                  +{expense.tags.length - 2}
+                </Badge>
+              )}
+            </div>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: "category",
+      label: "Category",
+      sortable: true,
+      render: (category) => {
+        const categoryConfig = getCategoryConfig(category);
+        return (
+          <Badge className={categoryConfig.color}>
+            <span className="mr-1">{categoryConfig.icon}</span>
+            {categoryConfig.label}
+          </Badge>
+        );
+      },
+    },
+    {
+      key: "amount",
+      label: "Amount",
+      sortable: true,
+      render: (amount, expense) => (
+        <div className="space-y-1">
+          <div className="font-medium">
+            {formatCurrency(amount, expense.currency)}
+          </div>
+          {expense.isReimbursable && (
+            <Badge variant="outline" className="text-xs">
+              Reimbursable
+            </Badge>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: "status",
+      label: "Status",
+      sortable: true,
+      render: (status, expense) => {
+        const statusConfig = getStatusConfig(status || "pending");
+        return (
+          <Select
+            value={status || "pending"}
+            onValueChange={(value) => {
+              updateStatusMutation.mutate({
+                expenseId: expense.id,
+                status: value,
+              });
+            }}
+            disabled={updateStatusMutation.isPending}
+          >
+            <SelectTrigger className={`w-[140px] h-8 ${statusConfig.color} border-0`}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {STATUS_OPTIONS.map((statusOption) => (
+                <SelectItem key={statusOption.value} value={statusOption.value}>
+                  {statusOption.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        );
+      },
+    },
+    {
+      key: "expenseDate",
+      label: "Date",
+      sortable: true,
+      render: (expenseDate) => (
+        <div className="text-sm">
+          {expenseDate 
+            ? new Date(expenseDate).toLocaleDateString() 
+            : "N/A"}
+        </div>
+      ),
+    },
+    {
+      key: "vendorName",
+      label: "Vendor",
+      sortable: true,
+      render: (vendorName) => (
+        vendorName ? (
+          <div className="flex items-center gap-2">
+            <Building2 className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm">{vendorName}</span>
+          </div>
+        ) : (
+          <span className="text-sm text-muted-foreground">No vendor</span>
+        )
+      ),
+    },
+    {
+      key: "actions",
+      label: "Actions",
+      sortable: false,
+      className: "text-right",
+      render: (_, expense) => (
+        <div className="flex justify-end space-x-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setSelectedExpense(expense);
+              setShowDetailsDialog(true);
+            }}
+            title="View Details"
+          >
+            <Eye className="h-4 w-4" />
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => handleEdit(expense)}
+            title="Edit Expense"
+          >
+            <Edit className="h-4 w-4" />
+          </Button>
+          {expense.receiptUrl && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => window.open(expense.receiptUrl, '_blank')}
+              className="text-blue-600 hover:text-blue-700"
+              title="Download Receipt"
+            >
+              <Download className="h-4 w-4" />
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => handleDelete(expense.id)}
+            className="text-red-600 hover:text-red-700"
+            title="Delete Expense"
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
+      ),
+    },
+  ];
 
   if (isLoading) {
     return (
@@ -736,213 +934,109 @@ export default function Expenses() {
         {/* Expenses List */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center justify-between">
-              <span>Expenses ({totalItems})</span>
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Select value={itemsPerPage.toString()} onValueChange={(value) => setItemsPerPage(parseInt(value))}>
-                  <SelectTrigger className="w-20">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="5">5</SelectItem>
-                    <SelectItem value="10">10</SelectItem>
-                    <SelectItem value="25">25</SelectItem>
-                    <SelectItem value="50">50</SelectItem>
-                  </SelectContent>
-                </Select>
-                <span>per page</span>
-              </div>
-            </CardTitle>
+            <CardTitle>Expense List</CardTitle>
           </CardHeader>
           <CardContent>
-            {expenses.length === 0 ? (
-              <div className="text-center py-12">
-                <Archive className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                <h3 className="text-lg font-semibold text-muted-foreground">No expenses found</h3>
-                <p className="text-sm text-muted-foreground mt-2">
-                  {searchQuery || categoryFilter !== "all" || statusFilter !== "all" 
-                    ? "Try adjusting your filters to see more results."
-                    : "Get started by adding your first expense."
-                  }
-                </p>
-                {!searchQuery && categoryFilter === "all" && statusFilter === "all" && (
-                  <Link href="/expenses/create">
-                    <Button
-                      className="mt-4"
-                      data-testid="button-add-first-expense"
-                    >
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add First Expense
-                    </Button>
-                  </Link>
-                )}
+            <EnhancedTable
+              data={expenses}
+              columns={expenseColumns}
+              isLoading={isLoading}
+              showPagination={false}
+              emptyMessage="No expenses found. Create your first expense to get started."
+            />
+            {/* Backend Pagination Controls */}
+            <div className="flex items-center justify-between mt-4 pt-4 border-t">
+              <div className="flex items-center gap-4">
+                <div className="text-sm text-gray-500">
+                  Showing {(currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, totalItems)} of {totalItems} expenses
+                </div>
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="pageSize" className="text-sm text-gray-500">
+                    Show:
+                  </Label>
+                  <Select
+                    value={itemsPerPage.toString()}
+                    onValueChange={(value) => {
+                      setItemsPerPage(parseInt(value));
+                      setCurrentPage(1); // Reset to first page when changing page size
+                    }}
+                  >
+                    <SelectTrigger id="pageSize" className="w-20 h-8">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="5">5</SelectItem>
+                      <SelectItem value="10">10</SelectItem>
+                      <SelectItem value="25">25</SelectItem>
+                      <SelectItem value="50">50</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
-            ) : viewMode === "table" ? (
-              <div className="space-y-4">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Expense Details</TableHead>
-                      <TableHead>Category</TableHead>
-                      <TableHead>Amount</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Date</TableHead>
-                      <TableHead>Vendor</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {expenses.map((expense) => {
-                      const categoryConfig = getCategoryConfig(expense.category);
-                      const statusConfig = getStatusConfig(expense.status);
-                      const StatusIcon = statusConfig.icon;
+              {totalPages > 1 && (
+                <div className="flex items-center space-x-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={currentPage === 1}
+                    onClick={() => setCurrentPage(currentPage - 1)}
+                  >
+                    Previous
+                  </Button>
+                  
+                  {/* Page Numbers */}
+                  <div className="flex items-center space-x-1">
+                    {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                      let pageNum;
+                      if (totalPages <= 5) {
+                        // Show all pages if 5 or fewer
+                        pageNum = i + 1;
+                      } else if (currentPage <= 3) {
+                        // Show first 5 pages
+                        pageNum = i + 1;
+                      } else if (currentPage >= totalPages - 2) {
+                        // Show last 5 pages
+                        pageNum = totalPages - 4 + i;
+                      } else {
+                        // Show pages around current page
+                        pageNum = currentPage - 2 + i;
+                      }
                       
                       return (
-                        <TableRow key={expense.id} className="hover:bg-muted/50">
-                          <TableCell>
-                            <div className="space-y-1">
-                              <div className="font-medium">{expense.title}</div>
-                              {expense.description && (
-                                <div className="text-sm text-muted-foreground">
-                                  {expense.description.length > 50 
-                                    ? `${expense.description.substring(0, 50)}...` 
-                                    : expense.description
-                                  }
-                                </div>
-                              )}
-                              {Array.isArray(expense.tags) && expense.tags.length > 0 && (
-                                <div className="flex gap-1 flex-wrap">
-                                  {expense.tags.slice(0, 2).map((tag, index) => (
-                                    <Badge key={index} variant="secondary" className="text-xs">
-                                      {tag}
-                                    </Badge>
-                                  ))}
-                                  {expense.tags.length > 2 && (
-                                    <Badge variant="secondary" className="text-xs">
-                                      +{expense.tags.length - 2}
-                                    </Badge>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge className={categoryConfig.color}>
-                              <span className="mr-1">{categoryConfig.icon}</span>
-                              {categoryConfig.label}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <div className="space-y-1">
-                              <div className="font-medium">
-                                {formatCurrency(expense.amount, expense.currency)}
-                              </div>
-                              {expense.isReimbursable && (
-                                <Badge variant="outline" className="text-xs">
-                                  Reimbursable
-                                </Badge>
-                              )}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge className={statusConfig.color}>
-                              <StatusIcon className="h-3 w-3 mr-1" />
-                              {statusConfig.label}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <div className="text-sm">
-                              {new Date(expense.expenseDate).toLocaleDateString()}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            {expense.vendorName ? (
-                              <div className="flex items-center gap-2">
-                                <Building2 className="h-4 w-4 text-muted-foreground" />
-                                <span className="text-sm">{expense.vendorName}</span>
-                              </div>
-                            ) : (
-                              <span className="text-sm text-muted-foreground">No vendor</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" size="sm">
-                                  <MoreHorizontal className="h-4 w-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem
-                                  onClick={() => {
-                                    setSelectedExpense(expense);
-                                    setShowDetailsDialog(true);
-                                  }}
-                                >
-                                  <Eye className="h-4 w-4 mr-2" />
-                                  View Details
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => handleEdit(expense)}>
-                                  <Edit className="h-4 w-4 mr-2" />
-                                  Edit
-                                </DropdownMenuItem>
-                                {expense.receiptUrl && (
-                                  <DropdownMenuItem>
-                                    <Download className="h-4 w-4 mr-2" />
-                                    Download Receipt
-                                  </DropdownMenuItem>
-                                )}
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem
-                                  onClick={() => handleDelete(expense.id)}
-                                  className="text-red-600 dark:text-red-400"
-                                >
-                                  <Trash2 className="h-4 w-4 mr-2" />
-                                  Delete
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </TableCell>
-                        </TableRow>
+                        <Button
+                          key={pageNum}
+                          variant={currentPage === pageNum ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => setCurrentPage(pageNum)}
+                          className="min-w-[2.5rem]"
+                        >
+                          {pageNum}
+                        </Button>
                       );
                     })}
-                  </TableBody>
-                </Table>
-
-                {/* Pagination */}
-                {totalPages > 1 && (
-                  <div className="flex items-center justify-between mt-4">
-                    <p className="text-sm text-muted-foreground">
-                      Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, totalItems)} of {totalItems} expenses
-                    </p>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={currentPage === 1}
-                        onClick={() => setCurrentPage(currentPage - 1)}
-                      >
-                        Previous
-                      </Button>
-                      <span className="text-sm text-muted-foreground">
-                        Page {currentPage} of {totalPages}
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={currentPage === totalPages}
-                        onClick={() => setCurrentPage(currentPage + 1)}
-                      >
-                        Next
-                      </Button>
-                    </div>
                   </div>
-                )}
-              </div>
-            ) : (
-              // Grid View
+                  
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={currentPage >= totalPages}
+                    onClick={() => setCurrentPage(currentPage + 1)}
+                  >
+                    Next
+                  </Button>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Grid View - keeping for now but can be removed if not needed */}
+        {viewMode === "grid" && expenses.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Expenses Grid View</CardTitle>
+            </CardHeader>
+            <CardContent>
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                 {expenses.map((expense) => {
                   const categoryConfig = getCategoryConfig(expense.category);
@@ -1014,7 +1108,9 @@ export default function Expenses() {
                           
                           <div className="flex items-center gap-2 text-sm text-muted-foreground">
                             <Calendar className="h-4 w-4" />
-                            {new Date(expense.expenseDate).toLocaleDateString()}
+                            {expense.expenseDate 
+                              ? new Date(expense.expenseDate).toLocaleDateString() 
+                              : "N/A"}
                           </div>
                           
                           {expense.vendorName && (
@@ -1044,39 +1140,9 @@ export default function Expenses() {
                   );
                 })}
               </div>
-            )}
-
-            {/* Pagination Navigation */}
-            {totalItems > 0 && (
-              <div className="flex items-center justify-between pt-4 border-t mt-4">
-                <div className="text-sm text-muted-foreground">
-                  Showing {Math.min((currentPage - 1) * itemsPerPage + 1, totalItems)} - {Math.min(currentPage * itemsPerPage, totalItems)} of {totalItems} expenses
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-                    disabled={currentPage <= 1}
-                  >
-                    Previous
-                  </Button>
-                  <span className="text-sm text-muted-foreground px-3">
-                    Page {currentPage} of {Math.ceil(totalItems / itemsPerPage)}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setCurrentPage(currentPage + 1)}
-                    disabled={currentPage >= Math.ceil(totalItems / itemsPerPage)}
-                  >
-                    Next
-                  </Button>
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Create/Edit Expense Dialog */}
         <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>

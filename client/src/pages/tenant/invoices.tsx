@@ -100,6 +100,11 @@ const invoiceStatuses = [
     label: "Cancelled",
     color: "bg-gray-100 text-gray-800",
   },
+  {
+    value: "void",
+    label: "Void",
+    color: "bg-purple-100 text-purple-800",
+  },
 ];
 
 export default function Invoices() {
@@ -568,6 +573,11 @@ export default function Invoices() {
           label: "Cancelled",
           color: "bg-gray-100 text-gray-800 border-gray-200",
         };
+      case "void":
+        return {
+          label: "Void",
+          color: "bg-purple-100 text-purple-800 border-purple-200",
+        };
       default:
         return {
           label: status || "Unknown",
@@ -772,6 +782,48 @@ export default function Invoices() {
     return symbols[currencyCode] || currencyCode;
   };
 
+  // Update invoice status mutation
+  const updateStatusMutation = useMutation({
+    mutationFn: async ({ invoiceId, status }: { invoiceId: number; status: string }) => {
+      const token = auth.getToken();
+      const response = await fetch(`/api/tenants/${tenant?.id}/invoices/${invoiceId}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ status }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `Failed to update invoice status: ${response.status} - ${errorText}`,
+        );
+      }
+
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Status Updated",
+        description: "Invoice status has been updated successfully.",
+      });
+
+      queryClient.invalidateQueries({
+        queryKey: [`/api/tenants/${tenant?.id}/invoices`],
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Status Update Failed",
+        description:
+          error.message || "Failed to update invoice status. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
   // Column definitions for the enhanced table
   const invoiceColumns: TableColumn<Invoice>[] = [
     {
@@ -945,24 +997,47 @@ export default function Invoices() {
       label: "Status",
       sortable: true,
       render: (status, invoice) => {
-        // Determine status based on paidAmount vs totalAmount if status is not explicitly set
+        // Use the status from the API - don't auto-detect to override explicit status
         const invoiceData = invoice as any;
         const paidAmount = parseFloat(invoiceData.paidAmount?.toString() || invoiceData.amountPaid?.toString() || "0");
         const totalAmount = parseFloat(invoiceData.totalAmount?.toString() || "0");
         
+        // Only auto-detect if status is missing/null/undefined, not when explicitly set
         let displayStatus = status;
-        if (!displayStatus || displayStatus === "pending") {
-          // Auto-detect partial payment
+        if (!displayStatus) {
+          // Auto-detect status only when status is not set at all
           if (paidAmount > 0 && paidAmount < totalAmount) {
             displayStatus = "partial";
           } else if (paidAmount >= totalAmount && totalAmount > 0) {
             displayStatus = "paid";
+          } else {
+            displayStatus = "pending";
           }
         }
         
         const statusConfig = getStatusBadge(displayStatus);
         return (
-          <Badge className={statusConfig.color}>{statusConfig.label}</Badge>
+          <Select
+            value={displayStatus || "pending"}
+            onValueChange={(newStatus) => {
+              updateStatusMutation.mutate({
+                invoiceId: invoice.id,
+                status: newStatus,
+              });
+            }}
+            disabled={updateStatusMutation.isPending}
+          >
+            <SelectTrigger className={`w-[140px] h-8 ${statusConfig.color} border-0`}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {invoiceStatuses.map((statusOption) => (
+                <SelectItem key={statusOption.value} value={statusOption.value}>
+                  {statusOption.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         );
       },
     },
@@ -1586,7 +1661,7 @@ export default function Invoices() {
               <div className="relative">
                 <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400 h-3 w-3" />
                 <Input
-                  placeholder="Search..."
+                  placeholder="Search invoice number and voucher number"
                   value={localSearchTerm}
                   onChange={(e) => setLocalSearchTerm(e.target.value)}
                   className="pl-7 h-9 text-sm"
@@ -1623,7 +1698,7 @@ export default function Invoices() {
                   <SelectValue placeholder="Lead Type" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Lead Types</SelectItem>
+                  <SelectItem value="all">All Services</SelectItem>
                   {leadTypes.map((leadType) => (
                     <SelectItem key={leadType.id} value={leadType.id.toString()}>
                       {leadType.name || leadType.leadTypeName || "Unknown"}

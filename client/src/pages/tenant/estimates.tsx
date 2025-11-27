@@ -64,6 +64,8 @@ import { EmailEstimateDialog } from "@/components/estimates/email-estimate-dialo
 import { useAuth } from "@/components/auth/auth-provider";
 import { DateFilter } from "@/components/ui/date-filter";
 import { buildDateFilters } from "@/lib/date-filter-helpers";
+import { EnhancedTable, TableColumn } from "@/components/ui/enhanced-table";
+import { useLocation } from "wouter";
 import {
   BarChart,
   Bar,
@@ -592,6 +594,120 @@ export default function Estimates() {
       </Badge>
     );
   };
+
+  const [, navigate] = useLocation();
+
+  // Column definitions for the enhanced table
+  const estimateColumns: TableColumn<Estimate>[] = [
+    {
+      key: "estimateNumber",
+      label: "Estimate #",
+      sortable: true,
+      render: (value) => (
+        <div className="font-medium">{value || `EST-${value}`}</div>
+      ),
+    },
+    {
+      key: "customerName",
+      label: "Customer",
+      sortable: true,
+      render: (customerName, estimate) => (
+        <div className="flex flex-col">
+          <div className="font-medium">{customerName || "Unknown"}</div>
+          <div className="text-sm text-gray-500 flex items-center mt-1">
+            <Mail className="h-3 w-3 mr-1" />
+            {estimate.customerEmail || ""}
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: "createdAt",
+      label: "Date",
+      sortable: true,
+      render: (createdAt) => (
+        <div className="flex items-center">
+          <Calendar className="h-4 w-4 mr-2 text-gray-400" />
+          <span>
+            {createdAt ? new Date(createdAt).toLocaleDateString() : "-"}
+          </span>
+        </div>
+      ),
+    },
+    {
+      key: "totalAmount",
+      label: "Total Amount",
+      sortable: true,
+      render: (totalAmount) => (
+        <div className="flex items-center font-semibold">
+          <span className="mr-1">$</span>
+          <span>
+            {totalAmount
+              ? parseFloat(totalAmount.toString()).toLocaleString()
+              : "0"}
+          </span>
+        </div>
+      ),
+    },
+    {
+      key: "status",
+      label: "Status",
+      sortable: true,
+      render: (status) => {
+        const statusConfig = estimateStatuses.find((s) => s.value === status);
+        return (
+          <Badge
+            className={statusConfig?.color || "bg-gray-100 text-gray-800"}
+            variant={
+              status === "rejected"
+                ? "destructive"
+                : status === "draft"
+                  ? "secondary"
+                  : "default"
+            }
+          >
+            {statusConfig?.label || status}
+          </Badge>
+        );
+      },
+    },
+    {
+      key: "actions",
+      label: "Actions",
+      sortable: false,
+      className: "text-right",
+      render: (_, estimate) => (
+        <div className="flex justify-end space-x-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => handlePreviewEstimate(estimate)}
+            title="Preview Estimate"
+          >
+            <Eye className="h-4 w-4" />
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setEmailEstimate(estimate)}
+            className="text-green-600 hover:text-green-700"
+            title="Send Email"
+          >
+            <Mail className="h-4 w-4" />
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => handleDownloadPDF(estimate)}
+            className="text-blue-600 hover:text-blue-700"
+            title="Download PDF"
+          >
+            <Download className="h-4 w-4" />
+          </Button>
+        </div>
+      ),
+    },
+  ];
 
   // Define estimate statuses first
   const estimateStatuses = [
@@ -1490,224 +1606,72 @@ export default function Estimates() {
             </DialogContent>
           </Dialog>
 
-          {/* Estimates Grid */}
-          <Card className="w-full">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle>Estimates List</CardTitle>
-                  <CardDescription>
-                    {estimates.length === 0
-                      ? "No estimates found. Create your first estimate to get started."
-                      : `Showing ${estimates.length} estimate${estimates.length !== 1 ? "s" : ""}`}
-                  </CardDescription>
-                </div>
-                <div className="flex items-center space-x-2">
-                  {/* Search Filter */}
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      placeholder="Search estimates..."
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      className="w-64 pl-9"
-                      data-testid="input-search-estimates"
-                    />
-                  </div>
-
-                  {/* Status Filter */}
-                  <Select value={statusFilter} onValueChange={setStatusFilter}>
-                    <SelectTrigger
-                      className="w-40"
-                      data-testid="select-status-filter"
-                    >
-                      <SelectValue placeholder="Filter by status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {estimateStatuses.map((status) => (
-                        <SelectItem key={status.value} value={status.value}>
-                          {status.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-
-                  {/* Date Filter */}
-                  <DateFilter
-                    dateFilter={dateFilter}
-                    setDateFilter={setDateFilter}
-                    customDateFrom={customDateFrom}
-                    setCustomDateFrom={setCustomDateFrom}
-                    customDateTo={customDateTo}
-                    setCustomDateTo={setCustomDateTo}
-                  />
-
-                  {/* View Toggle */}
-                  <div className="flex items-center border rounded-md">
-                    <Button
-                      variant={viewMode === "card" ? "default" : "ghost"}
-                      size="sm"
-                      onClick={() => setViewMode("card")}
-                      className="rounded-r-none"
-                    >
-                      <Grid3X3 className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      variant={viewMode === "list" ? "default" : "ghost"}
-                      size="sm"
-                      onClick={() => setViewMode("list")}
-                      className="rounded-l-none"
-                    >
-                      <List className="w-4 h-4" />
-                    </Button>
-                  </div>
-                </div>
-              </div>
+          {/* Filters */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Filter Estimates</CardTitle>
             </CardHeader>
             <CardContent>
-              {estimates.length === 0 ? (
-                <div className="text-center py-8">
-                  <FileText className="mx-auto h-12 w-12 text-gray-400" />
-                  <h3 className="mt-2 text-sm font-medium text-gray-900">
-                    No estimates
-                  </h3>
-                  <p className="mt-1 text-sm text-gray-500">
-                    Get started by creating a new estimate.
-                  </p>
-                  <div className="mt-6">
-                    <Link href="/estimates/create">
-                      <Button data-testid="button-new-estimate-empty">
-                        <Plus className="mr-2 h-4 w-4" />
-                        New Estimate
-                      </Button>
-                    </Link>
-                  </div>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 mb-3">
+                <div className="relative">
+                  <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400 h-3 w-3" />
+                  <Input
+                    placeholder="Search estimates..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-7 h-9 text-sm"
+                  />
                 </div>
-              ) : viewMode === "card" ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                  {estimates.map((estimate) => (
-                    <Card
-                      key={estimate.id}
-                      className="hover:shadow-md transition-shadow"
-                    >
-                      <CardHeader className="pb-3">
-                        <div className="flex items-center justify-between">
-                          <CardTitle className="text-lg font-semibold">
-                            {estimate.estimateNumber}
-                          </CardTitle>
-                          {getStatusBadge(estimate.status)}
-                        </div>
-                        <CardDescription className="text-sm">
-                          {estimate.customerName}
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent className="space-y-3">
-                        <div className="flex items-center justify-between text-sm">
-                          <div className="flex items-center gap-2 font-medium text-green-600">
-                            <DollarSign className="w-4 h-4" />$
-                            {estimate.totalAmount}
-                          </div>
-                          <div className="flex items-center gap-2 text-muted-foreground">
-                            <Calendar className="w-4 h-4" />
-                            {new Date(estimate.createdAt).toLocaleDateString()}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <Users className="w-4 h-4" />
-                          <span className="truncate">
-                            {estimate.customerEmail}
-                          </span>
-                        </div>
-                        <div className="flex gap-2 pt-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="flex-1"
-                            onClick={() => handlePreviewEstimate(estimate)}
-                          >
-                            <Eye className="w-4 h-4 mr-1" />
-                            Preview
-                          </Button>
-                          <Button
-                            size="sm"
-                            className="flex-1"
-                            onClick={() => setEmailEstimate(estimate)}
-                          >
-                            <Mail className="w-4 h-4 mr-1" />
-                            Email
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleDownloadPDF(estimate)}
-                          >
-                            <Download className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
+                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                  <SelectTrigger className="h-9 text-sm">
+                    <SelectValue placeholder="Status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {estimateStatuses.map((status) => (
+                      <SelectItem key={status.value} value={status.value}>
+                        {status.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <DateFilter
+                  dateFilter={dateFilter}
+                  setDateFilter={setDateFilter}
+                  customDateFrom={customDateFrom}
+                  setCustomDateFrom={setCustomDateFrom}
+                  customDateTo={customDateTo}
+                  setCustomDateTo={setCustomDateTo}
+                />
+              </div>
+              <div className="flex items-center justify-between mt-3 pt-3 border-t">
+                <div className="text-xs text-gray-500">
+                  Showing {estimates.length} estimate{estimates.length !== 1 ? "s" : ""}
                 </div>
-              ) : (
-                <div className="space-y-2">
-                  {/* List View Header */}
-                  <div className="grid grid-cols-12 gap-4 px-4 py-2 bg-gray-50 rounded-md font-medium text-sm text-gray-700">
-                    <div className="col-span-2">Estimate #</div>
-                    <div className="col-span-2">Customer</div>
-                    <div className="col-span-2">Email</div>
-                    <div className="col-span-1">Amount</div>
-                    <div className="col-span-1">Status</div>
-                    <div className="col-span-2">Date</div>
-                    <div className="col-span-2">Actions</div>
-                  </div>
-                  {/* List View Items */}
-                  {estimates.map((estimate) => (
-                    <div
-                      key={estimate.id}
-                      className="grid grid-cols-12 gap-4 px-4 py-3 bg-white border rounded-md hover:bg-gray-50 transition-colors"
-                    >
-                      <div className="col-span-2 font-medium">
-                        {estimate.estimateNumber}
-                      </div>
-                      <div className="col-span-2 truncate">
-                        {estimate.customerName}
-                      </div>
-                      <div className="col-span-2 truncate text-sm text-gray-600">
-                        {estimate.customerEmail}
-                      </div>
-                      <div className="col-span-1 font-semibold text-green-600">
-                        ${estimate.totalAmount}
-                      </div>
-                      <div className="col-span-1">
-                        {getStatusBadge(estimate.status)}
-                      </div>
-                      <div className="col-span-2 text-sm text-gray-600">
-                        {new Date(estimate.createdAt).toLocaleDateString()}
-                      </div>
-                      <div className="col-span-2 flex gap-1">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handlePreviewEstimate(estimate)}
-                        >
-                          <Eye className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          size="sm"
-                          onClick={() => setEmailEstimate(estimate)}
-                        >
-                          <Mail className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleDownloadPDF(estimate)}
-                        >
-                          <Download className="w-4 h-4" />
-                        </Button>
-                      </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Estimates Table */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Estimates List</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <EnhancedTable
+                data={estimates}
+                columns={estimateColumns}
+                isLoading={isLoading}
+                showPagination={false}
+                emptyMessage="No estimates found. Create your first estimate to get started."
+              />
+              {/* Pagination Controls - Below table like invoices */}
+              {estimates.length > 0 && (
+                <div className="flex items-center justify-between mt-4 pt-4 border-t">
+                  <div className="flex items-center gap-4">
+                    <div className="text-sm text-gray-500">
+                      Showing {estimates.length} estimate{estimates.length !== 1 ? "s" : ""}
                     </div>
-                  ))}
+                  </div>
                 </div>
               )}
             </CardContent>

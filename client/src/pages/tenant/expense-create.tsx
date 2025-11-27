@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Layout } from "@/components/layout/layout";
 import { Button } from "@/components/ui/button";
@@ -33,7 +33,7 @@ import {
 import { useAuth } from "@/components/auth/auth-provider";
 import { auth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
-import { useLocation } from "wouter";
+import { useLocation, useRoute } from "wouter";
 import { VendorCreateForm } from "@/components/forms/vendor-create-form";
 import { LeadTypeCreateForm } from "@/components/forms/lead-type-create-form";
 import { DatePicker } from "@/components/ui/date-picker";
@@ -59,7 +59,38 @@ export default function ExpenseCreate() {
   const { tenant } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
+  const [match, params] = useRoute("/expenses/create/:id?");
+  
+  // Extract expense ID from route params or URL path
+  const expenseId = React.useMemo(() => {
+    if (params?.id) {
+      const id = parseInt(params.id);
+      return isNaN(id) ? null : id;
+    }
+    // Fallback: extract from URL path
+    const pathMatch = location.match(/\/expenses\/create\/(\d+)/);
+    if (pathMatch && pathMatch[1]) {
+      const id = parseInt(pathMatch[1]);
+      return isNaN(id) ? null : id;
+    }
+    return null;
+  }, [params?.id, location]);
+  
+  const isEditMode = !!expenseId;
+
+  // Debug: Log route params
+  useEffect(() => {
+    console.log("Route params:", { 
+      location, 
+      match, 
+      params, 
+      expenseId, 
+      isEditMode,
+      extractedFromParams: !!params?.id,
+      extractedFromPath: location.includes('/expenses/create/')
+    });
+  }, [location, match, params, expenseId, isEditMode]);
 
   const [expenseItems, setExpenseItems] = useState([
     {
@@ -177,6 +208,85 @@ export default function ExpenseCreate() {
     },
   });
 
+  // Fetch expense data for edit mode
+  const { data: expenseData, isLoading: isLoadingExpense } = useQuery({
+    queryKey: ["/api/expenses", expenseId],
+    enabled: isEditMode && !!expenseId && !!tenant?.id,
+    queryFn: async () => {
+      console.log("Fetching expense data for ID:", expenseId);
+      const token = auth.getToken();
+      const response = await fetch(`/api/expenses/${expenseId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        console.error("Failed to fetch expense:", response.status, response.statusText);
+        throw new Error("Failed to fetch expense");
+      }
+      const data = await response.json();
+      console.log("Expense data fetched:", data);
+      return data;
+    },
+  });
+
+  // Debug: Log query state
+  useEffect(() => {
+    console.log("Expense query state:", {
+      expenseId,
+      tenantId: tenant?.id,
+      isEditMode,
+      enabled: isEditMode && !!expenseId && !!tenant?.id,
+      isLoadingExpense,
+      expenseData,
+      match,
+      params,
+    });
+  }, [expenseId, tenant?.id, isEditMode, isLoadingExpense, expenseData, match, params]);
+
+  // Load expense data when in edit mode
+  useEffect(() => {
+    if (isEditMode && expenseData && !isLoadingExpense) {
+      const expense = expenseData;
+      console.log("Loading expense data:", expense);
+      
+      setExpenseDate(expense.expense_date || expense.expenseDate || new Date().toISOString().split("T")[0]);
+      setCurrency(expense.currency || "USD");
+      setNotesContent(expense.notes || "");
+      
+      // Find tax rate ID from tax rate value - wait for gstRates to be available
+      let taxRateId = "";
+      if (expense.tax_rate && gstRates && gstRates.length > 0) {
+        const taxRateValue = parseFloat(expense.tax_rate?.toString() || "0");
+        const matchingRate = gstRates.find((rate: any) => {
+          const rateValue = parseFloat(rate.rate?.toString() || "0");
+          return Math.abs(rateValue - taxRateValue) < 0.01; // Allow small floating point differences
+        });
+        if (matchingRate) {
+          taxRateId = matchingRate.id?.toString() || "";
+        }
+      }
+      
+      // Set expense items from the expense data
+      const expenseItem = {
+        category: expense.category || "",
+        title: expense.title || "",
+        vendorId: expense.vendor_id?.toString() || expense.vendorId?.toString() || "",
+        leadTypeId: expense.lead_type_id?.toString() || expense.leadTypeId?.toString() || "",
+        amount: expense.amount?.toString() || "",
+        taxRateId: taxRateId,
+        taxAmount: expense.tax_amount?.toString() || expense.taxAmount?.toString() || "0",
+        totalAmount: parseFloat(expense.amount || "0") + parseFloat(expense.tax_amount || expense.taxAmount || "0"),
+        paymentMethod: expense.payment_method || expense.paymentMethod || "credit_card",
+        paymentStatus: expense.status || "paid",
+        amountPaid: expense.amount_paid?.toString() || expense.amountPaid?.toString() || "",
+        amountDue: expense.amount_due?.toString() || expense.amountDue?.toString() || "",
+        notes: expense.notes || expense.description || "",
+      };
+      
+      console.log("Setting expense item:", expenseItem);
+      setExpenseItems([expenseItem]);
+    }
+  }, [isEditMode, expenseData, isLoadingExpense, gstRates]);
+
   // Fetch all expenses for title suggestions
   const { data: allExpenses = [] } = useQuery({
     queryKey: ["/api/expenses"],
@@ -210,34 +320,52 @@ export default function ExpenseCreate() {
   const createExpensesMutation = useMutation({
     mutationFn: async (expenses: any[]) => {
       const token = auth.getToken();
-      const promises = expenses.map((expense) =>
-        fetch("/api/expenses", {
-          method: "POST",
+      if (isEditMode && expenseId) {
+        // Update existing expense
+        const expense = expenses[0];
+        const response = await fetch(`/api/expenses/${expenseId}`, {
+          method: "PUT",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify(expense),
-        }).then((res) => {
-          if (!res.ok) throw new Error("Failed to create expense");
-          return res.json();
-        })
-      );
-      return Promise.all(promises);
+        });
+        if (!response.ok) throw new Error("Failed to update expense");
+        return [await response.json()];
+      } else {
+        // Create new expenses
+        const promises = expenses.map((expense) =>
+          fetch("/api/expenses", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify(expense),
+          }).then((res) => {
+            if (!res.ok) throw new Error("Failed to create expense");
+            return res.json();
+          })
+        );
+        return Promise.all(promises);
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/expenses"] });
       toast({
         title: "Success",
-        description: `${expenseItems.length} expense(s) created successfully`,
+        description: isEditMode 
+          ? "Expense updated successfully"
+          : `${expenseItems.length} expense(s) created successfully`,
       });
       navigate("/expenses");
     },
     onError: (error: any) => {
-      console.error("Error creating expenses:", error);
+      console.error(`Error ${isEditMode ? 'updating' : 'creating'} expenses:`, error);
       toast({
         title: "Error",
-        description: "Failed to create expenses",
+        description: `Failed to ${isEditMode ? 'update' : 'create'} expense${isEditMode ? '' : 's'}`,
         variant: "destructive",
       });
     },
@@ -534,7 +662,7 @@ export default function ExpenseCreate() {
                   <span className="hidden sm:inline">Back</span>
                 </Button>
                 <h1 className="ml-2 sm:ml-4 font-inter font-medium text-base sm:text-[20px] leading-[24px] text-[#121926] truncate">
-                  Create Expenses
+                  {isEditMode ? "Edit Expense" : "Create Expenses"}
                 </h1>
               </div>
 
@@ -566,36 +694,37 @@ export default function ExpenseCreate() {
               </div>
 
               {/* Expense Line Items */}
-              <div className="border rounded-lg overflow-hidden">
-                {/* Table Header */}
-                <div 
-                  className="grid gap-2 p-3 font-medium text-sm border-b"
-                  style={{ gridTemplateColumns: gridTemplate }}
-                >
-                  <div className="text-center flex items-center justify-center">#</div>
-                  {expenseSettings?.showCategory !== false && <div className="flex items-center">Category *</div>}
-                  <div className="flex items-center">Title *</div>
-                  {expenseSettings?.showVendor !== false && <div className="flex items-center">Vendor</div>}
-                  {expenseSettings?.showLeadType !== false && <div className="flex items-center">Lead Type</div>}
-                  <div className="flex items-center">Amount ({currencySymbol}) *</div>
-                  {expenseSettings?.showTax !== false && <div className="flex items-center">Tax Rate</div>}
-                  {expenseSettings?.showTax !== false && <div className="flex items-center">Tax Amt ({currencySymbol})</div>}
-                  <div className="flex items-center">Total ({currencySymbol})</div>
-                  {expenseSettings?.showPaymentStatus !== false && <div className="flex items-center">Status *</div>}
-                  {expenseSettings?.showPaymentStatus !== false && <div className="flex items-center">Paid ({currencySymbol})</div>}
-                  {expenseSettings?.showPaymentStatus !== false && <div className="flex items-center">Due ({currencySymbol})</div>}
-                  {expenseSettings?.showPaymentMethod !== false && <div className="flex items-center">Payment</div>}
-                  <div></div>
-                </div>
+              <div className="border rounded-lg overflow-x-auto">
+                <div className="min-w-[1200px]">
+                  {/* Table Header */}
+                  <div 
+                    className="grid gap-2 p-3 font-medium text-sm border-b bg-gray-50"
+                    style={{ gridTemplateColumns: gridTemplate }}
+                  >
+                    <div className="text-center flex items-center justify-center">#</div>
+                    {expenseSettings?.showCategory !== false && <div className="flex items-center">Category *</div>}
+                    <div className="flex items-center">Title *</div>
+                    {expenseSettings?.showVendor !== false && <div className="flex items-center">Vendor</div>}
+                    {expenseSettings?.showLeadType !== false && <div className="flex items-center">Lead Type</div>}
+                    <div className="flex items-center">Amount ({currencySymbol}) *</div>
+                    {expenseSettings?.showTax !== false && <div className="flex items-center">Tax Rate</div>}
+                    {expenseSettings?.showTax !== false && <div className="flex items-center">Tax Amt ({currencySymbol})</div>}
+                    <div className="flex items-center">Total ({currencySymbol})</div>
+                    {expenseSettings?.showPaymentStatus !== false && <div className="flex items-center">Status *</div>}
+                    {expenseSettings?.showPaymentStatus !== false && <div className="flex items-center">Paid ({currencySymbol})</div>}
+                    {expenseSettings?.showPaymentStatus !== false && <div className="flex items-center">Due ({currencySymbol})</div>}
+                    {expenseSettings?.showPaymentMethod !== false && <div className="flex items-center">Payment</div>}
+                    <div></div>
+                  </div>
 
-                {/* Table Body */}
-                <div className="divide-y">
-                  {expenseItems.map((item, index) => (
-                    <div
-                      key={index}
-                      className="grid gap-2 p-3"
-                      style={{ gridTemplateColumns: gridTemplate }}
-                    >
+                  {/* Table Body */}
+                  <div>
+                    {expenseItems.map((item, index) => (
+                      <div
+                        key={index}
+                        className="grid gap-2 p-3 border-b last:border-b-0"
+                        style={{ gridTemplateColumns: gridTemplate }}
+                      >
                       <div className="flex items-center justify-center">
                         <span className="font-medium text-sm">{index + 1}</span>
                       </div>
@@ -696,12 +825,12 @@ export default function ExpenseCreate() {
                             </SelectContent>
                           </Select>
                           {!selectedTaxSettingId && (
-                            <p className="text-xs text-gray-500 mt-1">
+                            <p className="text-xs text-black mt-1">
                               Select tax setting in expense settings
                             </p>
                           )}
                           {selectedTaxSettingId && gstRates.length === 0 && (
-                            <p className="text-xs text-gray-500 mt-1">
+                            <p className="text-xs text-black mt-1">
                               No tax rates available
                             </p>
                           )}
@@ -823,6 +952,7 @@ export default function ExpenseCreate() {
                       </div>
                     </div>
                   ))}
+                  </div>
                 </div>
 
                 {/* Add New Line Button */}
@@ -847,19 +977,19 @@ export default function ExpenseCreate() {
                     <Label htmlFor="taxInclusive" className="text-sm font-medium">
                       Tax Type
                     </Label>
-                    <p className="text-xs text-muted-foreground mt-1">
+                    <p className="text-xs text-black mt-1">
                       {isTaxInclusive ? "Tax is included in prices" : "Tax will be added to prices"}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-sm text-muted-foreground">Exclusive</span>
+                    <span className="text-sm text-black">Exclusive</span>
                     <Switch
                       id="taxInclusive"
                       checked={isTaxInclusive}
                       onCheckedChange={setIsTaxInclusive}
                       data-testid="switch-tax-inclusive"
                     />
-                    <span className="text-sm text-muted-foreground">Inclusive</span>
+                    <span className="text-sm text-black">Inclusive</span>
                   </div>
                 </div>
               )}
@@ -872,7 +1002,7 @@ export default function ExpenseCreate() {
                     <Label htmlFor="notes" className="text-lg font-semibold mb-3 block">
                       Notes (Optional)
                     </Label>
-                    <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+                    <p className="text-sm text-black mb-3">
                       Add any additional notes or attachments for all expenses.
                     </p>
                     <div className="bg-white dark:bg-gray-900 rounded-lg" data-testid="rich-text-editor-notes">
@@ -880,7 +1010,7 @@ export default function ExpenseCreate() {
                         theme="snow"
                         value={notesContent}
                         onChange={setNotesContent}
-                        className="h-48"
+                        className="h-32"
                         modules={{
                           toolbar: [
                             [{ 'header': [1, 2, 3, false] }],
@@ -906,29 +1036,29 @@ export default function ExpenseCreate() {
 
                 {/* Calculation Summary */}
                 <div className="border rounded-lg p-6">
-                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+                  <h3 className="text-lg font-semibold text-black mb-4">
                     Summary
                   </h3>
                   <div className="space-y-3">
                     <div className="flex justify-between items-center py-2 border-b">
-                      <span className="text-gray-700 dark:text-gray-300 font-medium">Subtotal:</span>
-                      <span className="font-semibold text-lg">
+                      <span className="text-black font-medium">Subtotal:</span>
+                      <span className="font-semibold text-lg text-black">
                         {currencySymbol}{calculateSubtotal().toFixed(2)}
                       </span>
                     </div>
 
                     {expenseSettings?.showTax !== false && (
                       <div className="flex justify-between items-center py-2 border-b">
-                        <span className="text-gray-700 dark:text-gray-300 font-medium">Total Tax:</span>
-                        <span className="font-semibold text-lg text-blue-600">
+                        <span className="text-black font-medium">Total Tax:</span>
+                        <span className="font-semibold text-lg text-black">
                           {currencySymbol}{isTaxInclusive ? "0.00" : calculateTotalTax().toFixed(2)}
                         </span>
                       </div>
                     )}
 
                     <div className="flex justify-between items-center py-3 border-t-2 border-gray-300 dark:border-gray-600">
-                      <span className="text-gray-900 dark:text-white font-bold text-lg">Grand Total:</span>
-                      <span className="font-bold text-2xl text-cyan-600">
+                      <span className="text-black font-bold text-lg">Grand Total:</span>
+                      <span className="font-bold text-2xl text-black">
                         {currencySymbol}{calculateGrandTotal().toFixed(2)}
                       </span>
                     </div>
@@ -953,8 +1083,10 @@ export default function ExpenseCreate() {
                 >
                   <Receipt className="h-4 w-4 mr-2" />
                   {createExpensesMutation.isPending
-                    ? "Creating..."
-                    : `Create ${expenseItems.length} Expense${expenseItems.length > 1 ? "s" : ""}`}
+                    ? (isEditMode ? "Updating..." : "Creating...")
+                    : (isEditMode 
+                        ? "Update Expense"
+                        : `Create ${expenseItems.length} Expense${expenseItems.length > 1 ? "s" : ""}`)}
                 </Button>
               </div>
               </CardContent>

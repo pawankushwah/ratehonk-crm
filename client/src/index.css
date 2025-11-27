@@ -319,3 +319,8 @@
   --tw-text-opacity: 1;
   color: white !important;
 }
+
+/* Override hover:bg-muted/50 hover style */
+.hover\:bg-muted\/50:hover {
+  background-color: hsl(204.48deg 85.29% 40%) !important;
+}

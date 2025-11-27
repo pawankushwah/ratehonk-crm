@@ -691,14 +691,8 @@ export default function InvoiceCreate() {
       totalAmount = subtotal;
     }
 
-    // Calculate additional commission (percentage of totalAmount)
-    let additionalCommission = 0;
-    if (item.additionalCommissionPercentage) {
-      const commissionPercentage = parseFloat(item.additionalCommissionPercentage || "0");
-      if (commissionPercentage > 0) {
-        additionalCommission = totalAmount * (commissionPercentage / 100);
-      }
-    }
+    // Additional commission is now a direct value (not percentage-based)
+    const additionalCommission = parseFloat(item.additionalCommission || "0") || 0;
 
     return {
       ...item,
@@ -1291,7 +1285,6 @@ export default function InvoiceCreate() {
         sellingPrice: parseFloat(item.sellingPrice || "0"),
         purchasePrice: parseFloat(item.purchasePrice || "0"),
         tax: parseFloat(item.tax || "0"),
-        additionalCommissionPercentage: item.additionalCommissionPercentage || "",
         additionalCommission: parseFloat(item.additionalCommission || "0"),
       })),
       expenses, // Include auto-generated expenses
@@ -1339,6 +1332,21 @@ export default function InvoiceCreate() {
     ];
     return columns.join(' ');
   }, [invoiceSettings?.showVendor, invoiceSettings?.showProvider, invoiceSettings?.showUnitPrice, invoiceSettings?.showTax, invoiceSettings?.showAdditionalCommission, invoiceSettings?.showVoucherInvoice]);
+
+  // Grid template for expense table
+  const expenseGridTemplate = useMemo(() => {
+    const columns = [
+      '30px', // # column
+      'minmax(180px, 2fr)', // Title
+      'minmax(150px, 1.5fr)', // Category
+      'minmax(150px, 1.5fr)', // Vendor
+      'minmax(60px, 1fr)', // Qty
+      'minmax(130px, 1fr)', // Purchase Price
+      'minmax(130px, 1fr)', // Amount
+      '50px', // Delete button
+    ];
+    return columns.join(' ');
+  }, []);
 
   // Show loading state when fetching invoice data
   if (isEditMode && isLoadingInvoice) {
@@ -1575,7 +1583,7 @@ export default function InvoiceCreate() {
                 <div className="min-w-[800px]">
                   {/* Table Header */}
                   <div 
-                    className="grid gap-2 border-b p-3 font-medium text-sm"
+                    className="grid gap-2 border-b p-3 font-medium text-sm bg-gray-50"
                     style={{ gridTemplateColumns: gridTemplate }}
                   >
                     <div className="text-center flex items-center justify-center">#</div>
@@ -1588,17 +1596,17 @@ export default function InvoiceCreate() {
                     <div className="flex items-center">Purchase Price ({currencySymbol}) *</div>
                     {invoiceSettings?.showTax && <div className="flex items-center">Tax ({currencySymbol})</div>}
                     <div className="flex items-center">Amount ({currencySymbol})</div>
-                    {invoiceSettings?.showAdditionalCommission && <div className="flex items-center">Commission (%)</div>}
+                    {invoiceSettings?.showAdditionalCommission && <div className="flex items-center">Commission ({currencySymbol})</div>}
                     {invoiceSettings?.showVoucherInvoice && <div className="flex items-center">Invoice/Voucher</div>}
                     <div className="flex items-center"></div>
                   </div>
 
                   {/* Table Body */}
-                  <div className="divide-y divide-gray-200 dark:divide-gray-700">
+                  <div>
                     {lineItems.map((item, index) => (
                       <div
                         key={index}
-                        className="grid gap-2 p-3"
+                        className="grid gap-2 p-3 border-b last:border-b-0"
                         style={{ gridTemplateColumns: gridTemplate }}
                       >
                       <div className="flex items-center justify-center">
@@ -1759,22 +1767,17 @@ export default function InvoiceCreate() {
                           <Input
                             data-testid={`input-additional-commission-${index}`}
                             type="text"
-                            value={item.additionalCommissionPercentage || ""}
+                            value={item.additionalCommission || ""}
                             onChange={(e) =>
                               updateLineItem(
                                 index,
-                                "additionalCommissionPercentage",
+                                "additionalCommission",
                                 e.target.value,
                               )
                             }
                             onKeyPress={handleNumericKeyPress}
-                            placeholder="0"
+                            placeholder="0.00"
                           />
-                          {item.additionalCommission && (
-                            <p className="text-xs text-muted-foreground mt-1">
-                              Commission: {currencySymbol}{parseFloat(item.additionalCommission).toFixed(2)}
-                            </p>
-                          )}
                         </div>
                       )}
 
@@ -2190,44 +2193,36 @@ export default function InvoiceCreate() {
                     Auto-generated expenses from purchase prices and manually added expenses
                   </p>
 
-                  <div className="overflow-x-auto -mx-3 sm:mx-0">
-                    <table className="w-full border-collapse min-w-[600px]">
-                      <thead>
-                        <tr className="border-b">
-                          <th className="px-4 py-2 text-left text-sm font-medium">
-                            Item
-                          </th>
-                          <th className="px-4 py-2 text-left text-sm font-medium">
-                            Title
-                          </th>
-                          <th className="px-4 py-2 text-left text-sm font-medium">
-                            Category
-                          </th>
-                          <th className="px-4 py-2 text-left text-sm font-medium">
-                            Vendor
-                          </th>
-                          <th className="px-4 py-2 text-left text-sm font-medium">
-                            Qty
-                          </th>
-                          <th className="px-4 py-2 text-right text-sm font-medium">
-                            Purchase Price
-                          </th>
-                          <th className="px-4 py-2 text-right text-sm font-medium">
-                            Amount
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
+                  <div className="border rounded-lg overflow-x-auto">
+                    <div className="min-w-[800px]">
+                      {/* Table Header */}
+                      <div 
+                        className="grid gap-2 border-b p-3 font-medium text-sm bg-gray-50"
+                        style={{ gridTemplateColumns: expenseGridTemplate }}
+                      >
+                        <div className="text-center flex items-center justify-center">#</div>
+                        <div className="flex items-center">Title</div>
+                        <div className="flex items-center">Category</div>
+                        <div className="flex items-center">Vendor</div>
+                        <div className="flex items-center">Qty</div>
+                        <div className="flex items-center">Purchase Price ({currencySymbol})</div>
+                        <div className="flex items-center">Amount ({currencySymbol})</div>
+                        <div className="flex items-center"></div>
+                      </div>
+
+                      {/* Table Body */}
+                      <div>
                         {getAllExpenses().map((expense, idx) =>
                           expense.expenseType === "manual" ? (
-                            <tr
+                            <div
                               key={idx}
-                              className="border-t border-gray-200 dark:border-gray-700"
+                              className="grid gap-2 p-3 border-b last:border-b-0"
+                              style={{ gridTemplateColumns: expenseGridTemplate }}
                             >
-                              <td className="px-4 py-3 text-sm">
-                                {expense.itemIndex}
-                              </td>
-                              <td className="px-4 py-3">
+                              <div className="flex items-center justify-center">
+                                <span className="font-medium text-sm">{expense.itemIndex}</span>
+                              </div>
+                              <div>
                                 <Input
                                   value={expense.title}
                                   onChange={(e) =>
@@ -2238,10 +2233,9 @@ export default function InvoiceCreate() {
                                     )
                                   }
                                   placeholder="Expense title"
-                                  className="h-8"
                                 />
-                              </td>
-                              <td className="px-4 py-3">
+                              </div>
+                              <div>
                                 <AutocompleteInput
                                   suggestions={getTravelCategories().filter(
                                     (cat) => cat.value !== "create_new",
@@ -2256,8 +2250,8 @@ export default function InvoiceCreate() {
                                   }
                                   placeholder="Category"
                                 />
-                              </td>
-                              <td className="px-4 py-3">
+                              </div>
+                              <div>
                                 <AutocompleteInput
                                   suggestions={getVendorOptions().filter(
                                     (v) => v.value !== "create_new",
@@ -2272,8 +2266,8 @@ export default function InvoiceCreate() {
                                   }
                                   placeholder="Vendor"
                                 />
-                              </td>
-                              <td className="px-4 py-3">
+                              </div>
+                              <div>
                                 <Input
                                   value={expense.quantity}
                                   onChange={(e) =>
@@ -2285,10 +2279,9 @@ export default function InvoiceCreate() {
                                   }
                                   onKeyPress={handleNumericKeyPress}
                                   placeholder="1"
-                                  className="h-8 w-16"
                                 />
-                              </td>
-                              <td className="px-4 py-3">
+                              </div>
+                              <div>
                                 <Input
                                   value={expense.purchasePrice || ""}
                                   onChange={(e) =>
@@ -2300,79 +2293,93 @@ export default function InvoiceCreate() {
                                   }
                                   onKeyPress={handleNumericKeyPress}
                                   placeholder="0.00"
-                                  className="h-8 w-24"
                                 />
-                              </td>
-                              <td className="px-4 py-3">
-                                <div className="flex items-center gap-2">
-                                  <div className="text-right font-semibold min-w-[80px]">
-                                    {currencySymbol}{expense.amount ? parseFloat(expense.amount).toFixed(2) : "0.00"}
-                                  </div>
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() =>
-                                      removeManualExpense(
-                                        parseInt(expense.itemIndex.split("-")[1]) - 1,
-                                      )
-                                    }
-                                  >
-                                    <Trash2 className="h-4 w-4 text-gray-900 dark:text-white" />
-                                  </Button>
-                                </div>
-                              </td>
-                            </tr>
+                              </div>
+                              <div className="flex items-center">
+                                <span className="font-semibold text-sm">
+                                  {currencySymbol}{expense.amount ? parseFloat(expense.amount).toFixed(2) : "0.00"}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-center">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() =>
+                                    removeManualExpense(
+                                      parseInt(expense.itemIndex.split("-")[1]) - 1,
+                                    )
+                                  }
+                                >
+                                  <Trash2 className="h-4 w-4 text-gray-900 dark:text-white" />
+                                </Button>
+                              </div>
+                            </div>
                           ) : (
-                            <tr
+                            <div
                               key={idx}
-                              className="border-t border-gray-200 dark:border-gray-700"
+                              className="grid gap-2 p-3 border-b last:border-b-0"
+                              style={{ gridTemplateColumns: expenseGridTemplate }}
                             >
-                              <td className="px-4 py-3 text-sm">
-                                #{expense.itemIndex + 1}
-                              </td>
-                              <td className="px-4 py-3 text-sm font-medium">
-                                {expense.title}
-                              </td>
-                              <td className="px-4 py-3 text-sm">
+                              <div className="flex items-center justify-center">
+                                <span className="font-medium text-sm">#{expense.itemIndex + 1}</span>
+                              </div>
+                              <div className="flex items-center">
+                                <span className="text-sm font-medium">{expense.title}</span>
+                              </div>
+                              <div className="flex items-center">
                                 <span className="inline-flex items-center px-2 py-1 rounded-full text-xs border text-gray-900 dark:text-white">
                                   {expense.category}
                                 </span>
-                              </td>
-                              <td className="px-4 py-3 text-sm">
-                                {expense.vendorName}
-                              </td>
-                              <td className="px-4 py-3 text-sm">
-                                {expense.quantity}
-                              </td>
-                              <td className="px-4 py-3 text-sm text-right">
-                                {currencySymbol}{expense.purchasePrice?.toFixed(2) || "0.00"}
-                              </td>
-                              <td className="px-4 py-3 text-sm text-right font-semibold">
-                                {currencySymbol}{expense.amount.toFixed(2)}
-                              </td>
-                            </tr>
+                              </div>
+                              <div className="flex items-center">
+                                <span className="text-sm">{expense.vendorName}</span>
+                              </div>
+                              <div className="flex items-center">
+                                <span className="text-sm">{expense.quantity}</span>
+                              </div>
+                              <div className="flex items-center">
+                                <span className="text-sm text-right">
+                                  {currencySymbol}{expense.purchasePrice?.toFixed(2) || "0.00"}
+                                </span>
+                              </div>
+                              <div className="flex items-center">
+                                <span className="text-sm font-semibold">
+                                  {currencySymbol}{expense.amount.toFixed(2)}
+                                </span>
+                              </div>
+                              <div className="flex items-center"></div>
+                            </div>
                           ),
                         )}
-                        <tr className="border-t-2 border-gray-300 dark:border-gray-600 font-semibold">
-                          <td
-                            colSpan={6}
-                            className="px-4 py-3 text-sm text-right"
-                          >
-                            Total Expenses:
-                          </td>
-                          <td className="px-4 py-3 text-sm text-right">
-                            {currencySymbol}{getAllExpenses()
-                              .reduce((sum, exp) => sum + exp.amount, 0)
-                              .toFixed(2)}
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
+                        {/* Total Row */}
+                        <div 
+                          className="grid gap-2 p-3 border-t font-semibold"
+                          style={{ gridTemplateColumns: expenseGridTemplate }}
+                        >
+                          <div></div>
+                          <div></div>
+                          <div></div>
+                          <div></div>
+                          <div></div>
+                          <div className="flex items-center justify-end">
+                            <span className="text-sm">Total Expenses:</span>
+                          </div>
+                          <div className="flex items-center">
+                            <span className="text-sm">
+                              {currencySymbol}{getAllExpenses()
+                                .reduce((sum, exp) => sum + exp.amount, 0)
+                                .toFixed(2)}
+                            </span>
+                          </div>
+                          <div className="flex items-center"></div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
 
                   {/* Profit Calculation Section */}
-                  <div className="mt-6 border-t-2 pt-4">
+                  <div className="mt-6  pt-4">
                     <div className="border rounded-lg p-6">
                       <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
                         <span className="text-gray-900 dark:text-white">💰</span> Profit Analysis
@@ -2381,14 +2388,14 @@ export default function InvoiceCreate() {
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
                         {/* Left Side - Values */}
                         <div className="space-y-3">
-                          <div className="flex justify-between items-center py-2 border-b border-green-200 dark:border-green-800">
+                          <div className="flex justify-between items-center py-2 border-b">
                             <span className="text-gray-700 dark:text-gray-300 font-medium">Total Invoice Amount:</span>
                             <span className="font-semibold text-lg">
                               {currencySymbol}{calculateGrandTotal().toFixed(2)}
                             </span>
                           </div>
 
-                          <div className="flex justify-between items-center py-2 border-b border-gray-200 dark:border-gray-700">
+                          <div className="flex justify-between items-center py-2 border-b">
                             <span className="text-gray-700 dark:text-gray-300 font-medium">Total Expenses:</span>
                             <span className="font-semibold text-lg text-gray-900 dark:text-white">
                               -{currencySymbol}
@@ -2398,7 +2405,7 @@ export default function InvoiceCreate() {
                             </span>
                           </div>
 
-                          <div className="flex justify-between items-center py-2 border-b border-gray-200 dark:border-gray-700">
+                          <div className="flex justify-between items-center py-2 border-b">
                             <span className="text-gray-700 dark:text-gray-300 font-medium">Tax Amount:</span>
                             <span className="font-semibold text-lg text-gray-900 dark:text-white">
                               {currencySymbol}
