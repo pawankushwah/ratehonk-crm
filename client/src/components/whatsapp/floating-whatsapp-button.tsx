@@ -91,7 +91,7 @@ export function FloatingWhatsAppButton() {
     <Button
       onClick={handleWhatsAppClick}
       disabled={isChecking}
-      className="fixed bottom-24 right-6 h-14 w-14 rounded-full shadow-lg bg-green-600 hover:bg-green-700 text-white z-50 transition-all duration-200 hover:scale-110 disabled:opacity-50"
+      className="fixed bottom-52 right-6 h-14 w-14 rounded-full shadow-lg bg-green-600 hover:bg-green-700 text-white z-50 transition-all duration-200 hover:scale-110 disabled:opacity-50"
       data-testid="button-floating-whatsapp"
       title="Open WhatsApp Live Chat"
     >

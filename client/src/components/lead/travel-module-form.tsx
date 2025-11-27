@@ -18,7 +18,15 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
-import { CalendarIcon, Plus, Hotel, Car, Plane, X } from "lucide-react";
+import {
+  CalendarIcon,
+  Plus,
+  Hotel,
+  Car,
+  Plane,
+  X,
+  ArrowRight,
+} from "lucide-react";
 import { format } from "date-fns";
 import { cn, handleNumericKeyDown } from "@/lib/utils";
 import { useAuth } from "@/components/auth/auth-provider";
@@ -207,83 +215,30 @@ export function TravelModuleForm({
           </button>
         ))}
 
-        <div className="flex-1">
+        <div className="flex-1 ">
           <FormField
             control={form.control}
             name="typeSpecificData.flightClass"
             render={({ field }) => (
               <FormItem>
                 <FormControl>
-                  <Combobox
-                    options={flightClassOptions}
-                    value={field.value ?? ""}
-                    onValueChange={field.onChange}
-                    placeholder="Select class"
-                    searchPlaceholder="Search..."
-                    emptyText="No options"
-                  />
+                  <div className="w-40">
+                    <Combobox
+                      options={flightClassOptions}
+                      value={field.value ?? ""}
+                      onValueChange={field.onChange}
+                      placeholder="Select class"
+                      searchPlaceholder="Search..."
+                      emptyText="No options"
+                    />
+                  </div>
                 </FormControl>
                 <FormMessage />
               </FormItem>
             )}
           />
         </div>
-
-        <div className="relative">
-          <button
-            type="button"
-            onClick={() => setShowAlternate((p) => !p)}
-            className="
-          w-[150px] h-[40px] bg-white border border-gray-300 rounded-lg 
-          px-3 text-sm flex items-center justify-between shadow-sm
-        "
-          >
-            {alternateDays}
-            <i className="ri-arrow-down-s-line text-gray-500"></i>
-          </button>
-
-          {showAlternate && (
-            <div className="absolute mt-1 w-[150px] bg-white border border-gray-200 rounded-lg shadow-lg z-20">
-              {["None", "Alternate Days", "Flexible"].map((opt) => (
-                <div
-                  key={opt}
-                  className="px-3 py-2 text-sm hover:bg-gray-100 cursor-pointer"
-                  onClick={() => {
-                    setAlternateDays(opt);
-                    setShowAlternate(false);
-                  }}
-                >
-                  {opt}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-gray-700">Direct Flight</span>
-
-          <label className="inline-flex items-center cursor-pointer">
-            <input
-              type="checkbox"
-              checked={directFlight}
-              onChange={(e) => setDirectFlight(e.target.checked)}
-              className="sr-only peer"
-            />
-            <div
-              className="
-            w-10 h-5 bg-gray-300 rounded-full relative 
-            peer-checked:bg-[#1C75BC]
-            after:absolute after:top-[2px] after:left-[2px]
-            after:w-4 after:h-4 after:bg-white after:rounded-full
-            after:transition-all peer-checked:after:translate-x-5
-          "
-            ></div>
-          </label>
-        </div>
       </div>
-
-      <div className="flex items-center gap-3"></div>
 
       <div className="space-y-4">
         {cities.map((city, index) => (
@@ -335,34 +290,56 @@ export function TravelModuleForm({
             <div className="col-span-3">
               <FormField
                 control={form.control}
-                name={`typeSpecificData.date${index + 1}`}
+                name={`typeSpecificData.dateRange${index + 1}`}
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel className="text-xs font-semibold mb-1.5 block text-gray-700">
-                      Departure
+                    <FormLabel className="text-xs font-semibold mb-1.5 block">
+                      Date Range
                     </FormLabel>
+
                     <Popover>
                       <PopoverTrigger asChild>
                         <FormControl>
-                          <Button className="flex h-12 w-full justify-between px-3">
-                            {field.value
-                              ? format(field.value, "MM/dd/yyyy")
-                              : "Select date"}
-                            <CalendarIcon className="h-4 w-4" />
+                          <Button
+                            variant="outline"
+                            className="h-10 w-full justify-between rounded-lg border text-left font-normal overflow-hidden"
+                          >
+                            {field.value?.from ? (
+                              field.value.to ? (
+                                `${format(new Date(field.value.from), "PP")} → ${format(
+                                  new Date(field.value.to),
+                                  "PP"
+                                )}`
+                              ) : (
+                                format(new Date(field.value.from), "PP")
+                              )
+                            ) : (
+                              <span>Pick a date range</span>
+                            )}
+
+                            <CalendarIcon className="h-4 w-4 opacity-50" />
                           </Button>
                         </FormControl>
                       </PopoverTrigger>
 
-                      <PopoverContent className="w-auto p-0" align="start">
+                      <PopoverContent align="start" className="p-0">
                         <Calendar
-                          mode="single"
+                          mode="range"
                           selected={field.value}
-                          onSelect={field.onChange}
+                          onSelect={(range) => {
+                            if (!range) return field.onChange(null);
+
+                            field.onChange({
+                              from: range.from ? new Date(range.from) : null,
+                              to: range.to ? new Date(range.to) : null,
+                            });
+                          }}
                           disabled={(date) => date < new Date()}
                           initialFocus
                         />
                       </PopoverContent>
                     </Popover>
+
                     <FormMessage />
                   </FormItem>
                 )}
@@ -415,7 +392,7 @@ export function TravelModuleForm({
                       <FormControl>
                         <Button
                           className={cn(
-                            "flex h-12 w-full items-center justify-between rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-normal shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent",
+                            "flex h-12 w-full items-center justify-between rounded-lg border border-gray-300 text-black bg-white px-3 py-2 text-sm font-normal shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent",
                             !field.value && "text-gray-500"
                           )}
                         >
@@ -627,7 +604,7 @@ export function TravelModuleForm({
                     <FormControl>
                       <Button
                         className={cn(
-                          "flex h-10 w-full items-center justify-between rounded-lg border border-input bg-background px-3 py-2 text-sm font-normal shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500",
+                          "flex h-10 w-full items-center text-black justify-between rounded-lg border border-input bg-background px-3 py-2 text-sm font-normal shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500",
                           !field.value && "text-muted-foreground"
                         )}
                       >
@@ -670,7 +647,7 @@ export function TravelModuleForm({
                     <FormControl>
                       <Button
                         className={cn(
-                          "flex h-10 w-full items-center justify-between rounded-lg border border-input bg-background px-3 py-2 text-sm font-normal shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500",
+                          "flex h-10 w-full items-center justify-between text-black rounded-lg border border-input bg-background px-3 py-2 text-sm font-normal shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500",
                           !field.value && "text-muted-foreground"
                         )}
                       >
@@ -819,7 +796,7 @@ export function TravelModuleForm({
                     <FormControl>
                       <Button
                         className={cn(
-                          "flex h-10 w-full items-center justify-between rounded-lg border border-input bg-background px-3 py-2 text-sm font-normal shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500",
+                          "flex h-10 w-full items-center justify-between text-black rounded-lg border border-input bg-background px-3 py-2 text-sm font-normal shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500",
                           !field.value && "text-muted-foreground"
                         )}
                       >
@@ -920,7 +897,7 @@ export function TravelModuleForm({
                     <FormControl>
                       <Button
                         className={cn(
-                          "flex h-10 w-full items-center justify-between rounded-lg border border-input bg-background px-3 text-sm font-normal",
+                          "flex h-10 w-full items-center text-black justify-between rounded-lg border border-input bg-background px-3 text-sm font-normal",
                           !field.value && "text-muted-foreground"
                         )}
                       >
@@ -1035,13 +1012,13 @@ export function TravelModuleForm({
         <h3 className="text-sm font-semibold">Package Details</h3>
       </div>
 
-       <div className="space-y-6">
+      <div className="space-y-6">
         <div className="flex items-center gap-2 mb-2">
           <h3 className="text-sm font-semibold">Flight Details</h3>
         </div>
       </div>
       {renderFlightFields()}
-     
+
       <div className="space-y-6">
         <div className="flex items-center gap-2 mb-2">
           <h3 className="text-sm font-semibold">Hotels Details</h3>
@@ -1158,10 +1135,10 @@ export function TravelModuleForm({
           />
         </div>
 
-        <div className="col-span-6">
+        <div className="col-span-3">
           <FormField
             control={form.control}
-            name="typeSpecificData.dateRange"
+            name={`typeSpecificData.dateRange`}
             render={({ field }) => (
               <FormItem>
                 <FormLabel className="text-xs font-semibold mb-1.5 block">
@@ -1173,16 +1150,16 @@ export function TravelModuleForm({
                     <FormControl>
                       <Button
                         variant="outline"
-                        className="h-10 w-full justify-between rounded-lg border text-left font-normal"
+                        className="h-10 w-full justify-between rounded-lg border text-left font-normal overflow-hidden"
                       >
                         {field.value?.from ? (
                           field.value.to ? (
-                            `${format(new Date(field.value.from), "PPP")} → ${format(
+                            `${format(new Date(field.value.from), "PP")} → ${format(
                               new Date(field.value.to),
-                              "PPP"
+                              "PP" 
                             )}`
                           ) : (
-                            format(new Date(field.value.from), "PPP")
+                            format(new Date(field.value.from), "PP")
                           )
                         ) : (
                           <span>Pick a date range</span>
@@ -1342,6 +1319,356 @@ export function TravelModuleForm({
     </div>
   );
 
+  const renderInsuranceFields = () => (
+    <div className="space-y-3">
+      <div
+        className="
+      border border-[#E3E8EF] rounded-lg bg-white
+      grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2
+      w-full lg:h-[90px]
+    "
+      >
+        <div className="border-b md:border-b-0 md:border-r border-[#E3E8EF] p-4 flex flex-col justify-center">
+          <FormLabel className="text-xs font-semibold text-gray-700 mb-1">
+            From
+          </FormLabel>
+          <Input
+            placeholder="Enter City"
+            className="
+          h-10 bg-transparent border-none p-0 focus:ring-0 shadow-none
+        "
+            {...form.register("typeSpecificData.destination")}
+          />
+        </div>
+
+        <div className="border-b lg:border-b-0 lg:border-r border-[#E3E8EF] p-4 flex flex-col justify-center">
+          <FormLabel className="text-xs font-semibold text-gray-700 mb-1">
+            To
+          </FormLabel>
+
+          <Input
+            placeholder="Enter City"
+            className="
+          h-10 bg-transparent border-none p-0  shadow-none
+        "
+            {...form.register("typeSpecificData.destination")}
+          />
+        </div>
+      </div>
+
+      <div
+        className="
+      grid grid-cols-1 md:grid-cols-3 gap-4 lg:gap-[17px]
+      w-full
+    "
+      >
+        <div>
+          <FormLabel className="text-xs font-semibold text-gray-700 mb-1">
+            Customer Name
+          </FormLabel>
+          <Input
+            placeholder="Enter Customer Name"
+            className="h-10 rounded-md"
+            {...form.register("typeSpecificData.CustomerName")}
+          />
+        </div>
+
+        <div>
+          <FormLabel className="text-xs font-semibold text-gray-700 mb-1">
+            Age
+          </FormLabel>
+          <Input
+            placeholder="Enter the Age"
+            className="h-10 rounded-md"
+            {...form.register("typeSpecificData.Age")}
+          />
+        </div>
+        <div>
+          <FormLabel className="text-xs font-semibold text-gray-700 mb-1">
+            Nationality
+          </FormLabel>
+          <Input
+            placeholder="Enter Nationality"
+            className="h-10 rounded-md"
+            {...form.register("typeSpecificData.Nationality")}
+          />
+        </div>
+      </div>
+
+      <div
+        className="
+      grid grid-cols-1 md:grid-cols-3 gap-4 lg:gap-[17px]
+      w-full
+    "
+      >
+        <div>
+          <FormLabel className="text-xs font-semibold text-gray-700 mb-1">
+            Type of Insurance
+          </FormLabel>
+          <Input
+            placeholder="Enter Type of Insurance"
+            className="h-10 rounded-md"
+            {...form.register("typeSpecificData.TypeofInsurance")}
+          />
+        </div>
+        <div>
+          <FormLabel className="text-xs font-semibold text-gray-700 mb-1">
+            Travelers
+          </FormLabel>
+          <Input
+            placeholder="Enter Numbers Travelers"
+            className="h-10 rounded-md"
+            {...form.register("typeSpecificData.Travelers")}
+          />
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderCruiseFields = () => (
+    <div className="space-y-3">
+      <div
+        className="
+      grid grid-cols-1 md:grid-cols-4 gap-4 lg:gap-[17px]
+      w-full
+    "
+      >
+        <div>
+          <FormField
+            control={form.control}
+            name="typeSpecificData.pickupDate"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel className="text-xs font-semibold mb-1.5 block">
+                  Pick-Up Date
+                </FormLabel>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <FormControl>
+                      <Button
+                        className={cn(
+                          "flex h-10 w-full items-center justify-between text-black rounded-lg border border-input bg-background px-3 py-2 text-sm font-normal shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500",
+                          !field.value && "text-muted-foreground"
+                        )}
+                      >
+                        {field.value ? (
+                          format(field.value, "PPP")
+                        ) : (
+                          <span>Pick date</span>
+                        )}
+                        <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                      </Button>
+                    </FormControl>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={field.value}
+                      onSelect={field.onChange}
+                      disabled={(date) => date < new Date()}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
+
+        <div>
+          <FormField
+            control={form.control}
+            name="typeSpecificData.dropoffDate"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel className="text-xs font-semibold mb-1.5 block">
+                  Drop-Off Date
+                </FormLabel>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <FormControl>
+                      <Button
+                        className={cn(
+                          "flex h-10 w-full items-center justify-between text-black rounded-lg border border-input bg-background px-3 py-2 text-sm font-normal shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500",
+                          !field.value && "text-muted-foreground"
+                        )}
+                      >
+                        {field.value ? (
+                          format(field.value, "PPP")
+                        ) : (
+                          <span>Pick date</span>
+                        )}
+                        <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                      </Button>
+                    </FormControl>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={field.value}
+                      onSelect={field.onChange}
+                      disabled={(date) => date < new Date()}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
+
+        <div>
+          <FormLabel className="text-xs font-semibold text-gray-700 mb-1">
+            From (nights)
+          </FormLabel>
+          <Input
+            placeholder="From(nights)"
+            className="h-10 rounded-md"
+            {...form.register("typeSpecificData.From(nights)")}
+          />
+        </div>
+        <div>
+          <FormLabel className="text-xs font-semibold text-gray-700 mb-1">
+            To (nights)
+          </FormLabel>
+          <Input
+            placeholder=" To (nights)"
+            className="h-10 rounded-md"
+            {...form.register("typeSpecificData.To(nights)")}
+          />
+        </div>
+      </div>
+      <div
+        className="
+      border border-[#E3E8EF] rounded-lg bg-white
+      grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3
+      w-full lg:h-[90px]
+    "
+      >
+        <div className="border-b md:border-b-0 md:border-r border-[#E3E8EF] p-4 flex flex-col justify-center">
+          <FormLabel className="text-xs font-semibold text-gray-700 mb-1">
+            Going To
+          </FormLabel>
+          <Input
+            placeholder="Enter City"
+            className="
+          h-10 bg-transparent border-none p-0 focus:ring-0 shadow-none
+        "
+            {...form.register("typeSpecificData.destination")}
+          />
+        </div>
+
+        <div className="border-b lg:border-b-0 lg:border-r border-[#E3E8EF] p-4 flex flex-col justify-center">
+          <FormLabel className="text-xs font-semibold text-gray-700 mb-1">
+            Check In
+          </FormLabel>
+
+          <Input
+            placeholder="Enter City"
+            className="
+          h-10 bg-transparent border-none p-0  shadow-none
+        "
+            {...form.register("typeSpecificData.destination")}
+          />
+        </div>
+
+        <div className="p-4 flex flex-col justify-center">
+          <FormLabel className="text-xs font-semibold text-gray-700 mb-1">
+            Check Out
+          </FormLabel>
+
+          <Input
+            placeholder="Enter City"
+            className="
+          h-10 bg-transparent border-none p-0 focus:ring-0 shadow-none
+        "
+            {...form.register("typeSpecificData.destination")}
+          />
+        </div>
+      </div>
+
+      <div
+        className="
+      grid grid-cols-1 md:grid-cols-4 gap-4 lg:gap-[17px]
+      w-full
+    "
+      >
+        <div>
+          <FormLabel className="text-xs font-semibold text-gray-700 mb-1">
+            Embarkation park
+          </FormLabel>
+          <Input
+            placeholder="Enter  Embarkation park"
+            className="h-10 rounded-md"
+            {...form.register("typeSpecificData. Embarkation park")}
+          />
+        </div>
+
+        <div>
+          <FormLabel className="text-xs font-semibold text-gray-700 mb-1">
+            Port of Call
+          </FormLabel>
+          <Input
+            placeholder="Enter Port of Call"
+            className="h-10 rounded-md"
+            {...form.register("typeSpecificData.PortofCall")}
+          />
+        </div>
+
+        <div>
+          <FormLabel className="text-xs font-semibold text-gray-700 mb-1">
+            Marketing Code
+          </FormLabel>
+          <Input
+            placeholder="Enter Marketing Code"
+            className="h-10 rounded-md"
+            {...form.register("typeSpecificData.MarketingCode")}
+          />
+        </div>
+        <div>
+          <FormLabel className="text-xs font-semibold text-gray-700 mb-1">
+            Vender sailing identify
+          </FormLabel>
+          <Input
+            placeholder="Enter Nationality"
+            className="h-10 rounded-md"
+            {...form.register("typeSpecificData.Nationality")}
+          />
+        </div>
+      </div>
+
+      <div
+        className="
+      grid grid-cols-1 md:grid-cols-3 gap-4 lg:gap-[17px]
+      w-full
+    "
+      >
+        <div>
+          <FormLabel className="text-xs font-semibold text-gray-700 mb-1">
+            From (price)
+          </FormLabel>
+          <Input
+            placeholder="Enter From (price)"
+            className="h-10 rounded-md"
+            {...form.register("typeSpecificData.From(price)")}
+          />
+        </div>
+        <div>
+          <FormLabel className="text-xs font-semibold text-gray-700 mb-1">
+            to (price)
+          </FormLabel>
+          <Input
+            placeholder="Enter  to (price)"
+            className="h-10 rounded-md"
+            {...form.register("typeSpecificData. to(price)")}
+          />
+        </div>
+      </div>
+    </div>
+  );
+
   const renderModuleFields = () => {
     console.log("selectedCategory :", selectedCategory);
     switch (selectedCategory) {
@@ -1361,6 +1688,10 @@ export function TravelModuleForm({
         return renderEventFields();
       case "Activities":
         return renderActivitiesFields();
+      case "Insurance":
+        return renderInsuranceFields();
+      case "Cruise":
+        return renderCruiseFields();
       default:
         return null;
     }

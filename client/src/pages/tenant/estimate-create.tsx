@@ -893,7 +893,7 @@ export default function EstimateCreate() {
                 {/* Title and Ref No. Row */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
                   <div>
-                    <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
+                    <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">
                       Estimate
                     </h1>
                   </div>
@@ -921,7 +921,7 @@ export default function EstimateCreate() {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div className="lg:col-span-2">
                     <Label htmlFor="title">
-                      Title <span className="text-red-500">*</span>
+                      Title <span className="text-gray-900 dark:text-white">*</span>
                     </Label>
                     <AutocompleteInput
                       id="title"
@@ -1005,7 +1005,7 @@ export default function EstimateCreate() {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   <div>
                     <Label htmlFor="customerName">
-                      Customer Name <span className="text-red-500">*</span>
+                      Customer Name <span className="text-gray-900 dark:text-white">*</span>
                     </Label>
                     <Input
                       id="customerName"
@@ -1023,7 +1023,7 @@ export default function EstimateCreate() {
                   </div>
                   <div>
                     <Label htmlFor="customerEmail">
-                      Email <span className="text-red-500">*</span>
+                      Email <span className="text-gray-900 dark:text-white">*</span>
                     </Label>
                     <Input
                       id="customerEmail"
@@ -1245,7 +1245,7 @@ export default function EstimateCreate() {
                               size="sm"
                               onClick={() => removeLineItem(index)}
                               type="button"
-                              className="h-8 w-8 p-0 text-red-500 hover:text-red-700"
+                              className="h-8 w-8 p-0 text-gray-900 dark:text-white"
                             >
                               <Trash2 className="w-4 h-4" />
                             </Button>
@@ -1291,9 +1291,9 @@ export default function EstimateCreate() {
                       >
                         <div className="flex items-center gap-2">
                           {file.type === 'application/pdf' ? (
-                            <FileText className="h-4 w-4 text-red-500" />
+                            <FileText className="h-4 w-4 text-gray-900 dark:text-white" />
                           ) : (
-                            <Image className="h-4 w-4 text-blue-500" />
+                            <Image className="h-4 w-4 text-gray-900 dark:text-white" />
                           )}
                           <div>
                             <p className="text-xs font-medium text-gray-900 dark:text-gray-100">
@@ -1311,7 +1311,7 @@ export default function EstimateCreate() {
                           onClick={() => removeAttachment(index)}
                           className="h-7 w-7 p-0"
                         >
-                          <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                          <Trash2 className="h-3.5 w-3.5 text-gray-900 dark:text-white" />
                         </Button>
                       </div>
                     ))}
@@ -1489,7 +1489,7 @@ export default function EstimateCreate() {
                         {estimateSettings?.showDiscount !== false && (
                           <div className="flex justify-between items-center py-2 border-b border-gray-200 dark:border-gray-700">
                             <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Discount:</span>
-                            <span className="text-base font-semibold text-red-600 dark:text-red-400">
+                            <span className="text-base font-semibold text-gray-900 dark:text-white">
                               -{currencySymbol}{totals.discountAmount.toFixed(2)}
                             </span>
                           </div>
@@ -1497,14 +1497,14 @@ export default function EstimateCreate() {
                         {estimateSettings?.showTax !== false && (
                           <div className="flex justify-between items-center py-2 border-b border-gray-200 dark:border-gray-700">
                             <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Tax:</span>
-                            <span className="text-base font-semibold text-blue-600 dark:text-blue-400">
+                            <span className="text-base font-semibold text-gray-900 dark:text-white">
                               {currencySymbol}{isTaxInclusive ? "0.00" : totals.taxAmount.toFixed(2)}
                             </span>
                           </div>
                         )}
                         <div className="flex justify-between items-center py-3 border-t-2 border-gray-300 dark:border-gray-600 mt-2">
                           <span className="text-lg font-bold text-gray-900 dark:text-white">Total:</span>
-                          <span className="text-xl font-bold text-cyan-600 dark:text-cyan-400">
+                          <span className="text-xl font-bold text-gray-900 dark:text-white">
                             {currencySymbol}{totals.total.toFixed(2)}
                           </span>
                         </div>
@@ -1553,7 +1553,7 @@ export default function EstimateCreate() {
                 type="submit"
                 form="estimate-form"
                 disabled={createMutation.isPending}
-                className="h-10 px-6 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white"
+                className="h-10 px-6 text-white"
                 data-testid="button-submit"
               >
                 {createMutation.isPending ? "Creating..." : "Create Estimate"}
@@ -1592,7 +1592,7 @@ export default function EstimateCreate() {
               type="button"
               onClick={handleSaveFromPreview}
               disabled={createMutation.isPending}
-              className="bg-blue-600 hover:bg-blue-700"
+              className=""
             >
               {createMutation.isPending ? "Creating..." : "Create Estimate"}
             </Button>

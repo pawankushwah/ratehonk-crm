@@ -28,30 +28,25 @@ import { DollarSign, Plus } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { auth } from "@/lib/auth";
 import { TravelModuleForm } from "./travel-module-form";
-import { handleNumericKeyDown } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import {
-  AutocompleteInput,
-  AutocompleteOption,
-} from "@/components/ui/autocomplete-input";
+
 import { useAuth } from "@/components/auth/auth-provider";
 import type { Customer } from "@shared/schema";
 import { directCustomersApi } from "@/lib/direct-customers-api";
 
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-
-import { EnhancedCustomerForm } from "@/components/customer/enhanced-customer-form";
+  AutocompleteInput,
+  AutocompleteOption,
+} from "../ui/autocomplete-input";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../ui/sheet";
+import { CustomerCreateForm } from "../forms/customer-create-form";
+import { LeadCreateForm } from "../forms/lead-create-form";
 
 const leadSchema = z.object({
   leadTypeId: z.string().min(1, "Lead type is required"),
   firstName: z.string().min(1, "First name is required"),
   lastName: z.string().optional(),
+  customerId: z.string().optional(),
   email: z
     .string()
     .email("Please enter a valid email address")
@@ -141,7 +136,13 @@ export function FlexibleLeadForm({
   const [typeSpecificData, settypeSpecificData] = useState(
     lead?.typeSpecificData || {}
   );
-  const [isLeadTypePanelOpen, setIsLeadTypePanelOpen] = useState(false);
+  const [isLeadPanelOpen, setIsLeadPanelOpen] = useState(false);
+  const [isCustomerPanelOpen, setIsCustomerPanelOpen] = useState(false);
+  const [selectedCustomerId, setSelectedCustomerId] = useState("");
+  const [selectedLeadId, setSelectedLeadId] = useState("");
+  const [selectedLead, setSelectedLead] = useState("");
+  const [selectedCustomer, setSelectedCustomer] = useState<any>(null);
+
 
   const {
     data: leadTypes = [],
@@ -178,6 +179,7 @@ export function FlexibleLeadForm({
       leadTypeId: lead?.leadTypeId?.toString() || "",
       firstName: lead?.fisrt_name || "",
       lastName: lead?.email_name || "",
+      customerId: lead?.customerId || "",
       email: lead?.email || "",
       phone: lead?.phone || "",
       source: lead?.source || "",
@@ -273,6 +275,8 @@ export function FlexibleLeadForm({
       "6": "attraction",
       "7": "holiday",
       "8": "Activities",
+      "9": "Insurance",
+      "10": "Cruise",
     };
 
     return categoryToKeyMap[categoryNumber || "0"] || "flight";
@@ -477,20 +481,6 @@ export function FlexibleLeadForm({
       form.setValue("leadTypeId", leadTypeId);
       form.setValue("typeSpecificData", {});
     }
-  };
-
-  const handleCountryChange = (countryCode: string) => {
-    setSelectedCountry(countryCode);
-    setSelectedState("");
-    form.setValue("country", countryCode);
-    form.setValue("state", "");
-    form.setValue("city", "");
-  };
-
-  const handleStateChange = (stateName: string) => {
-    setSelectedState(stateName);
-    form.setValue("state", stateName);
-    form.setValue("city", "");
   };
 
   const selectedLeadTypeData = leadTypes.find(
@@ -723,16 +713,6 @@ export function FlexibleLeadForm({
     { value: "other", label: "Other" },
   ];
 
-  const countryOptions = countries.map((country: any) => ({
-    value: country.code,
-    label: `${country.flag} ${country.name}`,
-  }));
-
-  const stateOptions = states.map((state: any) => ({
-    value: state.name,
-    label: state.name,
-  }));
-
   // fetch customers details
 
   const { data: customers = [] } = useQuery({
@@ -756,114 +736,113 @@ export function FlexibleLeadForm({
 
   console.log("customers :", customers);
 
-  const getCustomerOptions = (): AutocompleteOption[] => {
-    const customerOptions = customers.map((customer: any) => {
-      const name =
-        customer.name ||
-        `${customer.firstName || ""}`.trim() ||
-        "Unnamed Customer";
+ 
 
-      return {
-        value: name,
-        label: name,
-        firstName: customer.firstName || "",
-        lastName: customer.lastName || "",
-        email: customer.email || "",
-        phone: customer.phone || "",
-        country: customer.country || "",
-        state: customer.state || "",
-        city: customer.city || "",
-      };
-    });
 
-    return [
-      {
-        value: "create_new",
-        label: "➕ Create New Customer",
-        firstName: "",
-        lastName: "",
-        email: "",
-        phone: "",
-        country: "",
-        state: "",
-        city: "",
-      },
-      ...customerOptions,
-    ];
-  };
+const handleCustomerChange = (value: string, field: any) => {
+ 
+  if (value === "create_new_customer") {
+    setIsCustomerPanelOpen(true);
+    return;
+  }
 
-  // add customers
+  
+  const selectedCustomer = customers.find((c: any) => c.id.toString() === value);
 
-  const createCustomerMutation = useMutation({
-    mutationFn: async (data: any) => {
-      return directCustomersApi.createCustomer(tenant?.id!, data);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: [`customers-tenant-${tenant?.id}`],
+  if (!selectedCustomer) {
+    field.onChange(value); 
+    return;
+  }
+
+ 
+  field.onChange(value);
+
+  form.setValue("customerId", selectedCustomer.id.toString());
+  form.setValue("firstName", selectedCustomer.firstName || selectedCustomer.first_name || "");
+  form.setValue("lastName",  selectedCustomer.lastName  || selectedCustomer.last_name  || "");
+  form.setValue("email",     selectedCustomer.email || "");
+  form.setValue("phone",     selectedCustomer.phone || "");
+  form.setValue("country",   selectedCustomer.country || "");
+  form.setValue("state",     selectedCustomer.state || "");
+  form.setValue("city",      selectedCustomer.city || "");
+};
+
+
+ const customerOptions = [
+  {
+    value: "create_new_customer",
+    label: "+ Create New Customer",
+    icon: <Plus className="h-4 w-4 text-cyan-600" />,
+  },
+  ...customers.map((customer: any) => ({
+    value: customer.id.toString(),
+    label: `${customer.name || ""} - ${customer.email || ""} - ${customer.phone || ""}`,
+  })),
+];
+
+
+  //add leads
+
+  const { data: leads = [] } = useQuery({
+    queryKey: [`/api/leads`, tenant?.id],
+    enabled: !!tenant?.id,
+    queryFn: async () => {
+      const token = auth.getToken();
+      const response = await fetch("/api/leads", {
+        headers: { Authorization: `Bearer ${token}` },
       });
-      toast({
-        title: "Success",
-        description: "Customer created successfully",
-      });
-      setIsDialogOpen(false);
-      setEditingCustomer(null);
-      setFormValidationErrors({});
-    },
-    onError: (error: any) => {
-      if (
-        error.validationErrors &&
-        Object.keys(error.validationErrors).length > 0
-      ) {
-        setFormValidationErrors(error.validationErrors);
-        const errorMessages = Object.values(error.validationErrors).join(", ");
-        toast({
-          title: "Validation Error",
-          description: errorMessages,
-          variant: "destructive",
-        });
-      } else {
-        toast({
-          title: "Error",
-          description: error.message || "Failed to create customer",
-          variant: "destructive",
-        });
-        setFormValidationErrors({});
+      if (!response.ok) return [];
+      const result = await response.json();
+      if (Array.isArray(result)) {
+        return result;
+      } else if (result.leads && Array.isArray(result.leads)) {
+        return result.leads;
+      } else if (result.data && Array.isArray(result.data)) {
+        return result.data;
+      } else if (result.rows && Array.isArray(result.rows)) {
+        return result.rows;
       }
+      return [];
     },
   });
 
-  const onSubmitCustomer = (data: any) => {
-    if (editingCustomer) {
-      updateCustomerMutation.mutate({ id: editingCustomer.id, data });
-    } else {
-      createCustomerMutation.mutate(data);
+  console.log("🚀 ~ FlexibleLeadForm ~ leads:", leads);
+
+  const leadOptions = [
+    {
+      value: "create_new_lead",
+      label: "+ Create New Lead",
+      icon: <Plus className="h-4 w-4 text-cyan-600" />,
+    },
+    { value: "", label: "No lead selected" },
+    ...leads.map((lead: any) => ({
+      value: lead.id.toString(),
+      name: lead.first_name,
+      label: `${lead.first_name} ${lead.phone} - ${lead.email}`,
+    })),
+  ];
+
+  const handleLeadSelectionChange = (value: string) => {
+    if (value === "create_new_lead") {
+      setIsLeadPanelOpen(true);
+      return;
     }
-  };
 
-  const updateCustomerMutation = useMutation({
-    mutationFn: async ({ id, data }: { id: number; data: any }) => {
-      return directCustomersApi.updateCustomer(tenant?.id!, id, data);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: [`customers-tenant-${tenant?.id}`],
-      });
-      toast({
-        title: "Success",
-        description: "Customer updated successfully",
-      });
-      setIsDialogOpen(false);
-      setEditingCustomer(null);
-    },
-    onError: (error: any) => {
-      toast({
-        title: "Error",
-        description: error.message || "Failed to update customer",
-        variant: "destructive",
-      });
-    },
-  });
+    const selectedLead = leads.find((l: any) => l.id.toString() === value);
+
+    if (!selectedLead) return;
+
+    setSelectedLead(selectedLead);
+
+    form.setValue("customerId", selectedLead.id.toString());
+    form.setValue("firstName", selectedLead.first_name || "");
+    form.setValue("lastName", selectedLead.last_name || "");
+    form.setValue("email", selectedLead.email || "");
+    form.setValue("phone", selectedLead.phone || "");
+    form.setValue("country", selectedLead.country || "");
+    form.setValue("state", selectedLead.state || "");
+    form.setValue("city", selectedLead.city || "");
+  };
 
   return (
     <Form {...form}>
@@ -875,209 +854,57 @@ export function FlexibleLeadForm({
             </h2>
 
             <div className="grid grid-cols-2 gap-4 items-end">
-              <div className="">
+              {/* Search Customer */}
+              <div>
+                <FormField
+                  control={form.control}
+                  name="customerId"
+                  render={({ field }) => (
+                    <FormItem className="col-span-12 md:col-span-6">
+                      <FormLabel>Customer </FormLabel>
+                      <FormControl>
+                        <Combobox
+                          options={customerOptions}
+                          value={field.value}
+                          onValueChange={(value: string) =>
+                            handleCustomerChange(value, field)
+                          }
+                          placeholder="Select customer"
+                          emptyText="No customers found"
+                          className="mt-1.5"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              {/* Search Lead */}
+              <div>
                 <FormField
                   control={form.control}
                   name="firstName"
                   render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-xs font-semibold text-gray-700 mb-1.5 flex items-center justify-between">
-                        Search Customer
-                        <Button
-                          className={`
-          w-[137px] h-[32px] 
-          rounded-[6px] 
-          bg-[#0E76BC] hover:bg-[#0C5F96] 
-          text-white text-xs font-medium 
-          flex items-center justify-center 
-          gap-[10px] 
-          px-[12px] py-[8px] 
-          shadow-[0_1px_2px_0_rgba(16,24,40,0.05)]
-          transition-colors
-        `}
-                          type="button"
-                          onClick={() => {
-                            setEditingCustomer(null);
-                            setFormValidationErrors({});
-                            setIsDialogOpen(true);
-                          }}
-                        >
-                          <Plus className="h-4 w-4" />
-                          New Customer
-                        </Button>
-                      </FormLabel>
-                      <FormControl>
-                        <AutocompleteInput
-                          data-testid="autocomplete-customer"
-                          suggestions={getCustomerOptions()}
-                          value={field.value}
-                          onValueChange={(val) => {
-                            field.onChange(val);
-
-                            const selected = getCustomerOptions().find(
-                              (c) => c.value === val
-                            );
-
-                            if (selected && selected.value !== "create_new") {
-                              form.setValue("email", selected.email || "");
-                              form.setValue("phone", selected.phone || "");
-                              form.setValue("country", selected.country || "");
-                              form.setValue("state", selected.state || "");
-                              form.setValue("city", selected.city || "");
-                            }
-                          }}
-                          placeholder="Search name, gmail, organization"
-                          emptyText="No customers found"
-                          className="h-10 rounded-md border-gray-300 focus:ring-2 focus:ring-cyan-500"
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-
-              <input
-                type="hidden"
-                {...form.register("dynamicData.customerName")}
-              />
-              <input
-                type="hidden"
-                {...form.register("dynamicData.customerEmail")}
-              />
-              <input
-                type="hidden"
-                {...form.register("dynamicData.customerPhone")}
-              />
-
-              <div className="flex items-end">
-                <FormField
-                  control={form.control}
-                  name="budgetRange"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-xs font-semibold text-gray-700 block mb-1.5">
-                        Budget
-                      </FormLabel>
-                      <FormControl>
-                        <Input
-                          className="h-10 rounded-md border-gray-300 focus:ring-2 focus:ring-cyan-500 placeholder:text-gray-400"
-                          placeholder="Select Source"
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-12 gap-3">
-              <div className="col-span-12 md:col-span-3 ">
-                <FormField
-                  control={form.control}
-                  name="status"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-xs font-semibold text-gray-700 block mb-1.5">
-                        Status
-                      </FormLabel>
+                    <FormItem className="col-span-12 md:col-span-6">
+                      <FormLabel>Search Leads</FormLabel>
                       <FormControl>
                         <Combobox
-                          options={statusOptions}
-                          value={field.value}
-                          onValueChange={field.onChange}
-                          placeholder="Select Status"
-                          className="h-10"
+                          options={leadOptions}
+                          value={selectedLead?.id?.toString() || ""}
+                          onValueChange={handleLeadSelectionChange}
+                          placeholder="Select lead (optional)"
+                          emptyText="No won leads found"
+                          className="mt-1.5"
                         />
                       </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-
-              <div className="col-span-12 md:col-span-3">
-                <FormField
-                  control={form.control}
-                  name="priority"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-xs font-semibold text-gray-700 block mb-1.5">
-                        Priority
-                      </FormLabel>
-                      <FormControl>
-                        <Combobox
-                          options={priorityOptions}
-                          value={field.value}
-                          onValueChange={field.onChange}
-                          placeholder="Select Priority"
-                          className="h-10"
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-12 gap-3">
-              <div className="col-span-3">
-                <FormField
-                  control={form.control}
-                  name="source"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-xs font-semibold text-gray-700 block mb-1.5">
-                        Source
-                      </FormLabel>
-                      <FormControl>
-                        <Combobox
-                          options={sourceOptions}
-                          value={field.value || ""}
-                          onValueChange={field.onChange}
-                          placeholder="Select Source"
-                          className="h-10"
-                        />
-                      </FormControl>
-                      <FormMessage />
+                      <FormMessage /> 
                     </FormItem>
                   )}
                 />
               </div>
             </div>
           </div>
-
-          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-            <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>
-                  {editingCustomer ? "Edit Customer" : "Add New Customer"}
-                </DialogTitle>
-                <DialogDescription>
-                  {editingCustomer
-                    ? "Update the customer information below."
-                    : "Fill in the customer information below."}
-                </DialogDescription>
-              </DialogHeader>
-              <EnhancedCustomerForm
-                customer={editingCustomer}
-                tenantId={tenant?.id!}
-                onSubmit={onSubmitCustomer}
-                onCancel={() => {
-                  setIsDialogOpen(false);
-                  setFormValidationErrors({});
-                }}
-                isLoading={
-                  createCustomerMutation.isPending ||
-                  updateCustomerMutation.isPending
-                }
-                serverErrors={formValidationErrors}
-              />
-            </DialogContent>
-          </Dialog>
 
           {dynamicFields.length > 0 && (
             <div className="col-span-12">
@@ -1204,29 +1031,23 @@ export function FlexibleLeadForm({
         </div>
       </form>
 
-      {/* Slide Panel for Creating New Travel Category */}
-      {/* <SlidePanel
-        isOpen={isLeadTypePanelOpen}
-        onClose={() => setIsLeadTypePanelOpen(false)}
-        title="Create New Travel Category"
+      <SlidePanel
+        isOpen={isLeadPanelOpen}
+        onClose={() => setIsLeadPanelOpen(false)}
+        title="Create New Lead"
       >
-        <LeadTypeCreateForm
-          tenantId={parseInt(tenantId)}
-          onSuccess={(leadType) => {
+        <LeadCreateForm
+          tenantId={tenantId}
+          onSuccess={(lead) => {
+            setSelectedLead(lead.id.toString());
+            setIsLeadPanelOpen(false);
             queryClient.invalidateQueries({
-              queryKey: [`/api/tenants/${tenantId}/lead-types`],
-            });
-            setSelectedLeadType(leadType.id.toString());
-            form.setValue("leadTypeId", leadType.id.toString());
-            setIsLeadTypePanelOpen(false);
-            toast({
-              title: "Success",
-              description: "Travel category created successfully",
+              queryKey: [`leads-tenant-${tenantId}-won`],
             });
           }}
-          onCancel={() => setIsLeadTypePanelOpen(false)}
+          onCancel={() => setIsLeadPanelOpen(false)}
         />
-      </SlidePanel> */}
+      </SlidePanel>
     </Form>
   );
 }
