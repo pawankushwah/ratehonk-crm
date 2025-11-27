@@ -3811,7 +3811,7 @@ export class SimpleStorage {
     }
   }
 
-  async getInvoicesByTenant(
+   async getInvoicesByTenant(
     tenantId: number,
     filters?: {
       customerId?: number;
@@ -4160,6 +4160,7 @@ export class SimpleStorage {
       throw error;
     }
   }
+
 
   async createInvoice(invoiceData: any) {
     try {
