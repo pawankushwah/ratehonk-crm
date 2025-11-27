@@ -3833,9 +3833,14 @@ export class SimpleStorage {
       const filterParams = filters || {};
       
       console.log("🔍 getInvoicesByTenant - Filters received:", JSON.stringify(filterParams, null, 2));
+      console.log("🔍 getInvoicesByTenant - Tenant ID:", tenantId);
+      console.log("🔍 getInvoicesByTenant - Page:", page, "PageSize:", pageSize, "Offset:", offset);
 
       // Build WHERE clause dynamically
       let whereClause = sql`tenant_id = ${tenantId}`;
+      let needsJoin = false;
+      
+      console.log("🔍 Initial WHERE clause: tenant_id =", tenantId);
       
       // Handle customer filter - can be single ID or array of IDs
       if (filterParams?.customerId) {
@@ -3843,55 +3848,106 @@ export class SimpleStorage {
           if (filterParams.customerId.length > 0) {
             console.log("🔍 Applying customer filter (array):", filterParams.customerId);
             whereClause = sql`${whereClause} AND customer_id = ANY(${sql.array(filterParams.customerId)})`;
+            console.log("🔍 WHERE clause after customer filter (array)");
           }
         } else {
           console.log("🔍 Applying customer filter (single):", filterParams.customerId);
           whereClause = sql`${whereClause} AND customer_id = ${filterParams.customerId}`;
+          console.log("🔍 WHERE clause after customer filter (single)");
         }
+      } else {
+        console.log("🔍 No customer filter applied");
       }
 
       if (filterParams?.status && filterParams.status !== "all") {
         console.log("🔍 Applying status filter:", filterParams.status);
         whereClause = sql`${whereClause} AND status = ${filterParams.status}`;
+        console.log("🔍 WHERE clause after status filter");
+      } else {
+        console.log("🔍 No status filter applied (status:", filterParams?.status, ")");
       }
 
-      if (filterParams?.search) {
-        const searchPattern = `%${filterParams.search}%`;
-        whereClause = sql`${whereClause} AND invoice_number ILIKE ${searchPattern}`;
+      // Build JOIN clause for search if needed
+      let joinClause = sql``;
+      if (filterParams?.search && filterParams.search.trim() !== "") {
+        const searchPattern = `%${filterParams.search.trim()}%`;
+        console.log("🔍 Applying search filter:", filterParams.search);
+        needsJoin = true;
+        joinClause = sql`LEFT JOIN customers c ON invoices.customer_id = c.id`;
+        whereClause = sql`${whereClause} AND (invoices.invoice_number ILIKE ${searchPattern} OR c.name ILIKE ${searchPattern})`;
       }
 
-      // Note: If vendorId, providerId, or leadTypeId filters are present,
+      // Note: If vendorId, providerId, leadTypeId, or search (for line items) filters are present,
       // we'll need to filter after fetching due to line items structure
-      const shouldFilterAfterFetch = filterParams?.vendorId || filterParams?.providerId || filterParams?.leadTypeId;
+      // Search needs to check line items for invoice/voucher numbers, so we filter after fetch
+      const shouldFilterAfterFetch = filterParams?.vendorId || filterParams?.providerId || filterParams?.leadTypeId || (filterParams?.search && filterParams.search.trim() !== "");
+      
+      console.log("🔍 shouldFilterAfterFetch:", shouldFilterAfterFetch);
+      console.log("🔍 Filter breakdown:");
+      console.log("🔍   - vendorId:", filterParams?.vendorId, "(type:", typeof filterParams?.vendorId, ")");
+      console.log("🔍   - providerId:", filterParams?.providerId, "(type:", typeof filterParams?.providerId, ")");
+      console.log("🔍   - leadTypeId:", filterParams?.leadTypeId, "(type:", typeof filterParams?.leadTypeId, ")");
+      console.log("🔍   - search:", filterParams?.search, "(type:", typeof filterParams?.search, ")");
+      console.log("🔍   - customerId:", filterParams?.customerId, "(type:", Array.isArray(filterParams?.customerId) ? "array" : typeof filterParams?.customerId, ")");
+      console.log("🔍   - status:", filterParams?.status, "(type:", typeof filterParams?.status, ")");
+      console.log("🔍 ========================================");
       
       let invoices;
       if (shouldFilterAfterFetch) {
         // Fetch all matching invoices (without pagination limit) to filter by line items
         // Then apply pagination after filtering
-        invoices = await sql`
-          SELECT * FROM invoices 
-          WHERE ${whereClause}
-          ORDER BY created_at DESC
-        `;
+        if (needsJoin) {
+          invoices = await sql`
+            SELECT invoices.* FROM invoices
+            ${joinClause}
+            WHERE ${whereClause}
+            ORDER BY invoices.created_at DESC
+          `;
+        } else {
+          invoices = await sql`
+            SELECT * FROM invoices 
+            WHERE ${whereClause}
+            ORDER BY created_at DESC
+          `;
+        }
       } else {
         // Apply pagination in SQL for better performance when no line item filters
-        invoices = await sql`
-          SELECT * FROM invoices 
-          WHERE ${whereClause}
-          ORDER BY created_at DESC
-          LIMIT ${pageSize} OFFSET ${offset}
-        `;
+        if (needsJoin) {
+          invoices = await sql`
+            SELECT invoices.* FROM invoices
+            ${joinClause}
+            WHERE ${whereClause}
+            ORDER BY invoices.created_at DESC
+            LIMIT ${pageSize} OFFSET ${offset}
+          `;
+        } else {
+          invoices = await sql`
+            SELECT * FROM invoices 
+            WHERE ${whereClause}
+            ORDER BY created_at DESC
+            LIMIT ${pageSize} OFFSET ${offset}
+          `;
+        }
       }
       
       // Get total count - will be recalculated after filtering if needed
       let totalCount = 0;
       if (!shouldFilterAfterFetch) {
         // For simple filters, count directly from SQL
-        const countResult = await sql`
-          SELECT COUNT(*) as total FROM invoices 
-          WHERE ${whereClause}
-        `;
-        totalCount = parseInt(countResult[0]?.total || "0");
+        if (needsJoin) {
+          const countResult = await sql`
+            SELECT COUNT(*) as total FROM invoices
+            ${joinClause}
+            WHERE ${whereClause}
+          `;
+          totalCount = parseInt(countResult[0]?.total || "0");
+        } else {
+          const countResult = await sql`
+            SELECT COUNT(*) as total FROM invoices 
+            WHERE ${whereClause}
+          `;
+          totalCount = parseInt(countResult[0]?.total || "0");
+        }
       }
 
       // Fetch customer and booking details separately for each invoice
@@ -3943,6 +3999,37 @@ export class SimpleStorage {
             }
           }
 
+          // Filter by search term in line items (invoice/voucher numbers)
+          // Note: Invoice number and customer name are already filtered in SQL WHERE clause
+          // Here we check line items' invoice/voucher numbers
+          // If invoice number matched in SQL, we keep it. If not, we check line items.
+          if (filterParams?.search && filterParams.search.trim() !== "") {
+            const searchTerm = filterParams.search.trim().toLowerCase();
+            console.log("🔍 Checking search in line items for invoice ID:", invoice.id, "Search term:", searchTerm);
+            
+            // Check if search matches any line item's invoice/voucher number
+            const lineItemMatch = lineItems.some((item: any) => {
+              const itemInvoiceNumber = (item.invoiceNumber?.toString() || "").toLowerCase();
+              const itemVoucherNumber = (item.voucherNumber?.toString() || "").toLowerCase();
+              const matches = itemInvoiceNumber.includes(searchTerm) || itemVoucherNumber.includes(searchTerm);
+              if (matches) {
+                console.log("🔍 Line item match found - invoiceNumber:", itemInvoiceNumber, "voucherNumber:", itemVoucherNumber);
+              }
+              return matches;
+            });
+            
+            // If invoice number matched in SQL, we already have it (it passed the WHERE clause)
+            // If invoice number didn't match, check if any line item matches
+            // If neither matches, skip this invoice
+            const invoiceNumberMatch = invoice.invoice_number?.toLowerCase().includes(searchTerm);
+            console.log("🔍 Invoice ID:", invoice.id, "invoiceNumberMatch:", invoiceNumberMatch, "lineItemMatch:", lineItemMatch);
+            if (!invoiceNumberMatch && !lineItemMatch) {
+              console.log("🔍 Excluding invoice ID:", invoice.id, "- no match found");
+              return null;
+            }
+            console.log("🔍 Including invoice ID:", invoice.id, "- match found");
+          }
+
           // Filter by vendor or provider if specified (check line items)
           if (filterParams?.vendorId || filterParams?.providerId) {
             const hasMatchingItem = lineItems.some((item: any) => {
@@ -3964,14 +4051,18 @@ export class SimpleStorage {
               }
               return true;
             });
-
+            
+            console.log("🔍 Invoice ID:", invoice.id, "hasMatchingItem:", hasMatchingItem, "lineItems count:", lineItems.length);
             if (!hasMatchingItem && lineItems.length > 0) {
+              console.log("🔍 Excluding invoice ID:", invoice.id, "- no matching vendor/provider in line items");
               return null; // Skip this invoice if it has line items but none match
             }
             // If no line items and filter is specified, exclude the invoice
             if (!hasMatchingItem && lineItems.length === 0) {
+              console.log("🔍 Excluding invoice ID:", invoice.id, "- no line items and filter specified");
               return null;
             }
+            console.log("🔍 Including invoice ID:", invoice.id, "- vendor/provider match found");
           }
 
           return {
@@ -4032,19 +4123,25 @@ export class SimpleStorage {
           })
         );
         filteredInvoices = filtered.filter((inv) => inv !== null);
+        console.log("🔍 Invoices after leadTypeId filter:", filteredInvoices.length);
       }
 
       // Recalculate total count after all filtering if we filtered after fetch
       if (shouldFilterAfterFetch) {
+        console.log("🔍 Recalculating total count after filtering. Current filtered count:", filteredInvoices.length);
         totalCount = filteredInvoices.length;
         // Apply pagination to filtered results
         const startIndex = (page - 1) * pageSize;
         const endIndex = startIndex + pageSize;
+        console.log("🔍 Applying pagination - startIndex:", startIndex, "endIndex:", endIndex);
         filteredInvoices = filteredInvoices.slice(startIndex, endIndex);
+        console.log("🔍 Final invoices count after pagination:", filteredInvoices.length);
+      } else {
+        console.log("🔍 Total count from SQL:", totalCount);
       }
 
       // Always return new format with pagination for consistency
-      return {
+      const result = {
         data: filteredInvoices,
         pagination: {
           page,
@@ -4053,6 +4150,11 @@ export class SimpleStorage {
           totalPages: Math.ceil(totalCount / pageSize),
         },
       };
+      
+      console.log("🔍 Final result - Data count:", result.data.length, "Total:", result.pagination.total, "TotalPages:", result.pagination.totalPages);
+      console.log("🔍 ========================================");
+      
+      return result;
     } catch (error) {
       console.error("getInvoicesByTenant error:", error);
       throw error;
@@ -9649,6 +9751,7 @@ export class SimpleStorage {
           showProvider: true,
           showVendor: true,
           showUnitPrice: true,
+          showAdditionalCommission: false,
           sendInvoiceViaEmail: true,
           sendInvoiceViaWhatsapp: false,
         };
@@ -9666,6 +9769,7 @@ export class SimpleStorage {
         showProvider: settings.show_provider,
         showVendor: settings.show_vendor,
         showUnitPrice: settings.show_unit_price,
+        showAdditionalCommission: settings.show_additional_commission ?? false,
         sendInvoiceViaEmail: settings.send_invoice_via_email ?? true,
         sendInvoiceViaWhatsapp: settings.send_invoice_via_whatsapp ?? false,
       };
@@ -9679,11 +9783,12 @@ export class SimpleStorage {
         showDiscount: true,
         showNotes: true,
         showVoucherInvoice: true,
-        showProvider: true,
-        showVendor: true,
-        showUnitPrice: true,
-        sendInvoiceViaEmail: true,
-        sendInvoiceViaWhatsapp: false,
+          showProvider: true,
+          showVendor: true,
+          showUnitPrice: true,
+          showAdditionalCommission: false,
+          sendInvoiceViaEmail: true,
+          sendInvoiceViaWhatsapp: false,
       };
     }
   }
@@ -9691,7 +9796,7 @@ export class SimpleStorage {
   async upsertInvoiceSettings(tenantId: number, settings: any) {
     try {
       const [result] =
-        await sql`INSERT INTO tenant_settings (tenant_id, invoice_number_start, default_currency, default_gst_setting_id, show_tax, show_discount, show_notes, show_voucher_invoice, show_provider, show_vendor, show_unit_price, send_invoice_via_email, send_invoice_via_whatsapp, updated_at) VALUES (${tenantId}, ${settings.invoiceNumberStart !== undefined ? settings.invoiceNumberStart : 1}, ${settings.defaultCurrency || "USD"}, ${settings.defaultGstSettingId || null}, ${settings.showTax !== undefined ? settings.showTax : true}, ${settings.showDiscount !== undefined ? settings.showDiscount : true}, ${settings.showNotes !== undefined ? settings.showNotes : true}, ${settings.showVoucherInvoice !== undefined ? settings.showVoucherInvoice : true}, ${settings.showProvider !== undefined ? settings.showProvider : true}, ${settings.showVendor !== undefined ? settings.showVendor : true}, ${settings.showUnitPrice !== undefined ? settings.showUnitPrice : true}, ${settings.sendInvoiceViaEmail !== undefined ? settings.sendInvoiceViaEmail : true}, ${settings.sendInvoiceViaWhatsapp !== undefined ? settings.sendInvoiceViaWhatsapp : false}, NOW()) ON CONFLICT (tenant_id) DO UPDATE SET invoice_number_start = COALESCE(${settings.invoiceNumberStart}, tenant_settings.invoice_number_start), default_currency = COALESCE(${settings.defaultCurrency}, tenant_settings.default_currency), default_gst_setting_id = COALESCE(${settings.defaultGstSettingId}, tenant_settings.default_gst_setting_id), show_tax = COALESCE(${settings.showTax}, tenant_settings.show_tax), show_discount = COALESCE(${settings.showDiscount}, tenant_settings.show_discount), show_notes = COALESCE(${settings.showNotes}, tenant_settings.show_notes), show_voucher_invoice = COALESCE(${settings.showVoucherInvoice}, tenant_settings.show_voucher_invoice), show_provider = COALESCE(${settings.showProvider}, tenant_settings.show_provider), show_vendor = COALESCE(${settings.showVendor}, tenant_settings.show_vendor), show_unit_price = COALESCE(${settings.showUnitPrice}, tenant_settings.show_unit_price), send_invoice_via_email = COALESCE(${settings.sendInvoiceViaEmail}, tenant_settings.send_invoice_via_email), send_invoice_via_whatsapp = COALESCE(${settings.sendInvoiceViaWhatsapp}, tenant_settings.send_invoice_via_whatsapp), updated_at = NOW() RETURNING *`;
+        await sql`INSERT INTO tenant_settings (tenant_id, invoice_number_start, default_currency, default_gst_setting_id, show_tax, show_discount, show_notes, show_voucher_invoice, show_provider, show_vendor, show_unit_price, show_additional_commission, send_invoice_via_email, send_invoice_via_whatsapp, updated_at) VALUES (${tenantId}, ${settings.invoiceNumberStart !== undefined ? settings.invoiceNumberStart : 1}, ${settings.defaultCurrency || "USD"}, ${settings.defaultGstSettingId || null}, ${settings.showTax !== undefined ? settings.showTax : true}, ${settings.showDiscount !== undefined ? settings.showDiscount : true}, ${settings.showNotes !== undefined ? settings.showNotes : true}, ${settings.showVoucherInvoice !== undefined ? settings.showVoucherInvoice : true}, ${settings.showProvider !== undefined ? settings.showProvider : true}, ${settings.showVendor !== undefined ? settings.showVendor : true}, ${settings.showUnitPrice !== undefined ? settings.showUnitPrice : true}, ${settings.showAdditionalCommission !== undefined ? settings.showAdditionalCommission : false}, ${settings.sendInvoiceViaEmail !== undefined ? settings.sendInvoiceViaEmail : true}, ${settings.sendInvoiceViaWhatsapp !== undefined ? settings.sendInvoiceViaWhatsapp : false}, NOW()) ON CONFLICT (tenant_id) DO UPDATE SET invoice_number_start = COALESCE(${settings.invoiceNumberStart}, tenant_settings.invoice_number_start), default_currency = COALESCE(${settings.defaultCurrency}, tenant_settings.default_currency), default_gst_setting_id = COALESCE(${settings.defaultGstSettingId}, tenant_settings.default_gst_setting_id), show_tax = COALESCE(${settings.showTax}, tenant_settings.show_tax), show_discount = COALESCE(${settings.showDiscount}, tenant_settings.show_discount), show_notes = COALESCE(${settings.showNotes}, tenant_settings.show_notes), show_voucher_invoice = COALESCE(${settings.showVoucherInvoice}, tenant_settings.show_voucher_invoice), show_provider = COALESCE(${settings.showProvider}, tenant_settings.show_provider), show_vendor = COALESCE(${settings.showVendor}, tenant_settings.show_vendor), show_unit_price = COALESCE(${settings.showUnitPrice}, tenant_settings.show_unit_price), show_additional_commission = COALESCE(${settings.showAdditionalCommission}, tenant_settings.show_additional_commission), send_invoice_via_email = COALESCE(${settings.sendInvoiceViaEmail}, tenant_settings.send_invoice_via_email), send_invoice_via_whatsapp = COALESCE(${settings.sendInvoiceViaWhatsapp}, tenant_settings.send_invoice_via_whatsapp), updated_at = NOW() RETURNING *`;
       return {
         id: result.id,
         tenantId: result.tenant_id,
@@ -9705,6 +9810,7 @@ export class SimpleStorage {
         showProvider: result.show_provider,
         showVendor: result.show_vendor,
         showUnitPrice: result.show_unit_price,
+        showAdditionalCommission: result.show_additional_commission ?? false,
         sendInvoiceViaEmail: result.send_invoice_via_email ?? true,
         sendInvoiceViaWhatsapp: result.send_invoice_via_whatsapp ?? false,
       };

@@ -35,6 +35,7 @@ interface InvoiceSettings {
   showProvider: boolean;
   showVendor: boolean;
   showUnitPrice: boolean;
+  showAdditionalCommission: boolean;
   sendInvoiceViaEmail: boolean;
   sendInvoiceViaWhatsapp: boolean;
 }
@@ -58,6 +59,7 @@ export function InvoiceSettingsPanel({ tenantId }: InvoiceSettingsPanelProps) {
     showProvider: true,
     showVendor: true,
     showUnitPrice: true,
+    showAdditionalCommission: false,
     sendInvoiceViaEmail: true,
     sendInvoiceViaWhatsapp: false,
   });
@@ -322,6 +324,20 @@ export function InvoiceSettingsPanel({ tenantId }: InvoiceSettingsPanelProps) {
                     setSettings({ ...settings, showUnitPrice: checked })
                   }
                   data-testid="switch-show-unit-price"
+                />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <Label htmlFor="showAdditionalCommission" className="cursor-pointer">
+                  Additional Commission
+                </Label>
+                <Switch
+                  id="showAdditionalCommission"
+                  checked={settings.showAdditionalCommission}
+                  onCheckedChange={(checked) =>
+                    setSettings({ ...settings, showAdditionalCommission: checked })
+                  }
+                  data-testid="switch-show-additional-commission"
                 />
               </div>
             </div>

@@ -124,7 +124,7 @@ export default function Invoices() {
   const [leadTypeFilter, setLeadTypeFilter] = useState<string>("all");
   
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(10);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
@@ -694,7 +694,7 @@ export default function Invoices() {
     isLoading,
     error,
   } = useQuery<{ data: Invoice[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }>({
-    queryKey: [`/api/tenants/${tenant?.id}/invoices`, currentPage, statusFilter, customerFilter, vendorFilter, providerFilter, leadTypeFilter, searchTerm],
+    queryKey: [`/api/tenants/${tenant?.id}/invoices`, currentPage, pageSize, statusFilter, customerFilter, vendorFilter, providerFilter, leadTypeFilter, searchTerm],
     enabled: !!tenant?.id,
     refetchOnWindowFocus: true,
     refetchInterval: 30000,
@@ -1616,6 +1616,22 @@ export default function Invoices() {
                 />
               </div>
               <Select
+                value={localLeadTypeFilter}
+                onValueChange={setLocalLeadTypeFilter}
+              >
+                <SelectTrigger className="h-9 text-sm">
+                  <SelectValue placeholder="Lead Type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Lead Types</SelectItem>
+                  {leadTypes.map((leadType) => (
+                    <SelectItem key={leadType.id} value={leadType.id.toString()}>
+                      {leadType.name || leadType.leadTypeName || "Unknown"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
                 value={localVendorFilter}
                 onValueChange={setLocalVendorFilter}
               >
@@ -1647,22 +1663,7 @@ export default function Invoices() {
                   ))}
                 </SelectContent>
               </Select>
-              <Select
-                value={localLeadTypeFilter}
-                onValueChange={setLocalLeadTypeFilter}
-              >
-                <SelectTrigger className="h-9 text-sm">
-                  <SelectValue placeholder="Lead Type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Lead Types</SelectItem>
-                  {leadTypes.map((leadType) => (
-                    <SelectItem key={leadType.id} value={leadType.id.toString()}>
-                      {leadType.name || leadType.leadTypeName || "Unknown"}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+             
             </div>
             <div className="flex items-center justify-between mt-3 pt-3 border-t">
               <div className="text-xs text-gray-500">
@@ -1704,11 +1705,34 @@ export default function Invoices() {
               emptyMessage="No invoices found. Create your first invoice to get started."
             />
             {/* Backend Pagination Controls */}
-            {pagination.totalPages > 1 && (
-              <div className="flex items-center justify-between mt-4 pt-4 border-t">
+            <div className="flex items-center justify-between mt-4 pt-4 border-t">
+              <div className="flex items-center gap-4">
                 <div className="text-sm text-gray-500">
                   Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, pagination.total)} of {pagination.total} invoices
                 </div>
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="pageSize" className="text-sm text-gray-500">
+                    Show:
+                  </Label>
+                  <Select
+                    value={pageSize.toString()}
+                    onValueChange={(value) => {
+                      setPageSize(parseInt(value));
+                      setCurrentPage(1); // Reset to first page when changing page size
+                    }}
+                  >
+                    <SelectTrigger id="pageSize" className="w-20 h-8">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="10">10</SelectItem>
+                      <SelectItem value="50">50</SelectItem>
+                      <SelectItem value="100">100</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              {pagination.totalPages > 1 && (
                 <div className="flex items-center space-x-2">
                   <Button
                     variant="outline"
@@ -1718,9 +1742,39 @@ export default function Invoices() {
                   >
                     Previous
                   </Button>
-                  <span className="text-sm text-gray-700">
-                    Page {currentPage} of {pagination.totalPages}
-                  </span>
+                  
+                  {/* Page Numbers */}
+                  <div className="flex items-center space-x-1">
+                    {Array.from({ length: Math.min(5, pagination.totalPages) }, (_, i) => {
+                      let pageNum;
+                      if (pagination.totalPages <= 5) {
+                        // Show all pages if 5 or fewer
+                        pageNum = i + 1;
+                      } else if (currentPage <= 3) {
+                        // Show first 5 pages
+                        pageNum = i + 1;
+                      } else if (currentPage >= pagination.totalPages - 2) {
+                        // Show last 5 pages
+                        pageNum = pagination.totalPages - 4 + i;
+                      } else {
+                        // Show pages around current page
+                        pageNum = currentPage - 2 + i;
+                      }
+                      
+                      return (
+                        <Button
+                          key={pageNum}
+                          variant={currentPage === pageNum ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => setCurrentPage(pageNum)}
+                          className="min-w-[2.5rem]"
+                        >
+                          {pageNum}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                  
                   <Button
                     variant="outline"
                     size="sm"
@@ -1730,8 +1784,8 @@ export default function Invoices() {
                     Next
                   </Button>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </CardContent>
         </Card>
       </div>

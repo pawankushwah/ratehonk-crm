@@ -74,6 +74,7 @@ export const tenantSettings = pgTable("tenant_settings", {
   showProvider: boolean("show_provider").default(true),
   showVendor: boolean("show_vendor").default(true),
   showUnitPrice: boolean("show_unit_price").default(true),
+  showAdditionalCommission: boolean("show_additional_commission").default(false),
   sendInvoiceViaEmail: boolean("send_invoice_via_email").default(true),
   sendInvoiceViaWhatsapp: boolean("send_invoice_via_whatsapp").default(false),
   // WhatsApp Welcome Messages

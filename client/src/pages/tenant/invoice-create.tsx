@@ -78,6 +78,8 @@ export default function InvoiceCreate() {
       purchasePrice: "",
       tax: "",
       taxRateId: "",
+      additionalCommissionPercentage: "",
+      additionalCommission: "",
       totalAmount: 0,
     },
   ]);
@@ -139,6 +141,7 @@ export default function InvoiceCreate() {
     showProvider: true,
     showVendor: true,
     showUnitPrice: true,
+    showAdditionalCommission: false,
     defaultCurrency: "USD",
     defaultGstSettingId: null,
   }, refetch: refetchInvoiceSettings } = useQuery({
@@ -355,6 +358,8 @@ export default function InvoiceCreate() {
           purchasePrice: item.purchasePrice?.toString() || "0",
           tax: item.tax?.toString() || "0",
           taxRateId: item.taxRateId?.toString() || "",
+          additionalCommissionPercentage: item.additionalCommissionPercentage?.toString() || "",
+          additionalCommission: item.additionalCommission?.toString() || "",
           totalAmount: parseFloat(item.totalAmount?.toString() || item.totalPrice?.toString() || "0"),
         })));
       }
@@ -686,11 +691,21 @@ export default function InvoiceCreate() {
       totalAmount = subtotal;
     }
 
+    // Calculate additional commission (percentage of totalAmount)
+    let additionalCommission = 0;
+    if (item.additionalCommissionPercentage) {
+      const commissionPercentage = parseFloat(item.additionalCommissionPercentage || "0");
+      if (commissionPercentage > 0) {
+        additionalCommission = totalAmount * (commissionPercentage / 100);
+      }
+    }
+
     return {
       ...item,
       tax: taxAmount ? taxAmount.toFixed(2) : "",
       totalAmount,
-    };
+      additionalCommission: additionalCommission > 0 ? additionalCommission.toFixed(2) : "" as any,
+    } as typeof item;
   };
 
   // Update line item
@@ -707,6 +722,20 @@ export default function InvoiceCreate() {
   useEffect(() => {
     setLineItems((prev) => prev.map((item) => calculateLineItemTotals(item)));
   }, [isTaxInclusive, gstRates]);
+
+  // Auto-set amount paid to full total when payment status is "paid"
+  useEffect(() => {
+    if (paymentStatus === "paid") {
+      const grandTotal = calculateGrandTotal();
+      // In edit mode, set to the difference needed to make it fully paid
+      if (isEditMode) {
+        const totalNeeded = grandTotal - existingPaidAmount;
+        setAmountPaid(totalNeeded > 0 ? totalNeeded.toFixed(2) : "0");
+      } else {
+        setAmountPaid(grandTotal.toFixed(2));
+      }
+    }
+  }, [paymentStatus, lineItems, discountAmount, isTaxInclusive, gstRates, isEditMode, existingPaidAmount]);
 
   // Add line item
   const addLineItem = () => {
@@ -725,6 +754,8 @@ export default function InvoiceCreate() {
         purchasePrice: "",
         tax: "",
         taxRateId: "",
+        additionalCommissionPercentage: "",
+        additionalCommission: "",
         totalAmount: 0,
       },
     ]);
@@ -757,12 +788,21 @@ export default function InvoiceCreate() {
     );
   };
 
-  // Calculate grand total (subtotal + tax - discount)
+  // Calculate total additional commission
+  const calculateTotalAdditionalCommission = () => {
+    return lineItems.reduce(
+      (total, item) => total + parseFloat(item.additionalCommission || "0"),
+      0,
+    );
+  };
+
+  // Calculate grand total (subtotal + tax - discount + additional commission)
   const calculateGrandTotal = () => {
     const subtotal = calculateSubtotal();
     const tax = calculateTotalTax();
     const discount = parseFloat(discountAmount || "0");
-    return subtotal + tax - discount;
+    const additionalCommission = calculateTotalAdditionalCommission();
+    return subtotal + tax - discount + additionalCommission;
   };
 
   // Calculate payment installments
@@ -770,9 +810,11 @@ export default function InvoiceCreate() {
     if (!enableInstallments) return [];
 
     const totalAmount = calculateGrandTotal();
-    const paidAmount = isEditMode 
-      ? existingPaidAmount + parseFloat(amountPaid || "0") // Add new payment to existing
-      : parseFloat(amountPaid || "0");
+    const paidAmount = paymentStatus === "paid"
+      ? totalAmount // Full payment when status is "paid"
+      : isEditMode 
+        ? existingPaidAmount + parseFloat(amountPaid || "0") // Add new payment to existing
+        : parseFloat(amountPaid || "0");
     const pendingAmount = totalAmount - paidAmount;
 
     if (pendingAmount <= 0) return [];
@@ -1134,9 +1176,11 @@ export default function InvoiceCreate() {
       notes: notesContent || undefined,
       paymentTerms: paymentTerms || undefined,
       paymentStatus: paymentStatus,
-      paidAmount: isEditMode 
-        ? existingPaidAmount + parseFloat(amountPaid || "0") // Add new payment to existing
-        : parseFloat(amountPaid || "0"),
+      paidAmount: paymentStatus === "paid"
+        ? calculateGrandTotal() // Full payment when status is "paid"
+        : isEditMode 
+          ? existingPaidAmount + parseFloat(amountPaid || "0") // Add new payment to existing
+          : parseFloat(amountPaid || "0"),
       installments: enableInstallments ? calculateInstallments().map(inst => ({
         installmentNumber: inst.installmentNumber,
         dueDate: inst.dueDate,
@@ -1219,9 +1263,11 @@ export default function InvoiceCreate() {
       issueDate: formData.get("issueDate") as string,
       dueDate: formData.get("dueDate") as string,
       totalAmount: finalAmount,
-      paidAmount: isEditMode 
-        ? existingPaidAmount + parseFloat(amountPaid || "0") // Add new payment to existing
-        : parseFloat(amountPaid || "0"),
+      paidAmount: paymentStatus === "paid"
+        ? calculateGrandTotal() // Full payment when status is "paid"
+        : isEditMode 
+          ? existingPaidAmount + parseFloat(amountPaid || "0") // Add new payment to existing
+          : parseFloat(amountPaid || "0"),
       subtotal: grandTotal,
       taxAmount: lineItems.reduce(
         (total, item) => total + parseFloat(item.tax || "0"),
@@ -1245,6 +1291,8 @@ export default function InvoiceCreate() {
         sellingPrice: parseFloat(item.sellingPrice || "0"),
         purchasePrice: parseFloat(item.purchasePrice || "0"),
         tax: parseFloat(item.tax || "0"),
+        additionalCommissionPercentage: item.additionalCommissionPercentage || "",
+        additionalCommission: parseFloat(item.additionalCommission || "0"),
       })),
       expenses, // Include auto-generated expenses
       installments: enableInstallments ? calculateInstallments().map(inst => ({
@@ -1276,20 +1324,21 @@ export default function InvoiceCreate() {
   const gridTemplate = useMemo(() => {
     const columns = [
       '30px', // # column - smaller (fixed)
-      'minmax(250px, 2fr)', // Category - bigger (flexible, min 150px)
-      ...(invoiceSettings?.showVendor ? ['minmax(250px, 2fr)'] : []), // Vendor - bigger (flexible, min 150px)
-      ...(invoiceSettings?.showProvider ? ['minmax(250px, 2fr)'] : []), // Provider - bigger (flexible, min 150px)
+      'minmax(180px, 1.5fr)', // Category - reduced width (flexible, min 180px)
+      ...(invoiceSettings?.showVendor ? ['minmax(180px, 1.5fr)'] : []), // Vendor - reduced width (flexible, min 180px)
+      ...(invoiceSettings?.showProvider ? ['minmax(180px, 1.5fr)'] : []), // Provider - reduced width (flexible, min 180px)
       'minmax(60px, 1fr)', // Pax - small (flexible, min 60px)
       ...(invoiceSettings?.showUnitPrice ? ['minmax(130px, 1fr)'] : []), // Unit Price - small (flexible, min 100px)
       'minmax(130px, 1fr)', // Selling Price - small (flexible, min 100px)
       'minmax(130px, 1fr)', // Purchase Price - small (flexible, min 100px)
       ...(invoiceSettings?.showTax ? ['minmax(100px, 1fr)'] : []), // Tax - small (flexible, min 100px)
       'minmax(100px, 1fr)', // Amount - small (flexible, min 100px)
+      ...(invoiceSettings?.showAdditionalCommission ? ['minmax(100px, 1fr)'] : []), // Additional Commission - small (flexible, min 100px)
       ...(invoiceSettings?.showVoucherInvoice ? ['minmax(100px, 1fr)'] : []), // Invoice/Voucher - small (flexible, min 100px)
       '50px', // Delete button - small (fixed)
     ];
     return columns.join(' ');
-  }, [invoiceSettings?.showVendor, invoiceSettings?.showProvider, invoiceSettings?.showUnitPrice, invoiceSettings?.showTax, invoiceSettings?.showVoucherInvoice]);
+  }, [invoiceSettings?.showVendor, invoiceSettings?.showProvider, invoiceSettings?.showUnitPrice, invoiceSettings?.showTax, invoiceSettings?.showAdditionalCommission, invoiceSettings?.showVoucherInvoice]);
 
   // Show loading state when fetching invoice data
   if (isEditMode && isLoadingInvoice) {
@@ -1522,35 +1571,34 @@ export default function InvoiceCreate() {
               </div>
 
               {/* Line Items */}
-              <div className="border rounded-lg overflow-hidden">
-                {/* Table Header - Show labels only once */}
-                <div className="overflow-x-auto">
+              <div className="border rounded-lg overflow-x-auto">
+                <div className="min-w-[800px]">
+                  {/* Table Header */}
                   <div 
-                    className="grid gap-2 border-b p-3 font-medium text-sm min-w-[800px]"
+                    className="grid gap-2 border-b p-3 font-medium text-sm"
                     style={{ gridTemplateColumns: gridTemplate }}
                   >
-                  <div className="text-center flex items-center justify-center">#</div>
-                  <div className="flex items-center">Category *</div>
-                  {invoiceSettings?.showVendor && <div className="flex items-center">Vendor</div>}
-                  {invoiceSettings?.showProvider && <div className="flex items-center">Provider</div>}
-                  <div className="flex items-center">Pax *</div>
-                  {invoiceSettings?.showUnitPrice && <div className="flex items-center">Unit Price ({currencySymbol}) *</div>}
-                  <div className="flex items-center">Selling Price ({currencySymbol}) *</div>
-                  <div className="flex items-center">Purchase Price ({currencySymbol}) *</div>
-                  {invoiceSettings?.showTax && <div className="flex items-center">Tax ({currencySymbol})</div>}
-                  <div className="flex items-center">Amount ({currencySymbol})</div>
-                  {invoiceSettings?.showVoucherInvoice && <div className="flex items-center">Invoice/Voucher</div>}
-                  <div className="flex items-center"></div>
-                </div>
-                </div>
+                    <div className="text-center flex items-center justify-center">#</div>
+                    <div className="flex items-center">Category *</div>
+                    {invoiceSettings?.showVendor && <div className="flex items-center">Vendor</div>}
+                    {invoiceSettings?.showProvider && <div className="flex items-center">Provider</div>}
+                    <div className="flex items-center">Pax *</div>
+                    {invoiceSettings?.showUnitPrice && <div className="flex items-center">Unit Price ({currencySymbol}) *</div>}
+                    <div className="flex items-center">Selling Price ({currencySymbol}) *</div>
+                    <div className="flex items-center">Purchase Price ({currencySymbol}) *</div>
+                    {invoiceSettings?.showTax && <div className="flex items-center">Tax ({currencySymbol})</div>}
+                    <div className="flex items-center">Amount ({currencySymbol})</div>
+                    {invoiceSettings?.showAdditionalCommission && <div className="flex items-center">Commission (%)</div>}
+                    {invoiceSettings?.showVoucherInvoice && <div className="flex items-center">Invoice/Voucher</div>}
+                    <div className="flex items-center"></div>
+                  </div>
 
-                {/* Table Body */}
-                <div className="divide-y divide-gray-200 dark:divide-gray-700">
-                  <div className="overflow-x-auto">
+                  {/* Table Body */}
+                  <div className="divide-y divide-gray-200 dark:divide-gray-700">
                     {lineItems.map((item, index) => (
                       <div
                         key={index}
-                        className="grid gap-2 p-3 min-w-[800px]"
+                        className="grid gap-2 p-3"
                         style={{ gridTemplateColumns: gridTemplate }}
                       >
                       <div className="flex items-center justify-center">
@@ -1705,6 +1753,30 @@ export default function InvoiceCreate() {
                           className="bg-transparent"
                         />
                       </div>
+
+                      {invoiceSettings?.showAdditionalCommission && (
+                        <div>
+                          <Input
+                            data-testid={`input-additional-commission-${index}`}
+                            type="text"
+                            value={item.additionalCommissionPercentage || ""}
+                            onChange={(e) =>
+                              updateLineItem(
+                                index,
+                                "additionalCommissionPercentage",
+                                e.target.value,
+                              )
+                            }
+                            onKeyPress={handleNumericKeyPress}
+                            placeholder="0"
+                          />
+                          {item.additionalCommission && (
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Commission: {currencySymbol}{parseFloat(item.additionalCommission).toFixed(2)}
+                            </p>
+                          )}
+                        </div>
+                      )}
 
                       {invoiceSettings?.showVoucherInvoice && (
                         <div>
@@ -1862,87 +1934,6 @@ export default function InvoiceCreate() {
                       )}
                       <input type="hidden" name="enableReminder" value={enableReminder.toString()} />
                     </div>
-                    {/* Notes Section with Rich Text Editor */}
-                    {invoiceSettings?.showNotes && (
-                      <div className="rounded-lg p-2 sm:p-4">
-                        <Label htmlFor="notes" className="text-base sm:text-lg font-semibold mb-2 sm:mb-3 block">
-                          Notes
-                        </Label>
-                        <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-2 sm:mb-3">
-                          Add any additional notes, attachments, or information. Supports text, images, videos, and paste functionality.
-                        </p>
-                         <div className="bg-white dark:bg-gray-900 rounded-lg overflow-x-auto" data-testid="rich-text-editor-notes">
-                           <ReactQuill
-                             theme="snow"
-                             value={notesContent}
-                             onChange={setNotesContent}
-                             className="h-40"
-                            modules={{
-                              toolbar: [
-                                [{ 'header': [1, 2, 3, false] }],
-                                ['bold', 'italic', 'underline', 'strike'],
-                                [{ 'list': 'ordered' }, { 'list': 'bullet' }],
-                                [{ 'color': [] }, { 'background': [] }],
-                                [{ 'align': [] }],
-                                ['link', 'image', 'video'],
-                                ['clean']
-                              ],
-                            }}
-                            formats={[
-                              'header',
-                              'bold', 'italic', 'underline', 'strike',
-                              'list', 'bullet',
-                              'color', 'background',
-                              'align',
-                              'link', 'image', 'video'
-                            ]}
-                            placeholder="Type your notes here... You can paste images directly or use the toolbar to add images, videos, and more."
-                          />
-                        </div>
-                        <input type="hidden" name="notes" value={notesContent} />
-                      </div>
-                    )}
-
-                    {invoiceSettings?.showNotes && (
-                      <div className="rounded-lg p-2 sm:p-4">
-                        <Label htmlFor="notes" className="text-base sm:text-lg font-semibold mb-2 sm:mb-3 block">
-                          Additional Notes (It will be hidden to the invoice)
-                        </Label>
-                        <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-2 sm:mb-3">
-                          Add any additional notes, attachments, or information. Supports text, images, videos, and paste functionality.
-                        </p>
-                        <div className="bg-white dark:bg-gray-900 rounded-lg overflow-x-auto" data-testid="rich-text-editor-additional-notes">
-                          <ReactQuill
-                            theme="snow"
-                            value={additionalNotesContent}
-                            onChange={setAdditionalNotesContent}
-                            className="h-40"
-                            modules={{
-                              toolbar: [
-                                [{ 'header': [1, 2, 3, false] }],
-                                ['bold', 'italic', 'underline', 'strike'],
-                                [{ 'list': 'ordered' }, { 'list': 'bullet' }],
-                                [{ 'color': [] }, { 'background': [] }],
-                                [{ 'align': [] }],
-                                ['link', 'image', 'video'],
-                                ['clean']
-                              ],
-                            }}
-                            formats={[
-                              'header',
-                              'bold', 'italic', 'underline', 'strike',
-                              'list', 'bullet',
-                              'color', 'background',
-                              'align',
-                              'link', 'image', 'video'
-                            ]}
-                            placeholder="Type your notes here... You can paste images directly or use the toolbar to add images, videos, and more."
-                          />
-                        </div>
-                        <input type="hidden" name="notes" value={additionalNotesContent} />
-                      </div>
-                    )}
-
                   </div>
 
                   {/* Right Side - Calculation Summary */}
@@ -1993,24 +1984,26 @@ export default function InvoiceCreate() {
                       </div>
                     )}
 
-                    <div className="pt-2">
-                      <Label htmlFor="amountPaid" className="mb-2 block">
-                        {isEditMode ? "Additional Amount Paid" : "Amount Paid"} ({currencySymbol})
-                      </Label>
-                      <Input
-                        data-testid="input-amount-paid"
-                        value={amountPaid}
-                        onChange={(e) => setAmountPaid(e.target.value)}
-                        onKeyPress={handleNumericKeyPress}
-                        placeholder="0"
-                        className="text-lg font-medium"
-                      />
-                      {isEditMode && (
-                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                          This will be added to the existing paid amount of {currencySymbol}{existingPaidAmount.toFixed(2)}
-                        </p>
-                      )}
-                    </div>
+                    {paymentStatus !== "paid" && (
+                      <div className="pt-2">
+                        <Label htmlFor="amountPaid" className="mb-2 block">
+                          {isEditMode ? "Additional Amount Paid" : "Amount Paid"} ({currencySymbol})
+                        </Label>
+                        <Input
+                          data-testid="input-amount-paid"
+                          value={amountPaid}
+                          onChange={(e) => setAmountPaid(e.target.value)}
+                          onKeyPress={handleNumericKeyPress}
+                          placeholder="0"
+                          className="text-lg font-medium"
+                        />
+                        {isEditMode && (
+                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                            This will be added to the existing paid amount of {currencySymbol}{existingPaidAmount.toFixed(2)}
+                          </p>
+                        )}
+                      </div>
+                    )}
 
                     {/* Payment Installments Section */}
                     <div className="pt-4 border-t mt-4">
@@ -2101,6 +2094,77 @@ export default function InvoiceCreate() {
                   </div>
                 </div>
               </div>
+
+              {/* Notes Section with Rich Text Editor - Side by Side */}
+              {invoiceSettings?.showNotes && (
+                <div className="border-t pt-6">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div className="rounded-lg p-2 sm:p-4">
+                      <Label htmlFor="notes" className="text-base sm:text-lg font-semibold mb-2 sm:mb-3 block">
+                        Notes
+                      </Label>
+                      <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-2 sm:mb-3">
+                        Add notes for the invoice.
+                      </p>
+                       <div className="bg-white dark:bg-gray-900 rounded-lg" data-testid="rich-text-editor-notes">
+                         <ReactQuill
+                           theme="snow"
+                           value={notesContent}
+                           onChange={setNotesContent}
+                           className="h-40"
+                          modules={{
+                            toolbar: [
+                              ['bold', 'italic', 'underline'],
+                              [{ 'list': 'ordered' }, { 'list': 'bullet' }],
+                              ['link', 'image'],
+                              ['clean']
+                            ],
+                          }}
+                          formats={[
+                            'bold', 'italic', 'underline',
+                            'list', 'bullet',
+                            'link', 'image'
+                          ]}
+                          placeholder="Type your notes here..."
+                        />
+                      </div>
+                      <input type="hidden" name="notes" value={notesContent} />
+                    </div>
+
+                    <div className="rounded-lg p-2 sm:p-4">
+                      <Label htmlFor="notes" className="text-base sm:text-lg font-semibold mb-2 sm:mb-3 block">
+                        Additional Notes 
+                      </Label>
+                      <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-2 sm:mb-3">
+                         It will be hidden to the invoice .
+                      </p>
+                      <div className="bg-white dark:bg-gray-900 rounded-lg" data-testid="rich-text-editor-additional-notes">
+                        <ReactQuill
+                          theme="snow"
+                          value={additionalNotesContent}
+                          onChange={setAdditionalNotesContent}
+                          className="h-40"
+                          modules={{
+                            toolbar: [
+                              ['bold', 'italic', 'underline'],
+                              [{ 'list': 'ordered' }, { 'list': 'bullet' }],
+                              ['link', 'image'],
+                              ['clean']
+                            ],
+                          }}
+                          formats={[
+                            'bold', 'italic', 'underline',
+                            'list', 'bullet',
+                            'link', 'image'
+                          ]}
+                          placeholder="Type your notes here..."
+                        />
+                      </div>
+                      <input type="hidden" name="notes" value={additionalNotesContent} />
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {(generateExpenses().length > 0 || manualExpenses.length > 0) && (
                 <div className="border-t pt-6 space-y-4">
