@@ -307,20 +307,20 @@
 /* Table styling overrides */
 .bg-\[\#EEF2F6\] {
   --tw-bg-opacity: 1;
-  background-color: hsl(204.48deg 85.29% 40%) !important;
+  background-color: #EEF2F6 !important;
 }
 
 .text-\[\#121926\] {
   --tw-text-opacity: 1;
-  color: white !important;
+  color: #121926 !important;
 }
 
 .text-\[\#364152\] {
   --tw-text-opacity: 1;
-  color: white !important;
+  color: #364152 !important;
 }
 
 /* Override hover:bg-muted/50 hover style */
 .hover\:bg-muted\/50:hover {
-  background-color: hsl(204.48deg 85.29% 40%) !important;
+  background-color: hsl(var(--muted) / 0.5) !important;
 }

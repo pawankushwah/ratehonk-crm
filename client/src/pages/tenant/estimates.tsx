@@ -1042,64 +1042,18 @@ export default function Estimates() {
                   </div>
                 </SheetContent>
               </Sheet>
+              {/* New Estimate Button */}
+              <Link href="/estimates/create">
+                <Button
+                  size="lg"
+                  className="gap-2"
+                  data-testid="button-new-estimate"
+                >
+                  <Plus className="w-4 h-4" />
+                  New Estimate
+                </Button>
+              </Link>
             </div>
-          </div>
-
-          {/* Filters Section */}
-          <Card className="border-0 shadow-sm">
-            <CardContent className="p-4">
-              <div className="flex flex-col md:flex-row gap-4">
-                {/* Search Input */}
-                <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                  <Input
-                    placeholder="Search by estimate number, customer name, or email..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-10"
-                    data-testid="input-search-estimates"
-                  />
-                </div>
-
-                {/* Status Filter */}
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger className="w-full md:w-48" data-testid="select-status-filter">
-                    <SelectValue placeholder="Filter by status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {estimateStatuses.map((status) => (
-                      <SelectItem key={status.value} value={status.value}>
-                        {status.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                {/* Date Filter */}
-                <DateFilter
-                  value={dateFilter}
-                  onChange={setDateFilter}
-                  customDateFrom={customDateFrom}
-                  customDateTo={customDateTo}
-                  onCustomDateFromChange={setCustomDateFrom}
-                  onCustomDateToChange={setCustomDateTo}
-                />
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* New Estimate Button - Separate Row */}
-          <div className="flex justify-end">
-            <Link href="/estimates/create">
-              <Button
-                size="lg"
-                className="gap-2"
-                data-testid="button-new-estimate"
-              >
-                <Plus className="w-4 h-4" />
-                New Estimate
-              </Button>
-            </Link>
           </div>
 
           {/* New Estimate Dialog */}
@@ -1612,7 +1566,7 @@ export default function Estimates() {
               <CardTitle className="text-base">Filter Estimates</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 mb-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 mb-3">
                 <div className="relative">
                   <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400 h-3 w-3" />
                   <Input

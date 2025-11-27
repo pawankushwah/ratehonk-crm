@@ -174,10 +174,10 @@ export function EnhancedTable<T extends Record<string, any>>({
               ))}
             </TableRow>
           </TableHeader>
-          <TableBody>
+          <TableBody className="bg-white">
             {paginatedData.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={columns.length} className="text-center py-8">
+                <TableCell colSpan={columns.length} className="text-center py-8 bg-white">
                   <div className="text-gray-500 dark:text-gray-400">
                     {emptyMessage}
                   </div>
