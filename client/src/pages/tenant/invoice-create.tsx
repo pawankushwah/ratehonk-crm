@@ -33,6 +33,9 @@ import {
   Bell,
   HelpCircle,
   Settings,
+  Check,
+  X,
+  ChevronDown,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -53,6 +56,7 @@ import { ServiceProviderCreateForm } from "@/components/forms/service-provider-c
 import { InvoiceSettingsPanel } from "@/components/invoice-settings-panel";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ModernTemplate, InvoiceData } from "@/components/invoices/invoice-templates";
 
 export default function InvoiceCreate() {
@@ -90,7 +94,7 @@ export default function InvoiceCreate() {
   const [amountPaid, setAmountPaid] = useState("");
   const [existingPaidAmount, setExistingPaidAmount] = useState(0); // Store original paid amount for edit mode
   const [paymentStatus, setPaymentStatus] = useState("pending");
-  const [paymentMethod, setPaymentMethod] = useState("credit_card");
+  const [paymentMethod, setPaymentMethod] = useState<string[]>([]);
   const [paymentTerms, setPaymentTerms] = useState("30");
   const [customDays, setCustomDays] = useState("");
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split("T")[0]);
@@ -300,7 +304,15 @@ export default function InvoiceCreate() {
       setExistingPaidAmount(existingPaid);
       setAmountPaid("0"); // Start with 0 for new payment
       setPaymentStatus(invoice.status || "pending");
-      setPaymentMethod(invoice.paymentMethod || "credit_card");
+      // Handle both array and string for backward compatibility
+      const paymentMethodValue = invoice.paymentMethod;
+      if (Array.isArray(paymentMethodValue)) {
+        setPaymentMethod(paymentMethodValue);
+      } else if (typeof paymentMethodValue === 'string') {
+        setPaymentMethod([paymentMethodValue]);
+      } else {
+        setPaymentMethod(["credit_card"]);
+      }
       setPaymentTerms(invoice.paymentTerms?.toString() || "30");
       setIsTaxInclusive(invoice.isTaxInclusive || false);
       setNotesContent(invoice.notes || "");
@@ -1273,7 +1285,7 @@ export default function InvoiceCreate() {
       notes: notesContent || undefined,
       additionalNotes: additionalNotesContent || undefined,
       paymentTerms: paymentTerms || undefined,
-      paymentMethod: paymentMethod || "credit_card",
+      paymentMethod: paymentMethod.length > 0 ? paymentMethod : ["credit_card"],
       isTaxInclusive: isTaxInclusive,
       enableReminder,
       reminderFrequency: enableReminder ? reminderFrequency : null,
@@ -1312,6 +1324,29 @@ export default function InvoiceCreate() {
       setCurrency(invoiceSettings.defaultCurrency);
     }
   }, [invoiceSettings?.defaultCurrency]);
+
+  // Payment method options
+  const paymentMethodOptions = [
+    { value: "credit_card", label: "Credit Card" },
+    { value: "debit_card", label: "Debit Card" },
+    { value: "bank_transfer", label: "Bank Transfer" },
+    { value: "wire_transfer", label: "Wire Transfer" },
+    { value: "ach_transfer", label: "ACH Transfer" },
+    { value: "cash", label: "Cash" },
+    { value: "check", label: "Check" },
+    { value: "petty_cash", label: "Petty Cash" },
+    { value: "paypal", label: "PayPal" },
+    { value: "stripe", label: "Stripe" },
+    { value: "venmo", label: "Venmo" },
+    { value: "zelle", label: "Zelle" },
+    { value: "apple_pay", label: "Apple Pay" },
+    { value: "google_pay", label: "Google Pay" },
+    { value: "cryptocurrency", label: "Cryptocurrency" },
+    { value: "mobile_payment", label: "Mobile Payment" },
+    { value: "online_gateway", label: "Online Payment Gateway" },
+    { value: "money_order", label: "Money Order" },
+    { value: "other", label: "Other" },
+  ];
 
   // Calculate grid template columns dynamically (must be before any conditional returns)
   const gridTemplate = useMemo(() => {
@@ -1539,24 +1574,72 @@ export default function InvoiceCreate() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div>
                   <Label htmlFor="paymentMethod">Payment Method *</Label>
-                  <Select
-                    value={paymentMethod}
-                    onValueChange={setPaymentMethod}
-                  >
-                    <SelectTrigger data-testid="select-payment-method">
-                      <SelectValue placeholder="Select method..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="credit_card">Credit Card</SelectItem>
-                      <SelectItem value="debit_card">Debit Card</SelectItem>
-                      <SelectItem value="bank_transfer">
-                        Bank Transfer
-                      </SelectItem>
-                      <SelectItem value="cash">Cash</SelectItem>
-                      <SelectItem value="check">Check</SelectItem>
-                      <SelectItem value="petty_cash">Petty Cash</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        className="w-full justify-between h-10"
+                        data-testid="select-payment-method"
+                      >
+                        <span className="truncate">
+                          {paymentMethod.length === 0
+                            ? "Select methods..."
+                            : paymentMethod.length === 1
+                            ? paymentMethodOptions.find((opt) => opt.value === paymentMethod[0])?.label || paymentMethod[0]
+                            : `${paymentMethod.length} methods selected`}
+                        </span>
+                        <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[300px] p-0" align="start">
+                      <div className="max-h-[300px] overflow-y-auto p-2">
+                        {paymentMethodOptions.map((option) => {
+                          const isSelected = paymentMethod.includes(option.value);
+                          return (
+                            <div
+                              key={option.value}
+                              className="flex items-center space-x-2 p-2 rounded-md hover:bg-gray-100 cursor-pointer"
+                              onClick={() => {
+                                if (isSelected) {
+                                  setPaymentMethod(paymentMethod.filter((v) => v !== option.value));
+                                } else {
+                                  setPaymentMethod([...paymentMethod, option.value]);
+                                }
+                              }}
+                            >
+                              <div
+                                className={`flex h-4 w-4 items-center justify-center rounded border ${
+                                  isSelected
+                                    ? "bg-blue-600 border-blue-600"
+                                    : "border-gray-300"
+                                }`}
+                              >
+                                {isSelected && <Check className="h-3 w-3 text-white" />}
+                              </div>
+                              <span className="text-sm">{option.label}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {paymentMethod.length > 0 && (
+                        <div className="border-t p-2 flex items-center justify-between">
+                          <span className="text-xs text-gray-500">
+                            {paymentMethod.length} selected
+                          </span>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={() => setPaymentMethod([])}
+                          >
+                            Clear all
+                          </Button>
+                        </div>
+                      )}
+                    </PopoverContent>
+                  </Popover>
                 </div>
 
                 <div>
@@ -1580,12 +1663,11 @@ export default function InvoiceCreate() {
 
               {/* Line Items */}
               <div className="border rounded-lg overflow-x-auto">
-                <div className="min-w-[800px]">
-                  {/* Table Header */}
-                  <div 
-                    className="grid gap-2 border-b p-3 font-medium text-sm bg-gray-50"
-                    style={{ gridTemplateColumns: gridTemplate }}
-                  >
+                {/* Table Header */}
+                <div 
+                  className="grid gap-2 border-b p-3 font-medium text-sm bg-gray-50"
+                  style={{ gridTemplateColumns: gridTemplate }}
+                >
                     <div className="text-center flex items-center justify-center">#</div>
                     <div className="flex items-center">Category *</div>
                     {invoiceSettings?.showVendor && <div className="flex items-center">Vendor</div>}
@@ -1599,16 +1681,16 @@ export default function InvoiceCreate() {
                     {invoiceSettings?.showAdditionalCommission && <div className="flex items-center">Commission ({currencySymbol})</div>}
                     {invoiceSettings?.showVoucherInvoice && <div className="flex items-center">Invoice/Voucher</div>}
                     <div className="flex items-center"></div>
-                  </div>
+                </div>
 
-                  {/* Table Body */}
-                  <div>
-                    {lineItems.map((item, index) => (
-                      <div
-                        key={index}
-                        className="grid gap-2 p-3 border-b last:border-b-0"
-                        style={{ gridTemplateColumns: gridTemplate }}
-                      >
+                {/* Table Body */}
+                <div>
+                  {lineItems.map((item, index) => (
+                    <div
+                      key={index}
+                      className="grid gap-2 p-3 border-b last:border-b-0"
+                      style={{ gridTemplateColumns: gridTemplate }}
+                    >
                       <div className="flex items-center justify-center">
                         <span className="font-medium text-sm">{index + 1}</span>
                       </div>
@@ -1813,7 +1895,6 @@ export default function InvoiceCreate() {
                       </div>
                     </div>
                   ))}
-                  </div>
                 </div>
               </div>
 
@@ -2170,7 +2251,7 @@ export default function InvoiceCreate() {
               )}
 
               {(generateExpenses().length > 0 || manualExpenses.length > 0) && (
-                <div className="border-t pt-6 space-y-4">
+                <div className="pt-6 space-y-4">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <Receipt className="h-5 w-5 text-gray-900 dark:text-white" />
@@ -2194,11 +2275,11 @@ export default function InvoiceCreate() {
                   </p>
 
                   <div className="border rounded-lg overflow-x-auto">
-                    <div className="min-w-[800px]">
+                    <div>
                       {/* Table Header */}
                       <div 
                         className="grid gap-2 border-b p-3 font-medium text-sm bg-gray-50"
-                        style={{ gridTemplateColumns: expenseGridTemplate }}
+                        style={{ gridTemplateColumns: expenseGridTemplate, minWidth: 'fit-content' }}
                       >
                         <div className="text-center flex items-center justify-center">#</div>
                         <div className="flex items-center">Title</div>

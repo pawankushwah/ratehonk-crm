@@ -58,10 +58,19 @@ export const ModernTemplate: React.FC<InvoiceTemplateProps> = ({ data }) => (
         </div>
       </div>
       <div className="text-right">
-        <h2 className="text-2xl font-bold text-blue-600 mb-2">INVOICE</h2>
+        <div className="flex items-center justify-end gap-3 mb-2">
+          <h2 className="text-2xl font-bold text-blue-600">INVOICE</h2>
+          {data.paymentStatus?.toLowerCase() === "paid" && (
+            <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold bg-green-100 text-green-800 border border-green-200">
+              PAID
+            </span>
+          )}
+        </div>
         <p className="text-lg font-semibold">#{data.invoiceNumber}</p>
         <p className="text-gray-600">Date: {format(new Date(data.issueDate), 'MMM dd, yyyy')}</p>
-        <p className="text-gray-600">Due: {format(new Date(data.dueDate), 'MMM dd, yyyy')}</p>
+        {data.paymentStatus?.toLowerCase() !== "paid" && (
+          <p className="text-gray-600">Due: {format(new Date(data.dueDate), 'MMM dd, yyyy')}</p>
+        )}
       </div>
     </div>
 
@@ -136,7 +145,7 @@ export const ModernTemplate: React.FC<InvoiceTemplateProps> = ({ data }) => (
     </div>
 
     {/* Payment Information */}
-    {(data.paymentStatus || (data.paidAmount || 0) > 0) && (
+    {data.paymentStatus?.toLowerCase() !== "paid" && (data.paymentStatus || (data.paidAmount || 0) > 0) && (
       <div className="mb-8 border-t pt-6">
         <h3 className="font-semibold mb-3 text-gray-800">Payment Information</h3>
         <div className="bg-gray-50 p-4 rounded-lg space-y-2">
@@ -206,9 +215,9 @@ export const ModernTemplate: React.FC<InvoiceTemplateProps> = ({ data }) => (
     )}
 
     {/* Footer */}
-    {(data.notes || data.paymentTerms) && (
+    {(data.notes || (data.paymentTerms && data.paymentStatus?.toLowerCase() !== "paid")) && (
       <div className="border-t pt-6">
-        {data.paymentTerms && (
+        {data.paymentTerms && data.paymentStatus?.toLowerCase() !== "paid" && (
           <div className="mb-4">
             <h4 className="font-semibold mb-2">Payment Terms:</h4>
             <p className="text-gray-600">{data.paymentTerms}</p>
@@ -244,7 +253,14 @@ export const CorporateTemplate: React.FC<InvoiceTemplateProps> = ({ data }) => (
           </div>
         </div>
         <div className="text-right">
-          <h2 className="text-3xl font-bold mb-2">INVOICE</h2>
+          <div className="flex items-center justify-end gap-3 mb-2">
+            <h2 className="text-3xl font-bold">INVOICE</h2>
+            {data.paymentStatus?.toLowerCase() === "paid" && (
+              <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold bg-green-100 text-green-800 border border-green-200">
+                PAID
+              </span>
+            )}
+          </div>
           <p className="text-xl">#{data.invoiceNumber}</p>
         </div>
       </div>
@@ -259,14 +275,18 @@ export const CorporateTemplate: React.FC<InvoiceTemplateProps> = ({ data }) => (
             <span className="w-24 font-medium">Date:</span>
             <span>{format(new Date(data.issueDate), 'MMMM dd, yyyy')}</span>
           </div>
-          <div className="flex">
-            <span className="w-24 font-medium">Due Date:</span>
-            <span>{format(new Date(data.dueDate), 'MMMM dd, yyyy')}</span>
-          </div>
-          <div className="flex">
-            <span className="w-24 font-medium">Terms:</span>
-            <span>{data.paymentTerms || 'Net 30'}</span>
-          </div>
+          {data.paymentStatus?.toLowerCase() !== "paid" && (
+            <div className="flex">
+              <span className="w-24 font-medium">Due Date:</span>
+              <span>{format(new Date(data.dueDate), 'MMMM dd, yyyy')}</span>
+            </div>
+          )}
+          {data.paymentStatus?.toLowerCase() !== "paid" && (
+            <div className="flex">
+              <span className="w-24 font-medium">Terms:</span>
+              <span>{data.paymentTerms || 'Net 30'}</span>
+            </div>
+          )}
         </div>
       </div>
       <div>
@@ -358,7 +378,14 @@ export const CreativeTemplate: React.FC<InvoiceTemplateProps> = ({ data }) => (
         </div>
         <div className="text-right">
           <div className="bg-white bg-opacity-20 p-4 rounded-2xl">
-            <h2 className="text-2xl font-bold mb-1">INVOICE</h2>
+            <div className="flex items-center justify-end gap-2 mb-1">
+              <h2 className="text-2xl font-bold">INVOICE</h2>
+              {data.paymentStatus?.toLowerCase() === "paid" && (
+                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold bg-green-500 text-white">
+                  PAID
+                </span>
+              )}
+            </div>
             <p className="text-lg opacity-90">#{data.invoiceNumber}</p>
           </div>
         </div>
@@ -371,8 +398,12 @@ export const CreativeTemplate: React.FC<InvoiceTemplateProps> = ({ data }) => (
         <h3 className="text-lg font-bold text-purple-800 mb-4">Invoice Information</h3>
         <div className="space-y-2">
           <p><span className="font-medium">Issue Date:</span> {format(new Date(data.issueDate), 'MMM dd, yyyy')}</p>
-          <p><span className="font-medium">Due Date:</span> {format(new Date(data.dueDate), 'MMM dd, yyyy')}</p>
-          <p><span className="font-medium">Payment Terms:</span> {data.paymentTerms || 'Net 30'}</p>
+          {data.paymentStatus?.toLowerCase() !== "paid" && (
+            <p><span className="font-medium">Due Date:</span> {format(new Date(data.dueDate), 'MMM dd, yyyy')}</p>
+          )}
+          {data.paymentStatus?.toLowerCase() !== "paid" && (
+            <p><span className="font-medium">Payment Terms:</span> {data.paymentTerms || 'Net 30'}</p>
+          )}
         </div>
       </div>
       <div className="bg-gradient-to-br from-blue-50 to-purple-50 p-6 rounded-2xl">
@@ -461,17 +492,26 @@ export const ClassicTemplate: React.FC<InvoiceTemplateProps> = ({ data }) => (
 
     {/* Invoice Title and Number */}
     <div className="text-center mb-8">
-      <h2 className="text-3xl font-bold text-gray-800 mb-2">INVOICE</h2>
+      <div className="flex items-center justify-center gap-3 mb-2">
+        <h2 className="text-3xl font-bold text-gray-800">INVOICE</h2>
+        {data.paymentStatus?.toLowerCase() === "paid" && (
+          <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold bg-green-100 text-green-800 border border-green-200">
+            PAID
+          </span>
+        )}
+      </div>
       <p className="text-xl font-medium">Invoice No: {data.invoiceNumber}</p>
       <div className="flex justify-center space-x-8 mt-4">
         <div className="text-center">
           <p className="font-medium">Date Issued</p>
           <p className="border-b border-gray-400 pb-1">{format(new Date(data.issueDate), 'MMMM dd, yyyy')}</p>
         </div>
-        <div className="text-center">
-          <p className="font-medium">Due Date</p>
-          <p className="border-b border-gray-400 pb-1">{format(new Date(data.dueDate), 'MMMM dd, yyyy')}</p>
-        </div>
+        {data.paymentStatus?.toLowerCase() !== "paid" && (
+          <div className="text-center">
+            <p className="font-medium">Due Date</p>
+            <p className="border-b border-gray-400 pb-1">{format(new Date(data.dueDate), 'MMMM dd, yyyy')}</p>
+          </div>
+        )}
       </div>
     </div>
 
@@ -541,22 +581,24 @@ export const ClassicTemplate: React.FC<InvoiceTemplateProps> = ({ data }) => (
     </div>
 
     {/* Terms and Notes */}
-    <div className="border-t-2 border-gray-800 pt-6">
-      <div className="grid grid-cols-2 gap-8">
-        {data.paymentTerms && (
-          <div>
-            <h4 className="font-bold text-lg mb-2 underline">PAYMENT TERMS:</h4>
-            <p>{data.paymentTerms}</p>
-          </div>
-        )}
-        {data.notes && (
-          <div>
-            <h4 className="font-bold text-lg mb-2 underline">NOTES:</h4>
-            <p>{data.notes}</p>
-          </div>
-        )}
+    {(data.notes || (data.paymentTerms && data.paymentStatus?.toLowerCase() !== "paid")) && (
+      <div className="border-t-2 border-gray-800 pt-6">
+        <div className="grid grid-cols-2 gap-8">
+          {data.paymentTerms && data.paymentStatus?.toLowerCase() !== "paid" && (
+            <div>
+              <h4 className="font-bold text-lg mb-2 underline">PAYMENT TERMS:</h4>
+              <p>{data.paymentTerms}</p>
+            </div>
+          )}
+          {data.notes && (
+            <div>
+              <h4 className="font-bold text-lg mb-2 underline">NOTES:</h4>
+              <p>{data.notes}</p>
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+    )}
 
     {/* Footer */}
     <div className="text-center mt-8 pt-6 border-t border-gray-400">

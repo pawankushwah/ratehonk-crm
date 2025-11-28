@@ -3787,7 +3787,14 @@ export class SimpleStorage {
         paidAmount: parseFloat(invoice.paid_amount || invoice.amount_paid || "0"),
         discountAmount: parseFloat(invoice.discount_amount || "0"),
         currency: invoice.currency || "USD",
-        paymentMethod: invoice.payment_method || null,
+        paymentMethod: invoice.payment_method ? (() => {
+          try {
+            const parsed = JSON.parse(invoice.payment_method);
+            return Array.isArray(parsed) ? parsed : [invoice.payment_method];
+          } catch {
+            return [invoice.payment_method];
+          }
+        })() : null,
         paymentTerms: invoice.payment_terms || null,
         isTaxInclusive: invoice.is_tax_inclusive || false,
         notes: invoice.notes || null,
@@ -3822,6 +3829,8 @@ export class SimpleStorage {
       search?: string;
       page?: number;
       pageSize?: number;
+      sortBy?: string;
+      sortOrder?: 'asc' | 'desc';
     }
   ) {
     try {
@@ -3896,7 +3905,82 @@ export class SimpleStorage {
       console.log("🔍   - search:", filterParams?.search, "(type:", typeof filterParams?.search, ")");
       console.log("🔍   - customerId:", filterParams?.customerId, "(type:", Array.isArray(filterParams?.customerId) ? "array" : typeof filterParams?.customerId, ")");
       console.log("🔍   - status:", filterParams?.status, "(type:", typeof filterParams?.status, ")");
+      console.log("🔍   - sortBy:", filterParams?.sortBy, "sortOrder:", filterParams?.sortOrder);
       console.log("🔍 ========================================");
+      
+      // Determine sort column and order
+      const sortBy = filterParams?.sortBy || 'created_at';
+      const sortOrder = filterParams?.sortOrder || 'desc';
+      
+      // Whitelist of valid sort columns for security
+      const validSortColumns = [
+        'invoice_number', 'customer_id', 'issue_date', 'due_date',
+        'total_amount', 'paid_amount', 'status', 'created_at'
+      ];
+      
+      // Validate and map sort column
+      const safeSortBy = validSortColumns.includes(sortBy) ? sortBy : 'created_at';
+      const orderDirection = sortOrder.toUpperCase() === 'ASC' ? sql`ASC` : sql`DESC`;
+      
+      // Build ORDER BY based on whether we need join prefix
+      let orderByColumn;
+      if (needsJoin) {
+        switch (safeSortBy) {
+          case 'invoice_number':
+            orderByColumn = sql`invoices.invoice_number`;
+            break;
+          case 'customer_id':
+            orderByColumn = sql`invoices.customer_id`;
+            break;
+          case 'issue_date':
+            orderByColumn = sql`invoices.issue_date`;
+            break;
+          case 'due_date':
+            orderByColumn = sql`invoices.due_date`;
+            break;
+          case 'total_amount':
+            orderByColumn = sql`invoices.total_amount`;
+            break;
+          case 'paid_amount':
+            orderByColumn = sql`invoices.paid_amount`;
+            break;
+          case 'status':
+            orderByColumn = sql`invoices.status`;
+            break;
+          case 'created_at':
+          default:
+            orderByColumn = sql`invoices.created_at`;
+            break;
+        }
+      } else {
+        switch (safeSortBy) {
+          case 'invoice_number':
+            orderByColumn = sql`invoice_number`;
+            break;
+          case 'customer_id':
+            orderByColumn = sql`customer_id`;
+            break;
+          case 'issue_date':
+            orderByColumn = sql`issue_date`;
+            break;
+          case 'due_date':
+            orderByColumn = sql`due_date`;
+            break;
+          case 'total_amount':
+            orderByColumn = sql`total_amount`;
+            break;
+          case 'paid_amount':
+            orderByColumn = sql`paid_amount`;
+            break;
+          case 'status':
+            orderByColumn = sql`status`;
+            break;
+          case 'created_at':
+          default:
+            orderByColumn = sql`created_at`;
+            break;
+        }
+      }
       
       let invoices;
       if (shouldFilterAfterFetch) {
@@ -3907,13 +3991,13 @@ export class SimpleStorage {
             SELECT invoices.* FROM invoices
             ${joinClause}
             WHERE ${whereClause}
-            ORDER BY invoices.created_at DESC
+            ORDER BY ${orderByColumn} ${orderDirection}
           `;
         } else {
           invoices = await sql`
             SELECT * FROM invoices 
             WHERE ${whereClause}
-            ORDER BY created_at DESC
+            ORDER BY ${orderByColumn} ${orderDirection}
           `;
         }
       } else {
@@ -3923,14 +4007,14 @@ export class SimpleStorage {
             SELECT invoices.* FROM invoices
             ${joinClause}
             WHERE ${whereClause}
-            ORDER BY invoices.created_at DESC
+            ORDER BY ${orderByColumn} ${orderDirection}
             LIMIT ${pageSize} OFFSET ${offset}
           `;
         } else {
           invoices = await sql`
             SELECT * FROM invoices 
             WHERE ${whereClause}
-            ORDER BY created_at DESC
+            ORDER BY ${orderByColumn} ${orderDirection}
             LIMIT ${pageSize} OFFSET ${offset}
           `;
         }
@@ -4251,7 +4335,7 @@ export class SimpleStorage {
           ${totalAmount},
           ${paidAmount},
           ${invoiceData.currency || "USD"},
-          ${invoiceData.paymentMethod || null},
+          ${invoiceData.paymentMethod ? (Array.isArray(invoiceData.paymentMethod) ? JSON.stringify(invoiceData.paymentMethod) : invoiceData.paymentMethod) : null},
           ${invoiceData.paymentTerms || null},
           ${invoiceData.isTaxInclusive !== undefined ? invoiceData.isTaxInclusive : false},
           ${invoiceData.notes || invoiceData.description || null},
@@ -4396,7 +4480,14 @@ export class SimpleStorage {
         totalAmount: parseFloat(newInvoice.total_amount),
         paidAmount: parseFloat(newInvoice.paid_amount || "0"),
         currency: newInvoice.currency || "USD",
-        paymentMethod: newInvoice.payment_method || null,
+        paymentMethod: newInvoice.payment_method ? (() => {
+          try {
+            const parsed = JSON.parse(newInvoice.payment_method);
+            return Array.isArray(parsed) ? parsed : [newInvoice.payment_method];
+          } catch {
+            return [newInvoice.payment_method];
+          }
+        })() : null,
         paymentTerms: newInvoice.payment_terms || null,
         isTaxInclusive: newInvoice.is_tax_inclusive || false,
         notes: newInvoice.notes,
@@ -4432,7 +4523,7 @@ export class SimpleStorage {
         totalAmount: invoiceData.totalAmount !== undefined ? parseFloat(invoiceData.totalAmount?.toString() || "0") : null,
         paidAmount: invoiceData.paidAmount !== undefined ? parseFloat(invoiceData.paidAmount?.toString() || "0") : null,
         currency: invoiceData.currency || null,
-        paymentMethod: invoiceData.paymentMethod || null,
+        paymentMethod: invoiceData.paymentMethod ? (Array.isArray(invoiceData.paymentMethod) ? JSON.stringify(invoiceData.paymentMethod) : invoiceData.paymentMethod) : null,
         paymentTerms: invoiceData.paymentTerms || null,
         isTaxInclusive: invoiceData.isTaxInclusive !== undefined ? invoiceData.isTaxInclusive : null,
         notes: invoiceData.notes !== undefined ? invoiceData.notes : null,
@@ -4562,7 +4653,14 @@ export class SimpleStorage {
         totalAmount: parseFloat(updatedInvoice.total_amount || "0"),
         paidAmount: parseFloat(updatedInvoice.paid_amount || "0"),
         currency: updatedInvoice.currency || "USD",
-        paymentMethod: updatedInvoice.payment_method || null,
+        paymentMethod: updatedInvoice.payment_method ? (() => {
+          try {
+            const parsed = JSON.parse(updatedInvoice.payment_method);
+            return Array.isArray(parsed) ? parsed : [updatedInvoice.payment_method];
+          } catch {
+            return [updatedInvoice.payment_method];
+          }
+        })() : null,
         paymentTerms: updatedInvoice.payment_terms || null,
         isTaxInclusive: updatedInvoice.is_tax_inclusive || false,
         notes: updatedInvoice.notes,

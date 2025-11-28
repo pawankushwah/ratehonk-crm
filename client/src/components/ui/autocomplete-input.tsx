@@ -46,11 +46,22 @@ export function AutocompleteInput({
 
   // Find the selected option's label to display
   const selectedOption = React.useMemo(() => {
-    return suggestions.find(s => s.value === value);
+    if (!value) return null;
+    // Try to find by exact match first
+    let found = suggestions.find(s => s.value === value);
+    // If not found, try string comparison (in case of type mismatch)
+    if (!found) {
+      found = suggestions.find(s => String(s.value) === String(value));
+    }
+    return found;
   }, [suggestions, value]);
 
   // Display label of selected option, or use input value for searching
-  const displayValue = open ? inputValue : (selectedOption?.label || value);
+  // If popover is open, show input value for searching
+  // If closed and option found, show label
+  // If closed and option not found, show empty string (will show placeholder)
+  // This prevents showing the raw value (ID) when option is not yet loaded
+  const displayValue = open ? inputValue : (selectedOption?.label || "");
 
   // Filter suggestions based on current input value
   const filteredSuggestions = React.useMemo(() => {

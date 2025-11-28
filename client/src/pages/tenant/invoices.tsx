@@ -130,6 +130,8 @@ export default function Invoices() {
   
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [sortBy, setSortBy] = useState<string | null>(null);
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
@@ -429,35 +431,290 @@ export default function Invoices() {
   // Download PDF handler
   const handleDownloadPDF = async (invoice: any) => {
     try {
-      const response = await fetch(
-        `/api/tenants/${tenant?.id}/invoices/${invoice.id}/pdf`,
-        {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem("token")}`,
-          },
-        },
+      // Get currency symbol helper
+      const getCurrencySymbol = (currencyCode: string): string => {
+        const symbols: { [key: string]: string } = {
+          USD: "$",
+          INR: "₹",
+          EUR: "€",
+          GBP: "£",
+          JPY: "¥",
+          AUD: "A$",
+          CAD: "C$",
+          CHF: "CHF",
+          CNY: "¥",
+          SGD: "S$",
+          HKD: "HK$",
+          NZD: "NZ$",
+        };
+        return symbols[currencyCode] || currencyCode;
+      };
+
+      // Parse line items
+      const invoiceData = invoice as any;
+      let lineItems: any[] = [];
+      
+      if (invoiceData.lineItems) {
+        if (typeof invoiceData.lineItems === "string") {
+          try {
+            lineItems = JSON.parse(invoiceData.lineItems);
+          } catch (e) {
+            console.warn("Failed to parse line items:", e);
+          }
+        } else if (Array.isArray(invoiceData.lineItems)) {
+          lineItems = invoiceData.lineItems;
+        }
+      }
+      
+      if (lineItems.length === 0) {
+        if (invoiceData.line_items) {
+          if (typeof invoiceData.line_items === "string") {
+            try {
+              lineItems = JSON.parse(invoiceData.line_items);
+            } catch (e) {
+              console.warn("Failed to parse line_items:", e);
+            }
+          } else if (Array.isArray(invoiceData.line_items)) {
+            lineItems = invoiceData.line_items;
+          }
+        } else if (invoiceData.items && Array.isArray(invoiceData.items)) {
+          lineItems = invoiceData.items;
+        }
+      }
+
+      // Get customer data
+      const customer = customers.find(
+        (c) => c.id === invoice.customerId,
       );
 
-      if (response.ok) {
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = `invoice-${invoice.invoiceNumber || invoice.id}.pdf`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        window.URL.revokeObjectURL(url);
+      // Get company info from tenant
+      const companyName = tenant?.companyName || "Company Name";
+      const companyEmail = tenant?.contactEmail || "company@example.com";
+      const companyPhone = tenant?.contactPhone || "";
 
-        toast({
-          title: "Success",
-          description: "Invoice PDF downloaded successfully!",
-        });
-      } else {
-        throw new Error("Failed to download PDF");
+      // Get currency symbol
+      const currency = invoice.currency || "USD";
+      const currencySymbol = getCurrencySymbol(currency);
+
+      // Prepare invoice data for template
+      const pdfData: any = {
+        invoiceNumber: invoice.invoiceNumber || `INV-${invoice.id}`,
+        issueDate: invoice.issueDate || new Date().toISOString().split("T")[0],
+        dueDate: invoice.dueDate || new Date().toISOString().split("T")[0],
+        customerName: customer?.name || customer?.customerName || "Customer",
+        customerEmail: customer?.email || customer?.customerEmail || "",
+        customerPhone: customer?.phone || customer?.customerPhone || "",
+        customerAddress: customer?.address || customer?.customerAddress || "",
+        companyName: companyName,
+        companyEmail: companyEmail,
+        companyPhone: companyPhone,
+        companyAddress: tenant?.address || "",
+        items: lineItems.length > 0
+          ? lineItems
+              .map((item, index) => {
+                const sellingPrice = parseFloat(
+                  item.sellingPrice?.toString() || 
+                  item.unitPrice?.toString() || 
+                  item.price?.toString() || 
+                  "0"
+                );
+                const quantity = parseInt(
+                  item.quantity?.toString() || 
+                  item.qty?.toString() || 
+                  "1"
+                );
+                const totalAmount = parseFloat(
+                  item.totalAmount?.toString() || 
+                  item.totalPrice?.toString() || 
+                  item.amount?.toString() || 
+                  "0"
+                );
+                
+                let description = item.itemTitle?.trim() || item.description?.trim();
+                if (!description && item.travelCategory) {
+                  description = item.travelCategory;
+                }
+                if (!description && item.name) {
+                  description = item.name;
+                }
+                if (!description) {
+                  description = `Item ${index + 1}`;
+                }
+                
+                const calculatedTotal = totalAmount > 0 
+                  ? totalAmount 
+                  : (sellingPrice * quantity);
+                
+                return {
+                  description: description,
+                  quantity: quantity || 1,
+                  unitPrice: sellingPrice || 0,
+                  totalPrice: calculatedTotal || 0,
+                };
+              })
+              .filter((item) => item !== null)
+          : [
+              {
+                description: "No line items available",
+                quantity: 1,
+                unitPrice: 0,
+                totalPrice: 0,
+              }
+            ],
+        subtotal: parseFloat((invoiceData.subtotal || invoiceData.totalAmount || 0).toString()),
+        taxAmount: parseFloat((invoiceData.taxAmount || 0).toString()),
+        discountAmount: parseFloat((invoiceData.discountAmount || 0).toString()),
+        totalAmount: parseFloat(invoice.totalAmount || 0),
+        currency: currencySymbol,
+        notes: invoice.notes || undefined,
+        paymentTerms: invoiceData.paymentTerms || undefined,
+        paymentStatus: invoiceData.status || invoice.status || "pending",
+        paidAmount: parseFloat((invoiceData.paidAmount || 0).toString()),
+      };
+
+      // Create a temporary div with the invoice HTML
+      const tempDiv = document.createElement('div');
+      tempDiv.style.position = 'absolute';
+      tempDiv.style.left = '-9999px';
+      tempDiv.style.width = '800px';
+      tempDiv.style.padding = '40px';
+      tempDiv.style.backgroundColor = '#ffffff';
+      tempDiv.innerHTML = `
+        <div style="font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 40px; background: white;">
+          <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 40px; padding-bottom: 20px; border-bottom: 2px solid #e5e7eb;">
+            <div>
+              <h1 style="font-size: 28px; font-weight: 700; color: #1f2937; margin-bottom: 8px;">${pdfData.companyName}</h1>
+              <p style="color: #6b7280; margin-bottom: 4px;">${pdfData.companyEmail}</p>
+              ${pdfData.companyPhone ? `<p style="color: #6b7280; margin-bottom: 4px;">${pdfData.companyPhone}</p>` : ''}
+              ${pdfData.companyAddress ? `<p style="color: #6b7280; margin-bottom: 4px;">${pdfData.companyAddress}</p>` : ''}
+            </div>
+            <div style="text-align: right;">
+              <div style="margin-bottom: 8px;">
+                <h2 style="font-size: 24px; font-weight: 600; color: #3b82f6; margin: 0 0 8px 0; display: inline-block;">INVOICE</h2>
+                ${pdfData.paymentStatus?.toLowerCase() === "paid" ? `<span style="display: inline-block; margin-left: 12px; padding: 6px 14px; border-radius: 4px; font-size: 11px; font-weight: 700; background-color: #10b981; color: #ffffff; text-transform: uppercase; letter-spacing: 0.5px; vertical-align: middle;">PAID</span>` : ''}
+              </div>
+              <p style="font-size: 18px; font-weight: 600; margin-bottom: 4px;">#${pdfData.invoiceNumber}</p>
+              <p style="color: #6b7280; margin-bottom: 4px;">Date: ${formatDate(pdfData.issueDate)}</p>
+              ${pdfData.paymentStatus?.toLowerCase() !== "paid" ? `<p style="color: #6b7280; margin-bottom: 4px;">Due: ${formatDate(pdfData.dueDate)}</p>` : ''}
+            </div>
+          </div>
+
+          <div style="margin-bottom: 40px;">
+            <h3 style="font-size: 18px; font-weight: 600; color: #1f2937; margin-bottom: 12px;">Bill To:</h3>
+            <div style="background: #f9fafb; padding: 16px; border-radius: 8px;">
+              <p style="font-weight: 600; margin-bottom: 4px;">${pdfData.customerName}</p>
+              <p style="color: #6b7280; margin-bottom: 4px;">${pdfData.customerEmail}</p>
+              ${pdfData.customerPhone ? `<p style="color: #6b7280; margin-bottom: 4px;">${pdfData.customerPhone}</p>` : ''}
+              ${pdfData.customerAddress ? `<p style="color: #6b7280; margin-bottom: 4px;">${pdfData.customerAddress}</p>` : ''}
+            </div>
+          </div>
+
+          <table style="width: 100%; border-collapse: collapse; margin-bottom: 40px;">
+            <thead>
+              <tr style="background: #f3f4f6;">
+                <th style="padding: 12px; text-align: left; font-weight: 600; color: #374151; border-bottom: 2px solid #e5e7eb;">Description</th>
+                <th style="padding: 12px; text-align: center; font-weight: 600; color: #374151; border-bottom: 2px solid #e5e7eb;">Qty</th>
+                <th style="padding: 12px; text-align: right; font-weight: 600; color: #374151; border-bottom: 2px solid #e5e7eb;">Unit Price</th>
+                <th style="padding: 12px; text-align: right; font-weight: 600; color: #374151; border-bottom: 2px solid #e5e7eb;">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${pdfData.items.map((item: any) => `
+                <tr style="border-bottom: 1px solid #e5e7eb;">
+                  <td style="padding: 12px;">${item.description}</td>
+                  <td style="padding: 12px; text-align: center;">${item.quantity}</td>
+                  <td style="padding: 12px; text-align: right;">${pdfData.currency} ${item.unitPrice.toFixed(2)}</td>
+                  <td style="padding: 12px; text-align: right;">${pdfData.currency} ${item.totalPrice.toFixed(2)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+
+          <div style="display: flex; justify-content: flex-end; margin-bottom: 40px;">
+            <div style="width: 300px;">
+              <div style="display: flex; justify-content: space-between; padding: 8px 0;">
+                <span>Subtotal:</span>
+                <span>${pdfData.currency} ${pdfData.subtotal.toFixed(2)}</span>
+              </div>
+              ${pdfData.discountAmount > 0 ? `
+                <div style="display: flex; justify-content: space-between; padding: 8px 0; color: #059669;">
+                  <span>Discount:</span>
+                  <span>-${pdfData.currency} ${pdfData.discountAmount.toFixed(2)}</span>
+                </div>
+              ` : ''}
+              <div style="display: flex; justify-content: space-between; padding: 8px 0;">
+                <span>Tax:</span>
+                <span>${pdfData.currency} ${pdfData.taxAmount.toFixed(2)}</span>
+              </div>
+              <div style="display: flex; justify-content: space-between; padding: 16px 0; margin-top: 12px; border-top: 2px solid #3b82f6; border-bottom: 2px solid #3b82f6;">
+                <span style="font-size: 18px; font-weight: 700;">Total:</span>
+                <span style="font-size: 18px; font-weight: 700;">${pdfData.currency} ${pdfData.totalAmount.toFixed(2)}</span>
+              </div>
+            </div>
+          </div>
+
+          ${pdfData.paymentStatus?.toLowerCase() !== "paid" && pdfData.paymentTerms ? `
+            <div style="border-top: 1px solid #e5e7eb; padding-top: 24px; margin-top: 40px;">
+              <h4 style="font-weight: 600; margin-bottom: 8px;">Payment Terms:</h4>
+              <p style="color: #6b7280;">${pdfData.paymentTerms}</p>
+            </div>
+          ` : ''}
+
+          ${pdfData.notes ? `
+            <div style="border-top: 1px solid #e5e7eb; padding-top: 24px; margin-top: 40px;">
+              <h4 style="font-weight: 600; margin-bottom: 8px;">Notes:</h4>
+              <div style="color: #6b7280;">${pdfData.notes}</div>
+            </div>
+          ` : ''}
+        </div>
+      `;
+
+      document.body.appendChild(tempDiv);
+
+      // Generate PDF using html2canvas and jsPDF
+      const html2canvas = (await import('html2canvas')).default;
+      const jsPDF = (await import('jspdf')).default;
+      
+      const canvas = await html2canvas(tempDiv, {
+        backgroundColor: '#ffffff',
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+        logging: false,
+      });
+      
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+      
+      // Handle multi-page PDFs
+      let heightLeft = pdfHeight;
+      let position = 0;
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      
+      pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
+      heightLeft -= pageHeight;
+      
+      while (heightLeft > 0) {
+        position = heightLeft - pdfHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
+        heightLeft -= pageHeight;
       }
+      
+      // Clean up temporary element
+      document.body.removeChild(tempDiv);
+      
+      // Download PDF
+      pdf.save(`invoice-${pdfData.invoiceNumber || invoice.id}.pdf`);
+
+      toast({
+        title: "Success",
+        description: "Invoice PDF downloaded successfully!",
+      });
     } catch (error) {
+      console.error("Error generating PDF:", error);
       toast({
         title: "Error",
         description: "Failed to download PDF. Please try again.",
@@ -704,7 +961,7 @@ export default function Invoices() {
     isLoading,
     error,
   } = useQuery<{ data: Invoice[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }>({
-    queryKey: [`/api/tenants/${tenant?.id}/invoices`, currentPage, pageSize, statusFilter, customerFilter, vendorFilter, providerFilter, leadTypeFilter, searchTerm],
+    queryKey: [`/api/tenants/${tenant?.id}/invoices`, currentPage, pageSize, statusFilter, customerFilter, vendorFilter, providerFilter, leadTypeFilter, searchTerm, sortBy, sortOrder],
     enabled: !!tenant?.id,
     refetchOnWindowFocus: true,
     refetchInterval: 30000,
@@ -735,6 +992,10 @@ export default function Invoices() {
       }
       if (searchTerm) {
         params.append("search", searchTerm);
+      }
+      if (sortBy) {
+        params.append("sortBy", sortBy);
+        params.append("sortOrder", sortOrder);
       }
 
       const response = await fetch(
@@ -780,6 +1041,19 @@ export default function Invoices() {
       NZD: "NZ$",
     };
     return symbols[currencyCode] || currencyCode;
+  };
+
+  // Helper function to format date as dd-mm-yyyy
+  const formatDate = (date: string | Date | null | undefined): string => {
+    if (!date) return "-";
+    const dateObj = typeof date === 'string' ? new Date(date) : date;
+    if (isNaN(dateObj.getTime())) return "-";
+    
+    const day = String(dateObj.getDate()).padStart(2, '0');
+    const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const year = dateObj.getFullYear();
+    
+    return `${day}-${month}-${year}`;
   };
 
   // Update invoice status mutation
@@ -930,7 +1204,7 @@ export default function Invoices() {
         <div className="flex items-center">
           <Calendar className="h-4 w-4 mr-2 text-gray-400" />
           <span>
-            {issueDate ? new Date(issueDate).toLocaleDateString() : "-"}
+            {formatDate(issueDate)}
           </span>
         </div>
       ),
@@ -942,14 +1216,14 @@ export default function Invoices() {
       render: (dueDate, invoice) => {
         const isOverdue =
           invoice.status === "overdue" ||
-          (invoice.status === "pending" && new Date(dueDate) < new Date());
+          (invoice.status === "pending" && dueDate && new Date(dueDate) < new Date());
         return (
           <div className="flex items-center">
             <Clock
               className={`h-4 w-4 mr-2 ${isOverdue ? "text-red-400" : "text-gray-400"}`}
             />
             <span className={isOverdue ? "text-red-600 font-medium" : ""}>
-              {dueDate ? new Date(dueDate).toLocaleDateString() : "-"}
+              {formatDate(dueDate)}
             </span>
           </div>
         );
@@ -1106,6 +1380,49 @@ export default function Invoices() {
   useEffect(() => {
     setCurrentPage(1);
   }, [statusFilter, customerFilter, vendorFilter, providerFilter, leadTypeFilter, searchTerm]);
+
+  // Map column keys to API field names
+  const getApiFieldName = (columnKey: string): string => {
+    const fieldMap: { [key: string]: string } = {
+      invoiceNumber: 'invoice_number',
+      customerName: 'customer_id', // Will need to sort by customer name via join
+      issueDate: 'issue_date',
+      dueDate: 'due_date',
+      totalAmount: 'total_amount',
+      paidAmount: 'paid_amount',
+      status: 'status',
+    };
+    return fieldMap[columnKey] || columnKey;
+  };
+
+  // Map API field names back to column keys for icon display
+  const getColumnKeyFromApiField = (apiField: string): string | null => {
+    const reverseMap: { [key: string]: string } = {
+      'invoice_number': 'invoiceNumber',
+      'customer_id': 'customerName',
+      'issue_date': 'issueDate',
+      'due_date': 'dueDate',
+      'total_amount': 'totalAmount',
+      'paid_amount': 'paidAmount',
+      'status': 'status',
+      'created_at': 'created_at',
+    };
+    return reverseMap[apiField] || null;
+  };
+
+  // Handle column sorting
+  const handleSort = (columnKey: string) => {
+    const apiField = getApiFieldName(columnKey);
+    if (sortBy === apiField) {
+      // Toggle sort order
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      // Set new sort column
+      setSortBy(apiField);
+      setSortOrder('asc');
+    }
+    setCurrentPage(1); // Reset to first page when sorting changes
+  };
 
   // Apply filters function
   const handleApplyFilters = () => {
@@ -1377,18 +1694,6 @@ export default function Invoices() {
     );
   }
 
-  if (isLoading) {
-    return (
-      <Layout>
-        <div className="p-8">
-          <div className="animate-pulse space-y-6">
-            <div className="h-8 bg-gray-200 rounded w-1/3"></div>
-            <div className="h-64 bg-gray-200 rounded"></div>
-          </div>
-        </div>
-      </Layout>
-    );
-  }
 
   // Calculate analytics data
   const totalInvoices = invoices.length;
@@ -1657,19 +1962,29 @@ export default function Invoices() {
             <CardTitle className="text-base">Filter Invoices</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 mb-3">
-              <div className="relative">
-                <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400 h-3 w-3" />
-                <Input
-                  placeholder="Search invoice number and voucher number"
-                  value={localSearchTerm}
-                  onChange={(e) => setLocalSearchTerm(e.target.value)}
-                  className="pl-7 h-9 text-sm"
-                />
-              </div>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleApplyFilters();
+              }}
+            >
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 mb-3">
+                <div className="relative">
+                  <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400 h-3 w-3" />
+                  <Input
+                    placeholder="Search invoice number and voucher number"
+                    value={localSearchTerm}
+                    onChange={(e) => setLocalSearchTerm(e.target.value)}
+                    className="pl-7 h-9 text-sm"
+                  />
+                </div>
               <Select
                 value={localStatusFilter}
-                onValueChange={setLocalStatusFilter}
+                onValueChange={(value) => {
+                  setLocalStatusFilter(value);
+                  setStatusFilter(value);
+                  setCurrentPage(1);
+                }}
               >
                 <SelectTrigger className="h-9 text-sm">
                   <SelectValue placeholder="Status" />
@@ -1687,12 +2002,20 @@ export default function Invoices() {
                 <MultiSelectCustomer
                   customers={customers}
                   selectedCustomers={localCustomerFilter}
-                  onSelectionChange={setLocalCustomerFilter}
+                  onSelectionChange={(selected) => {
+                    setLocalCustomerFilter(selected);
+                    setCustomerFilter([...selected]);
+                    setCurrentPage(1);
+                  }}
                 />
               </div>
               <Select
                 value={localLeadTypeFilter}
-                onValueChange={setLocalLeadTypeFilter}
+                onValueChange={(value) => {
+                  setLocalLeadTypeFilter(value);
+                  setLeadTypeFilter(value);
+                  setCurrentPage(1);
+                }}
               >
                 <SelectTrigger className="h-9 text-sm">
                   <SelectValue placeholder="Lead Type" />
@@ -1708,7 +2031,11 @@ export default function Invoices() {
               </Select>
               <Select
                 value={localVendorFilter}
-                onValueChange={setLocalVendorFilter}
+                onValueChange={(value) => {
+                  setLocalVendorFilter(value);
+                  setVendorFilter(value);
+                  setCurrentPage(1);
+                }}
               >
                 <SelectTrigger className="h-9 text-sm">
                   <SelectValue placeholder="Vendor" />
@@ -1724,7 +2051,11 @@ export default function Invoices() {
               </Select>
               <Select
                 value={localProviderFilter}
-                onValueChange={setLocalProviderFilter}
+                onValueChange={(value) => {
+                  setLocalProviderFilter(value);
+                  setProviderFilter(value);
+                  setCurrentPage(1);
+                }}
               >
                 <SelectTrigger className="h-9 text-sm">
                   <SelectValue placeholder="Provider" />
@@ -1747,6 +2078,7 @@ export default function Invoices() {
               </div>
               <div className="flex gap-2">
                 <Button
+                  type="button"
                   variant="outline"
                   size="sm"
                   onClick={handleResetFilters}
@@ -1755,14 +2087,15 @@ export default function Invoices() {
                   Reset
                 </Button>
                 <Button
+                  type="submit"
                   size="sm"
-                  onClick={handleApplyFilters}
                   className="h-8 text-xs"
                 >
                   Apply Filters
                 </Button>
               </div>
             </div>
+            </form>
           </CardContent>
         </Card>
 
@@ -1778,6 +2111,11 @@ export default function Invoices() {
               isLoading={isLoading}
               showPagination={false}
               emptyMessage="No invoices found. Create your first invoice to get started."
+              externalSort={{
+                sortColumn: sortBy ? getColumnKeyFromApiField(sortBy) : null,
+                sortDirection: sortOrder,
+                onSort: handleSort,
+              }}
             />
             {/* Backend Pagination Controls */}
             <div className="flex items-center justify-between mt-4 pt-4 border-t">

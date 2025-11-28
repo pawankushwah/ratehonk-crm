@@ -13273,6 +13273,8 @@ Please improve this email.`;
           search: req.query.search as string | undefined,
           page: req.query.page ? parseInt(req.query.page as string) : 1,
           pageSize: req.query.pageSize ? parseInt(req.query.pageSize as string) : 10,
+          sortBy: req.query.sortBy as string | undefined,
+          sortOrder: req.query.sortOrder as 'asc' | 'desc' | undefined,
         };
 
         console.log("📋 Calling getInvoicesByTenant with ID:", tenantIdNum, "filters:", filters);
