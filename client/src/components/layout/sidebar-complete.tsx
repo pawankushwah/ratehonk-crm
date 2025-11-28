@@ -19,6 +19,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   BarChart3,
   Users,
   Target,
@@ -92,9 +97,9 @@ const allMenuItems = {
     name: "Estimate",
     href: "/estimates",
     icon: FileText,
-    group: null,
+    group: "Invoice & Billing",
     badge: null,
-    order: 4,
+    order: 4.3,
   },
   expenses: {
     name: "Expense",
@@ -168,21 +173,29 @@ const allMenuItems = {
   //   badge: null,
   //   order: 4,
   // },
-  // packages: {
-  //   name: "Travel Packages",
-  //   href: "/packages",
-  //   icon: Package,
-  //   group: "Booking & Sales",
-  //   badge: null,
-  //   order: 4,
-  // },
+  packages: {
+    name: "Travel Packages",
+    href: "/packages",
+    icon: Package,
+    group: null,
+    badge: null,
+    order: 3.9,
+  },
   invoices: {
-    name: "Invoices & Billing",
+    name: "Invoices",
     href: "/invoices",
     icon: FileText,
-    group:null,
+    group: "Invoice & Billing",
     badge: null,
-    order: 4,
+    order: 4.1,
+  },
+  "supplier-management": {
+    name: "Supplier Management",
+    href: "/vendors",
+    icon: Building2,
+    group: "Invoice & Billing",
+    badge: null,
+    order: 4.2,
   },
   // estimates: {
   //   name: "Estimate Management",
@@ -222,7 +235,7 @@ const allMenuItems = {
     icon: Mail,
     group: null,
     badge: null,
-    order: 5,
+    order: 6,
   },
   // "email-campaigns": {
   //   name: "Campaign Manager",
@@ -485,7 +498,31 @@ export function CompleteSidebar({
       }
     });
 
-    return { groups, singleItems };
+    // Sort groups by the minimum order of items in each group
+    const sortedGroups = Object.entries(groups).sort(([groupA, itemsA], [groupB, itemsB]) => {
+      const minOrderA = Math.min(...itemsA.map(item => item.order));
+      const minOrderB = Math.min(...itemsB.map(item => item.order));
+      return minOrderA - minOrderB;
+    });
+
+    // Create a combined list of all menu items (single items and groups) sorted by order
+    const allMenuItemsSorted: Array<{ type: 'single' | 'group'; data: any; order: number }> = [];
+    
+    // Add single items
+    singleItems.forEach(item => {
+      allMenuItemsSorted.push({ type: 'single', data: item, order: item.order });
+    });
+    
+    // Add groups (using minimum order of items in group)
+    sortedGroups.forEach(([groupName, groupItems]) => {
+      const minOrder = Math.min(...groupItems.map(item => item.order));
+      allMenuItemsSorted.push({ type: 'group', data: { name: groupName, items: groupItems }, order: minOrder });
+    });
+    
+    // Sort all items by order
+    allMenuItemsSorted.sort((a, b) => a.order - b.order);
+
+    return { groups: Object.fromEntries(sortedGroups), singleItems, allMenuItemsSorted };
   }, []);
 
   const toggleSidebar = () => {
@@ -508,8 +545,6 @@ export function CompleteSidebar({
   };
 
   const toggleGroup = (groupLabel: string) => {
-    if (isCollapsed) return; // Don't expand groups in collapsed state
-
     setExpandedGroups((prev) =>
       prev.includes(groupLabel)
         ? prev.filter((g) => g !== groupLabel)
@@ -518,7 +553,7 @@ export function CompleteSidebar({
   };
 
   const isGroupExpanded = (groupLabel: string) => {
-    return !isCollapsed && expandedGroups.includes(groupLabel);
+    return expandedGroups.includes(groupLabel);
   };
 
   const isActive = (href: string) => {
@@ -539,6 +574,11 @@ export function CompleteSidebar({
           : "bg-[#f1f4f9] border-gray-200", // Light gray-blue for expanded
         className,
       )}
+      onMouseLeave={() => {
+        if (isCollapsed) {
+          setExpandedGroups([]); // Close all popovers when mouse leaves sidebar
+        }
+      }}
     >
       {/* Header with logo and menu button */}
       <div
@@ -583,59 +623,59 @@ export function CompleteSidebar({
       <nav className="flex-1 overflow-y-auto py-4 scrollbar-none">
         <TooltipProvider delayDuration={0}>
           <div className={cn("space-y-1", isCollapsed ? "px-2" : "px-4")}>
-            {/* Single items first */}
-            {menuGroups.singleItems.map((item, index) => {
-              const Icon = item.icon;
-              const active = isActive(item.href);
+            {/* All menu items sorted by order */}
+            {menuGroups.allMenuItemsSorted.map((menuItem, index) => {
+              if (menuItem.type === 'single') {
+                const item = menuItem.data;
+                const Icon = item.icon;
+                const active = isActive(item.href);
 
-              const menuButton = (
-                <Link key={index} href={item.href}>
-                  <Button
-                    variant="ghost"
-                    className={cn(
-                      "w-full justify-start h-11 transition-all duration-200 text-left",
-                      isCollapsed ? "px-0" : "px-3",
-                      active
-                        ? isCollapsed
-                          ? "bg-white/20 text-white"
-                          : "bg-[#0EA5E9] text-white hover:bg-[#0EA5E9]/90"
-                        : isCollapsed
-                          ? "text-white hover:bg-white/10"
-                          : "text-gray-700 hover:bg-gray-200",
-                    )}
-                  >
-                    <div
+                const menuButton = (
+                  <Link key={index} href={item.href}>
+                    <Button
+                      variant="ghost"
                       className={cn(
-                        "flex items-center",
-                        isCollapsed ? "justify-center w-full" : "gap-3",
+                        "w-full justify-start h-11 transition-all duration-200 text-left",
+                        isCollapsed ? "px-0" : "px-3",
+                        active
+                          ? isCollapsed
+                            ? "bg-white/20 text-white"
+                            : "bg-[#0EA5E9] text-white hover:bg-[#0EA5E9]/90"
+                          : isCollapsed
+                            ? "text-white hover:bg-white/10"
+                            : "text-gray-700 hover:bg-gray-200",
                       )}
                     >
-                      <Icon className="h-5 w-5 shrink-0" />
-                      {!isCollapsed && (
-                        <span className="font-medium text-sm">{item.name}</span>
-                      )}
-                    </div>
-                  </Button>
-                </Link>
-              );
-
-              if (isCollapsed) {
-                return (
-                  <Tooltip key={index}>
-                    <TooltipTrigger asChild>{menuButton}</TooltipTrigger>
-                    <TooltipContent side="right" className="font-medium">
-                      {item.name}
-                    </TooltipContent>
-                  </Tooltip>
+                      <div
+                        className={cn(
+                          "flex items-center",
+                          isCollapsed ? "justify-center w-full" : "gap-3",
+                        )}
+                      >
+                        <Icon className="h-5 w-5 shrink-0" />
+                        {!isCollapsed && (
+                          <span className="font-medium text-sm">{item.name}</span>
+                        )}
+                      </div>
+                    </Button>
+                  </Link>
                 );
-              }
 
-              return menuButton;
-            })}
+                if (isCollapsed) {
+                  return (
+                    <Tooltip key={index}>
+                      <TooltipTrigger asChild>{menuButton}</TooltipTrigger>
+                      <TooltipContent side="right" className="font-medium">
+                        {item.name}
+                      </TooltipContent>
+                    </Tooltip>
+                  );
+                }
 
-            {/* Group items */}
-            {Object.entries(menuGroups.groups).map(
-              ([groupName, groupItems]) => {
+                return menuButton;
+              } else {
+                // Group item
+                const { name: groupName, items: groupItems } = menuItem.data;
                 const isExpanded = isGroupExpanded(groupName);
                 const hasActiveChild = hasActiveChildInGroup(groupItems);
                 const firstItem = groupItems[0];
@@ -679,56 +719,140 @@ export function CompleteSidebar({
                   </Button>
                 );
 
+                const isPopoverOpen = isCollapsed && isGroupExpanded(groupName);
+
                 return (
                   <div key={groupName}>
                     {isCollapsed ? (
-                      <Tooltip>
-                        <TooltipTrigger asChild>{groupButton}</TooltipTrigger>
-                        <TooltipContent side="right" className="font-medium">
-                          {groupName}
-                        </TooltipContent>
-                      </Tooltip>
+                      <Popover open={isPopoverOpen} onOpenChange={(open) => {
+                        if (isCollapsed) {
+                          if (open) {
+                            setExpandedGroups((prev) =>
+                              prev.includes(groupName)
+                                ? prev
+                                : [...prev, groupName]
+                            );
+                          } else {
+                            setExpandedGroups((prev) =>
+                              prev.filter((g) => g !== groupName)
+                            );
+                          }
+                        }
+                      }}>
+                        <PopoverTrigger asChild>
+                          <div
+                            onMouseEnter={() => {
+                              if (isCollapsed) {
+                                setExpandedGroups((prev) =>
+                                  prev.includes(groupName)
+                                    ? prev
+                                    : [...prev, groupName]
+                                );
+                              }
+                            }}
+                            onMouseLeave={() => {
+                              // Don't close immediately on mouse leave - let PopoverContent handle it
+                            }}
+                          >
+                            {groupButton}
+                          </div>
+                        </PopoverTrigger>
+                        <PopoverContent 
+                          side="right" 
+                          align="start"
+                          className="w-56 p-1"
+                          onOpenAutoFocus={(e) => e.preventDefault()}
+                          onMouseEnter={() => {
+                            if (isCollapsed) {
+                              setExpandedGroups((prev) =>
+                                prev.includes(groupName)
+                                  ? prev
+                                  : [...prev, groupName]
+                              );
+                            }
+                          }}
+                          onMouseLeave={() => {
+                            if (isCollapsed) {
+                              setExpandedGroups((prev) =>
+                                prev.filter((g) => g !== groupName)
+                              );
+                            }
+                          }}
+                        >
+                          <div className="space-y-1">
+                            {groupItems.map((child: any, childIndex: number) => {
+                              const ChildIcon = child.icon;
+                              const childActive = isActive(child.href);
+
+                              return (
+                                <Link key={childIndex} href={child.href}>
+                                  <Button
+                                    variant="ghost"
+                                    className={cn(
+                                      "w-full justify-start h-9 px-3 text-left transition-all duration-200",
+                                      childActive
+                                        ? "bg-[#0EA5E9] text-white hover:bg-[#0EA5E9]/90"
+                                        : "text-gray-700 hover:bg-gray-100",
+                                    )}
+                                  >
+                                    <div className="flex items-center gap-3 w-full">
+                                      <ChildIcon className="h-4 w-4 shrink-0" />
+                                      <span className="text-sm">{child.name}</span>
+                                      {child.badge && (
+                                        <span className="ml-auto text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
+                                          {child.badge}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </Button>
+                                </Link>
+                              );
+                            })}
+                          </div>
+                        </PopoverContent>
+                      </Popover>
                     ) : (
-                      groupButton
-                    )}
+                      <>
+                        {groupButton}
+                        {/* Group submenu items */}
+                        {isExpanded && (
+                          <div className="ml-6 mt-1 space-y-1">
+                            {groupItems.map((child: any, childIndex: number) => {
+                              const ChildIcon = child.icon;
+                              const childActive = isActive(child.href);
 
-                    {/* Group submenu items */}
-                    {isExpanded && !isCollapsed && (
-                      <div className="ml-6 mt-1 space-y-1">
-                        {groupItems.map((child, childIndex) => {
-                          const ChildIcon = child.icon;
-                          const childActive = isActive(child.href);
-
-                          return (
-                            <Link key={childIndex} href={child.href}>
-                              <Button
-                                variant="ghost"
-                                className={cn(
-                                  "w-full justify-start h-9 px-3 text-left transition-all duration-200",
-                                  childActive
-                                    ? "bg-[#0EA5E9] text-white"
-                                    : "text-gray-600 hover:bg-gray-200",
-                                )}
-                              >
-                                <div className="flex items-center gap-3 w-full">
-                                  <ChildIcon className="h-4 w-4 shrink-0" />
-                                  <span className="text-sm">{child.name}</span>
-                                  {child.badge && (
-                                    <span className="ml-auto text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
-                                      {child.badge}
-                                    </span>
-                                  )}
-                                </div>
-                              </Button>
-                            </Link>
-                          );
-                        })}
-                      </div>
+                              return (
+                                <Link key={childIndex} href={child.href}>
+                                  <Button
+                                    variant="ghost"
+                                    className={cn(
+                                      "w-full justify-start h-9 px-3 text-left transition-all duration-200",
+                                      childActive
+                                        ? "bg-[#0EA5E9] text-white"
+                                        : "text-gray-600 hover:bg-gray-200",
+                                    )}
+                                  >
+                                    <div className="flex items-center gap-3 w-full">
+                                      <ChildIcon className="h-4 w-4 shrink-0" />
+                                      <span className="text-sm">{child.name}</span>
+                                      {child.badge && (
+                                        <span className="ml-auto text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
+                                          {child.badge}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </Button>
+                                </Link>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 );
-              },
-            )}
+              }
+            })}
           </div>
         </TooltipProvider>
       </nav>
@@ -786,7 +910,7 @@ export function CompleteSidebar({
                 <DropdownMenuLabel className="font-medium">
                   <div className="flex items-center gap-2">
                     <Building2 className="h-4 w-4" />
-                    {tenant?.name || "My Account"}
+                    {(tenant as any)?.name || "My Account"}
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
