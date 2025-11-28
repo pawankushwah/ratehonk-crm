@@ -16612,6 +16612,60 @@ Please improve this email.`;
         tenantId: req.user.tenantId,
       });
 
+      // Extract query parameters
+      const page = req.query.page ? parseInt(req.query.page as string) : 1;
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : 10;
+      const offset = (page - 1) * limit;
+      const search = req.query.search as string | undefined;
+      const status = req.query.status as string | undefined;
+      const category = req.query.category as string | undefined;
+      const startDate = req.query.startDate as string | undefined;
+      const endDate = req.query.endDate as string | undefined;
+
+      console.log("💰 GET /api/expenses - Query params:", {
+        page,
+        limit,
+        offset,
+        search,
+        status,
+        category,
+        startDate,
+        endDate,
+      });
+
+      // Build WHERE clause dynamically
+      let whereClause = sql`e.tenant_id = ${req.user.tenantId}`;
+
+      if (search) {
+        const searchPattern = `%${search}%`;
+        whereClause = sql`${whereClause} AND (e.title ILIKE ${searchPattern} OR e.description ILIKE ${searchPattern})`;
+      }
+
+      if (status && status !== "all") {
+        whereClause = sql`${whereClause} AND e.status = ${status}`;
+      }
+
+      if (category && category !== "all") {
+        whereClause = sql`${whereClause} AND e.category = ${category}`;
+      }
+
+      if (startDate) {
+        whereClause = sql`${whereClause} AND e.expense_date >= ${startDate}`;
+      }
+
+      if (endDate) {
+        whereClause = sql`${whereClause} AND e.expense_date <= ${endDate}`;
+      }
+
+      // Get total count for pagination
+      const [countResult] = await sql`
+        SELECT COUNT(*) as total
+        FROM expenses e
+        WHERE ${whereClause}
+      `;
+      const total = Number(countResult.total);
+
+      // Get paginated expenses
       const expenses = await sql`
         SELECT 
           e.*,
@@ -16623,12 +16677,23 @@ Please improve this email.`;
         LEFT JOIN vendors v ON e.vendor_id = v.id
         LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
         LEFT JOIN users u ON e.created_by = u.id
-        WHERE e.tenant_id = ${req.user.tenantId}
+        WHERE ${whereClause}
         ORDER BY e.expense_date DESC, e.created_at DESC
+        LIMIT ${limit} OFFSET ${offset}
       `;
 
-      console.log("💰 GET /api/expenses - Found expenses:", expenses.length);
-      res.json(expenses);
+      console.log("💰 GET /api/expenses - Found expenses:", expenses.length, "Total:", total);
+
+      // Return paginated response structure
+      res.json({
+        data: expenses,
+        pagination: {
+          page,
+          pageSize: limit,
+          total,
+          totalPages: Math.ceil(total / limit),
+        },
+      });
     } catch (error: unknown) {
       console.error("💰 Error fetching expenses:", error);
       res.status(500).json({ message: "Failed to fetch expenses" });

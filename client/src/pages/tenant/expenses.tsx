@@ -233,7 +233,13 @@ export default function Expenses() {
       if (!response.ok) return [];
       const result = await response.json();
       
-      // Handle paginated response structure like customers page
+      // Handle paginated response structure
+      if (result && typeof result === "object" && "data" in result && "pagination" in result) {
+        setTotalItems(result.pagination?.total || 0);
+        return result.data;
+      }
+
+      // Handle old paginated response structure (with total at root)
       if (result && typeof result === "object" && "data" in result) {
         setTotalItems(result.total || 0);
         return result.data;
@@ -683,16 +689,6 @@ export default function Expenses() {
       ),
     },
   ];
-
-  if (isLoading) {
-    return (
-      <Layout>
-        <div className="flex items-center justify-center h-64">
-          <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full" />
-        </div>
-      </Layout>
-    );
-  }
 
   if (error) {
     return (
