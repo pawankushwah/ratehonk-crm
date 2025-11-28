@@ -669,7 +669,7 @@ export default function Leads() {
     const startOfToday = new Date(
       today.getFullYear(),
       today.getMonth(),
-      today.getDate(),
+      today.getDate()
     );
 
     switch (filter) {
@@ -952,7 +952,7 @@ export default function Leads() {
                             variant="outline"
                             className={cn(
                               "w-[180px] justify-start text-left font-normal",
-                              !customDateFrom && "text-muted-foreground",
+                              !customDateFrom && "text-muted-foreground"
                             )}
                             data-testid="button-date-from"
                           >
@@ -980,7 +980,7 @@ export default function Leads() {
                             variant="outline"
                             className={cn(
                               "w-[180px] justify-start text-left font-normal",
-                              !customDateTo && "text-muted-foreground",
+                              !customDateTo && "text-muted-foreground"
                             )}
                             data-testid="button-date-to"
                           >
@@ -1129,25 +1129,33 @@ export default function Leads() {
             <div className="bg-white rounded-lg border p-4 mb-4">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-sm font-medium text-gray-700 mr-2">
-                  Filters for {leadTypes.find(t => String(t.id) === typeFilter)?.name}:
+                  Filters for{" "}
+                  {leadTypes.find((t) => String(t.id) === typeFilter)?.name}:
                 </span>
                 {leadTypeFields.map((field: any) => {
                   const fieldValue = dynamicFilters[field.fieldName] || "";
 
                   // Render different input types based on field type
-                  if (field.fieldType === "select" || field.fieldType === "dropdown") {
+                  if (
+                    field.fieldType === "select" ||
+                    field.fieldType === "dropdown"
+                  ) {
                     let options: string[] = [];
                     if (field.fieldOptions) {
                       try {
                         // Try parsing as JSON first (database stores as JSON array)
-                        options = typeof field.fieldOptions === "string" 
-                          ? JSON.parse(field.fieldOptions)
-                          : field.fieldOptions;
+                        options =
+                          typeof field.fieldOptions === "string"
+                            ? JSON.parse(field.fieldOptions)
+                            : field.fieldOptions;
                       } catch {
                         // Fallback to comma-separated if not JSON
-                        options = typeof field.fieldOptions === "string"
-                          ? field.fieldOptions.split(",").map((opt: string) => opt.trim())
-                          : [];
+                        options =
+                          typeof field.fieldOptions === "string"
+                            ? field.fieldOptions
+                                .split(",")
+                                .map((opt: string) => opt.trim())
+                            : [];
                       }
                     }
 
@@ -1166,7 +1174,9 @@ export default function Leads() {
                           <SelectValue placeholder={field.fieldLabel} />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="all">All {field.fieldLabel}</SelectItem>
+                          <SelectItem value="all">
+                            All {field.fieldLabel}
+                          </SelectItem>
                           {options.map((option: string) => (
                             <SelectItem key={option} value={option}>
                               {option}
@@ -1183,7 +1193,7 @@ export default function Leads() {
                             variant="outline"
                             className={cn(
                               "w-[180px] justify-start text-left font-normal",
-                              !fieldValue && "text-muted-foreground",
+                              !fieldValue && "text-muted-foreground"
                             )}
                           >
                             <CalendarDays className="mr-2 h-4 w-4" />
@@ -1195,11 +1205,15 @@ export default function Leads() {
                         <PopoverContent className="w-auto p-0" align="start">
                           <DatePickerCalendar
                             mode="single"
-                            selected={fieldValue ? new Date(fieldValue) : undefined}
+                            selected={
+                              fieldValue ? new Date(fieldValue) : undefined
+                            }
                             onSelect={(d) => {
                               setDynamicFilters((prev) => ({
                                 ...prev,
-                                [field.fieldName]: d ? d.toISOString().split("T")[0] : "",
+                                [field.fieldName]: d
+                                  ? d.toISOString().split("T")[0]
+                                  : "",
                               }));
                             }}
                             initialFocus
@@ -1223,7 +1237,9 @@ export default function Leads() {
                           <SelectValue placeholder={field.fieldLabel} />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="all">All {field.fieldLabel}</SelectItem>
+                          <SelectItem value="all">
+                            All {field.fieldLabel}
+                          </SelectItem>
                           <SelectItem value="true">Yes</SelectItem>
                           <SelectItem value="false">No</SelectItem>
                         </SelectContent>
@@ -1529,7 +1545,7 @@ export default function Leads() {
                                         "Lead data:",
                                         lead,
                                         "typeSpecificData:",
-                                        lead.typeSpecificData,
+                                        lead.typeSpecificData
                                       )
                                     }
                                   >
@@ -1552,7 +1568,7 @@ export default function Leads() {
                                       0 ? (
                                       <div className="space-y-2 text-xs">
                                         {Object.entries(
-                                          lead.typeSpecificData,
+                                          lead.typeSpecificData
                                         ).map(([key, value]) => (
                                           <div
                                             key={key}
@@ -1566,14 +1582,13 @@ export default function Leads() {
                                                     word
                                                       .charAt(0)
                                                       .toUpperCase() +
-                                                    word.slice(1).toLowerCase(),
+                                                    word.slice(1).toLowerCase()
                                                 )
                                                 .join(" ")}
                                               :
                                             </span>
                                             <span className="text-gray-900 text-right font-normal">
                                               {(() => {
-                                                
                                                 if (
                                                   key === "dateRange" &&
                                                   typeof value === "object" &&
@@ -1587,7 +1602,7 @@ export default function Leads() {
                                                 }
 
                                                 if (
-                                                  key === "activities" &&
+                                                  (key === "activities") &&
                                                   Array.isArray(value)
                                                 ) {
                                                   return (
@@ -1609,7 +1624,6 @@ export default function Leads() {
                                                   );
                                                 }
 
-                                               
                                                 if (
                                                   typeof value === "object" &&
                                                   value !== null
@@ -1739,7 +1753,7 @@ export default function Leads() {
                                     onClick={() => {
                                       const phone = lead.phone?.replace(
                                         /\D/g,
-                                        "",
+                                        ""
                                       );
                                       if (!phone) {
                                         toast({
@@ -1751,7 +1765,7 @@ export default function Leads() {
                                         return;
                                       }
                                       const message = encodeURIComponent(
-                                        `Hello ${lead.firstName} ${lead.lastName},\n\nHere are your lead details:\nEmail: ${lead.email || "N/A"}\nPhone: ${lead.phone || "N/A"}\nStatus: ${lead.status || "N/A"}`,
+                                        `Hello ${lead.firstName} ${lead.lastName},\n\nHere are your lead details:\nEmail: ${lead.email || "N/A"}\nPhone: ${lead.phone || "N/A"}\nStatus: ${lead.status || "N/A"}`
                                       );
                                       const whatsappUrl = `https://wa.me/${phone}?text=${message}`;
                                       window.open(whatsappUrl, "_blank");
@@ -1843,7 +1857,7 @@ export default function Leads() {
                             data-testid={`button-page-${pageNumber}`}
                           >
                             {pageNumber}
-                          </Button>,
+                          </Button>
                         );
                       }
                       return pages;
@@ -1857,8 +1871,8 @@ export default function Leads() {
                       setCurrentPage(
                         Math.min(
                           Math.ceil(totalItems / itemsPerPage),
-                          currentPage + 1,
-                        ),
+                          currentPage + 1
+                        )
                       )
                     }
                     disabled={
