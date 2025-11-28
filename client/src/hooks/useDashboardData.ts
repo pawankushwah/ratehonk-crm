@@ -243,7 +243,15 @@ export const useExpenses = (
         credentials: "include",
       });
       if (!res.ok) throw new Error("Failed to fetch expenses data");
-      return res.json();
+      const result = await res.json();
+      
+      // Handle paginated response structure
+      if (result && typeof result === "object" && "data" in result) {
+        return result.data;
+      }
+      
+      // Fallback for old array response
+      return Array.isArray(result) ? result : [];
     },
     enabled: !!tenant?.id,
     refetchInterval: 30000,
