@@ -4254,6 +4254,133 @@ export class SimpleStorage {
     }
   }
 
+async getAllInvoicesByTenant(tenantId: number, startDate?: string, endDate?: string) {
+  try {
+    const parseJsonSafe = (value: any) => {
+      if (!value) return [];
+      if (typeof value === "object") return value;
+      try {
+        return JSON.parse(value);
+      } catch {
+        return [];
+      }
+    };
+
+    let dateFilter = sql`1=1`;
+    if (startDate && endDate) {
+      dateFilter = sql`created_at >= ${startDate} AND created_at <= ${endDate}`;
+    }
+
+    // Fetch invoices with date filter
+    const invoices = await sql`
+      SELECT * FROM invoices
+      WHERE tenant_id = ${tenantId} AND ${dateFilter}
+      ORDER BY created_at DESC
+    `;
+
+    if (invoices.length === 0) return [];
+
+    const invoiceIds = invoices.map(i => i.id);
+
+    //  Fetch invoice_items 
+    const invoiceItems = await sql`
+      SELECT * FROM invoice_items
+      WHERE invoice_id = ANY(${invoiceIds})
+    `;
+
+    const itemMap: any = {};
+    invoiceItems.forEach(item => {
+      if (!itemMap[item.invoice_id]) itemMap[item.invoice_id] = [];
+      itemMap[item.invoice_id].push(item);
+    });
+
+    //  Extract provider/vendor IDs from JSON
+    const allJsonLineItems = invoices.flatMap(inv => parseJsonSafe(inv.line_items));
+
+    const providerIds = [
+      ...new Set(
+        allJsonLineItems
+          .map(li => Number(li.serviceProviderId))
+          .filter(id => !isNaN(id))
+      ),
+    ];
+
+    const vendorIds = [
+      ...new Set(
+        allJsonLineItems
+          .map(li => Number(li.vendor))
+          .filter(id => !isNaN(id))
+      ),
+    ];
+
+    //  Providers lookup 
+    const providers = providerIds.length
+      ? await sql`
+          SELECT id, name
+          FROM service_providers
+          WHERE id = ANY(${providerIds})
+        `
+      : [];
+
+    const providerMap = Object.fromEntries(
+      providers.map(p => [p.id, p])
+    );
+
+    // Vendors lookup 
+    const vendors = vendorIds.length
+      ? await sql`
+          SELECT id, name
+          FROM vendors
+          WHERE id = ANY(${vendorIds})
+        `
+      : [];
+
+    const vendorMap = Object.fromEntries(
+      vendors.map(v => [v.id, v])
+    );
+
+    // Build final invoice response 
+    return invoices.map(inv => {
+      const rawLineItems = parseJsonSafe(inv.line_items);
+
+      const lineItems = rawLineItems.map(li => ({
+        ...li,
+        serviceProviderName: providerMap[Number(li.serviceProviderId)]?.name || null,
+        vendorName: vendorMap[Number(li.vendor)]?.name || null,
+      }));
+
+      return {
+        id: inv.id,
+        tenantId: inv.tenant_id,
+        customerId: inv.customer_id,
+        bookingId: inv.booking_id,
+        invoiceNumber: inv.invoice_number,
+
+        status: inv.status,
+        issueDate: inv.issue_date,
+        dueDate: inv.due_date,
+
+        subtotal: parseFloat(inv.subtotal),
+        taxAmount: parseFloat(inv.tax_amount || "0"),
+        discountAmount: parseFloat(inv.discount_amount || "0"),
+        totalAmount: parseFloat(inv.total_amount),
+
+        notes: inv.notes,
+        additionalNotes: inv.additional_notes,
+        createdAt: inv.created_at,
+
+        lineItems,
+        items: itemMap[inv.id] || []
+      };
+    });
+
+  } catch (error) {
+    console.error("❌ getAllInvoicesByTenant error:", error);
+    throw error;
+  }
+}
+
+
 
   async createInvoice(invoiceData: any) {
     try {
