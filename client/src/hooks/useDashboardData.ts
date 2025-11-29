@@ -232,10 +232,10 @@ export const useExpenses = (
   );
 
   return useQuery<Expense[]>({
-    queryKey: ["/api/expenses", params],
+    queryKey: ["/api/All-expenses", params],
     queryFn: async () => {
       const searchParams = new URLSearchParams(params as any).toString();
-      const url = `/api/expenses${searchParams ? `?${searchParams}` : ""}`;
+      const url = `/api/All-expenses${searchParams ? `?${searchParams}` : ""}`;
       const res = await fetch(url, {
         headers: {
           Authorization: `Bearer ${localStorage.getItem("auth_token")}`,
@@ -353,7 +353,7 @@ export const useInvoicesForGraph = (
 
     queryFn: async () => {
       const searchParams = new URLSearchParams(params as any).toString();
-      const url = `/api/tenants/${tenantId}/invoices${searchParams ? `?${searchParams}` : ""}`;
+      const url = `/api/tenants/${tenantId}/All-invoices${searchParams ? `?${searchParams}` : ""}`;
 
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${localStorage.getItem("auth_token")}` },

@@ -47,7 +47,7 @@ export function ProfitLossCard() {
 
 
   return (
-    <Card className="lg:col-span-5 h-fit">
+    <Card className="lg:col-span-5">
       <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <CardTitle className="text-[#000000] text-base sm:text-lg font-semibold">
           Profit & Loss

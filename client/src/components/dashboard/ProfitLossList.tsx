@@ -43,7 +43,10 @@ export function ProfitLossList({
         return monthA - monthB;
       })
     : [];
-  console.log("🚀 ~ ProfitLossList ~ sortedProfitLossData:", sortedProfitLossData)
+  console.log(
+    "🚀 ~ ProfitLossList ~ sortedProfitLossData:",
+    sortedProfitLossData
+  );
   const maxValue =
     sortedProfitLossData.length > 0
       ? Math.max(
@@ -53,7 +56,16 @@ export function ProfitLossList({
           1
         )
       : 1;
+const formatShort = (num) => {
+  const abs = Math.abs(num);
 
+  if (abs >= 1_000_000_000_000) return (num / 1_000_000_000_000).toFixed(2) + "T";
+  if (abs >= 1_000_000_000) return (num / 1_000_000_000).toFixed(2) + "B";
+  if (abs >= 1_000_000) return (num / 1_000_000).toFixed(2) + "M";
+  if (abs >= 1_000) return (num / 1_000).toFixed(2) + "K";
+
+  return num.toFixed(2);
+};
   return (
     <div className="space-y-3 sm:space-y-4">
       {sortedProfitLossData
@@ -63,10 +75,7 @@ export function ProfitLossList({
           const expenses = item.expenses ?? 0;
           const profit = revenue - expenses;
           const isLoss = profit < 0;
-          const displayValue =
-            Math.abs(profit) >= 1000
-              ? `${profit < 0 ? "-" : ""}$${Math.abs(profit / 1000)}k`
-              : `$${profit}`;
+          const displayValue = `$${formatShort(profit)}`;
           const widthPercentage = (Math.abs(profit) / maxValue) * 100;
           return (
             <div
@@ -113,7 +122,7 @@ export function ProfitLossList({
           <span className="w-3 h-3 rounded-full bg-[#FE4F02]"></span> Loss
         </div>
         <div className="flex items-center gap-1">
-          <span className="w-3 h-3 rounded-full  bg-[#0A64A0]"></span>  Profit
+          <span className="w-3 h-3 rounded-full  bg-[#0A64A0]"></span> Profit
         </div>
       </div>
     </div>

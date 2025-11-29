@@ -154,6 +154,7 @@ export default function TenantDashboard() {
     enabled: !!tenant?.id,
     refetchInterval: 30000,
   });
+  console.log("🚀 ~ TenantDashboard ~ dashboardData:", dashboardData)
   const getGraphQueryParams = () => {
     const params: any = {};
     if (graphFilter.period && graphFilter.period !== "custom") {
@@ -336,15 +337,7 @@ export default function TenantDashboard() {
         credentials: "include",
       });
       if (!res.ok) throw new Error("Failed to fetch expenses data");
-      const result = await res.json();
-      
-      // Handle paginated response structure
-      if (result && typeof result === "object" && "data" in result) {
-        return result.data;
-      }
-      
-      // Fallback for old array response
-      return Array.isArray(result) ? result : [];
+      return res.json();
     },
     enabled: !!tenant?.id,
     refetchInterval: 30000,
@@ -411,12 +404,24 @@ export default function TenantDashboard() {
     enabled: !!tenant?.id,
     refetchInterval: 30000,
   });
+
+  const formatNumberShort = (num: number) => {
+  if (num === null || num === undefined) return "0";
+
+  if (num >= 1_000_000_000_000) return (num / 1_000_000_000_000).toFixed(1) + "T";
+  if (num >= 1_000_000_000) return (num / 1_000_000_000).toFixed(1) + "B";
+  if (num >= 1_000_000) return (num / 1_000_000).toFixed(1) + "M";
+  if (num >= 1_000) return (num / 1_000).toFixed(1) + "K";
+
+  return num.toString();
+};
   const metrics = dashboardData?.metrics || {
     revenue: 0,
     activeBookings: 0,
     customers: 0,
     leads: 0,
   };
+  console.log("🚀 ~ TenantDashboard ~ metrics:", metrics)
   const { data: chartDataResponse, isLoading: chartLoading } = useQuery({
     queryKey: [`/api/dashboard/chart-data`, businessMetricsQueryParams],
     queryFn: async () => {
@@ -527,39 +532,9 @@ export default function TenantDashboard() {
     ? bookingsByVendorData
     : [];
   console.log("bookingsByVendorArray :",bookingsByVendorArray)
-  const estimatesArray = Array.isArray(estimatesData) ? estimatesData : [];
-  const expensesArray = Array.isArray(expensesData) ? expensesData : [];
-  const emailCampaignsArray = Array.isArray(emailCampaignsData)
-    ? emailCampaignsData
-    : [];
-  const estimatesMetrics = {
-    total: estimatesArray.length,
-    totalRevenue: estimatesArray.reduce(
-      (sum, est) => sum + safeParseNumber(est?.totalAmount),
-      0
-    ),
-    pending: estimatesArray.filter(
-      (est) => est?.status === "draft" || est?.status === "sent"
-    ).length,
-    accepted: estimatesArray.filter((est) => est?.status === "accepted").length,
-    rejected: estimatesArray.filter((est) => est?.status === "rejected").length,
-  };
-  const estimatesStatusData = [
-    { name: "Draft/Sent", value: estimatesMetrics.pending, fill: "#F59E0B" },
-    { name: "Accepted", value: estimatesMetrics.accepted, fill: "#10B981" },
-    { name: "Rejected", value: estimatesMetrics.rejected, fill: "#EF4444" },
-  ].filter((item) => item.value > 0);
-  // Expenses Analytics Processing with safe numeric handling
-  const expensesMetrics = {
-    total: expensesArray.length,
-    totalAmount: expensesArray.reduce(
-      (sum, exp) => sum + safeParseNumber(exp?.amount),
-      0
-    ),
-    pending: expensesArray.filter((exp) => exp?.status === "pending").length,
-    approved: expensesArray.filter((exp) => exp?.status === "approved").length,
-    paid: expensesArray.filter((exp) => exp?.status === "paid").length,
-  };
+
+
+
   
   
   const followUpsArray = topLeadsArray ?? [];
@@ -613,7 +588,7 @@ export default function TenantDashboard() {
                   <MetricCard
                     
                     title="Total Revenue"
-                    value={`$${metrics.revenue.toLocaleString()}`}
+                    value={`$${formatNumberShort(metrics.revenue)}`}
                     icon={DollarSign}
                     trend={`${(
                       ((monthlyData.revenue.current -
