@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
+import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
 import { DateFilter } from "@/components/ui/date-filter";
 import { useInvoicesForGraph } from "@/hooks/useDashboardData";
 import { useAuth } from "../auth/auth-provider";
@@ -8,9 +8,11 @@ import { useAuth } from "../auth/auth-provider";
 export function ServiceProviderChart() {
   const { tenant } = useAuth();
 
-  const [dateFilter, setDateFilter] = useState("thisMonth");
-  const [customDateFrom, setCustomDateFrom] = useState(null);
-  const [customDateTo, setCustomDateTo] = useState(null);
+  const [dateFilter, setDateFilter] = useState("this_week");
+  const [customDateFrom, setCustomDateFrom] = useState<Date | null>(null);
+  const [customDateTo, setCustomDateTo] = useState<Date | null>(null);
+
+  const [selectedCategory, setSelectedCategory] = useState<string>("");
 
   const { data: invoices = [], isLoading } = useInvoicesForGraph(
     tenant?.id,
@@ -18,32 +20,55 @@ export function ServiceProviderChart() {
     customDateFrom,
     customDateTo
   );
+  const categories = useMemo(() => {
+    const set = new Set<string>();
 
+    invoices.forEach((inv) => {
+      (inv.lineItems || []).forEach((li) => {
+        if (li.travelCategory) set.add(li.travelCategory);
+      });
+    });
 
-  const dummyProviderData = [
-    { name: "Air India", value: 40, color: "#6C63FF" },
-    { name: "Indigo", value: 32, color: "#A393FF" },
-    { name: "Vistara", value: 28, color: "#D7D2FF" },
-  ];
+    return Array.from(set);
+  }, [invoices]);
 
+  const prepareProviderData = (list: any[]) => {
+    if (!list || list.length === 0) return [];
+
+    if (list.length <= 10) return list;
+
+    const topTen = list.slice(0, 10);
+    const otherList = list.slice(10);
+    const otherValue = otherList.reduce((sum, item) => sum + item.value, 0);
+
+    return [
+      ...topTen,
+      {
+        name: "Other",
+        value: Number(otherValue.toFixed(2)),
+        color: "#D1D5DB",
+      },
+    ];
+  };
 
   const providerData = useMemo(() => {
+    if (!selectedCategory) return [];
+
     const countMap: Record<string, number> = {};
 
     invoices.forEach((inv) => {
       (inv.lineItems || []).forEach((li) => {
-        if (!li.serviceProviderName) return;
-
-        countMap[li.serviceProviderName] =
-          (countMap[li.serviceProviderName] || 0) + 1;
+        if (li.travelCategory === selectedCategory && li.serviceProviderName) {
+          countMap[li.serviceProviderName] =
+            (countMap[li.serviceProviderName] || 0) + 1;
+        }
       });
     });
 
     const total = Object.values(countMap).reduce((a, b) => a + b, 0);
-
     if (total === 0) return [];
 
-    const pastelColors = [
+    const colors = [
       "#6C63FF",
       "#A393FF",
       "#D7D2FF",
@@ -58,33 +83,56 @@ export function ServiceProviderChart() {
       "#B9B2FF",
     ];
 
-    return Object.keys(countMap).map((name, index) => ({
-      name,
-      value: Number(((countMap[name] / total) * 100).toFixed(2)),
-      color: pastelColors[index % pastelColors.length],
+    const sorted = Object.entries(countMap)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+
+    const mapped = sorted.map((item, index) => ({
+      name: item.name,
+      value: Number(((item.count / total) * 100).toFixed(2)), // % value
+      color: colors[index % colors.length],
     }));
-  }, [invoices]);
 
+    return prepareProviderData(mapped);
+  }, [invoices, selectedCategory]);
 
-  const finalProviderData =
-    providerData.length > 0 ? providerData : dummyProviderData;
+  const CustomTooltip = ({ active, payload }: any) => {
+    if (active && payload && payload.length) {
+      const item = payload[0].payload;
+      return (
+        <div className="bg-white shadow-lg rounded-md px-3 py-2 text-xs border border-gray-200">
+          <p className="font-semibold">{item.name}</p>
+          <p>{item.value}%</p>
+        </div>
+      );
+    }
+    return null;
+  };
+
 
   return (
     <Card className="col-span-12 lg:col-span-6 bg-white shadow-md rounded-xl p-4">
       <CardHeader className="pb-4">
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
           <CardTitle className="text-black font-medium text-lg">
-            Service Provider
+            Service Providers
           </CardTitle>
 
-          <DateFilter
-            dateFilter={dateFilter}
-            setDateFilter={setDateFilter}
-            customDateFrom={customDateFrom}
-            setCustomDateFrom={setCustomDateFrom}
-            customDateTo={customDateTo}
-            setCustomDateTo={setCustomDateTo}
-          />
+       
+            <div className="mb-5">
+              <select
+                className="border px-3 py-2 rounded-md text-sm w-full sm:w-60"
+                value={selectedCategory}
+                onChange={(e) => setSelectedCategory(e.target.value)}
+              >
+                <option value="">Select Category</option>
+                {categories.map((cat, i) => (
+                  <option key={i} value={cat}>
+                    {cat}
+                  </option>
+                ))}
+              </select>
+            </div>
         </div>
       </CardHeader>
 
@@ -92,48 +140,54 @@ export function ServiceProviderChart() {
         {isLoading ? (
           <p className="text-center text-gray-500">Loading...</p>
         ) : (
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-6">
-          
-            <div className="w-full h-72">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={finalProviderData}
-                    dataKey="value"
-                    nameKey="name"
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={70}
-                    outerRadius={110}
-                    paddingAngle={3}
-                    startAngle={90}
-                    endAngle={450}
-                    stroke="none"
-                  >
-                    {finalProviderData.map((entry, idx) => (
-                      <Cell key={idx} fill={entry.color} />
-                    ))}
-                  </Pie>
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-
-            <div className="grid grid-cols-2 gap-y-3 gap-x-6 text-xs">
-              {finalProviderData.map((item, index) => (
-                <div className="flex items-center gap-2" key={index}>
-                  <div
-                    className="w-3 h-3 rounded-full"
-                    style={{ backgroundColor: item.color }}
-                  ></div>
-
-                  <div>
-                    <p className="font-medium text-gray-900">{item.name}</p>
-                    <p className="text-gray-500 text-[12px]">{item.value}%</p>
-                  </div>
+          <>
+            {providerData.length === 0 ? (
+              <p className="text-center text-gray-500 text-sm">
+                No data available for the selected category.
+              </p>
+            ) : (
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-6">
+                <div className="w-full h-72">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Tooltip content={<CustomTooltip />} />
+                      <Pie
+                        data={providerData}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={70}
+                        outerRadius={110}
+                        paddingAngle={3}
+                        startAngle={90}
+                        endAngle={450}
+                        stroke="none"
+                      >
+                        {providerData.map((entry, idx) => (
+                          <Cell key={idx} fill={entry.color} />
+                        ))}
+                      </Pie>
+                    </PieChart>
+                  </ResponsiveContainer>
                 </div>
-              ))}
-            </div>
-          </div>
+                <div className="grid grid-cols-2 gap-y-3 gap-x-6 text-xs">
+                  {providerData.map((item, index) => (
+                    <div className="flex items-center gap-2" key={index}>
+                      <div
+                        className="w-3 h-3 rounded-full"
+                        style={{ backgroundColor: item.color }}
+                      ></div>
+                      <div>
+                        <p className="font-medium">{item.name}</p>
+                        <p className="text-gray-500">{item.value}%</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
         )}
       </CardContent>
     </Card>

@@ -2,14 +2,13 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Download } from "lucide-react";
-import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { DateFilter } from "@/components/ui/date-filter";
 
 import { safeParseNumber } from "@/lib/utils";
 import { useExpenses } from "@/hooks/useDashboardData";
 
 const COLORS = ["#0A64A0", "#3E85C5", "#6DA9DB", "#8EC1E7", "#A7D5F0"];
-
 
 const dummyExpenseCategories = [
   { category: "Travel", amount: 1200 },
@@ -29,7 +28,9 @@ export function ExpensePieChart() {
     customDateFrom,
     customDateTo
   );
+  console.log("🚀 ~ ExpensePieChart ~ expensesData:", expensesData)
 
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
   const expenseAmountByCategory = expensesData.reduce((acc: any, exp: any) => {
     const cat = exp.category || "Other";
@@ -41,7 +42,6 @@ export function ExpensePieChart() {
     return acc;
   }, {});
 
-  
   const categoryArray = Object.entries(expenseAmountByCategory).map(
     ([category, amount]: any) => ({
       category,
@@ -49,9 +49,7 @@ export function ExpensePieChart() {
     })
   );
 
- 
   const totalAmount = categoryArray.reduce((sum, x) => sum + x.amount, 0);
-
 
   const pieData = categoryArray.map((item, i) => ({
     name: item.category,
@@ -60,7 +58,6 @@ export function ExpensePieChart() {
     fill: COLORS[i % COLORS.length],
   }));
 
-  
   const finalPieData =
     pieData.length > 0 && totalAmount > 0
       ? pieData
@@ -71,8 +68,19 @@ export function ExpensePieChart() {
           fill: COLORS[i % COLORS.length],
       }));
   
-  
-      
+  const CustomTooltip = ({ active, payload }: any) => {
+  if (active && payload && payload.length) {
+    const item = payload[0].payload;
+    return (
+      <div className="bg-white shadow-lg rounded-md p-2 border text-xs text-black">
+        <p className="font-semibold">{item.name}</p>
+        <p>{item.value}%</p>
+      </div>
+    );
+  }
+  return null;
+};
+
   return (
     <Card className="col-span-12 md:col-span-6 bg-white shadow-md rounded-xl h-[500px]">
       <CardHeader className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-4 gap-3 p-4">
@@ -105,32 +113,47 @@ export function ExpensePieChart() {
         <div className="flex justify-center items-center">
           <div className="relative w-36 h-36 sm:w-52 sm:h-52 mb-10">
             <ResponsiveContainer width="100%" height="100%">
-              {isLoading ? (
-                <div>Loading...</div>
-              ) : (
-                <PieChart>
-                  <Pie
-                    data={finalPieData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius="60%"
-                    outerRadius="80%"
-                    startAngle={90}
-                    endAngle={-270}
-                    dataKey="value"
-                  >
-                    {finalPieData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.fill} />
-                    ))}
-                  </Pie>
-                </PieChart>
-              )}
-            </ResponsiveContainer>
+  {isLoading ? (
+    <div>Loading...</div>
+  ) : (
+    <PieChart>
+      <Tooltip content={<CustomTooltip />} />
+
+      <Pie
+        data={finalPieData}
+        cx="50%"
+        cy="50%"
+        innerRadius="60%"
+        outerRadius="80%"
+        startAngle={90}
+        endAngle={-270}
+        dataKey="value"
+        onMouseEnter={(_, index) => setActiveIndex(index)}
+        onMouseLeave={() => setActiveIndex(null)}
+      >
+        {finalPieData.map((entry, index) => (
+          <Cell
+            key={`cell-${index}`}
+            fill={entry.fill}
+            style={{
+              transition: "0.3s",
+              transform: activeIndex === index ? "scale(1.08)" : "scale(1)",
+              filter:
+                activeIndex === index
+                  ? "drop-shadow(0px 0px 6px rgba(0,0,0,0.3))"
+                  : "none",
+              transformOrigin: "center",
+              cursor: "pointer",
+            }}
+          />
+        ))}
+      </Pie>
+    </PieChart>
+  )}
+</ResponsiveContainer>
           </div>
         </div>
-
-       
-        <div className="flex flex-row flex-wrap  gap-2 pt-4 text-xs sm:text-sm text-gray-700">
+        <div className="flex flex-row flex-wrap gap-2 pt-4 text-xs sm:text-sm text-gray-700">
           {finalPieData.map((item, i) => (
             <div
               key={i}
