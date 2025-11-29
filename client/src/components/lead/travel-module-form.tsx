@@ -49,9 +49,6 @@ export function TravelModuleForm({
   const { tenant } = useAuth();
   const [activeTab, setActiveTab] = useState("one-way");
   const [cities, setCities] = useState([{ from: "", to: "", date: "" }]);
-  const [alternateDays, setAlternateDays] = useState("Alternate Days");
-  const [showAlternate, setShowAlternate] = useState(false);
-  const [directFlight, setDirectFlight] = useState(false);
 
   const { data: packages = [], isLoading: packagesLoading } = useQuery<
     TravelPackage[]
@@ -290,7 +287,7 @@ export function TravelModuleForm({
             <div className="col-span-3">
               <FormField
                 control={form.control}
-                name={`typeSpecificData.dateRange${index + 1}`}
+                name={`typeSpecificData.dateRange`}
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel className="text-xs font-semibold mb-1.5 block">
@@ -1144,7 +1141,6 @@ export function TravelModuleForm({
                 <FormLabel className="text-xs font-semibold mb-1.5 block">
                   Date Range
                 </FormLabel>
-
                 <Popover>
                   <PopoverTrigger asChild>
                     <FormControl>
@@ -1318,7 +1314,7 @@ export function TravelModuleForm({
       )}
     </div>
   );
-
+// for insurance
   const renderInsuranceFields = () => (
     <div className="space-y-3">
       <div
@@ -1424,7 +1420,7 @@ export function TravelModuleForm({
       </div>
     </div>
   );
-
+  // for cruise
   const renderCruiseFields = () => (
     <div className="space-y-3">
       <div
@@ -1668,7 +1664,7 @@ export function TravelModuleForm({
       </div>
     </div>
   );
-
+  // Render fields based on selected category
   const renderModuleFields = () => {
     console.log("selectedCategory :", selectedCategory);
     switch (selectedCategory) {

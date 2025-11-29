@@ -47,6 +47,7 @@ const leadSchema = z.object({
   firstName: z.string().min(1, "First name is required"),
   lastName: z.string().optional(),
   customerId: z.string().optional(),
+  leadId: z.string().optional(),
   email: z
     .string()
     .email("Please enter a valid email address")
@@ -97,13 +98,6 @@ export function FlexibleLeadForm({
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { tenant } = useAuth();
-  const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
-  const [formValidationErrors, setFormValidationErrors] = useState<
-    Record<string, string>
-  >({});
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
-
-  const [selectedCustomerLabel, setSelectedCustomerLabel] = useState("");
 
   const handleNumericKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (
@@ -138,11 +132,10 @@ export function FlexibleLeadForm({
   );
   const [isLeadPanelOpen, setIsLeadPanelOpen] = useState(false);
   const [isCustomerPanelOpen, setIsCustomerPanelOpen] = useState(false);
-  const [selectedCustomerId, setSelectedCustomerId] = useState("");
-  const [selectedLeadId, setSelectedLeadId] = useState("");
-  const [selectedLead, setSelectedLead] = useState("");
-  const [selectedCustomer, setSelectedCustomer] = useState<any>(null);
-
+  const [selectedCustomer, setSelectedCustomer] = useState<any | null>(null);
+  const [selectedLead, setSelectedLead] = useState<any | null>(null);
+  const [customerInput, setCustomerInput] = useState("");
+  const [leadInput, setLeadInput] = useState("");
 
   const {
     data: leadTypes = [],
@@ -177,9 +170,10 @@ export function FlexibleLeadForm({
     resolver: zodResolver(leadSchema),
     defaultValues: {
       leadTypeId: lead?.leadTypeId?.toString() || "",
-      firstName: lead?.fisrt_name || "",
+      firstName: lead?.first_name || "",
       lastName: lead?.email_name || "",
       customerId: lead?.customerId || "",
+      leadId: lead?.id?.toString() || "",
       email: lead?.email || "",
       phone: lead?.phone || "",
       source: lead?.source || "",
@@ -475,7 +469,7 @@ export function FlexibleLeadForm({
 
   const handleLeadTypeChange = (leadTypeId: string) => {
     if (leadTypeId === "create_new") {
-      setIsLeadTypePanelOpen(true);
+      setIsLeadPanelOpen(true);
     } else {
       setSelectedLeadType(leadTypeId);
       form.setValue("leadTypeId", leadTypeId);
@@ -736,50 +730,48 @@ export function FlexibleLeadForm({
 
   console.log("customers :", customers);
 
- 
+  const customerOptions: AutocompleteOption[] = [
+    ...customers.map((customer: any) => ({
+      value: customer.id?.toString(),
+      label: `${customer.firstName || ""} ${customer.lastName || ""} | ${
+        customer.phone || ""
+      } | ${customer.email || ""}`,
+    })),
+  ];
 
+  const handleCustomerSelectionChange = (value: string) => {
+    if (value === "create_new_customer") {
+      setIsCustomerPanelOpen(true);
+      return;
+    }
 
-const handleCustomerChange = (value: string, field: any) => {
- 
-  if (value === "create_new_customer") {
-    setIsCustomerPanelOpen(true);
-    return;
-  }
+    setLeadInput("");
+    form.setValue("leadId", "");
+    setSelectedLead(null);
 
-  
-  const selectedCustomer = customers.find((c: any) => c.id.toString() === value);
+    const selectedCustomer = customers.find(
+      (c: any) => c.id?.toString() === value
+    );
 
-  if (!selectedCustomer) {
-    field.onChange(value); 
-    return;
-  }
+    if (!selectedCustomer) {
+      form.setValue("customerId", "");
+      setCustomerInput("");
+      return;
+    }
 
- 
-  field.onChange(value);
+    setSelectedCustomer(selectedCustomer);
 
-  form.setValue("customerId", selectedCustomer.id.toString());
-  form.setValue("firstName", selectedCustomer.firstName || selectedCustomer.first_name || "");
-  form.setValue("lastName",  selectedCustomer.lastName  || selectedCustomer.last_name  || "");
-  form.setValue("email",     selectedCustomer.email || "");
-  form.setValue("phone",     selectedCustomer.phone || "");
-  form.setValue("country",   selectedCustomer.country || "");
-  form.setValue("state",     selectedCustomer.state || "");
-  form.setValue("city",      selectedCustomer.city || "");
-};
+    form.setValue("customerId", selectedCustomer.id?.toString());
+    setCustomerInput(selectedCustomer.id?.toString());
 
-
- const customerOptions = [
-  {
-    value: "create_new_customer",
-    label: "+ Create New Customer",
-    icon: <Plus className="h-4 w-4 text-cyan-600" />,
-  },
-  ...customers.map((customer: any) => ({
-    value: customer.id.toString(),
-    label: `${customer.name || ""} - ${customer.email || ""} - ${customer.phone || ""}`,
-  })),
-];
-
+    form.setValue("firstName", selectedCustomer.firstName || "");
+    form.setValue("lastName", selectedCustomer.lastName || "");
+    form.setValue("email", selectedCustomer.email || "");
+    form.setValue("phone", selectedCustomer.phone || "");
+    form.setValue("country", selectedCustomer.country || "");
+    form.setValue("state", selectedCustomer.state || "");
+    form.setValue("city", selectedCustomer.city || "");
+  };
 
   //add leads
 
@@ -814,11 +806,10 @@ const handleCustomerChange = (value: string, field: any) => {
       label: "+ Create New Lead",
       icon: <Plus className="h-4 w-4 text-cyan-600" />,
     },
-    { value: "", label: "No lead selected" },
+
     ...leads.map((lead: any) => ({
       value: lead.id.toString(),
-      name: lead.first_name,
-      label: `${lead.first_name} ${lead.phone} - ${lead.email}`,
+      label: `${lead.first_name} | ${lead.phone} | ${lead.email}`,
     })),
   ];
 
@@ -828,13 +819,23 @@ const handleCustomerChange = (value: string, field: any) => {
       return;
     }
 
+    setCustomerInput("");
+    form.setValue("customerId", "");
+    setSelectedCustomer(null);
+
     const selectedLead = leads.find((l: any) => l.id.toString() === value);
 
-    if (!selectedLead) return;
+    if (!selectedLead) {
+      form.setValue("leadId", "");
+      setLeadInput("");
+      return;
+    }
 
     setSelectedLead(selectedLead);
 
-    form.setValue("customerId", selectedLead.id.toString());
+    form.setValue("leadId", selectedLead.id.toString());
+    setLeadInput(selectedLead.id.toString());
+
     form.setValue("firstName", selectedLead.first_name || "");
     form.setValue("lastName", selectedLead.last_name || "");
     form.setValue("email", selectedLead.email || "");
@@ -843,6 +844,53 @@ const handleCustomerChange = (value: string, field: any) => {
     form.setValue("state", selectedLead.state || "");
     form.setValue("city", selectedLead.city || "");
   };
+
+const handlePrefillFromLead = (leadData: any) => {
+  console.log("Received lead data →", leadData);
+
+  // -------------------------
+  // Lead Autocomplete
+  // -------------------------
+  form.setValue("leadId", leadData.id?.toString() || "");
+
+  // Your Autocomplete input
+  setLeadInput(leadData.firstName + " " + leadData.lastName + "  " + leadData.phone + " " + leadData.email );
+
+  // -------------------------
+  // Basic Lead Info
+  // -------------------------
+  form.setValue("firstName", leadData.firstName || "");
+  form.setValue("lastName", leadData.lastName || "");
+  form.setValue("email", leadData.email || "");
+  form.setValue("phone", leadData.phone || "");
+
+  // -------------------------
+  // Address Info
+  // -------------------------
+  form.setValue("country", leadData.country || "");
+  form.setValue("state", leadData.state || "");
+  form.setValue("city", leadData.city || "");
+
+  // -------------------------
+  // Budget / Priority / Source
+  // -------------------------
+  form.setValue("budgetRange", leadData.budgetRange || "");
+  form.setValue("priority", leadData.priority || "");
+  form.setValue("source", leadData.source || "");
+
+  // -------------------------
+  // Status → Not in leadData!
+  // -------------------------
+  // If you expect "status", ensure LeadCreateForm returns it.
+  form.setValue("status", leadData.status || "");
+
+  // -------------------------
+  // Notes
+  // -------------------------
+  form.setValue("notes", leadData.notes || "");
+};
+
+
 
   return (
     <Form {...form}>
@@ -860,18 +908,100 @@ const handleCustomerChange = (value: string, field: any) => {
                   control={form.control}
                   name="customerId"
                   render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Search Customer</FormLabel>
+
+                      <FormControl>
+                        <AutocompleteInput
+                          suggestions={customerOptions}
+                          value={customerInput}
+                          onValueChange={(val) => {
+                            setCustomerInput(val);
+                            field.onChange(val);
+                            handleCustomerSelectionChange(val);
+                          }}
+                          placeholder="Search customer"
+                          emptyText="No customers found"
+                          className="h-10 rounded-md border-gray-300 focus:ring-2 focus:ring-cyan-500"
+                        />
+                      </FormControl>
+
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <div>
+                <FormField
+                  control={form.control}
+                  name="leadId"
+                  render={({ field }) => (
                     <FormItem className="col-span-12 md:col-span-6">
-                      <FormLabel>Customer </FormLabel>
+                      <FormLabel>Search Lead</FormLabel>
+
+                      <FormControl>
+                        <AutocompleteInput
+                          suggestions={leadOptions}
+                          value={leadInput}
+                          onValueChange={(val) => {
+                            setLeadInput(val);
+                            field.onChange(val);
+                            handleLeadSelectionChange(val);
+                          }}
+                          placeholder="Search lead"
+                          emptyText="No leads found"
+                          className="h-10 rounded-md border-gray-300 focus:ring-2 focus:ring-cyan-500"
+                        />
+                      </FormControl>
+
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-12 gap-3"></div>
+
+            <div className="grid grid-cols-12 gap-3">
+              <div className="col-span-3 md:col-span-4">
+                <FormField
+                  control={form.control}
+                  name="budgetRange"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs font-semibold text-gray-700 block mb-1.5">
+                        Budget
+                      </FormLabel>
+                      <FormControl>
+                        <Input
+                          className="h-10 rounded-md border-gray-300 focus:ring-2 focus:ring-cyan-500 placeholder:text-gray-400"
+                          placeholder="Enter Budget"
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+              <div className="col-span-12 md:col-span-4">
+                <FormField
+                  control={form.control}
+                  name="status"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs font-semibold text-gray-700 block mb-1.5">
+                        Status
+                      </FormLabel>
                       <FormControl>
                         <Combobox
-                          options={customerOptions}
+                          options={statusOptions}
                           value={field.value}
-                          onValueChange={(value: string) =>
-                            handleCustomerChange(value, field)
-                          }
-                          placeholder="Select customer"
-                          emptyText="No customers found"
-                          className="mt-1.5"
+                          onValueChange={field.onChange}
+                          placeholder="Select Status"
+                          className="h-10"
                         />
                       </FormControl>
                       <FormMessage />
@@ -880,25 +1010,51 @@ const handleCustomerChange = (value: string, field: any) => {
                 />
               </div>
 
-              {/* Search Lead */}
-              <div>
+              <div className="col-span-12 md:col-span-4">
                 <FormField
                   control={form.control}
-                  name="firstName"
+                  name="priority"
                   render={({ field }) => (
-                    <FormItem className="col-span-12 md:col-span-6">
-                      <FormLabel>Search Leads</FormLabel>
+                    <FormItem>
+                      <FormLabel className="text-xs font-semibold text-gray-700 block mb-1.5">
+                        Priority
+                      </FormLabel>
                       <FormControl>
                         <Combobox
-                          options={leadOptions}
-                          value={selectedLead?.id?.toString() || ""}
-                          onValueChange={handleLeadSelectionChange}
-                          placeholder="Select lead (optional)"
-                          emptyText="No won leads found"
-                          className="mt-1.5"
+                          options={priorityOptions}
+                          value={field.value}
+                          onValueChange={field.onChange}
+                          placeholder="Select Priority"
+                          className="h-10"
                         />
                       </FormControl>
-                      <FormMessage /> 
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-12 gap-3">
+              <div className="col-span-4">
+                <FormField
+                  control={form.control}
+                  name="source"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs font-semibold text-gray-700 block mb-1.5">
+                        Source
+                      </FormLabel>
+                      <FormControl>
+                        <Combobox
+                          options={sourceOptions}
+                          value={field.value || ""}
+                          onValueChange={field.onChange}
+                          placeholder="Select Source"
+                          className="h-10"
+                        />
+                      </FormControl>
+                      <FormMessage />
                     </FormItem>
                   )}
                 />
@@ -943,8 +1099,8 @@ const handleCustomerChange = (value: string, field: any) => {
                     className={cn(
                       "px-3 py-1.5 rounded-md text-xs font-medium border transition-colors",
                       selectedLeadType === type.value
-                        ? "bg-[#F8FAFC] text-black border-[#E2E8F0]"
-                        : "bg-white text-black border-gray-300 hover:bg-gray-50"
+                        ? "bg-blue-400 text-black border-[#E2E8F0]"
+                        : "bg-white text-black border-gray-300 hover:bg-blue-300"
                     )}
                   >
                     {type.label}
@@ -1031,23 +1187,30 @@ const handleCustomerChange = (value: string, field: any) => {
         </div>
       </form>
 
-      <SlidePanel
-        isOpen={isLeadPanelOpen}
-        onClose={() => setIsLeadPanelOpen(false)}
-        title="Create New Lead"
-      >
-        <LeadCreateForm
-          tenantId={tenantId}
-          onSuccess={(lead) => {
-            setSelectedLead(lead.id.toString());
-            setIsLeadPanelOpen(false);
-            queryClient.invalidateQueries({
-              queryKey: [`leads-tenant-${tenantId}-won`],
-            });
-          }}
-          onCancel={() => setIsLeadPanelOpen(false)}
-        />
-      </SlidePanel>
+  <SlidePanel
+  isOpen={isLeadPanelOpen}
+  onClose={() => setIsLeadPanelOpen(false)}
+  title="Create New Lead"
+>
+  <LeadCreateForm
+    tenantId={tenantId}
+
+    onSuccess={(lead) => {
+      setSelectedLead(lead.id.toString());
+      setIsLeadPanelOpen(false);
+      queryClient.invalidateQueries({
+        queryKey: [`leads-tenant-${tenantId}-won`],
+      });
+    }}
+    onFillOnly={(data) => {
+      handlePrefillFromLead(data);
+      setIsLeadPanelOpen(false);
+    }}
+    enableFillOnlyButton={true}
+
+    onCancel={() => setIsLeadPanelOpen(false)}
+  />
+</SlidePanel>
     </Form>
   );
 }
