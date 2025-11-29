@@ -2423,6 +2423,29 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ALL INVOICES ROUTE 
+app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, res) => {
+  try {
+    const tenantId = parseInt(req.params.tenantId);
+
+    const { startDate = "", endDate = "" } = req.query;
+
+    const invoices = await simpleStorage.getAllInvoicesByTenant(
+      tenantId,
+      startDate as string,
+      endDate as string
+    );
+
+    return res.json(invoices);
+  } catch (error: any) {
+    console.error("Get invoices error:", error);
+    return res.status(500).json({
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+});
+
   app.get("/api/tenants/:tenantId/invoices/:invoiceId", authenticateToken, async (req, res) => {
     try {
       const tenantId = parseInt(req.params.tenantId);
@@ -16699,6 +16722,55 @@ Please improve this email.`;
       res.status(500).json({ message: "Failed to fetch expenses" });
     }
   });
+
+
+
+  app.get("/api/all-expenses", authenticateVendor, async (req: any, res) => {
+  try {
+    console.log("💰 GET /api/all-expenses - User authenticated:", {
+      id: req.user.id,
+      tenantId: req.user.tenantId,
+    });
+
+    const { startDate = "", endDate = "" } = req.query;
+
+    // ---------- DATE FILTER ----------
+    let dateFilter = sql`1=1`;
+    if (startDate && endDate) {
+      dateFilter = sql`
+        e.expense_date >= ${startDate}
+        AND e.expense_date <= ${endDate}
+      `;
+    }
+
+    // ---------- FETCH EXPENSES ----------
+    const expenses = await sql`
+      SELECT 
+        e.*,
+        v.name as vendor_name,
+        lt.name as lead_type_name,
+        lt.color as lead_type_color,
+        u.first_name || ' ' || u.last_name as created_by_name
+      FROM expenses e
+      LEFT JOIN vendors v ON e.vendor_id = v.id
+      LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+      LEFT JOIN users u ON e.created_by = u.id
+      WHERE e.tenant_id = ${req.user.tenantId}
+        AND ${dateFilter}
+      ORDER BY e.expense_date DESC, e.created_at DESC
+    `;
+
+    console.log("💰 GET /api/all-expenses - Found:", expenses.length);
+    return res.json(expenses);
+
+  } catch (error: unknown) {
+    console.error("💰 Error fetching expenses:", error);
+    return res.status(500).json({
+      message: "Failed to fetch expenses",
+    });
+  }
+});
+
 
   // Create new expense
   app.post("/api/expenses", authenticateVendor, async (req: any, res) => {
