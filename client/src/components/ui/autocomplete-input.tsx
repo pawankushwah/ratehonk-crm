@@ -59,9 +59,13 @@ export function AutocompleteInput({
   // Display label of selected option, or use input value for searching
   // If popover is open, show input value for searching
   // If closed and option found, show label
-  // If closed and option not found, show empty string (will show placeholder)
+  // If closed and option not found:
+  //   - If allowCustomValue is true, show the actual value (custom input)
+  //   - Otherwise, show empty string (will show placeholder)
   // This prevents showing the raw value (ID) when option is not yet loaded
-  const displayValue = open ? inputValue : (selectedOption?.label || "");
+  const displayValue = open 
+    ? inputValue 
+    : (selectedOption?.label || (allowCustomValue && value ? value : ""));
 
   // Filter suggestions based on current input value
   const filteredSuggestions = React.useMemo(() => {

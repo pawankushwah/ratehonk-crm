@@ -1,9 +1,31 @@
 import type { Express } from "express";
 import { storage } from "./storage";
 import { simpleStorage} from "./simple-storage";
+import { sql } from "./db";
 import jwt from "jsonwebtoken";
+import multer from "multer";
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
+
+// Configure multer for estimate attachments
+const estimateAttachmentUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = [
+      "image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp",
+      "application/pdf",
+    ];
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`Unsupported file type: ${file.mimetype}`) as any, false);
+    }
+  },
+});
+
 // Proper JWT authentication middleware
 const authenticate = async (req: any, res: any, next: any) => {
   try {
@@ -29,42 +51,101 @@ const authenticate = async (req: any, res: any, next: any) => {
 
 // Transform database result to camelCase for frontend
 function transformEstimate(estimate: any) {
+  // Handle both snake_case (from DB) and camelCase (already transformed) formats
   return {
     id: estimate.id,
-    estimateNumber: estimate.estimateNumber,
+    estimateNumber: estimate.estimate_number || estimate.estimateNumber,
     title: estimate.title,
-    invoiceNumber: estimate.invoiceNumber,
+    invoiceNumber: estimate.invoice_number || estimate.invoiceNumber,
     currency: estimate.currency,
-    customerName: estimate.customerName,
-    customerEmail: estimate.customerEmail,
-    customerPhone: estimate.customerPhone,
-    customerAddress: estimate.customerAddress,
+    customerId: estimate.customer_id || estimate.customerId,
+    leadId: estimate.lead_id || estimate.leadId,
+    customerName: estimate.customer_name || estimate.customerName,
+    customerEmail: estimate.customer_email || estimate.customerEmail,
+    customerPhone: estimate.customer_phone || estimate.customerPhone,
+    customerAddress: estimate.customer_address || estimate.customerAddress,
     description: estimate.description,
     status: estimate.status,
-    totalAmount: estimate.totalAmount,
-    validUntil: estimate.validUntil,
+    totalAmount: estimate.total_amount || estimate.totalAmount,
+    validUntil: estimate.valid_until || estimate.validUntil,
     notes: estimate.notes,
-    logoUrl: estimate.logoUrl,
-    discountType: estimate.discountType,
-    discountValue: estimate.discountValue,
-    discountAmount: estimate.discountAmount,
+    logoUrl: estimate.logo_url || estimate.logoUrl,
+    discountType: estimate.discount_type || estimate.discountType,
+    discountValue: estimate.discount_value || estimate.discountValue,
+    discountAmount: estimate.discount_amount || estimate.discountAmount,
     subtotal: estimate.subtotal,
-    taxRate: estimate.taxRate,
-    taxAmount: estimate.taxAmount,
-    depositRequired: estimate.depositRequired,
-    depositAmount: estimate.depositAmount,
-    depositPercentage: estimate.depositPercentage,
-    paymentTerms: estimate.paymentTerms,
-    createdAt: estimate.createdAt,
-    updatedAt: estimate.updatedAt,
-    sentAt: estimate.sentAt,
-    viewedAt: estimate.viewedAt,
-    acceptedAt: estimate.acceptedAt,
-    rejectedAt: estimate.rejectedAt,
+    taxRate: estimate.tax_rate || estimate.taxRate,
+    taxAmount: estimate.tax_amount || estimate.taxAmount,
+    depositRequired: estimate.deposit_required || estimate.depositRequired,
+    depositAmount: estimate.deposit_amount || estimate.depositAmount,
+    depositPercentage: estimate.deposit_percentage || estimate.depositPercentage,
+    paymentTerms: estimate.payment_terms || estimate.paymentTerms,
+    createdAt: estimate.created_at || estimate.createdAt,
+    updatedAt: estimate.updated_at || estimate.updatedAt,
+    sentAt: estimate.sent_at || estimate.sentAt,
+    viewedAt: estimate.viewed_at || estimate.viewedAt,
+    acceptedAt: estimate.accepted_at || estimate.acceptedAt,
+    rejectedAt: estimate.rejected_at || estimate.rejectedAt,
+    attachments: (() => {
+      try {
+        if (typeof estimate.attachments === 'string') {
+          return JSON.parse(estimate.attachments);
+        }
+        return estimate.attachments || [];
+      } catch {
+        return [];
+      }
+    })(),
   };
 }
 
 export function registerEstimatesRoutes(app: Express) {
+  // Estimate attachments upload endpoint
+  app.post(
+    "/api/estimate-attachments/upload",
+    authenticate,
+    estimateAttachmentUpload.array('attachments', 10),
+    async (req: any, res) => {
+      try {
+        if (!req.files || !Array.isArray(req.files) || req.files.length === 0) {
+          return res.status(400).json({ message: "No files uploaded" });
+        }
+
+        const { ObjectStorageService } = await import("./objectStorage");
+        const objectStorage = new ObjectStorageService();
+
+        const uploadedFiles = [];
+
+        for (const file of req.files) {
+          const fileName = `estimate-attachments/${Date.now()}-${file.originalname}`;
+          
+          try {
+            const url = await objectStorage.uploadFile(
+              fileName,
+              file.buffer,
+              file.mimetype
+            );
+
+            uploadedFiles.push({
+              filename: file.originalname,
+              path: url,
+              size: file.size,
+              mimetype: file.mimetype,
+            });
+          } catch (uploadError) {
+            console.error(`Error uploading file ${file.originalname}:`, uploadError);
+            throw uploadError;
+          }
+        }
+
+        res.json({ files: uploadedFiles });
+      } catch (error: any) {
+        console.error("Error uploading estimate attachments:", error);
+        res.status(500).json({ message: error.message || "Failed to upload attachments" });
+      }
+    }
+  );
+
   // Tenant-based routes (matching frontend API calls)
   app.get(
     "/api/tenants/:tenantId/estimates",
@@ -185,6 +266,10 @@ export function registerEstimatesRoutes(app: Express) {
               unitPrice: (parseFloat(item.unitPrice) || 0).toString(),
               totalPrice: (parseFloat(item.totalPrice) || 0).toString(),
               displayOrder: index,
+              category: item.leadCategory || item.category || null,
+              taxRateId: item.taxRateId ? parseInt(item.taxRateId) : null,
+              tax: item.tax ? parseFloat(item.tax).toString() : null,
+              discount: item.discount ? parseFloat(item.discount).toString() : null,
             });
           }
         }
@@ -328,12 +413,13 @@ export function registerEstimatesRoutes(app: Express) {
         limit = "50",
         offset = "0",
         page = "1",
+        pageSize = "10",
       } = req.query;
 
       const limitNum = Number(limit);
       const offsetNum = Number(offset);
       const pageNum = Number(page);
-      const calculatedOffset = offsetNum || (pageNum - 1) * limitNum;
+      const pageSizeNum = Number(pageSize);
 
       console.log("📊 Estimate [API] Query params:", {
         search,
@@ -346,11 +432,11 @@ export function registerEstimatesRoutes(app: Express) {
         limitNum,
         offsetNum,
         pageNum,
-        calculatedOffset,
+        pageSizeNum,
       });
 
       // Get all estimates for tenant with filters applied in database
-      const estimates = await simpleStorage.getEstimatesByTenant({
+      const result = await simpleStorage.getEstimatesByTenant({
         tenantId,
         search: String(search),
         status: String(status),
@@ -359,14 +445,21 @@ export function registerEstimatesRoutes(app: Express) {
         sortBy: String(sortBy),
         sortOrder: String(sortOrder),
         limit: limitNum,
-        offset: calculatedOffset,
+        offset: offsetNum,
+        page: pageNum,
+        pageSize: pageSizeNum,
       });
 
-      console.log("📊 [API] Estimates fetched:", estimates.length);
+      console.log("📊 [API] Estimates fetched:", result.data.length, "Total:", result.pagination.total);
 
       // Transform to camelCase for frontend
-      const transformedEstimates = estimates.map(transformEstimate);
-      res.json(transformedEstimates);
+      const transformedEstimates = result.data.map(transformEstimate);
+      
+      // Return pagination format
+      res.json({
+        data: transformedEstimates,
+        pagination: result.pagination,
+      });
     } catch (error: any) {
       console.error("❌ [API] Error getting estimates:", error);
       res
@@ -395,20 +488,64 @@ export function registerEstimatesRoutes(app: Express) {
 
       // Calculate totals from line items
       let subtotal = 0;
+      let taxAmount = 0;
+      
       if (req.body.lineItems && Array.isArray(req.body.lineItems)) {
+        // Calculate subtotal (sum of unitPrice * quantity - discount for each item)
         subtotal = req.body.lineItems.reduce((sum: number, item: any) => {
-          return sum + (parseFloat(item.totalPrice) || 0);
+          const unitPrice = parseFloat(item.unitPrice) || 0;
+          const quantity = parseFloat(item.quantity) || 1;
+          const discount = parseFloat(item.discount) || 0;
+          const itemSubtotal = (unitPrice * quantity) - discount;
+          return sum + itemSubtotal;
         }, 0);
+        
+        // Calculate tax from line items (sum of tax from each item)
+        taxAmount = req.body.lineItems.reduce((sum: number, item: any) => {
+          return sum + (parseFloat(item.tax) || 0);
+        }, 0);
+      } else if (req.body.manualTotalPrice) {
+        // Use manual total price if no line items
+        subtotal = parseFloat(req.body.manualTotalPrice) || 0;
       }
 
-      const taxRate = parseFloat(req.body.taxRate) || 0;
-      const taxAmount = subtotal * (taxRate / 100);
-      const discountAmount = parseFloat(req.body.discountAmount) || 0;
-      const totalAmount = subtotal + taxAmount - discountAmount;
+      // Apply discount percentage if provided
+      const discountPercentage = parseFloat(req.body.discountPercentage) || 0;
+      const discountAmount = (subtotal * discountPercentage) / 100;
+      const afterDiscount = subtotal - discountAmount;
+      
+      // Total amount = subtotal after discount + tax
+      const totalAmount = afterDiscount + taxAmount;
+      
+      // Calculate deposit amount if deposit is required
+      let depositAmount = 0;
+      if (req.body.depositRequired && req.body.depositPercentage) {
+        const depositPercentage = parseFloat(req.body.depositPercentage) || 0;
+        depositAmount = (totalAmount * depositPercentage) / 100;
+      }
+
+      // Determine customerId from selectedCustomerId or selectedLeadId
+      let customerId = null;
+      let leadId = null;
+      if (req.body.selectedCustomerId) {
+        customerId = parseInt(req.body.selectedCustomerId);
+      } else if (req.body.selectedLeadId) {
+        leadId = parseInt(req.body.selectedLeadId);
+        // Try to find if this lead has been converted to a customer
+        try {
+          const lead = await simpleStorage.getLeadById(leadId, req.user.tenantId);
+          if (lead && lead.customerId) {
+            customerId = lead.customerId;
+          }
+        } catch (error) {
+          console.log("Could not find lead or customer link:", error);
+        }
+      }
 
       const estimateData = {
         tenantId: req.user.tenantId,
-        customerId: req.body.customerId || null,
+        customerId: customerId,
+        leadId: leadId,
         estimateNumber: req.body.estimateNumber || `EST-${Date.now()}`,
         invoiceNumber: req.body.invoiceNumber || null,
         title: req.body.title,
@@ -421,16 +558,16 @@ export function registerEstimatesRoutes(app: Express) {
 
         // Financial calculations
         subtotal: subtotal.toFixed(2),
-        discountType: req.body.discountType || "none",
-        discountValue: (parseFloat(req.body.discountValue) || 0).toString(),
+        discountType: req.body.discountType || (discountPercentage > 0 ? "percentage" : "none"),
+        discountValue: discountPercentage.toString(),
         discountAmount: discountAmount.toFixed(2),
-        taxRate: taxRate.toFixed(2),
+        taxRate: taxAmount > 0 ? ((taxAmount / subtotal) * 100).toFixed(2) : "0.00",
         taxAmount: taxAmount.toFixed(2),
         totalAmount: totalAmount.toFixed(2),
 
         // Additional fields
         depositRequired: req.body.depositRequired || false,
-        depositAmount: (parseFloat(req.body.depositAmount) || 0).toString(),
+        depositAmount: depositAmount.toFixed(2),
         depositPercentage: (
           parseFloat(req.body.depositPercentage) || 0
         ).toString(),
@@ -440,6 +577,7 @@ export function registerEstimatesRoutes(app: Express) {
         notes: req.body.notes || null,
         status: req.body.status || "draft",
         validUntil: req.body.validUntil ? new Date(req.body.validUntil) : null,
+        attachments: req.body.attachments ? JSON.stringify(req.body.attachments) : JSON.stringify([]),
       };
 
       console.log("📊 Processed estimate data:", estimateData);
@@ -451,7 +589,7 @@ export function registerEstimatesRoutes(app: Express) {
       if (req.body.lineItems && Array.isArray(req.body.lineItems)) {
         console.log("📊 Creating line items:", req.body.lineItems.length);
         for (const [index, item] of req.body.lineItems.entries()) {
-          await storage.createEstimateLineItem({
+          await simpleStorage.createEstimateLineItem({
             estimateId: estimate.id,
             itemName: item.itemName || "Item",
             description: item.description || "",
@@ -459,8 +597,52 @@ export function registerEstimatesRoutes(app: Express) {
             unitPrice: (parseFloat(item.unitPrice) || 0).toString(),
             totalPrice: (parseFloat(item.totalPrice) || 0).toString(),
             displayOrder: index,
+            category: item.leadCategory || item.category || null,
+            taxRateId: item.taxRateId ? parseInt(item.taxRateId) : null,
+            tax: item.tax ? parseFloat(item.tax).toString() : null,
+            discount: item.discount ? parseFloat(item.discount).toString() : null,
           });
         }
+      }
+
+      // Create activity entries for customer or lead
+      try {
+        const estimateId = estimate.id || estimate.estimate_id;
+        const estimateNumber = estimate.estimate_number || estimateData.estimateNumber;
+        const estimateTitle = estimateData.title;
+        const estimateTotal = estimateData.totalAmount;
+        const estimateCurrency = estimateData.currency || "USD";
+        const estimateStatus = estimateData.status || "draft";
+        
+        if (customerId && req.user?.id) {
+          await simpleStorage.createCustomerActivity({
+            tenantId: req.user.tenantId,
+            customerId: customerId,
+            userId: req.user.id,
+            activityType: 13, // Estimate Created
+            activityTitle: `Estimate Created: ${estimateNumber}`,
+            activityDescription: `New estimate "${estimateTitle}" created. Total amount: ${estimateCurrency}${estimateTotal}. Status: ${estimateStatus}`,
+            activityStatus: 1,
+            activityDate: new Date().toISOString(),
+          });
+          console.log(`✅ Customer activity logged for estimate ${estimateId}`);
+        }
+        
+        if (leadId && req.user?.id) {
+          await simpleStorage.saveLeadActivity({
+            tenant_id: req.user.tenantId,
+            lead_id: leadId,
+            user_id: req.user.id,
+            activity_type: 13, // Estimate Created
+            activity_title: `Estimate Created: ${estimateNumber}`,
+            activity_description: `New estimate "${estimateTitle}" created. Total amount: ${estimateCurrency}${estimateTotal}. Status: ${estimateStatus}`,
+            activity_status: 1,
+          });
+          console.log(`✅ Lead activity logged for estimate ${estimateId}`);
+        }
+      } catch (activityError) {
+        // Don't fail the whole operation if activity logging fails
+        console.error("⚠️ Failed to log estimate activity:", activityError);
       }
 
       res.status(201).json(estimate);
@@ -486,12 +668,197 @@ export function registerEstimatesRoutes(app: Express) {
       // Get line items
       const lineItems = await storage.getEstimateLineItems(estimateId);
 
+      // Transform line items to camelCase and enrich with tax rate info
+      const transformedLineItems = await Promise.all(
+        lineItems.map(async (item: any) => {
+          const transformed: any = {
+            id: item.id,
+            itemName: item.item_name || item.itemName,
+            description: item.description || "",
+            quantity: parseFloat(item.quantity || 1),
+            unitPrice: parseFloat(item.unit_price || item.unitPrice || 0),
+            totalPrice: parseFloat(item.total_price || item.totalPrice || 0),
+            category: item.category || null,
+            discount: (item.discount !== undefined && item.discount !== null) ? parseFloat(item.discount) : null,
+            tax: (item.tax !== undefined && item.tax !== null) ? parseFloat(item.tax) : null,
+            taxRateId: item.tax_rate_id || item.taxRateId || null,
+          };
+
+          // Fetch tax rate information if taxRateId exists
+          if (transformed.taxRateId) {
+            try {
+              const [taxRate] = await sql`
+                SELECT rate_name, rate_percentage, rate 
+                FROM gst_rates 
+                WHERE id = ${transformed.taxRateId}
+              `;
+              if (taxRate) {
+                const ratePercentage = parseFloat(taxRate.rate_percentage || taxRate.rate || "0");
+                transformed.taxRate = taxRate.rate_name || `${ratePercentage}%`;
+              }
+            } catch (error) {
+              console.error("Error fetching tax rate:", error);
+            }
+          }
+
+          return transformed;
+        })
+      );
+
       // Transform data to camelCase for frontend
       const transformedEstimate = transformEstimate(estimate);
-      res.json({ ...transformedEstimate, lineItems });
+      res.json({ ...transformedEstimate, lineItems: transformedLineItems });
     } catch (error: any) {
       console.error("Error getting estimate:", error);
       res.status(500).json({ message: "Failed to get estimate" });
+    }
+  });
+
+  // Update estimate
+  app.put("/api/estimates/:id", authenticate, async (req: any, res) => {
+    try {
+      const estimateId = parseInt(req.params.id);
+      const estimate = await storage.getEstimate(estimateId, req.user.tenantId);
+
+      if (!estimate) {
+        return res.status(404).json({ message: "Estimate not found" });
+      }
+
+      // Calculate totals from line items
+      let subtotal = 0;
+      let taxAmount = 0;
+      if (req.body.lineItems && Array.isArray(req.body.lineItems)) {
+        subtotal = req.body.lineItems.reduce((sum: number, item: any) => {
+          const itemSubtotal = (parseFloat(item.unitPrice) || 0) * (parseFloat(item.quantity) || 1);
+          const itemDiscount = parseFloat(item.discount) || 0;
+          const itemAfterDiscount = itemSubtotal - itemDiscount;
+          const itemTax = parseFloat(item.tax) || 0;
+          taxAmount += itemTax;
+          return sum + (parseFloat(item.totalPrice) || (itemAfterDiscount + itemTax));
+        }, 0);
+      }
+
+      const discountPercentage = parseFloat(req.body.discountPercentage || "0");
+      const discountAmount = (subtotal * discountPercentage) / 100;
+      const totalAmount = subtotal + taxAmount - discountAmount;
+
+      const depositPercentage = parseFloat(req.body.depositPercentage || "0");
+      const depositAmount = (totalAmount * depositPercentage) / 100;
+
+      const updateData: any = {
+        title: req.body.title,
+        description: req.body.description || "",
+        currency: req.body.currency || "USD",
+        customerName: req.body.customerName,
+        customerEmail: req.body.customerEmail,
+        customerPhone: req.body.customerPhone || null,
+        customerAddress: req.body.customerAddress || null,
+        subtotal: subtotal.toFixed(2),
+        discountType: req.body.discountType || "none",
+        discountValue: discountPercentage.toString(),
+        discountAmount: discountAmount.toFixed(2),
+        taxRate: req.body.taxPercentage || "0",
+        taxAmount: taxAmount.toFixed(2),
+        totalAmount: totalAmount.toFixed(2),
+        depositRequired: req.body.depositRequired || false,
+        depositAmount: depositAmount.toFixed(2),
+        depositPercentage: depositPercentage.toString(),
+        paymentTerms: req.body.paymentTerms || "net30",
+        notes: req.body.notes || null,
+        validUntil: req.body.validUntil ? new Date(req.body.validUntil) : null,
+        customerId: req.body.selectedCustomerId ? parseInt(req.body.selectedCustomerId) : null,
+        leadId: req.body.selectedLeadId ? parseInt(req.body.selectedLeadId) : null,
+        attachments: req.body.attachments ? JSON.stringify(req.body.attachments) : JSON.stringify([]),
+      };
+
+      const updatedEstimate = await storage.updateEstimate(estimateId, req.user.tenantId, updateData);
+
+      if (!updatedEstimate) {
+        return res.status(404).json({ message: "Estimate not found" });
+      }
+
+      // Delete existing line items and create new ones
+      await sql`DELETE FROM estimate_line_items WHERE estimate_id = ${estimateId}`;
+
+      if (req.body.lineItems && Array.isArray(req.body.lineItems)) {
+        for (const [index, item] of req.body.lineItems.entries()) {
+          await storage.createEstimateLineItem({
+            estimateId: estimateId,
+            itemName: item.itemName || item.description || "Item",
+            description: item.description || "",
+            quantity: (parseFloat(item.quantity) || 1).toString(),
+            unitPrice: (parseFloat(item.unitPrice) || 0).toString(),
+            totalPrice: (parseFloat(item.totalPrice) || 0).toString(),
+            displayOrder: index,
+            category: item.leadCategory || item.category || null,
+            taxRateId: item.taxRateId ? parseInt(item.taxRateId) : null,
+            tax: item.tax ? parseFloat(item.tax).toString() : null,
+            discount: item.discount ? parseFloat(item.discount).toString() : null,
+          });
+        }
+      }
+
+      // Get updated line items
+      const lineItems = await storage.getEstimateLineItems(estimateId);
+
+      // Transform data to camelCase for frontend
+      const transformedEstimate = transformEstimate(updatedEstimate);
+      res.json({ ...transformedEstimate, lineItems, estimate: transformedEstimate });
+    } catch (error: any) {
+      console.error("Error updating estimate:", error);
+      res.status(500).json({ message: "Failed to update estimate" });
+    }
+  });
+
+  // Update estimate status
+  app.patch("/api/estimates/:id/status", authenticate, async (req: any, res) => {
+    try {
+      const estimateId = parseInt(req.params.id);
+      const { status } = req.body;
+
+      if (!status) {
+        return res.status(400).json({
+          message: "Status is required",
+        });
+      }
+
+      const validStatuses = ["draft", "sent", "viewed", "accepted", "rejected"];
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({
+          message: `Invalid status. Must be one of: ${validStatuses.join(", ")}`,
+        });
+      }
+
+      const estimate = await storage.getEstimate(estimateId, req.user.tenantId);
+      if (!estimate) {
+        return res.status(404).json({ message: "Estimate not found" });
+      }
+
+      // Prepare update data
+      const updateData: any = { status };
+      
+      // Update timestamp based on status
+      if (status === "sent" && !estimate.sentAt) {
+        updateData.sentAt = new Date();
+      } else if (status === "viewed" && !estimate.viewedAt) {
+        updateData.viewedAt = new Date();
+      } else if (status === "accepted" && !estimate.acceptedAt) {
+        updateData.acceptedAt = new Date();
+      } else if (status === "rejected" && !estimate.rejectedAt) {
+        updateData.rejectedAt = new Date();
+      }
+
+      const updatedEstimate = await storage.updateEstimate(estimateId, req.user.tenantId, updateData);
+      
+      if (!updatedEstimate) {
+        return res.status(404).json({ message: "Estimate not found" });
+      }
+
+      const transformedEstimate = transformEstimate(updatedEstimate);
+      res.json(transformedEstimate);
+    } catch (error: any) {
+      console.error("Error updating estimate status:", error);
+      res.status(500).json({ message: "Failed to update estimate status" });
     }
   });
 
@@ -521,6 +888,14 @@ export function registerEstimatesRoutes(app: Express) {
       console.log("Subject:", subject);
       console.log("Message:", message);
       console.log("Estimate:", estimate.estimateNumber);
+
+      // Update estimate status to "sent" and set sentAt timestamp
+      const updateData: any = {
+        status: "sent",
+        sentAt: new Date(),
+      };
+      
+      await storage.updateEstimate(estimateId, req.user.tenantId, updateData);
 
       res.json({
         message: "Estimate email sent successfully",

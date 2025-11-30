@@ -7881,6 +7881,8 @@ async getAllInvoicesByTenant(tenantId: number, startDate?: string, endDate?: str
     sortOrder = "desc",
     limit = 50,
     offset = 0,
+    page = 1,
+    pageSize = 10,
   }: {
     tenantId: number;
     search?: string;
@@ -7891,6 +7893,8 @@ async getAllInvoicesByTenant(tenantId: number, startDate?: string, endDate?: str
     sortOrder?: string;
     limit?: number;
     offset?: number;
+    page?: number;
+    pageSize?: number;
   }) {
     console.log("Fetching estimates for tenantId:", tenantId);
 
@@ -7911,6 +7915,10 @@ async getAllInvoicesByTenant(tenantId: number, startDate?: string, endDate?: str
       whereClauses = sql`${whereClauses} AND e.created_at BETWEEN ${startDate} AND ${endDate}`;
     }
 
+    // Get total count for pagination
+    const [totalCountResult] = await sql`SELECT COUNT(*) as count FROM estimates e WHERE ${whereClauses}`;
+    const totalCount = Number(totalCountResult?.count || 0);
+
     const validSortFields = [
       "created_at",
       "updated_at",
@@ -7920,6 +7928,10 @@ async getAllInvoicesByTenant(tenantId: number, startDate?: string, endDate?: str
     const sortColumn = validSortFields.includes(sortBy) ? sortBy : "created_at";
     const orderDirection = sortOrder.toLowerCase() === "asc" ? "ASC" : "DESC";
 
+    // Use page/pageSize if provided, otherwise use limit/offset
+    const finalLimit = pageSize || limit;
+    const finalOffset = page ? (page - 1) * finalLimit : offset;
+
     // Build query with validated column name (safe because column is whitelisted)
     // We need to use different queries for each sort column since sql doesn't support identifiers
     let estimates;
@@ -7927,30 +7939,40 @@ async getAllInvoicesByTenant(tenantId: number, startDate?: string, endDate?: str
     if (sortColumn === "created_at") {
       estimates =
         orderDirection === "ASC"
-          ? await sql`SELECT * FROM estimates e WHERE ${whereClauses} ORDER BY e.created_at ASC LIMIT ${limit} OFFSET ${offset}`
-          : await sql`SELECT * FROM estimates e WHERE ${whereClauses} ORDER BY e.created_at DESC LIMIT ${limit} OFFSET ${offset}`;
+          ? await sql`SELECT * FROM estimates e WHERE ${whereClauses} ORDER BY e.created_at ASC LIMIT ${finalLimit} OFFSET ${finalOffset}`
+          : await sql`SELECT * FROM estimates e WHERE ${whereClauses} ORDER BY e.created_at DESC LIMIT ${finalLimit} OFFSET ${finalOffset}`;
     } else if (sortColumn === "updated_at") {
       estimates =
         orderDirection === "ASC"
-          ? await sql`SELECT * FROM estimates e WHERE ${whereClauses} ORDER BY e.updated_at ASC LIMIT ${limit} OFFSET ${offset}`
-          : await sql`SELECT * FROM estimates e WHERE ${whereClauses} ORDER BY e.updated_at DESC LIMIT ${limit} OFFSET ${offset}`;
+          ? await sql`SELECT * FROM estimates e WHERE ${whereClauses} ORDER BY e.updated_at ASC LIMIT ${finalLimit} OFFSET ${finalOffset}`
+          : await sql`SELECT * FROM estimates e WHERE ${whereClauses} ORDER BY e.updated_at DESC LIMIT ${finalLimit} OFFSET ${finalOffset}`;
     } else if (sortColumn === "estimate_number") {
       estimates =
         orderDirection === "ASC"
-          ? await sql`SELECT * FROM estimates e WHERE ${whereClauses} ORDER BY e.estimate_number ASC LIMIT ${limit} OFFSET ${offset}`
-          : await sql`SELECT * FROM estimates e WHERE ${whereClauses} ORDER BY e.estimate_number DESC LIMIT ${limit} OFFSET ${offset}`;
+          ? await sql`SELECT * FROM estimates e WHERE ${whereClauses} ORDER BY e.estimate_number ASC LIMIT ${finalLimit} OFFSET ${finalOffset}`
+          : await sql`SELECT * FROM estimates e WHERE ${whereClauses} ORDER BY e.estimate_number DESC LIMIT ${finalLimit} OFFSET ${finalOffset}`;
     } else if (sortColumn === "status") {
       estimates =
         orderDirection === "ASC"
-          ? await sql`SELECT * FROM estimates e WHERE ${whereClauses} ORDER BY e.status ASC LIMIT ${limit} OFFSET ${offset}`
-          : await sql`SELECT * FROM estimates e WHERE ${whereClauses} ORDER BY e.status DESC LIMIT ${limit} OFFSET ${offset}`;
+          ? await sql`SELECT * FROM estimates e WHERE ${whereClauses} ORDER BY e.status ASC LIMIT ${finalLimit} OFFSET ${finalOffset}`
+          : await sql`SELECT * FROM estimates e WHERE ${whereClauses} ORDER BY e.status DESC LIMIT ${finalLimit} OFFSET ${finalOffset}`;
     } else {
       estimates =
-        await sql`SELECT * FROM estimates e WHERE ${whereClauses} ORDER BY e.created_at DESC LIMIT ${limit} OFFSET ${offset}`;
+        await sql`SELECT * FROM estimates e WHERE ${whereClauses} ORDER BY e.created_at DESC LIMIT ${finalLimit} OFFSET ${finalOffset}`;
     }
 
-    console.log("Fetched records:", estimates.length);
-    return estimates;
+    console.log("Fetched records:", estimates.length, "Total count:", totalCount);
+
+    // Return pagination format similar to invoices
+    return {
+      data: estimates,
+      pagination: {
+        page: page || Math.floor(offset / finalLimit) + 1,
+        pageSize: finalLimit,
+        total: totalCount,
+        totalPages: Math.ceil(totalCount / finalLimit),
+      },
+    };
   }
 
   async getEstimate(estimateId: number, tenantId: number) {
@@ -7981,13 +8003,13 @@ async getAllInvoicesByTenant(tenantId: number, startDate?: string, endDate?: str
 
       const [estimate] = await sql`
         INSERT INTO estimates (
-          tenant_id, customer_id, estimate_number, invoice_number, title, description, 
+          tenant_id, customer_id, lead_id, estimate_number, invoice_number, title, description, 
           currency, customer_name, customer_email, customer_phone, customer_address,
           subtotal, discount_type, discount_value, discount_amount, tax_rate, tax_amount,
           total_amount, deposit_required, deposit_amount, deposit_percentage,
-          payment_terms, logo_url, brand_color, notes, status
+          payment_terms, logo_url, brand_color, notes, status, valid_until, attachments
         ) VALUES (
-          ${estimateData.tenantId}, ${estimateData.customerId}, ${estimateData.estimateNumber},
+          ${estimateData.tenantId}, ${estimateData.customerId}, ${estimateData.leadId || null}, ${estimateData.estimateNumber},
           ${estimateData.invoiceNumber}, ${estimateData.title}, ${estimateData.description},
           ${estimateData.currency || "USD"}, ${estimateData.customerName}, 
           ${estimateData.customerEmail}, ${estimateData.customerPhone}, 
@@ -7998,7 +8020,8 @@ async getAllInvoicesByTenant(tenantId: number, startDate?: string, endDate?: str
           ${estimateData.depositRequired || false}, ${estimateData.depositAmount || 0},
           ${estimateData.depositPercentage || 0}, ${estimateData.paymentTerms},
           ${estimateData.logoUrl}, ${estimateData.brandColor || "#0BBCD6"},
-          ${estimateData.notes}, ${estimateData.status || "draft"}
+          ${estimateData.notes}, ${estimateData.status || "draft"}, ${estimateData.validUntil || null},
+          ${estimateData.attachments || JSON.stringify([])}
         ) RETURNING *
       `;
       return estimate;
@@ -8024,16 +8047,69 @@ async getAllInvoicesByTenant(tenantId: number, startDate?: string, endDate?: str
 
   async createEstimateLineItem(lineItemData: any) {
     try {
-      const [lineItem] = await sql`
-        INSERT INTO estimate_line_items (
-          estimate_id, item_name, description, quantity, unit_price, total_price, display_order
-        ) VALUES (
-          ${lineItemData.estimateId}, ${lineItemData.itemName}, ${lineItemData.description},
-          ${lineItemData.quantity}, ${lineItemData.unitPrice}, ${lineItemData.totalPrice},
-          ${lineItemData.displayOrder || 0}
-        ) RETURNING *
-      `;
-      return lineItem;
+      // Try to insert with all optional fields first
+      try {
+        const [lineItem] = await sql`
+          INSERT INTO estimate_line_items (
+            estimate_id, item_name, description, quantity, unit_price, total_price, display_order, 
+            category, tax_rate_id, tax, discount
+          ) VALUES (
+            ${lineItemData.estimateId}, ${lineItemData.itemName}, ${lineItemData.description || null},
+            ${lineItemData.quantity}, ${lineItemData.unitPrice}, ${lineItemData.totalPrice},
+            ${lineItemData.displayOrder || 0},
+            ${lineItemData.category || null},
+            ${lineItemData.taxRateId || null},
+            ${lineItemData.tax || null},
+            ${lineItemData.discount || null}
+          ) RETURNING *
+        `;
+        return lineItem;
+      } catch (error: any) {
+        // If columns don't exist, try with category and tax_rate_id only
+        if (error && error.message && (
+          error.message.includes('column "tax"') || 
+          error.message.includes('column "discount"') ||
+          error.message.includes('column tax') ||
+          error.message.includes('column discount')
+        )) {
+          console.log("⚠️ Tax/discount columns not found, trying without them");
+          try {
+            const [lineItem] = await sql`
+              INSERT INTO estimate_line_items (
+                estimate_id, item_name, description, quantity, unit_price, total_price, display_order, 
+                category, tax_rate_id
+              ) VALUES (
+                ${lineItemData.estimateId}, ${lineItemData.itemName}, ${lineItemData.description || null},
+                ${lineItemData.quantity}, ${lineItemData.unitPrice}, ${lineItemData.totalPrice},
+                ${lineItemData.displayOrder || 0},
+                ${lineItemData.category || null},
+                ${lineItemData.taxRateId || null}
+              ) RETURNING *
+            `;
+            return lineItem;
+          } catch (error2: any) {
+            // If category or tax_rate_id don't exist either, try basic fields
+            if (error2 && error2.message && (
+              error2.message.includes('column "category"') || 
+              error2.message.includes('column "tax_rate_id"')
+            )) {
+              console.log("⚠️ Category/tax_rate_id columns not found, using basic fields only");
+              const [lineItem] = await sql`
+                INSERT INTO estimate_line_items (
+                  estimate_id, item_name, description, quantity, unit_price, total_price, display_order
+                ) VALUES (
+                  ${lineItemData.estimateId}, ${lineItemData.itemName}, ${lineItemData.description || null},
+                  ${lineItemData.quantity}, ${lineItemData.unitPrice}, ${lineItemData.totalPrice},
+                  ${lineItemData.displayOrder || 0}
+                ) RETURNING *
+              `;
+              return lineItem;
+            }
+            throw error2;
+          }
+        }
+        throw error;
+      }
     } catch (error) {
       console.error("Error creating estimate line item:", error);
       throw error;

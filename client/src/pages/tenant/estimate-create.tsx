@@ -1,5 +1,5 @@
-import { useState, useMemo, useEffect } from "react";
-import { useLocation } from "wouter";
+import { useState, useMemo, useEffect, useRef } from "react";
+import { useLocation, useParams } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Layout } from "@/components/layout/layout";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,7 @@ import { Combobox } from "@/components/ui/combobox";
 import { AutocompleteInput } from "@/components/ui/autocomplete-input";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Switch } from "@/components/ui/switch";
-import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Upload, FileText, Image, HelpCircle } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Upload, FileText, Image, HelpCircle, Download } from "lucide-react";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useToast } from "@/hooks/use-toast";
 import { EstimateSettingsPanel } from "@/components/estimate-settings-panel";
@@ -56,6 +56,9 @@ interface EstimateFormData {
 
 export default function EstimateCreate() {
   const [, setLocation] = useLocation();
+  const params = useParams();
+  const estimateId = params?.id ? parseInt(params.id) : null;
+  const isEditMode = !!estimateId;
   const { user, tenant } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -101,6 +104,8 @@ export default function EstimateCreate() {
 
   // Attachment files
   const [attachments, setAttachments] = useState<File[]>([]);
+  // Existing attachments from database (for edit mode)
+  const [existingAttachments, setExistingAttachments] = useState<Array<{filename: string; path: string; size: number; mimetype: string}>>([]);
 
   // Form data state
   const [formData, setFormData] = useState<EstimateFormData>({
@@ -118,7 +123,7 @@ export default function EstimateCreate() {
     taxPercentage: "0",
     manualTotalPrice: "0",
     manualTaxRateId: "",
-    depositRequired: false,
+    depositRequired: true,
     depositPercentage: "0",
     paymentTerms: "net30",
     notes: "",
@@ -189,6 +194,21 @@ export default function EstimateCreate() {
     enabled: !!tenant?.id,
   });
 
+  // Fetch estimate data for editing
+  const { data: estimateData, isLoading: isLoadingEstimate } = useQuery({
+    queryKey: [`/api/estimates/${estimateId}`, estimateId],
+    enabled: !!estimateId && !!tenant?.id,
+    queryFn: async () => {
+      if (!estimateId) return null;
+      const token = auth.getToken();
+      const response = await fetch(`/api/estimates/${estimateId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error("Failed to fetch estimate");
+      return response.json();
+    },
+  });
+
   // Fetch estimate settings
   const { data: estimateSettings = {
     estimateNumberStart: 1,
@@ -213,20 +233,189 @@ export default function EstimateCreate() {
     },
     enabled: !!tenant?.id,
     refetchOnMount: true,
+    refetchOnWindowFocus: true,
     staleTime: 0,
   });
 
   const [selectedTaxSettingId, setSelectedTaxSettingId] = useState<string>("");
 
+  // Function to generate next estimate number
+  const generateNextEstimateNumber = useMemo(() => {
+    const startNumber = estimateSettings?.estimateNumberStart || 1;
+    
+    if (!estimates || estimates.length === 0) {
+      // No existing estimates, use starting number from settings
+      return `EST-${String(startNumber).padStart(3, '0')}`;
+    }
+
+    // Extract numbers from existing estimate numbers
+    const estimateNumbers = estimates
+      .map((est: any) => {
+        const estNum = est.estimateNumber || est.invoiceNumber || "";
+        // Extract number from formats like EST-001, EST-1, EST001, etc.
+        const match = estNum.match(/(\d+)/);
+        return match ? parseInt(match[1], 10) : 0;
+      })
+      .filter((num: number) => num > 0);
+
+    // Find the highest number
+    const maxNumber = estimateNumbers.length > 0 
+      ? Math.max(...estimateNumbers) 
+      : startNumber - 1;
+
+    // Use the higher of: max existing number + 1, or starting number
+    const nextNumber = Math.max(maxNumber + 1, startNumber);
+    
+    return `EST-${String(nextNumber).padStart(3, '0')}`;
+  }, [estimates, estimateSettings?.estimateNumberStart]);
+
   // Update currency and tax setting when settings load
   useEffect(() => {
-    if (estimateSettings?.defaultCurrency) {
+    if (estimateSettings?.defaultCurrency && !isEditMode) {
       setFormData((prev) => ({ ...prev, currency: estimateSettings.defaultCurrency }));
     }
     if (estimateSettings?.defaultGstSettingId) {
       setSelectedTaxSettingId(estimateSettings.defaultGstSettingId.toString());
     }
-  }, [estimateSettings?.defaultCurrency, estimateSettings?.defaultGstSettingId]);
+  }, [estimateSettings?.defaultCurrency, estimateSettings?.defaultGstSettingId, isEditMode]);
+
+  // Load estimate data into form when editing
+  useEffect(() => {
+    if (estimateData && isEditMode) {
+      const estimate = estimateData;
+      console.log("Loading estimate data for edit:", estimate);
+      console.log("Line items:", estimate.lineItems);
+      
+      const leadIdValue = estimate.leadId ? estimate.leadId.toString() : "";
+      const customerIdValue = estimate.customerId ? estimate.customerId.toString() : "";
+      
+      setFormData({
+        title: estimate.title || "",
+        selectedLeadId: leadIdValue,
+        selectedCustomerId: customerIdValue,
+        customerName: estimate.customerName || "",
+        customerEmail: estimate.customerEmail || "",
+        customerPhone: estimate.customerPhone || "",
+        invoiceNumber: estimate.invoiceNumber || estimate.estimateNumber || "",
+        currency: estimate.currency || "USD",
+        validUntil: estimate.validUntil ? new Date(estimate.validUntil).toISOString().split('T')[0] : "",
+        lineItems: estimate.lineItems?.map((item: any) => {
+          const taxValue = (item.tax !== null && item.tax !== undefined && item.tax !== "") 
+            ? parseFloat(item.tax) 
+            : 0;
+          const discountValue = (item.discount !== null && item.discount !== undefined && item.discount !== "") 
+            ? parseFloat(item.discount) 
+            : 0;
+          const taxRateIdValue = (item.taxRateId !== null && item.taxRateId !== undefined && item.taxRateId !== "") 
+            ? item.taxRateId.toString() 
+            : "";
+          
+          console.log("Mapping line item:", {
+            original: item,
+            tax: taxValue,
+            discount: discountValue,
+            taxRateId: taxRateIdValue
+          });
+          
+          return {
+            itemName: item.itemName || "",
+            description: item.description || "",
+            quantity: item.quantity || 1,
+            unitPrice: parseFloat(item.unitPrice || 0),
+            totalPrice: parseFloat(item.totalPrice || 0),
+            leadCategory: item.category || "",
+            tax: taxValue,
+            taxRateId: taxRateIdValue,
+            discount: discountValue,
+          };
+        }) || [],
+        discountPercentage: estimate.discountPercentage ? estimate.discountPercentage.toString() : "0",
+        taxPercentage: estimate.taxRate ? estimate.taxRate.toString() : "0",
+        manualTotalPrice: estimate.manualTotalPrice ? estimate.manualTotalPrice.toString() : "0",
+        manualTaxRateId: estimate.manualTaxRateId ? estimate.manualTaxRateId.toString() : "",
+        depositRequired: estimate.depositRequired ?? true,
+        depositPercentage: estimate.depositPercentage ? estimate.depositPercentage.toString() : "0",
+        paymentTerms: estimate.paymentTerms || "net30",
+        notes: estimate.notes || "",
+      });
+      
+      // Load attachments if they exist
+      if (estimate.attachments && Array.isArray(estimate.attachments) && estimate.attachments.length > 0) {
+        // Store attachment info in state for display
+        setExistingAttachments(estimate.attachments);
+      } else {
+        setExistingAttachments([]);
+      }
+      
+      if (estimate.lineItems && estimate.lineItems.length > 0) {
+        setShowLineItems(true);
+      }
+    }
+  }, [estimateData, isEditMode]);
+  
+  // Separate effect to trigger selection handlers once customers/leads are loaded
+  // This ensures the dropdowns show the correct selected values
+  useEffect(() => {
+    if (isEditMode && estimateData && (customers.length > 0 || leads.length > 0)) {
+      const estimate = estimateData;
+      const customerIdValue = estimate.customerId ? estimate.customerId.toString() : "";
+      const leadIdValue = estimate.leadId ? estimate.leadId.toString() : "";
+      
+      // Only trigger if the form data doesn't already match and we have the customer/lead in the list
+      if (customerIdValue && formData.selectedCustomerId !== customerIdValue) {
+        const customer = customers.find((c: any) => String(c.id) === customerIdValue);
+        if (customer) {
+          // Use a small delay to avoid race conditions
+          const timer = setTimeout(() => {
+            handleCustomerSelection(customerIdValue);
+          }, 50);
+          return () => clearTimeout(timer);
+        }
+      } else if (leadIdValue && formData.selectedLeadId !== leadIdValue) {
+        const lead = leads.find((l: any) => String(l.id) === leadIdValue);
+        if (lead) {
+          // Use a small delay to avoid race conditions
+          const timer = setTimeout(() => {
+            handleLeadSelection(leadIdValue);
+          }, 50);
+          return () => clearTimeout(timer);
+        }
+      }
+    }
+  }, [isEditMode, estimateData?.customerId, estimateData?.leadId, customers.length, leads.length]);
+
+  // Track the last starting number used for auto-generation
+  const lastStartingNumber = useRef<number | null>(null);
+  const hasInitialized = useRef(false);
+
+  // Auto-generate ref no when estimates/settings are loaded
+  useEffect(() => {
+    const currentStartNumber = estimateSettings?.estimateNumberStart || 1;
+    
+    if (generateNextEstimateNumber) {
+      setFormData((prev) => {
+        // Check if starting number changed
+        const startingNumberChanged = lastStartingNumber.current !== null && 
+                                      lastStartingNumber.current !== currentStartNumber;
+        
+        // On first initialization, always update (even if field has a value)
+        // After that, update if field is empty OR starting number changed
+        const shouldUpdate = !hasInitialized.current || 
+                            !prev.invoiceNumber || 
+                            startingNumberChanged;
+        
+        if (shouldUpdate) {
+          lastStartingNumber.current = currentStartNumber;
+          hasInitialized.current = true;
+          return { ...prev, invoiceNumber: generateNextEstimateNumber };
+        }
+        return prev;
+      });
+    } else if (estimateSettings?.estimateNumberStart && !hasInitialized.current) {
+      // Initialize lastStartingNumber even if generateNextEstimateNumber isn't ready yet
+      lastStartingNumber.current = estimateSettings.estimateNumberStart;
+    }
+  }, [generateNextEstimateNumber, estimateSettings?.estimateNumberStart]);
 
   // Fetch GST rates based on selected tax setting
   const { data: gstRates = [] } = useQuery<any[]>({
@@ -255,7 +444,6 @@ export default function EstimateCreate() {
       'minmax(60px, 1fr)', // Qty - small (flexible, min 60px)
       'minmax(130px, 1fr)', // Price - small (flexible, min 130px)
       'minmax(100px, 1fr)', // Tax Rate - small (flexible, min 100px)
-      'minmax(100px, 1fr)', // Tax - small (flexible, min 100px)
       'minmax(100px, 1fr)', // Discount - small (flexible, min 100px)
       'minmax(100px, 1fr)', // Total - small (flexible, min 100px)
       '50px', // Delete button - small (fixed)
@@ -331,7 +519,7 @@ export default function EstimateCreate() {
     }));
 
     if (customerId && customerId !== "none") {
-      const customer = customers.find((c) => c.id.toString() === customerId);
+      const customer = customers.find((c: any) => String(c.id) === customerId);
       if (customer) {
         setFormData((prev) => ({
           ...prev,
@@ -359,7 +547,7 @@ export default function EstimateCreate() {
     }));
 
     if (leadId && leadId !== "none") {
-      const lead = leads.find((l) => l.id.toString() === leadId);
+      const lead = leads.find((l: any) => String(l.id) === leadId);
       if (lead) {
         setFormData((prev) => ({
           ...prev,
@@ -427,7 +615,8 @@ export default function EstimateCreate() {
           (rate: any) => rate.id?.toString() === item.taxRateId
         );
         if (selectedRate) {
-          const ratePercentage = parseFloat(selectedRate.rate || "0");
+          // Try ratePercentage first, then fallback to rate
+          const ratePercentage = parseFloat(selectedRate.ratePercentage || selectedRate.rate || "0");
           const subtotal = unitPrice * quantity;
           const afterDiscount = subtotal - discount;
           
@@ -476,7 +665,8 @@ export default function EstimateCreate() {
           (rate: any) => rate.id?.toString() === item.taxRateId
         );
         if (selectedRate) {
-          const ratePercentage = parseFloat(selectedRate.rate || "0");
+          // Try ratePercentage first, then fallback to rate
+          const ratePercentage = parseFloat(selectedRate.ratePercentage || selectedRate.rate || "0");
           const subtotal = unitPrice * quantity;
           const afterDiscount = subtotal - discount;
           
@@ -523,7 +713,8 @@ export default function EstimateCreate() {
           (rate: any) => rate.id?.toString() === formData.manualTaxRateId
         );
         if (selectedRate) {
-          const ratePercentage = parseFloat(selectedRate.rate || "0");
+          // Try ratePercentage first, then fallback to rate
+          const ratePercentage = parseFloat(selectedRate.ratePercentage || selectedRate.rate || "0");
           if (isTaxInclusive) {
             // Tax is already included, so show 0
             taxAmount = 0;
@@ -604,7 +795,8 @@ export default function EstimateCreate() {
               const itemSummaryDiscount = (itemAfterItemDiscount * discountPercentage) / 100;
               const itemFinalAmount = itemAfterItemDiscount - itemSummaryDiscount;
               
-              const ratePercentage = parseFloat(selectedRate.rate || "0");
+              // Try ratePercentage first, then fallback to rate
+              const ratePercentage = parseFloat(selectedRate.ratePercentage || selectedRate.rate || "0");
               taxAmount += (itemFinalAmount * ratePercentage) / 100;
             }
           }
@@ -699,11 +891,28 @@ export default function EstimateCreate() {
         const quantity = parseInt(item.quantity?.toString() || "1") || 1;
         const unitPrice = parseFloat(item.unitPrice?.toString() || "0") || 0;
         const totalPrice = parseFloat(item.totalPrice?.toString() || "0") || (unitPrice * quantity);
+        const category = item.leadCategory || "";
+        const discount = parseFloat(item.discount?.toString() || "0") || 0;
+        
+        // Get tax rate name if taxRateId is set
+        let taxRate = "";
+        if (item.taxRateId && gstRates.length > 0) {
+          const selectedRate = gstRates.find(
+            (rate: any) => rate.id?.toString() === item.taxRateId
+          );
+          if (selectedRate) {
+            const ratePercentage = parseFloat(selectedRate.ratePercentage || selectedRate.rate || "0");
+            taxRate = selectedRate.rateName || `${ratePercentage}%`;
+          }
+        }
         
         return {
           description,
+          category,
           quantity,
           unitPrice,
+          taxRate,
+          discount,
           totalPrice,
         };
       });
@@ -711,8 +920,22 @@ export default function EstimateCreate() {
     // If no line items, create a single item from manual total price
     const finalItems = items.length > 0 ? items : [{
       description: "Service",
+      category: "",
       quantity: 1,
       unitPrice: totals.subtotal,
+      taxRate: formData.manualTaxRateId && gstRates.length > 0
+        ? (() => {
+            const selectedRate = gstRates.find(
+              (rate: any) => rate.id?.toString() === formData.manualTaxRateId
+            );
+            if (selectedRate) {
+              const ratePercentage = parseFloat(selectedRate.ratePercentage || selectedRate.rate || "0");
+              return selectedRate.rateName || `${ratePercentage}%`;
+            }
+            return "";
+          })()
+        : "",
+      discount: 0,
       totalPrice: totals.subtotal,
     }];
 
@@ -769,13 +992,55 @@ export default function EstimateCreate() {
     createMutation.mutate(formData);
   };
 
-  // Create estimate mutation
+  // Create/Update estimate mutation
   const createMutation = useMutation({
     mutationFn: async (data: EstimateFormData) => {
       const token =
         localStorage.getItem("token") || localStorage.getItem("auth_token");
-      const response = await fetch(`/api/estimates`, {
-        method: "POST",
+      
+      // Upload attachments first if any
+      let uploadedAttachments: Array<{filename: string; path: string; size: number; mimetype: string}> = [];
+      if (attachments.length > 0) {
+        try {
+          const formData = new FormData();
+          attachments.forEach((file) => {
+            formData.append('attachments', file);
+          });
+
+          const uploadResponse = await fetch('/api/estimate-attachments/upload', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+            body: formData,
+          });
+
+          if (uploadResponse.ok) {
+            const uploadResult = await uploadResponse.json();
+            uploadedAttachments = uploadResult.files || [];
+          } else {
+            console.error('Failed to upload attachments');
+            toast({
+              title: "Warning",
+              description: "Failed to upload some attachments. Estimate will be saved without them.",
+              variant: "destructive",
+            });
+          }
+        } catch (error) {
+          console.error('Error uploading attachments:', error);
+          toast({
+            title: "Warning",
+            description: "Failed to upload attachments. Estimate will be saved without them.",
+            variant: "destructive",
+          });
+        }
+      }
+      
+      const url = isEditMode ? `/api/estimates/${estimateId}` : `/api/estimates`;
+      const method = isEditMode ? "PUT" : "POST";
+      
+      const response = await fetch(url, {
+        method,
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
@@ -783,21 +1048,33 @@ export default function EstimateCreate() {
         body: JSON.stringify({
           ...data,
           tenantId: tenant?.id,
+          attachments: [
+            ...uploadedAttachments,
+            ...existingAttachments,
+          ],
         }),
       });
-      if (!response.ok) throw new Error("Failed to create estimate");
+      if (!response.ok) throw new Error(isEditMode ? "Failed to update estimate" : "Failed to create estimate");
       return response.json();
     },
     onSuccess: async (data) => {
-      toast({ title: "Success", description: "Estimate created successfully" });
+      toast({ 
+        title: "Success", 
+        description: isEditMode ? "Estimate updated successfully" : "Estimate created successfully" 
+      });
       queryClient.invalidateQueries({ queryKey: ["/api/estimates"] });
-
-      // Send estimate via email/WhatsApp if enabled
-      const selectedCustomer = customers.find((c: any) => c.id.toString() === formData.selectedCustomerId);
-      const selectedLead = leads.find((l: any) => l.id.toString() === formData.selectedLeadId);
-      const customer = selectedCustomer || selectedLead;
       
-      if (data.estimate?.id && customer && estimateSettings) {
+      // Clear attachments after successful save
+      setAttachments([]);
+      setExistingAttachments([]);
+
+      // Send estimate via email/WhatsApp if enabled (only for new estimates)
+      if (!isEditMode) {
+        const selectedCustomer = customers.find((c: any) => c.id.toString() === formData.selectedCustomerId);
+        const selectedLead = leads.find((l: any) => l.id.toString() === formData.selectedLeadId);
+        const customer = selectedCustomer || selectedLead;
+        
+        if (data.estimate?.id && customer && estimateSettings) {
         try {
           const token = auth.getToken();
           
@@ -839,13 +1116,14 @@ export default function EstimateCreate() {
           console.error("Error sending estimate:", error);
         }
       }
+      }
 
       setLocation("/estimates");
     },
     onError: (error: any) => {
       toast({
         title: "Error",
-        description: error.message || "Failed to create estimate",
+        description: error.message || (isEditMode ? "Failed to update estimate" : "Failed to create estimate"),
         variant: "destructive",
       });
     },
@@ -972,7 +1250,7 @@ export default function EstimateCreate() {
                             `Lead ${lead.id}`
                         }))
                       ]}
-                      value={formData.selectedLeadId || "none"}
+                      value={formData.selectedLeadId ? formData.selectedLeadId : "none"}
                       onValueChange={handleLeadSelection}
                       placeholder="Select lead"
                       searchPlaceholder="Search..."
@@ -992,7 +1270,7 @@ export default function EstimateCreate() {
                             `Customer ${customer.id}`
                         }))
                       ]}
-                      value={formData.selectedCustomerId || "none"}
+                      value={formData.selectedCustomerId ? formData.selectedCustomerId : "none"}
                       onValueChange={handleCustomerSelection}
                       placeholder="Select customer"
                       searchPlaceholder="Search..."
@@ -1099,16 +1377,27 @@ export default function EstimateCreate() {
 
                 {showLineItems && formData.lineItems.length > 0 && (
                   <div className="border rounded-lg overflow-x-auto">
-                    <div className="min-w-[1100px]">
+                    <div className="min-w-[1300px]">
                       {/* Table Header */}
-                      <div className="grid gap-2 p-3 font-medium text-sm border-b bg-gray-50" style={{ gridTemplateColumns: gridTemplate }}>
+                      <div 
+                        className="sticky top-0 z-[100] grid gap-2 p-3 font-medium text-sm border-b bg-gray-50 dark:bg-gray-800" 
+                        style={{ 
+                          gridTemplateColumns: gridTemplate,
+                          backgroundColor: 'rgb(249, 250, 251)',
+                          position: 'sticky',
+                          top: 0,
+                          zIndex: 100,
+                          minWidth: '1300px',
+                          width: '100%',
+                          willChange: 'transform'
+                        }}
+                      >
                         <div className="text-center flex items-center justify-center">#</div>
                         <div className="flex items-center">Category</div>
                         <div className="flex items-center">Service</div>
                         <div className="flex items-center">Qty</div>
                         <div className="flex items-center">Price</div>
                         <div className="flex items-center">Tax Rate</div>
-                        <div className="flex items-center">Tax</div>
                         <div className="flex items-center">Discount</div>
                         <div className="flex items-center">Total</div>
                         <div></div>
@@ -1126,7 +1415,7 @@ export default function EstimateCreate() {
                             <span className="font-medium text-sm">{index + 1}</span>
                           </div>
 
-                          <div>
+                          <div className="flex items-center">
                             <Combobox
                               options={getTravelCategories().map((category) => ({
                                 value: category,
@@ -1141,7 +1430,7 @@ export default function EstimateCreate() {
                             />
                           </div>
 
-                          <div>
+                          <div className="flex items-center">
                             <Input
                               value={item.itemName || item.description || ""}
                               onChange={(e) =>
@@ -1155,7 +1444,7 @@ export default function EstimateCreate() {
                             />
                           </div>
 
-                          <div>
+                          <div className="flex items-center">
                             <Input
                               value={item.quantity}
                               onChange={(e) =>
@@ -1171,7 +1460,7 @@ export default function EstimateCreate() {
                             />
                           </div>
 
-                          <div>
+                          <div className="flex items-center">
                             <Input
                               value={item.unitPrice}
                               onChange={(e) =>
@@ -1186,9 +1475,9 @@ export default function EstimateCreate() {
                             />
                           </div>
 
-                          <div>
+                          <div className="flex items-center">
                             <Select
-                              value={item.taxRateId || "none"}
+                              value={(item.taxRateId && item.taxRateId !== "") ? item.taxRateId.toString() : "none"}
                               onValueChange={(value) =>
                                 updateLineItem(index, "taxRateId", value === "none" ? "" : value)
                               }
@@ -1209,17 +1498,9 @@ export default function EstimateCreate() {
                             </Select>
                           </div>
 
-                          <div>
+                          <div className="flex items-center">
                             <Input
-                              readOnly
-                              value={`${currencySymbol}${(parseFloat(item.tax?.toString() || "0") || 0).toFixed(2)}`}
-                              className="text-gray-600 dark:text-gray-400 cursor-not-allowed"
-                            />
-                          </div>
-
-                          <div>
-                            <Input
-                              value={item.discount}
+                              value={item.discount?.toString() || "0"}
                               onChange={(e) =>
                                 updateLineItem(
                                   index,
@@ -1232,7 +1513,7 @@ export default function EstimateCreate() {
                             />
                           </div>
 
-                          <div>
+                          <div className="flex items-center">
                             <Input
                               readOnly
                               value={`${currencySymbol}${item.totalPrice.toFixed(2)}`}
@@ -1284,11 +1565,12 @@ export default function EstimateCreate() {
                   </span>
                 </div>
 
-                {attachments.length > 0 && (
+                {(attachments.length > 0 || existingAttachments.length > 0) && (
                   <div className="mt-3 space-y-2">
+                    {/* Display new attachments (File objects) */}
                     {attachments.map((file, index) => (
                       <div
-                        key={index}
+                        key={`new-${index}`}
                         className="flex items-center justify-between p-2 rounded border border-gray-200 dark:border-gray-700"
                       >
                         <div className="flex items-center gap-2">
@@ -1311,6 +1593,45 @@ export default function EstimateCreate() {
                           variant="ghost"
                           size="sm"
                           onClick={() => removeAttachment(index)}
+                          className="h-7 w-7 p-0"
+                        >
+                          <Trash2 className="h-3.5 w-3.5 text-gray-900 dark:text-white" />
+                        </Button>
+                      </div>
+                    ))}
+                    {/* Display existing attachments from database */}
+                    {existingAttachments.map((attachment, index) => (
+                      <div
+                        key={`existing-${index}`}
+                        className="flex items-center justify-between p-2 rounded border border-gray-200 dark:border-gray-700"
+                      >
+                        <div className="flex items-center gap-2">
+                          {attachment.mimetype === 'application/pdf' ? (
+                            <FileText className="h-4 w-4 text-gray-900 dark:text-white" />
+                          ) : (
+                            <Image className="h-4 w-4 text-gray-900 dark:text-white" />
+                          )}
+                          <div>
+                            <a
+                              href={attachment.path}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline"
+                            >
+                              {attachment.filename}
+                            </a>
+                            <p className="text-[10px] text-gray-500 dark:text-gray-400">
+                              {attachment.size ? `${(attachment.size / 1024).toFixed(2)} KB` : ''}
+                            </p>
+                          </div>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setExistingAttachments(prev => prev.filter((_, i) => i !== index));
+                          }}
                           className="h-7 w-7 p-0"
                         >
                           <Trash2 className="h-3.5 w-3.5 text-gray-900 dark:text-white" />
@@ -1504,7 +1825,7 @@ export default function EstimateCreate() {
                             </span>
                           </div>
                         )}
-                        <div className="flex justify-between items-center py-3 border-t-2 border-gray-300 dark:border-gray-600 mt-2">
+                        <div className="flex justify-between items-center py-3 border-gray-300 dark:border-gray-600 mt-2">
                           <span className="text-lg font-bold text-gray-900 dark:text-white">Total:</span>
                           <span className="text-xl font-bold text-gray-900 dark:text-white">
                             {currencySymbol}{totals.total.toFixed(2)}
@@ -1567,22 +1888,75 @@ export default function EstimateCreate() {
 
       {/* Estimate Preview Dialog */}
       <Dialog open={showPreview} onOpenChange={setShowPreview}>
-        <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Estimate Preview</DialogTitle>
-            <DialogDescription>
-              Review your estimate before saving. All estimate data will be displayed as shown below.
-            </DialogDescription>
+        <DialogContent className="max-w-6xl max-h-[95vh] overflow-hidden flex flex-col p-0">
+          <DialogHeader className="px-6 pt-6 pb-4 border-b">
+            <div className="flex items-center justify-between">
+              <div>
+                <DialogTitle className="text-xl font-semibold">Estimate Preview</DialogTitle>
+                <DialogDescription className="mt-1">
+                  Review your estimate before saving. All estimate data will be displayed as shown below.
+                </DialogDescription>
+              </div>
+              <div className="flex items-center gap-3">
+                <Button
+                  variant="outline"
+                  onClick={async () => {
+                    if (!previewEstimateData) return;
+                    try {
+                      // Import dynamically to avoid SSR issues
+                      const [{ default: jsPDF }, { default: html2canvas }] = await Promise.all([
+                        import('jspdf'),
+                        import('html2canvas')
+                      ]);
+                      
+                      const templateElement = document.querySelector('[data-estimate-template]');
+                      if (!templateElement) {
+                        toast({
+                          title: "Error",
+                          description: "Could not find estimate template",
+                          variant: "destructive",
+                        });
+                        return;
+                      }
+                      
+                      const canvas = await html2canvas(templateElement as HTMLElement);
+                      const imgData = canvas.toDataURL("image/png");
+                      const pdf = new jsPDF("p", "mm", "a4");
+                      const pdfWidth = pdf.internal.pageSize.getWidth();
+                      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+                      
+                      pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight);
+                      pdf.save(`Estimate-${previewEstimateData.estimateNumber}.pdf`);
+                      
+                      toast({
+                        title: "Success",
+                        description: "PDF downloaded successfully",
+                      });
+                    } catch (error) {
+                      console.error("PDF download error:", error);
+                      toast({
+                        title: "Error",
+                        description: "Failed to download PDF",
+                        variant: "destructive",
+                      });
+                    }
+                  }}
+                  className="flex items-center gap-2"
+                >
+                  <Download className="h-4 w-4" />
+                  Download PDF
+                </Button>
+              </div>
+            </div>
           </DialogHeader>
-          <div className="mt-4">
+          <div className="flex-1 overflow-y-auto px-6 py-4">
             {previewEstimateData && (
-              <>
-                {/* Use actual estimate template */}
+              <div data-estimate-template>
                 <ModernEstimateTemplate data={previewEstimateData} />
-              </>
+              </div>
             )}
           </div>
-          <div className="flex justify-end gap-2 pt-4 border-t mt-4">
+          <div className="flex justify-end gap-2 pt-4 border-t px-6 pb-6">
             <Button
               type="button"
               variant="outline"

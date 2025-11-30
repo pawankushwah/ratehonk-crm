@@ -1312,6 +1312,7 @@ export const estimates = pgTable("estimates", {
   id: serial("id").primaryKey(),
   tenantId: integer("tenant_id").notNull().references(() => tenants.id),
   customerId: integer("customer_id").references(() => customers.id),
+  leadId: integer("lead_id").references(() => leads.id),
   estimateNumber: varchar("estimate_number", { length: 50 }).notNull(),
   invoiceNumber: varchar("invoice_number", { length: 50 }), // New field for invoice number
   title: varchar("title", { length: 200 }).notNull(),
@@ -1341,6 +1342,7 @@ export const estimates = pgTable("estimates", {
   logoUrl: text("logo_url"),
   brandColor: varchar("brand_color", { length: 7 }).default("#0BBCD6"),
   notes: text("notes"),
+  attachments: json("attachments").$type<Array<{filename: string; path: string; size: number; mimetype: string}>>().default([]), // File attachments
   
   // Status and dates
   status: varchar("status", { length: 20 }).notNull().default("draft"), // draft, sent, viewed, accepted, rejected, expired
@@ -1360,9 +1362,13 @@ export const estimateLineItems = pgTable("estimate_line_items", {
   estimateId: integer("estimate_id").notNull().references(() => estimates.id, { onDelete: 'cascade' }),
   itemName: varchar("item_name", { length: 200 }).notNull(),
   description: text("description"),
+  category: varchar("category", { length: 200 }),
   quantity: decimal("quantity", { precision: 10, scale: 2 }).notNull().default("1.00"),
   unitPrice: decimal("unit_price", { precision: 10, scale: 2 }).notNull().default("0.00"),
   totalPrice: decimal("total_price", { precision: 10, scale: 2 }).notNull().default("0.00"),
+  taxRateId: integer("tax_rate_id").references(() => gstRates.id),
+  tax: decimal("tax", { precision: 10, scale: 2 }).default("0.00"),
+  discount: decimal("discount", { precision: 10, scale: 2 }).default("0.00"),
   displayOrder: integer("display_order").default(0),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });

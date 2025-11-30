@@ -60,7 +60,7 @@ Your Team`
       onOpenChange(false);
       toast({
         title: "Email Sent",
-        description: `Estimate has been emailed to ${emailData.to}`,
+        description: `Estimate has been emailed to ${emailData.to}. Status updated to "Sent".`,
       });
     },
     onError: (error: any) => {

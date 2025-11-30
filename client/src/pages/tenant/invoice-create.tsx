@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Layout } from "@/components/layout/layout";
 import { Button } from "@/components/ui/button";
@@ -101,6 +101,7 @@ export default function InvoiceCreate() {
   const [dueDate, setDueDate] = useState(
     new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
   );
+  const [invoiceNumber, setInvoiceNumber] = useState("");
 
   // Payment reminder states
   const [enableReminder, setEnableReminder] = useState(false);
@@ -138,6 +139,7 @@ export default function InvoiceCreate() {
 
   // Fetch invoice settings
   const { data: invoiceSettings = {
+    invoiceNumberStart: 1,
     showTax: true,
     showDiscount: true,
     showNotes: true,
@@ -158,7 +160,23 @@ export default function InvoiceCreate() {
       return result.data;
     },
     refetchOnMount: true,
+    refetchOnWindowFocus: true,
     staleTime: 0,
+  });
+
+  // Fetch existing invoices for number generation
+  const { data: invoices = [] } = useQuery<any[]>({
+    queryKey: ["/api/invoices", tenant?.id],
+    enabled: !!tenant?.id && !isEditMode,
+    queryFn: async () => {
+      const token = auth.getToken();
+      const response = await fetch(`/api/tenants/${tenant?.id}/invoices`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) return [];
+      const result = await response.json();
+      return Array.isArray(result) ? result : [];
+    },
   });
 
   // Refetch invoice settings when page loads
@@ -174,6 +192,68 @@ export default function InvoiceCreate() {
       setSelectedTaxSettingId(invoiceSettings.defaultGstSettingId.toString());
     }
   }, [invoiceSettings?.defaultGstSettingId]);
+
+  // Function to generate next invoice number
+  const generateNextInvoiceNumber = useMemo(() => {
+    const startNumber = invoiceSettings?.invoiceNumberStart || 1;
+    
+    if (!invoices || invoices.length === 0) {
+      // No existing invoices, use starting number from settings
+      return `INV-${String(startNumber).padStart(3, '0')}`;
+    }
+
+    // Extract numbers from existing invoice numbers
+    const invoiceNumbers = invoices
+      .map((inv: any) => {
+        const invNum = inv.invoiceNumber || "";
+        // Extract number from formats like INV-001, INV-1, INV001, etc.
+        const match = invNum.match(/(\d+)/);
+        return match ? parseInt(match[1], 10) : 0;
+      })
+      .filter((num: number) => num > 0);
+
+    // Find the highest number
+    const maxNumber = invoiceNumbers.length > 0 
+      ? Math.max(...invoiceNumbers) 
+      : startNumber - 1;
+
+    // Use the higher of: max existing number + 1, or starting number
+    const nextNumber = Math.max(maxNumber + 1, startNumber);
+    
+    return `INV-${String(nextNumber).padStart(3, '0')}`;
+  }, [invoices, invoiceSettings?.invoiceNumberStart]);
+
+  // Track the last starting number used for auto-generation
+  const lastStartingNumber = useRef<number | null>(null);
+  const hasInitialized = useRef(false);
+
+  // Auto-generate invoice number when invoices/settings are loaded
+  useEffect(() => {
+    if (isEditMode) return; // Don't auto-generate in edit mode
+    
+    const currentStartNumber = invoiceSettings?.invoiceNumberStart || 1;
+    
+    if (generateNextInvoiceNumber) {
+      // Check if starting number changed
+      const startingNumberChanged = lastStartingNumber.current !== null && 
+                                    lastStartingNumber.current !== currentStartNumber;
+      
+      // On first initialization, always update (even if field has a value)
+      // After that, update if field is empty OR starting number changed
+      const shouldUpdate = !hasInitialized.current || 
+                          !invoiceNumber || 
+                          startingNumberChanged;
+      
+      if (shouldUpdate) {
+        lastStartingNumber.current = currentStartNumber;
+        hasInitialized.current = true;
+        setInvoiceNumber(generateNextInvoiceNumber);
+      }
+    } else if (invoiceSettings?.invoiceNumberStart && !hasInitialized.current) {
+      // Initialize lastStartingNumber even if generateNextInvoiceNumber isn't ready yet
+      lastStartingNumber.current = invoiceSettings.invoiceNumberStart;
+    }
+  }, [generateNextInvoiceNumber, invoiceSettings?.invoiceNumberStart, isEditMode]);
 
   // Fetch customers
   const { data: customers = [] } = useQuery({
@@ -1131,7 +1211,7 @@ export default function InvoiceCreate() {
     const companyPhone = tenant?.contactPhone || "";
 
     const invoiceData: InvoiceData = {
-      invoiceNumber: formData.get("invoiceNumber") as string || "INV-001",
+      invoiceNumber: invoiceNumber || formData.get("invoiceNumber") as string || "INV-001",
       issueDate: invoiceDate,
       dueDate: dueDate,
       customerName: selectedCustomer.name || selectedCustomer.customerName || "Customer",
@@ -1471,9 +1551,11 @@ export default function InvoiceCreate() {
                   <Label htmlFor="invoiceNumber">Invoice Number *</Label>
                   <Input
                     data-testid="input-invoice-number"
+                    id="invoiceNumber"
                     name="invoiceNumber"
-                    placeholder={`INV-${Date.now()}`}
-                    defaultValue={`INV-${Date.now()}`}
+                    value={invoiceNumber}
+                    onChange={(e) => setInvoiceNumber(e.target.value)}
+                    placeholder="INV-001"
                     required
                   />
                 </div>
@@ -1663,11 +1745,21 @@ export default function InvoiceCreate() {
 
               {/* Line Items */}
               <div className="border rounded-lg overflow-x-auto">
-                {/* Table Header */}
-                <div 
-                  className="grid gap-2 border-b p-3 font-medium text-sm bg-gray-50"
-                  style={{ gridTemplateColumns: gridTemplate }}
-                >
+                <div className="min-w-[2200px]">
+                  {/* Table Header */}
+                  <div 
+                    className="sticky top-0 z-[100] grid gap-2 border-b p-3 font-medium text-sm bg-gray-50 dark:bg-gray-800"
+                    style={{ 
+                      gridTemplateColumns: gridTemplate,
+                      backgroundColor: 'rgb(249, 250, 251)',
+                      position: 'sticky',
+                      top: 0,
+                      zIndex: 100,
+                      minWidth: '2200px',
+                      width: '100%',
+                      willChange: 'transform'
+                    }}
+                  >
                     <div className="text-center flex items-center justify-center">#</div>
                     <div className="flex items-center">Category *</div>
                     {invoiceSettings?.showVendor && <div className="flex items-center">Vendor</div>}
@@ -1681,10 +1773,9 @@ export default function InvoiceCreate() {
                     {invoiceSettings?.showAdditionalCommission && <div className="flex items-center">Commission ({currencySymbol})</div>}
                     {invoiceSettings?.showVoucherInvoice && <div className="flex items-center">Invoice/Voucher</div>}
                     <div className="flex items-center"></div>
-                </div>
+                  </div>
 
-                {/* Table Body */}
-                <div>
+                  {/* Table Body */}
                   {lineItems.map((item, index) => (
                     <div
                       key={index}
@@ -1695,7 +1786,7 @@ export default function InvoiceCreate() {
                         <span className="font-medium text-sm">{index + 1}</span>
                       </div>
 
-                      <div>
+                      <div className="flex items-center">
                         <AutocompleteInput
                           data-testid={`autocomplete-category-${index}`}
                           suggestions={getTravelCategories()}
@@ -1709,7 +1800,7 @@ export default function InvoiceCreate() {
                       </div>
 
                       {invoiceSettings?.showVendor && (
-                        <div>
+                        <div className="flex items-center">
                           <AutocompleteInput
                             data-testid={`autocomplete-vendor-${index}`}
                             suggestions={getVendorOptions()}
@@ -1724,7 +1815,7 @@ export default function InvoiceCreate() {
                       )}
 
                       {invoiceSettings?.showProvider && (
-                        <div>
+                        <div className="flex items-center">
                           <AutocompleteInput
                             data-testid={`autocomplete-service-provider-${index}`}
                             suggestions={getServiceProviderOptions(
@@ -1740,7 +1831,7 @@ export default function InvoiceCreate() {
                         </div>
                       )}
 
-                      <div>
+                      <div className="flex items-center">
                         <Input
                           data-testid={`input-quantity-${index}`}
                           value={item.quantity}
@@ -1753,7 +1844,7 @@ export default function InvoiceCreate() {
                       </div>
 
                       {invoiceSettings?.showUnitPrice && (
-                        <div>
+                        <div className="flex items-center">
                           <Input
                             data-testid={`input-unit-price-${index}`}
                             value={item.unitPrice}
@@ -1766,7 +1857,7 @@ export default function InvoiceCreate() {
                         </div>
                       )}
 
-                      <div>
+                      <div className="flex items-center">
                         <Input
                           data-testid={`input-selling-price-${index}`}
                           value={item.sellingPrice}
@@ -1782,7 +1873,7 @@ export default function InvoiceCreate() {
                         />
                       </div>
 
-                      <div>
+                      <div className="flex items-center">
                         <Input
                           data-testid={`input-purchase-price-${index}`}
                           value={item.purchasePrice}
@@ -1799,7 +1890,7 @@ export default function InvoiceCreate() {
                       </div>
 
                       {invoiceSettings?.showTax && (
-                        <div>
+                        <div className="flex items-center">
                           <Select
                             value={item.taxRateId || "none"}
                             onValueChange={(value) =>
@@ -1835,7 +1926,7 @@ export default function InvoiceCreate() {
                         </div>
                       )}
 
-                      <div>
+                      <div className="flex items-center">
                         <Input
                           data-testid={`input-total-amount-${index}`}
                           value={item.totalAmount.toFixed(2)}
@@ -1845,7 +1936,7 @@ export default function InvoiceCreate() {
                       </div>
 
                       {invoiceSettings?.showAdditionalCommission && (
-                        <div>
+                        <div className="flex items-center">
                           <Input
                             data-testid={`input-additional-commission-${index}`}
                             type="text"
@@ -1864,7 +1955,7 @@ export default function InvoiceCreate() {
                       )}
 
                       {invoiceSettings?.showVoucherInvoice && (
-                        <div>
+                        <div className="flex items-center">
                           <Input
                             data-testid={`input-line-invoice-number-${index}`}
                             value={item.invoiceNumber}
@@ -2275,11 +2366,20 @@ export default function InvoiceCreate() {
                   </p>
 
                   <div className="border rounded-lg overflow-x-auto">
-                    <div>
+                    <div className="min-w-[2200px]">
                       {/* Table Header */}
                       <div 
-                        className="grid gap-2 border-b p-3 font-medium text-sm bg-gray-50"
-                        style={{ gridTemplateColumns: expenseGridTemplate, minWidth: 'fit-content' }}
+                        className="sticky top-0 z-[100] grid gap-2 border-b p-3 font-medium text-sm bg-gray-50 dark:bg-gray-800"
+                        style={{ 
+                          gridTemplateColumns: expenseGridTemplate,
+                          backgroundColor: 'rgb(249, 250, 251)',
+                          position: 'sticky',
+                          top: 0,
+                          zIndex: 100,
+                          minWidth: '2200px',
+                          width: '100%',
+                          willChange: 'transform'
+                        }}
                       >
                         <div className="text-center flex items-center justify-center">#</div>
                         <div className="flex items-center">Title</div>
@@ -2303,7 +2403,7 @@ export default function InvoiceCreate() {
                               <div className="flex items-center justify-center">
                                 <span className="font-medium text-sm">{expense.itemIndex}</span>
                               </div>
-                              <div>
+                              <div className="flex items-center">
                                 <Input
                                   value={expense.title}
                                   onChange={(e) =>
@@ -2316,7 +2416,7 @@ export default function InvoiceCreate() {
                                   placeholder="Expense title"
                                 />
                               </div>
-                              <div>
+                              <div className="flex items-center">
                                 <AutocompleteInput
                                   suggestions={getTravelCategories().filter(
                                     (cat) => cat.value !== "create_new",
@@ -2332,7 +2432,7 @@ export default function InvoiceCreate() {
                                   placeholder="Category"
                                 />
                               </div>
-                              <div>
+                              <div className="flex items-center">
                                 <AutocompleteInput
                                   suggestions={getVendorOptions().filter(
                                     (v) => v.value !== "create_new",
@@ -2348,7 +2448,7 @@ export default function InvoiceCreate() {
                                   placeholder="Vendor"
                                 />
                               </div>
-                              <div>
+                              <div className="flex items-center">
                                 <Input
                                   value={expense.quantity}
                                   onChange={(e) =>
@@ -2362,7 +2462,7 @@ export default function InvoiceCreate() {
                                   placeholder="1"
                                 />
                               </div>
-                              <div>
+                              <div className="flex items-center">
                                 <Input
                                   value={expense.purchasePrice || ""}
                                   onChange={(e) =>

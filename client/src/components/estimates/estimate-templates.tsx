@@ -15,8 +15,11 @@ export interface EstimateData {
   companyLogo?: string;
   items: {
     description: string;
+    category?: string;
     quantity: number;
     unitPrice: number;
+    taxRate?: string;
+    discount?: number;
     totalPrice: number;
   }[];
   subtotal: number;
@@ -79,8 +82,17 @@ export const ModernEstimateTemplate: React.FC<EstimateTemplateProps> = ({ data }
           <thead>
             <tr className="bg-blue-50">
               <th className="border-b-2 border-blue-200 p-3 text-left font-semibold">Description</th>
+              {data.items.some(item => item.category) && (
+                <th className="border-b-2 border-blue-200 p-3 text-left font-semibold">Category</th>
+              )}
               <th className="border-b-2 border-blue-200 p-3 text-center font-semibold">Qty</th>
               <th className="border-b-2 border-blue-200 p-3 text-right font-semibold">Unit Price</th>
+              {data.items.some(item => item.taxRate) && (
+                <th className="border-b-2 border-blue-200 p-3 text-center font-semibold">Tax Rate</th>
+              )}
+              {data.items.some(item => item.discount && item.discount > 0) && (
+                <th className="border-b-2 border-blue-200 p-3 text-right font-semibold">Discount</th>
+              )}
               <th className="border-b-2 border-blue-200 p-3 text-right font-semibold">Total</th>
             </tr>
           </thead>
@@ -88,8 +100,21 @@ export const ModernEstimateTemplate: React.FC<EstimateTemplateProps> = ({ data }
             {data.items.map((item, index) => (
               <tr key={index} className="border-b border-gray-200">
                 <td className="p-3">{item.description}</td>
+                {data.items.some(i => i.category) && (
+                  <td className="p-3">{item.category || "-"}</td>
+                )}
                 <td className="p-3 text-center">{item.quantity}</td>
                 <td className="p-3 text-right">{getCurrencySymbol(data.currency)}{item.unitPrice.toFixed(2)}</td>
+                {data.items.some(i => i.taxRate) && (
+                  <td className="p-3 text-center">{item.taxRate || "-"}</td>
+                )}
+                {data.items.some(i => i.discount && i.discount > 0) && (
+                  <td className="p-3 text-right">
+                    {item.discount && item.discount > 0 
+                      ? `${getCurrencySymbol(data.currency)}${item.discount.toFixed(2)}` 
+                      : "-"}
+                  </td>
+                )}
                 <td className="p-3 text-right">{getCurrencySymbol(data.currency)}{item.totalPrice.toFixed(2)}</td>
               </tr>
             ))}

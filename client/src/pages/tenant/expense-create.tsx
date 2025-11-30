@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Layout } from "@/components/layout/layout";
 import { Button } from "@/components/ui/button";
@@ -116,6 +116,7 @@ export default function ExpenseCreate() {
   const [currency, setCurrency] = useState("USD");
   const [notesContent, setNotesContent] = useState("");
   const [isTaxInclusive, setIsTaxInclusive] = useState(false);
+  const [expenseNumber, setExpenseNumber] = useState("");
 
   // Fetch expense settings
   const { data: expenseSettings = {
@@ -144,7 +145,23 @@ export default function ExpenseCreate() {
     },
     enabled: !!tenant?.id,
     refetchOnMount: true,
+    refetchOnWindowFocus: true,
     staleTime: 0,
+  });
+
+  // Fetch existing expenses for number generation
+  const { data: expenses = [] } = useQuery<any[]>({
+    queryKey: ["/api/expenses", tenant?.id],
+    enabled: !!tenant?.id && !isEditMode,
+    queryFn: async () => {
+      const token = auth.getToken();
+      const response = await fetch(`/api/expenses?tenantId=${tenant?.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) return [];
+      const result = await response.json();
+      return Array.isArray(result) ? result : result.expenses || result.data || [];
+    },
   });
 
   // Update currency when settings load
@@ -156,6 +173,69 @@ export default function ExpenseCreate() {
       setSelectedTaxSettingId(expenseSettings.defaultGstSettingId.toString());
     }
   }, [expenseSettings?.defaultCurrency, expenseSettings?.defaultGstSettingId]);
+
+  // Function to generate next expense number
+  const generateNextExpenseNumber = useMemo(() => {
+    const startNumber = expenseSettings?.expenseNumberStart || 1;
+    
+    if (!expenses || expenses.length === 0) {
+      // No existing expenses, use starting number from settings
+      return `EXP-${String(startNumber).padStart(3, '0')}`;
+    }
+
+    // Extract numbers from existing expense numbers (if they have one)
+    // Note: Expenses might not have expenseNumber field yet, so we'll use ID as fallback
+    const expenseNumbers = expenses
+      .map((exp: any) => {
+        const expNum = exp.expenseNumber || exp.referenceNumber || "";
+        // Extract number from formats like EXP-001, EXP-1, EXP001, etc.
+        const match = expNum.match(/(\d+)/);
+        return match ? parseInt(match[1], 10) : 0;
+      })
+      .filter((num: number) => num > 0);
+
+    // Find the highest number
+    const maxNumber = expenseNumbers.length > 0 
+      ? Math.max(...expenseNumbers) 
+      : startNumber - 1;
+
+    // Use the higher of: max existing number + 1, or starting number
+    const nextNumber = Math.max(maxNumber + 1, startNumber);
+    
+    return `EXP-${String(nextNumber).padStart(3, '0')}`;
+  }, [expenses, expenseSettings?.expenseNumberStart]);
+
+  // Track the last starting number used for auto-generation
+  const lastStartingNumber = useRef<number | null>(null);
+  const hasInitialized = useRef(false);
+
+  // Auto-generate expense number when expenses/settings are loaded
+  useEffect(() => {
+    if (isEditMode) return; // Don't auto-generate in edit mode
+    
+    const currentStartNumber = expenseSettings?.expenseNumberStart || 1;
+    
+    if (generateNextExpenseNumber) {
+      // Check if starting number changed
+      const startingNumberChanged = lastStartingNumber.current !== null && 
+                                    lastStartingNumber.current !== currentStartNumber;
+      
+      // On first initialization, always update (even if field has a value)
+      // After that, update if field is empty OR starting number changed
+      const shouldUpdate = !hasInitialized.current || 
+                          !expenseNumber || 
+                          startingNumberChanged;
+      
+      if (shouldUpdate) {
+        lastStartingNumber.current = currentStartNumber;
+        hasInitialized.current = true;
+        setExpenseNumber(generateNextExpenseNumber);
+      }
+    } else if (expenseSettings?.expenseNumberStart && !hasInitialized.current) {
+      // Initialize lastStartingNumber even if generateNextExpenseNumber isn't ready yet
+      lastStartingNumber.current = expenseSettings.expenseNumberStart;
+    }
+  }, [generateNextExpenseNumber, expenseSettings?.expenseNumberStart, isEditMode]);
 
   // Fetch GST rates based on selected tax setting
   const { data: gstRates = [] } = useQuery<any[]>({
@@ -679,9 +759,31 @@ export default function ExpenseCreate() {
             <form onSubmit={handleSubmit}>
               <Card>
             <CardContent className="p-6 space-y-6">
-              {/* Expense Date Row */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Expense Number and Date Row */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
                 <div>
+                  <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">
+                    Expense
+                  </h1>
+                </div>
+                <div></div>
+                <div></div>
+                <div></div>
+                <div></div>
+                <div>
+                  <Label htmlFor="expenseNumber">Expense Number</Label>
+                  <Input
+                    id="expenseNumber"
+                    value={expenseNumber}
+                    onChange={(e) => setExpenseNumber(e.target.value)}
+                    placeholder="EXP-001"
+                  />
+                </div>
+              </div>
+
+              {/* Expense Date Row */}
+              <div className="flex items-end gap-4">
+                <div className="w-auto md:w-64">
                   <Label htmlFor="expenseDate">Expense Date *</Label>
                   <DatePicker
                     value={expenseDate}
@@ -691,267 +793,295 @@ export default function ExpenseCreate() {
                   />
                   <input type="hidden" name="expenseDate" value={expenseDate} />
                 </div>
+                {expenseSettings?.showTax !== false && (
+                  <div className="ml-auto">
+                    <Label htmlFor="taxInclusive" className="text-sm font-medium">
+                      Tax Type
+                    </Label>
+                    <div className="flex items-center gap-2 mt-2">
+                      <span className="text-sm text-black">Exclusive</span>
+                      <Switch
+                        id="taxInclusive"
+                        checked={isTaxInclusive}
+                        onCheckedChange={setIsTaxInclusive}
+                        data-testid="switch-tax-inclusive"
+                      />
+                      <span className="text-sm text-black">Inclusive</span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Expense Line Items */}
-              <div className="border rounded-lg overflow-x-auto">
-                <div className="min-w-[1200px]">
-                  {/* Table Header */}
-                  <div 
-                    className="grid gap-2 p-3 font-medium text-sm border-b bg-gray-50"
-                    style={{ gridTemplateColumns: gridTemplate }}
-                  >
-                    <div className="text-center flex items-center justify-center">#</div>
-                    {expenseSettings?.showCategory !== false && <div className="flex items-center">Category *</div>}
-                    <div className="flex items-center">Title *</div>
-                    {expenseSettings?.showVendor !== false && <div className="flex items-center">Vendor</div>}
-                    {expenseSettings?.showLeadType !== false && <div className="flex items-center">Lead Type</div>}
-                    <div className="flex items-center">Amount ({currencySymbol}) *</div>
-                    {expenseSettings?.showTax !== false && <div className="flex items-center">Tax Rate</div>}
-                    {expenseSettings?.showTax !== false && <div className="flex items-center">Tax Amt ({currencySymbol})</div>}
-                    <div className="flex items-center">Total ({currencySymbol})</div>
-                    {expenseSettings?.showPaymentStatus !== false && <div className="flex items-center">Status *</div>}
-                    {expenseSettings?.showPaymentStatus !== false && <div className="flex items-center">Paid ({currencySymbol})</div>}
-                    {expenseSettings?.showPaymentStatus !== false && <div className="flex items-center">Due ({currencySymbol})</div>}
-                    {expenseSettings?.showPaymentMethod !== false && <div className="flex items-center">Payment</div>}
-                    <div></div>
-                  </div>
-
-                  {/* Table Body */}
-                  <div>
-                    {expenseItems.map((item, index) => (
-                      <div
-                        key={index}
-                        className="grid gap-2 p-3 border-b last:border-b-0"
-                        style={{ gridTemplateColumns: gridTemplate }}
-                      >
-                      <div className="flex items-center justify-center">
-                        <span className="font-medium text-sm">{index + 1}</span>
-                      </div>
-
-                      {expenseSettings?.showCategory !== false && (
-                        <div>
-                          <AutocompleteInput
-                            data-testid={`autocomplete-category-${index}`}
-                            suggestions={getCategoryOptions()}
-                            value={item.category}
-                            onValueChange={(value) =>
-                              updateExpenseItem(index, "category", value)
-                            }
-                            placeholder="Select..."
-                            emptyText="No categories found"
-                          />
-                        </div>
-                      )}
-
-                      <div>
-                        <AutocompleteInput
-                          data-testid={`autocomplete-title-${index}`}
-                          suggestions={getExpenseTitleSuggestions()}
-                          value={item.title}
-                          onValueChange={(value) =>
-                            updateExpenseItem(index, "title", value)
-                          }
-                          placeholder="Type or select expense title..."
-                          emptyText="No previous expenses found"
-                          allowCustomValue={true}
-                        />
-                      </div>
-
-                      {expenseSettings?.showVendor !== false && (
-                        <div>
-                          <AutocompleteInput
-                            data-testid={`autocomplete-vendor-${index}`}
-                            suggestions={getVendorOptions()}
-                            value={item.vendorId}
-                            onValueChange={(value) =>
-                              handleVendorSelection(value, index)
-                            }
-                            placeholder="Select..."
-                            emptyText="No vendors found"
-                          />
-                        </div>
-                      )}
-
-                      {expenseSettings?.showLeadType !== false && (
-                        <div>
-                          <AutocompleteInput
-                            data-testid={`autocomplete-lead-type-${index}`}
-                            suggestions={getLeadTypeOptions()}
-                            value={item.leadTypeId}
-                            onValueChange={(value) =>
-                              handleLeadTypeSelection(value, index)
-                            }
-                            placeholder="Select..."
-                            emptyText="No lead types found"
-                          />
-                        </div>
-                      )}
-
-                      <div>
-                        <Input
-                          data-testid={`input-amount-${index}`}
-                          type="text"
-                          value={item.amount}
-                          onChange={(e) =>
-                            updateExpenseItem(index, "amount", e.target.value)
-                          }
-                          onKeyPress={handleNumericKeyPress}
-                          placeholder="0.00"
-                          required
-                        />
-                      </div>
-
-                      {expenseSettings?.showTax !== false && (
-                        <div>
-                          <Select
-                            value={item.taxRateId || "none"}
-                            onValueChange={(value) =>
-                              updateExpenseItem(index, "taxRateId", value === "none" ? "" : value)
-                            }
-                          >
-                            <SelectTrigger data-testid={`select-tax-rate-${index}`} className="text-xs">
-                              <SelectValue placeholder="Select tax rate" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="none">None</SelectItem>
-                              {gstRates
-                                .filter((rate: any) => rate.isActive !== false)
-                                .map((rate: any) => (
-                                  <SelectItem key={rate.id} value={rate.id?.toString()}>
-                                    {rate.rateName || `Rate ${rate.rate}%`} ({rate.rate}%)
-                                  </SelectItem>
-                                ))}
-                            </SelectContent>
-                          </Select>
-                          {!selectedTaxSettingId && (
-                            <p className="text-xs text-black mt-1">
-                              Select tax setting in expense settings
-                            </p>
-                          )}
-                          {selectedTaxSettingId && gstRates.length === 0 && (
-                            <p className="text-xs text-black mt-1">
-                              No tax rates available
-                            </p>
-                          )}
-                        </div>
-                      )}
-
-                      {expenseSettings?.showTax !== false && (
-                        <div>
-                          <Input
-                            value={item.taxAmount}
-                            readOnly
-                            className="text-xs"
-                          />
-                        </div>
-                      )}
-
-                      <div>
-                        <Input
-                          value={item.totalAmount.toFixed(2)}
-                          readOnly
-                          className="font-semibold text-xs"
-                        />
-                      </div>
-
-                      {expenseSettings?.showPaymentStatus !== false && (
-                        <div>
-                          <Select
-                            value={item.paymentStatus}
-                            onValueChange={(value) => {
-                              updateExpenseItem(index, "paymentStatus", value);
-                              // Auto-fill paid/due amounts based on status
-                              if (value === "paid") {
-                                updateExpenseItem(index, "amountPaid", item.totalAmount.toFixed(2));
-                                updateExpenseItem(index, "amountDue", "0");
-                              } else if (value === "due") {
-                                updateExpenseItem(index, "amountPaid", "0");
-                                updateExpenseItem(index, "amountDue", item.totalAmount.toFixed(2));
-                              }
-                            }}
-                          >
-                            <SelectTrigger data-testid={`select-payment-status-${index}`} className="text-xs">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="paid">Paid</SelectItem>
-                              <SelectItem value="credit">Credit</SelectItem>
-                              <SelectItem value="due">Due</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      )}
-
-                      {expenseSettings?.showPaymentStatus !== false && (
-                        <div>
-                          <Input
-                            data-testid={`input-amount-paid-${index}`}
-                            type="text"
-                            value={item.amountPaid}
-                            onChange={(e) =>
-                              updateExpenseItem(index, "amountPaid", e.target.value)
-                            }
-                            onKeyPress={handleNumericKeyPress}
-                            placeholder="0.00"
-                            className="text-xs"
-                          />
-                        </div>
-                      )}
-
-                      {expenseSettings?.showPaymentStatus !== false && (
-                        <div>
-                          <Input
-                            data-testid={`input-amount-due-${index}`}
-                            type="text"
-                            value={item.amountDue}
-                            onChange={(e) =>
-                              updateExpenseItem(index, "amountDue", e.target.value)
-                            }
-                            onKeyPress={handleNumericKeyPress}
-                            placeholder="0.00"
-                            className="text-xs"
-                          />
-                        </div>
-                      )}
-
-                      {expenseSettings?.showPaymentMethod !== false && (
-                        <div>
-                          <Select
-                            value={item.paymentMethod}
-                            onValueChange={(value) =>
-                              updateExpenseItem(index, "paymentMethod", value)
-                            }
-                          >
-                            <SelectTrigger data-testid={`select-payment-method-${index}`} className="text-xs">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="credit_card">Card</SelectItem>
-                              <SelectItem value="debit_card">Debit</SelectItem>
-                              <SelectItem value="bank_transfer">Bank</SelectItem>
-                              <SelectItem value="cash">Cash</SelectItem>
-                              <SelectItem value="check">Check</SelectItem>
-                              <SelectItem value="petty_cash">Petty</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      )}
-
-                      <div className="flex items-center justify-center">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => removeExpenseItem(index)}
-                          disabled={expenseItems.length === 1}
-                          data-testid={`button-remove-expense-${index}`}
-                        >
-                          <Trash2 className="h-4 w-4 text-red-500" />
-                        </Button>
-                      </div>
+              <div className="border rounded-lg">
+                <div className="overflow-x-auto">
+                  <div className="min-w-[2200px]">
+                    {/* Table Header */}
+                    <div 
+                      className="sticky top-0 z-[100] grid gap-2 p-3 font-medium text-sm border-b bg-gray-50 dark:bg-gray-800" 
+                      style={{ 
+                        gridTemplateColumns: gridTemplate,
+                        backgroundColor: 'rgb(249, 250, 251)',
+                        position: 'sticky',
+                        top: 0,
+                        zIndex: 100,
+                        minWidth: '2200px',
+                        width: '100%',
+                        willChange: 'transform'
+                      }}
+                    >
+                      <div className="text-center flex items-center justify-center">#</div>
+                      {expenseSettings?.showCategory !== false && <div className="flex items-center">Category *</div>}
+                      <div className="flex items-center">Title *</div>
+                      {expenseSettings?.showVendor !== false && <div className="flex items-center">Vendor</div>}
+                      {expenseSettings?.showLeadType !== false && <div className="flex items-center">Lead Type</div>}
+                      <div className="flex items-center">Amount ({currencySymbol}) *</div>
+                      {expenseSettings?.showTax !== false && <div className="flex items-center">Tax Rate</div>}
+                      {expenseSettings?.showTax !== false && <div className="flex items-center">Tax Amt ({currencySymbol})</div>}
+                      <div className="flex items-center">Total ({currencySymbol})</div>
+                      {expenseSettings?.showPaymentStatus !== false && <div className="flex items-center">Status *</div>}
+                      {expenseSettings?.showPaymentStatus !== false && <div className="flex items-center">Paid ({currencySymbol})</div>}
+                      {expenseSettings?.showPaymentStatus !== false && <div className="flex items-center">Due ({currencySymbol})</div>}
+                      {expenseSettings?.showPaymentMethod !== false && <div className="flex items-center">Payment</div>}
+                      <div></div>
                     </div>
-                  ))}
+
+                    {/* Table Body */}
+                    <div>
+                      {expenseItems.map((item, index) => (
+                        <div
+                          key={index}
+                          className="grid gap-2 p-3 border-b last:border-b-0"
+                          style={{ gridTemplateColumns: gridTemplate }}
+                        >
+                        <div className="flex items-center justify-center">
+                          <span className="font-medium text-sm">{index + 1}</span>
+                        </div>
+
+                        {expenseSettings?.showCategory !== false && (
+                          <div className="flex items-center">
+                            <AutocompleteInput
+                              data-testid={`autocomplete-category-${index}`}
+                              suggestions={getCategoryOptions()}
+                              value={item.category}
+                              onValueChange={(value) =>
+                                updateExpenseItem(index, "category", value)
+                              }
+                              placeholder="Select..."
+                              emptyText="No categories found"
+                            />
+                          </div>
+                        )}
+
+                        <div className="flex items-center">
+                          <AutocompleteInput
+                            data-testid={`autocomplete-title-${index}`}
+                            suggestions={getExpenseTitleSuggestions()}
+                            value={item.title}
+                            onValueChange={(value) =>
+                              updateExpenseItem(index, "title", value)
+                            }
+                            placeholder="Type or select expense title..."
+                            emptyText="No previous expenses found"
+                            allowCustomValue={true}
+                          />
+                        </div>
+
+                        {expenseSettings?.showVendor !== false && (
+                          <div className="flex items-center">
+                            <AutocompleteInput
+                              data-testid={`autocomplete-vendor-${index}`}
+                              suggestions={getVendorOptions()}
+                              value={item.vendorId}
+                              onValueChange={(value) =>
+                                handleVendorSelection(value, index)
+                              }
+                              placeholder="Select..."
+                              emptyText="No vendors found"
+                            />
+                          </div>
+                        )}
+
+                        {expenseSettings?.showLeadType !== false && (
+                          <div className="flex items-center">
+                            <AutocompleteInput
+                              data-testid={`autocomplete-lead-type-${index}`}
+                              suggestions={getLeadTypeOptions()}
+                              value={item.leadTypeId}
+                              onValueChange={(value) =>
+                                handleLeadTypeSelection(value, index)
+                              }
+                              placeholder="Select..."
+                              emptyText="No lead types found"
+                            />
+                          </div>
+                        )}
+
+                        <div className="flex items-center">
+                          <Input
+                            data-testid={`input-amount-${index}`}
+                            type="text"
+                            value={item.amount}
+                            onChange={(e) =>
+                              updateExpenseItem(index, "amount", e.target.value)
+                            }
+                            onKeyPress={handleNumericKeyPress}
+                            placeholder="0.00"
+                            required
+                          />
+                        </div>
+
+                        {expenseSettings?.showTax !== false && (
+                          <div className="flex items-center">
+                            <Select
+                              value={item.taxRateId || "none"}
+                              onValueChange={(value) =>
+                                updateExpenseItem(index, "taxRateId", value === "none" ? "" : value)
+                              }
+                            >
+                              <SelectTrigger data-testid={`select-tax-rate-${index}`} className="text-xs">
+                                <SelectValue placeholder="Select tax rate" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="none">None</SelectItem>
+                                {gstRates
+                                  .filter((rate: any) => rate.isActive !== false)
+                                  .map((rate: any) => (
+                                    <SelectItem key={rate.id} value={rate.id?.toString()}>
+                                      {rate.rateName || `Rate ${rate.rate}%`} ({rate.rate}%)
+                                    </SelectItem>
+                                  ))}
+                              </SelectContent>
+                            </Select>
+                            {!selectedTaxSettingId && (
+                              <p className="text-xs text-black mt-1">
+                                Select tax setting in expense settings
+                              </p>
+                            )}
+                            {selectedTaxSettingId && gstRates.length === 0 && (
+                              <p className="text-xs text-black mt-1">
+                                No tax rates available
+                              </p>
+                            )}
+                          </div>
+                        )}
+
+                        {expenseSettings?.showTax !== false && (
+                          <div className="flex items-center">
+                            <Input
+                              value={item.taxAmount}
+                              readOnly
+                              className="text-xs"
+                            />
+                          </div>
+                        )}
+
+                        <div className="flex items-center">
+                          <Input
+                            value={item.totalAmount.toFixed(2)}
+                            readOnly
+                            className="font-semibold text-xs"
+                          />
+                        </div>
+
+                        {expenseSettings?.showPaymentStatus !== false && (
+                          <div className="flex items-center">
+                            <Select
+                              value={item.paymentStatus}
+                              onValueChange={(value) => {
+                                updateExpenseItem(index, "paymentStatus", value);
+                                // Auto-fill paid/due amounts based on status
+                                if (value === "paid") {
+                                  updateExpenseItem(index, "amountPaid", item.totalAmount.toFixed(2));
+                                  updateExpenseItem(index, "amountDue", "0");
+                                } else if (value === "due") {
+                                  updateExpenseItem(index, "amountPaid", "0");
+                                  updateExpenseItem(index, "amountDue", item.totalAmount.toFixed(2));
+                                }
+                              }}
+                            >
+                              <SelectTrigger data-testid={`select-payment-status-${index}`} className="text-xs">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="paid">Paid</SelectItem>
+                                <SelectItem value="credit">Credit</SelectItem>
+                                <SelectItem value="due">Due</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        )}
+
+                        {expenseSettings?.showPaymentStatus !== false && (
+                          <div className="flex items-center">
+                            <Input
+                              data-testid={`input-amount-paid-${index}`}
+                              type="text"
+                              value={item.amountPaid}
+                              onChange={(e) =>
+                                updateExpenseItem(index, "amountPaid", e.target.value)
+                              }
+                              onKeyPress={handleNumericKeyPress}
+                              placeholder="0.00"
+                              className="text-xs"
+                            />
+                          </div>
+                        )}
+
+                        {expenseSettings?.showPaymentStatus !== false && (
+                          <div className="flex items-center">
+                            <Input
+                              data-testid={`input-amount-due-${index}`}
+                              type="text"
+                              value={item.amountDue}
+                              onChange={(e) =>
+                                updateExpenseItem(index, "amountDue", e.target.value)
+                              }
+                              onKeyPress={handleNumericKeyPress}
+                              placeholder="0.00"
+                              className="text-xs"
+                            />
+                          </div>
+                        )}
+
+                        {expenseSettings?.showPaymentMethod !== false && (
+                          <div className="flex items-center">
+                            <Select
+                              value={item.paymentMethod}
+                              onValueChange={(value) =>
+                                updateExpenseItem(index, "paymentMethod", value)
+                              }
+                            >
+                              <SelectTrigger data-testid={`select-payment-method-${index}`} className="text-xs">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="credit_card">Card</SelectItem>
+                                <SelectItem value="debit_card">Debit</SelectItem>
+                                <SelectItem value="bank_transfer">Bank</SelectItem>
+                                <SelectItem value="cash">Cash</SelectItem>
+                                <SelectItem value="check">Check</SelectItem>
+                                <SelectItem value="petty_cash">Petty</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        )}
+
+                        <div className="flex items-center justify-center">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => removeExpenseItem(index)}
+                            disabled={expenseItems.length === 1}
+                            data-testid={`button-remove-expense-${index}`}
+                          >
+                            <Trash2 className="h-4 w-4 text-red-500" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                    </div>
                   </div>
                 </div>
 
@@ -970,29 +1100,6 @@ export default function ExpenseCreate() {
                 </div>
               </div>
 
-              {/* Tax Inclusive/Exclusive Toggle */}
-              {expenseSettings?.showTax !== false && (
-                <div className="flex items-center justify-between p-3 border rounded-lg">
-                  <div className="flex flex-col">
-                    <Label htmlFor="taxInclusive" className="text-sm font-medium">
-                      Tax Type
-                    </Label>
-                    <p className="text-xs text-black mt-1">
-                      {isTaxInclusive ? "Tax is included in prices" : "Tax will be added to prices"}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-black">Exclusive</span>
-                    <Switch
-                      id="taxInclusive"
-                      checked={isTaxInclusive}
-                      onCheckedChange={setIsTaxInclusive}
-                      data-testid="switch-tax-inclusive"
-                    />
-                    <span className="text-sm text-black">Inclusive</span>
-                  </div>
-                </div>
-              )}
 
               {/* Notes and Summary in Same Row */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -1056,7 +1163,7 @@ export default function ExpenseCreate() {
                       </div>
                     )}
 
-                    <div className="flex justify-between items-center py-3 border-t-2 border-gray-300 dark:border-gray-600">
+                    <div className="flex justify-between items-center py-3  border-gray-300 dark:border-gray-600">
                       <span className="text-black font-bold text-lg">Grand Total:</span>
                       <span className="font-bold text-2xl text-black">
                         {currencySymbol}{calculateGrandTotal().toFixed(2)}

@@ -4647,38 +4647,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Transform database result to camelCase for frontend
   function transformEstimate(estimate: any) {
+    // Handle both snake_case (from DB) and camelCase (already transformed) formats
     return {
       id: estimate.id,
-      estimateNumber: estimate.estimateNumber,
+      estimateNumber: estimate.estimate_number || estimate.estimateNumber,
       title: estimate.title,
-      invoiceNumber: estimate.invoiceNumber,
+      invoiceNumber: estimate.invoice_number || estimate.invoiceNumber,
       currency: estimate.currency,
-      customerName: estimate.customerName,
-      customerEmail: estimate.customerEmail,
-      customerPhone: estimate.customerPhone,
-      customerAddress: estimate.customerAddress,
+      customerName: estimate.customer_name || estimate.customerName,
+      customerEmail: estimate.customer_email || estimate.customerEmail,
+      customerPhone: estimate.customer_phone || estimate.customerPhone,
+      customerAddress: estimate.customer_address || estimate.customerAddress,
       description: estimate.description,
       status: estimate.status,
-      totalAmount: estimate.totalAmount,
-      validUntil: estimate.validUntil,
+      totalAmount: estimate.total_amount || estimate.totalAmount,
+      validUntil: estimate.valid_until || estimate.validUntil,
       notes: estimate.notes,
-      logoUrl: estimate.logoUrl,
-      discountType: estimate.discountType,
-      discountValue: estimate.discountValue,
-      discountAmount: estimate.discountAmount,
+      logoUrl: estimate.logo_url || estimate.logoUrl,
+      discountType: estimate.discount_type || estimate.discountType,
+      discountValue: estimate.discount_value || estimate.discountValue,
+      discountAmount: estimate.discount_amount || estimate.discountAmount,
       subtotal: estimate.subtotal,
-      taxRate: estimate.taxRate,
-      taxAmount: estimate.taxAmount,
-      depositRequired: estimate.depositRequired,
-      depositAmount: estimate.depositAmount,
-      depositPercentage: estimate.depositPercentage,
-      paymentTerms: estimate.paymentTerms,
-      createdAt: estimate.createdAt,
-      updatedAt: estimate.updatedAt,
-      sentAt: estimate.sentAt,
-      viewedAt: estimate.viewedAt,
-      acceptedAt: estimate.acceptedAt,
-      rejectedAt: estimate.rejectedAt,
+      taxRate: estimate.tax_rate || estimate.taxRate,
+      taxAmount: estimate.tax_amount || estimate.taxAmount,
+      depositRequired: estimate.deposit_required || estimate.depositRequired,
+      depositAmount: estimate.deposit_amount || estimate.depositAmount,
+      depositPercentage: estimate.deposit_percentage || estimate.depositPercentage,
+      paymentTerms: estimate.payment_terms || estimate.paymentTerms,
+      createdAt: estimate.created_at || estimate.createdAt,
+      updatedAt: estimate.updated_at || estimate.updatedAt,
+      sentAt: estimate.sent_at || estimate.sentAt,
+      viewedAt: estimate.viewed_at || estimate.viewedAt,
+      acceptedAt: estimate.accepted_at || estimate.acceptedAt,
+      rejectedAt: estimate.rejected_at || estimate.rejectedAt,
     };
   }
 
@@ -4698,22 +4699,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ? JSON.stringify(transformedEstimates[0], null, 2)
           : "No estimates",
       );
-      // TEMPORARY: Return hardcoded test data to isolate the issue
-      console.log("🚨 RETURNING TEST DATA FOR DEBUGGING");
-      const testData = [
-        {
-          id: 1,
-          estimateNumber: "EST-TEST-001",
-          customerName: "Test Customer",
-          customerEmail: "test@example.com",
-          totalAmount: "500.00",
-          title: "Test Estimate",
-          status: "draft",
-          currency: "USD",
-          createdAt: new Date().toISOString(),
-        },
-      ];
-      res.json(testData);
+      res.json(transformedEstimates);
     } catch (error: unknown) {
       console.error("Error getting estimates:", error);
       res.status(500).json({ message: "Failed to get estimates" });

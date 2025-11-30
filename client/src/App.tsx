@@ -522,6 +522,12 @@ function Router() {
           </ProtectedRoute>
         </Route>
 
+        <Route path="/estimates/edit/:id">
+          <ProtectedRoute>
+            <EstimateCreate />
+          </ProtectedRoute>
+        </Route>
+
         <Route path="/estimates">
           <ProtectedRoute>
             <Estimates />
