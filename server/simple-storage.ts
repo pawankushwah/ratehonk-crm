@@ -4515,23 +4515,36 @@ async getAllInvoicesByTenant(tenantId: number, startDate?: string, endDate?: str
           try {
             await sql`
               INSERT INTO expenses (
-                tenant_id, title, description, amount, currency, category, subcategory,
-                expense_date, payment_method, vendor_id, lead_type_id, expense_type,
-                status, notes, created_by
+                tenant_id, expense_number, title, description, quantity, amount, currency, category, subcategory,
+                expense_date, payment_method, payment_reference, vendor_id, lead_type_id, expense_type,
+                receipt_url, tax_amount, tax_rate, is_reimbursable, is_recurring, recurring_frequency,
+                status, amount_paid, amount_due, tags, notes, created_by
               ) VALUES (
                 ${invoiceData.tenantId},
+                ${expense.expenseNumber || null},
                 ${expense.title || "Expense"},
                 ${expense.notes || expense.description || null},
+                ${expense.quantity || 1},
                 ${parseFloat(expense.amount?.toString() || "0")},
                 ${expense.currency || invoiceData.currency || "USD"},
                 ${expense.category || "General"},
                 ${expense.subcategory || expense.category || "General"},
                 ${expense.expenseDate || issueDate},
                 ${expense.paymentMethod || "bank_transfer"},
+                ${expense.paymentReference || null},
                 ${expense.vendorId || null},
                 ${expense.leadTypeId || null},
                 ${expense.expenseType || "purchase"},
+                ${expense.receiptUrl || null},
+                ${expense.taxAmount || 0},
+                ${expense.taxRate || 0},
+                ${expense.isReimbursable || false},
+                ${expense.isRecurring || false},
+                ${expense.recurringFrequency || null},
                 ${expense.status || "pending"},
+                ${expense.amountPaid || 0},
+                ${expense.amountDue || parseFloat(expense.amount?.toString() || "0")},
+                ${JSON.stringify(expense.tags || [])},
                 ${expense.notes || null},
                 ${invoiceData.userId || null}
               )

@@ -40,8 +40,10 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 
 interface Expense {
   id: number;
+  expense_number?: string | null;
   title: string;
   description?: string;
+  quantity?: number;
   amount: string;
   currency: string;
   category: string;
@@ -58,6 +60,8 @@ interface Expense {
   receiptUrl?: string;
   taxAmount: string;
   taxRate: string;
+  amountPaid?: string | number;
+  amountDue?: string | number;
   isReimbursable: boolean;
   isRecurring: boolean;
   recurringFrequency?: string;
@@ -68,6 +72,8 @@ interface Expense {
   tags: string[];
   notes?: string;
   createdAt: Date;
+  updatedAt?: Date;
+  createdBy?: number;
   createdByName?: string;
 }
 
@@ -147,6 +153,10 @@ export default function Expenses() {
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
+  
+  // Sorting state
+  const [sortColumn, setSortColumn] = useState<string | null>(null);
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
   // Form state
   const [formData, setFormData] = useState({
@@ -173,7 +183,33 @@ export default function Expenses() {
     notes: "",
   });
 
-  // Fetch expenses with comprehensive filtering and pagination
+  // Map frontend column keys to database column names
+  const getSortColumnName = (columnKey: string): string => {
+    const columnMap: Record<string, string> = {
+      title: "title",
+      category: "category",
+      amount: "amount",
+      status: "status",
+      expenseDate: "expense_date",
+      vendorName: "vendor_name",
+      createdAt: "created_at",
+    };
+    return columnMap[columnKey] || columnKey;
+  };
+
+  // Handle sort change
+  const handleSort = (columnKey: string) => {
+    if (sortColumn === columnKey) {
+      // Toggle direction if same column
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      // New column, default to desc
+      setSortColumn(columnKey);
+      setSortDirection('desc');
+    }
+  };
+
+  // Fetch expenses with comprehensive filtering, pagination, and sorting
   const { data: rawExpenses = [], isLoading, error } = useQuery<any[]>({
     queryKey: [
       "/api/expenses",
@@ -185,6 +221,8 @@ export default function Expenses() {
       customDateTo,
       currentPage,
       itemsPerPage,
+      sortColumn,
+      sortDirection,
     ],
     queryFn: async () => {
       const dateFilters = buildDateFilters(dateFilter, customDateFrom, customDateTo);
@@ -219,6 +257,12 @@ export default function Expenses() {
       }
       queryParams.append("page", currentPage.toString());
       queryParams.append("limit", itemsPerPage.toString());
+      
+      // Add sorting parameters
+      if (sortColumn) {
+        queryParams.append("sortBy", getSortColumnName(sortColumn));
+        queryParams.append("sortOrder", sortDirection);
+      }
       
       const url = queryParams.toString() 
         ? `/api/expenses?${queryParams.toString()}`
@@ -286,8 +330,10 @@ export default function Expenses() {
   const expenses = rawExpenses
     .map((expense: any) => ({
       id: expense.id,
+      expense_number: expense.expense_number,
       title: expense.title,
       description: expense.description,
+      quantity: expense.quantity,
       amount: expense.amount,
       currency: expense.currency,
       category: expense.category,
@@ -304,6 +350,8 @@ export default function Expenses() {
       receiptUrl: expense.receipt_url,
       taxAmount: expense.tax_amount,
       taxRate: expense.tax_rate,
+      amountPaid: expense.amount_paid,
+      amountDue: expense.amount_due,
       isReimbursable: expense.is_reimbursable,
       isRecurring: expense.is_recurring,
       recurringFrequency: expense.recurring_frequency,
@@ -314,6 +362,8 @@ export default function Expenses() {
       tags: normalizeTags(expense.tags),
       notes: expense.notes,
       createdAt: new Date(expense.created_at),
+      updatedAt: expense.updated_at ? new Date(expense.updated_at) : undefined,
+      createdBy: expense.created_by,
       createdByName: expense.created_by_name,
     }));
 
@@ -645,7 +695,7 @@ export default function Expenses() {
       sortable: false,
       className: "text-right",
       render: (_, expense) => (
-        <div className="flex justify-end space-x-2">
+        <div className="flex space-x-2">
           <Button
             size="sm"
             variant="outline"
@@ -909,20 +959,20 @@ export default function Expenses() {
             </div>
             
             <div className="flex items-center gap-2">
-              <Button
+              {/* <Button
                 variant={viewMode === "table" ? "default" : "outline"}
                 size="sm"
                 onClick={() => setViewMode("table")}
               >
                 <List className="h-4 w-4" />
-              </Button>
-              <Button
+              </Button> */}
+              {/* <Button
                 variant={viewMode === "grid" ? "default" : "outline"}
                 size="sm"
                 onClick={() => setViewMode("grid")}
               >
                 <Grid className="h-4 w-4" />
-              </Button>
+              </Button> */}
             </div>
           </div>
         </Card>
@@ -939,6 +989,11 @@ export default function Expenses() {
               isLoading={isLoading}
               showPagination={false}
               emptyMessage="No expenses found. Create your first expense to get started."
+              externalSort={{
+                sortColumn: sortColumn,
+                sortDirection: sortDirection,
+                onSort: handleSort,
+              }}
             />
             {/* Backend Pagination Controls */}
             <div className="flex items-center justify-between mt-4 pt-4 border-t">
@@ -1540,7 +1595,7 @@ export default function Expenses() {
 
         {/* Expense Details Dialog */}
         <Dialog open={showDetailsDialog} onOpenChange={setShowDetailsDialog}>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
             <DialogHeader>
               <DialogTitle>Expense Details</DialogTitle>
               <DialogDescription>
@@ -1549,37 +1604,82 @@ export default function Expenses() {
             </DialogHeader>
             
             {selectedExpense && (
-              <div className="space-y-6">
+              <div className="space-y-6 max-h-[80vh] overflow-y-auto">
                 {/* Header */}
                 <div className="flex items-start justify-between">
                   <div>
                     <h3 className="text-xl font-semibold">{selectedExpense.title}</h3>
-                    <p className="text-muted-foreground mt-1">{selectedExpense.description}</p>
+                    {selectedExpense.description && (
+                      <p className="text-muted-foreground mt-1">{selectedExpense.description}</p>
+                    )}
+                    {selectedExpense.expense_number && (
+                      <p className="text-sm text-muted-foreground mt-1">Expense Number: {selectedExpense.expense_number}</p>
+                    )}
                   </div>
                   <Badge className={getStatusConfig(selectedExpense.status).color}>
                     {getStatusConfig(selectedExpense.status).label}
                   </Badge>
                 </div>
                 
-                {/* Amount and Category */}
-                <div className="grid grid-cols-2 gap-4">
+                {/* Financial Summary */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <Card>
                     <CardContent className="p-4">
                       <div className="flex items-center gap-2 mb-2">
                         <DollarSign className="h-4 w-4 text-muted-foreground" />
                         <span className="text-sm font-medium">Amount</span>
                       </div>
-                      <div className="text-2xl font-bold">
+                      <div className="text-xl font-bold">
                         {formatCurrency(selectedExpense.amount, selectedExpense.currency)}
                       </div>
-                      {selectedExpense.isReimbursable && (
-                        <Badge variant="outline" className="mt-2">
-                          Reimbursable
-                        </Badge>
-                      )}
                     </CardContent>
                   </Card>
                   
+                  {selectedExpense.quantity && selectedExpense.quantity > 1 && (
+                    <Card>
+                      <CardContent className="p-4">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Package className="h-4 w-4 text-muted-foreground" />
+                          <span className="text-sm font-medium">Quantity</span>
+                        </div>
+                        <div className="text-xl font-bold">
+                          {selectedExpense.quantity}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+                  
+                  {selectedExpense.amountPaid !== undefined && selectedExpense.amountPaid !== null && (
+                    <Card>
+                      <CardContent className="p-4">
+                        <div className="flex items-center gap-2 mb-2">
+                          <CheckCircle className="h-4 w-4 text-green-600" />
+                          <span className="text-sm font-medium">Amount Paid</span>
+                        </div>
+                        <div className="text-xl font-bold text-green-600">
+                          {formatCurrency(selectedExpense.amountPaid.toString(), selectedExpense.currency)}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+                  
+                  {selectedExpense.amountDue !== undefined && selectedExpense.amountDue !== null && (
+                    <Card>
+                      <CardContent className="p-4">
+                        <div className="flex items-center gap-2 mb-2">
+                          <AlertCircle className="h-4 w-4 text-orange-600" />
+                          <span className="text-sm font-medium">Amount Due</span>
+                        </div>
+                        <div className="text-xl font-bold text-orange-600">
+                          {formatCurrency(selectedExpense.amountDue.toString(), selectedExpense.currency)}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+                </div>
+                
+                {/* Category and Type */}
+                <div className="grid grid-cols-2 gap-4">
                   <Card>
                     <CardContent className="p-4">
                       <div className="flex items-center gap-2 mb-2">
@@ -1591,53 +1691,104 @@ export default function Expenses() {
                         {getCategoryConfig(selectedExpense.category).label}
                       </Badge>
                       {selectedExpense.subcategory && (
-                        <div className="text-sm text-muted-foreground mt-1">
-                          {selectedExpense.subcategory}
+                        <div className="text-sm text-muted-foreground mt-2">
+                          Subcategory: {selectedExpense.subcategory}
                         </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                  
+                  <Card>
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Receipt className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm font-medium">Expense Type</span>
+                      </div>
+                      <div className="text-sm capitalize">{selectedExpense.expenseType || "purchase"}</div>
+                      {selectedExpense.isReimbursable && (
+                        <Badge variant="outline" className="mt-2">
+                          Reimbursable
+                        </Badge>
+                      )}
+                      {selectedExpense.isRecurring && (
+                        <Badge variant="outline" className="mt-2 ml-2">
+                          Recurring {selectedExpense.recurringFrequency && `(${selectedExpense.recurringFrequency})`}
+                        </Badge>
                       )}
                     </CardContent>
                   </Card>
                 </div>
                 
                 {/* Details Grid */}
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <span className="font-medium">Date:</span>
-                    <span className="ml-2">{new Date(selectedExpense.expenseDate).toLocaleDateString()}</span>
-                  </div>
-                  <div>
-                    <span className="font-medium">Type:</span>
-                    <span className="ml-2 capitalize">{selectedExpense.expenseType}</span>
-                  </div>
-                  <div>
-                    <span className="font-medium">Payment Method:</span>
-                    <span className="ml-2 capitalize">{selectedExpense.paymentMethod.replace('_', ' ')}</span>
-                  </div>
-                  {selectedExpense.paymentReference && (
-                    <div>
-                      <span className="font-medium">Reference:</span>
-                      <span className="ml-2">{selectedExpense.paymentReference}</span>
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">Expense Details</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <span className="font-medium">Expense Date:</span>
+                        <span className="ml-2">{new Date(selectedExpense.expenseDate).toLocaleDateString()}</span>
+                      </div>
+                      <div>
+                        <span className="font-medium">Payment Method:</span>
+                        <span className="ml-2 capitalize">{selectedExpense.paymentMethod.replace(/_/g, ' ')}</span>
+                      </div>
+                      {selectedExpense.paymentReference && (
+                        <div>
+                          <span className="font-medium">Payment Reference:</span>
+                          <span className="ml-2">{selectedExpense.paymentReference}</span>
+                        </div>
+                      )}
+                      {selectedExpense.vendorName && (
+                        <div>
+                          <span className="font-medium">Vendor:</span>
+                          <span className="ml-2">{selectedExpense.vendorName}</span>
+                        </div>
+                      )}
+                      {selectedExpense.leadTypeName && (
+                        <div>
+                          <span className="font-medium">Lead Type:</span>
+                          <span className="ml-2 flex items-center gap-2">
+                            {selectedExpense.leadTypeColor && (
+                              <span 
+                                className="w-3 h-3 rounded-full" 
+                                style={{ backgroundColor: selectedExpense.leadTypeColor }}
+                              />
+                            )}
+                            {selectedExpense.leadTypeName}
+                          </span>
+                        </div>
+                      )}
+                      {selectedExpense.createdByName && (
+                        <div>
+                          <span className="font-medium">Created By:</span>
+                          <span className="ml-2">{selectedExpense.createdByName}</span>
+                        </div>
+                      )}
+                      {selectedExpense.createdAt && (
+                        <div>
+                          <span className="font-medium">Created At:</span>
+                          <span className="ml-2">{new Date(selectedExpense.createdAt).toLocaleString()}</span>
+                        </div>
+                      )}
+                      {selectedExpense.updatedAt && (
+                        <div>
+                          <span className="font-medium">Updated At:</span>
+                          <span className="ml-2">{new Date(selectedExpense.updatedAt).toLocaleString()}</span>
+                        </div>
+                      )}
                     </div>
-                  )}
-                  {selectedExpense.vendorName && (
-                    <div>
-                      <span className="font-medium">Vendor:</span>
-                      <span className="ml-2">{selectedExpense.vendorName}</span>
-                    </div>
-                  )}
-                  {selectedExpense.leadTypeName && (
-                    <div>
-                      <span className="font-medium">Lead Type:</span>
-                      <span className="ml-2">{selectedExpense.leadTypeName}</span>
-                    </div>
-                  )}
-                </div>
+                  </CardContent>
+                </Card>
                 
                 {/* Tax Information */}
-                {(parseFloat(selectedExpense.taxAmount) > 0 || parseFloat(selectedExpense.taxRate) > 0) && (
+                {(parseFloat(selectedExpense.taxAmount?.toString() || "0") > 0 || parseFloat(selectedExpense.taxRate?.toString() || "0") > 0) && (
                   <Card>
-                    <CardContent className="p-4">
-                      <h4 className="font-medium mb-2">Tax Information</h4>
+                    <CardHeader>
+                      <CardTitle className="text-lg">Tax Information</CardTitle>
+                    </CardHeader>
+                    <CardContent>
                       <div className="grid grid-cols-2 gap-4 text-sm">
                         <div>
                           <span className="font-medium">Tax Rate:</span>
@@ -1652,30 +1803,92 @@ export default function Expenses() {
                   </Card>
                 )}
                 
+                {/* Approval Information */}
+                {(selectedExpense.status === "approved" || selectedExpense.status === "rejected") && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg">Approval Information</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        {selectedExpense.approvedAt && (
+                          <div>
+                            <span className="font-medium">Approved At:</span>
+                            <span className="ml-2">{new Date(selectedExpense.approvedAt).toLocaleString()}</span>
+                          </div>
+                        )}
+                        {selectedExpense.approvedBy && (
+                          <div>
+                            <span className="font-medium">Approved By:</span>
+                            <span className="ml-2">User ID: {selectedExpense.approvedBy}</span>
+                          </div>
+                        )}
+                        {selectedExpense.rejectionReason && (
+                          <div className="col-span-2">
+                            <span className="font-medium">Rejection Reason:</span>
+                            <p className="mt-1 text-muted-foreground">{selectedExpense.rejectionReason}</p>
+                          </div>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+                
+                {/* Receipt */}
+                {selectedExpense.receiptUrl && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg">Receipt</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <a 
+                        href={selectedExpense.receiptUrl} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="text-blue-600 hover:underline flex items-center gap-2"
+                      >
+                        <FileText className="h-4 w-4" />
+                        View Receipt
+                      </a>
+                    </CardContent>
+                  </Card>
+                )}
+                
                 {/* Tags */}
-                {selectedExpense.tags.length > 0 && (
-                  <div>
-                    <h4 className="font-medium mb-2">Tags</h4>
-                    <div className="flex gap-2 flex-wrap">
-                      {selectedExpense.tags.map((tag, index) => (
-                        <Badge key={index} variant="secondary">
-                          {tag}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
+                {selectedExpense.tags && selectedExpense.tags.length > 0 && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg">Tags</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="flex gap-2 flex-wrap">
+                        {selectedExpense.tags.map((tag, index) => (
+                          <Badge key={index} variant="secondary">
+                            {tag}
+                          </Badge>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
                 )}
                 
                 {/* Notes */}
                 {selectedExpense.notes && (
-                  <div>
-                    <h4 className="font-medium mb-2">Notes</h4>
-                    <p className="text-sm text-muted-foreground">{selectedExpense.notes}</p>
-                  </div>
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg">Notes</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div 
+                        className="text-sm text-muted-foreground prose prose-sm max-w-none"
+                        dangerouslySetInnerHTML={{ __html: selectedExpense.notes }}
+                      />
+                    </CardContent>
+                  </Card>
                 )}
                 
                 {/* Actions */}
-                <div className="flex items-center justify-end gap-3 pt-4 border-t">
+                <div className="flex items-center justify-end gap-3 pt-4 border-t sticky bottom-0 bg-white dark:bg-gray-900">
                   <Button variant="outline" onClick={() => setShowDetailsDialog(false)}>
                     Close
                   </Button>

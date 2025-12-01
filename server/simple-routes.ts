@@ -13348,16 +13348,18 @@ Please improve this email.`;
               // Map camelCase to snake_case for database
               const expenseResult = await expenseSql`
                 INSERT INTO expenses (
-                  tenant_id, created_by, title, description, amount, currency,
+                  tenant_id, expense_number, created_by, title, description, quantity, amount, currency,
                   category, subcategory, expense_date, payment_method, payment_reference,
                   vendor_id, lead_type_id, expense_type, receipt_url,
                   tax_amount, tax_rate, is_reimbursable, is_recurring,
-                  recurring_frequency, status, tags, notes
+                  recurring_frequency, status, amount_paid, amount_due, tags, notes
                 ) VALUES (
                   ${parseInt(tenantId)},
+                  ${expenseData.expenseNumber || null},
                   ${req.user?.id || 1},
                   ${expenseData.title || ""},
                   ${expenseData.description || null},
+                  ${expenseData.quantity || 1},
                   ${expenseData.amount || 0},
                   ${expenseData.currency || "USD"},
                   ${expenseData.category || "purchase"},
@@ -13375,6 +13377,8 @@ Please improve this email.`;
                   ${expenseData.isRecurring || false},
                   ${expenseData.recurringFrequency || null},
                   ${expenseData.status || "approved"},
+                  ${expenseData.amountPaid || 0},
+                  ${expenseData.amountDue || (expenseData.amount || 0)},
                   ${expenseData.tags ? JSON.stringify(expenseData.tags) : "[]"},
                   ${expenseData.notes || null}
                 )
@@ -16628,6 +16632,7 @@ Please improve this email.`;
   // ========== EXPENSE MANAGEMENT ROUTES ==========
 
   // Get all expenses for a tenant with filtering and pagination
+  // Note: Using explicit column lists instead of e.* to avoid cached plan issues after schema changes
   app.get("/api/expenses", authenticateVendor, async (req: any, res) => {
     try {
       console.log("💰 GET /api/expenses - User authenticated:", {
@@ -16644,6 +16649,8 @@ Please improve this email.`;
       const category = req.query.category as string | undefined;
       const startDate = req.query.startDate as string | undefined;
       const endDate = req.query.endDate as string | undefined;
+      const sortBy = (req.query.sortBy as string) || "created_at";
+      const sortOrder = (req.query.sortOrder as string) || "desc";
 
       console.log("💰 GET /api/expenses - Query params:", {
         page,
@@ -16654,6 +16661,8 @@ Please improve this email.`;
         category,
         startDate,
         endDate,
+        sortBy,
+        sortOrder,
       });
 
       // Build WHERE clause dynamically
@@ -16688,22 +16697,303 @@ Please improve this email.`;
       `;
       const total = Number(countResult.total);
 
-      // Get paginated expenses
-      const expenses = await sql`
-        SELECT 
-          e.*,
-          v.name as vendor_name,
-          lt.name as lead_type_name,
-          lt.color as lead_type_color,
-          u.first_name || ' ' || u.last_name as created_by_name
-        FROM expenses e
-        LEFT JOIN vendors v ON e.vendor_id = v.id
-        LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
-        LEFT JOIN users u ON e.created_by = u.id
-        WHERE ${whereClause}
-        ORDER BY e.expense_date DESC, e.created_at DESC
-        LIMIT ${limit} OFFSET ${offset}
-      `;
+      // Validate and map sort column
+      const validSortFields = [
+        "title",
+        "category",
+        "amount",
+        "status",
+        "expense_date",
+        "vendor_name",
+        "created_at",
+      ];
+      const safeSortBy = validSortFields.includes(sortBy) ? sortBy : "created_at";
+      const orderDirection = sortOrder.toLowerCase() === "asc" ? "ASC" : "DESC";
+
+      // Build ORDER BY clause based on sort column (using separate queries for safety)
+      let expenses;
+      if (safeSortBy === "vendor_name") {
+        expenses = orderDirection === "ASC"
+          ? await sql`
+            SELECT 
+              e.id, e.tenant_id, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
+              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
+              e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color,
+              u.first_name || ' ' || u.last_name as created_by_name
+            FROM expenses e
+            LEFT JOIN vendors v ON e.vendor_id = v.id
+            LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+            LEFT JOIN users u ON e.created_by = u.id
+            WHERE ${whereClause}
+            ORDER BY v.name ASC, e.created_at DESC
+            LIMIT ${limit} OFFSET ${offset}
+          `
+          : await sql`
+            SELECT 
+              e.id, e.tenant_id, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
+              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
+              e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color,
+              u.first_name || ' ' || u.last_name as created_by_name
+            FROM expenses e
+            LEFT JOIN vendors v ON e.vendor_id = v.id
+            LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+            LEFT JOIN users u ON e.created_by = u.id
+            WHERE ${whereClause}
+            ORDER BY v.name DESC, e.created_at DESC
+            LIMIT ${limit} OFFSET ${offset}
+          `;
+      } else if (safeSortBy === "expense_date") {
+        expenses = orderDirection === "ASC"
+          ? await sql`
+            SELECT 
+              e.id, e.tenant_id, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
+              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
+              e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color,
+              u.first_name || ' ' || u.last_name as created_by_name
+            FROM expenses e
+            LEFT JOIN vendors v ON e.vendor_id = v.id
+            LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+            LEFT JOIN users u ON e.created_by = u.id
+            WHERE ${whereClause}
+            ORDER BY e.expense_date ASC, e.created_at DESC
+            LIMIT ${limit} OFFSET ${offset}
+          `
+          : await sql`
+            SELECT 
+              e.id, e.tenant_id, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
+              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
+              e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color,
+              u.first_name || ' ' || u.last_name as created_by_name
+            FROM expenses e
+            LEFT JOIN vendors v ON e.vendor_id = v.id
+            LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+            LEFT JOIN users u ON e.created_by = u.id
+            WHERE ${whereClause}
+            ORDER BY e.expense_date DESC, e.created_at DESC
+            LIMIT ${limit} OFFSET ${offset}
+          `;
+      } else if (safeSortBy === "title") {
+        expenses = orderDirection === "ASC"
+          ? await sql`
+            SELECT 
+              e.id, e.tenant_id, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
+              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
+              e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color,
+              u.first_name || ' ' || u.last_name as created_by_name
+            FROM expenses e
+            LEFT JOIN vendors v ON e.vendor_id = v.id
+            LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+            LEFT JOIN users u ON e.created_by = u.id
+            WHERE ${whereClause}
+            ORDER BY e.title ASC, e.created_at DESC
+            LIMIT ${limit} OFFSET ${offset}
+          `
+          : await sql`
+            SELECT 
+              e.id, e.tenant_id, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
+              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
+              e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color,
+              u.first_name || ' ' || u.last_name as created_by_name
+            FROM expenses e
+            LEFT JOIN vendors v ON e.vendor_id = v.id
+            LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+            LEFT JOIN users u ON e.created_by = u.id
+            WHERE ${whereClause}
+            ORDER BY e.title DESC, e.created_at DESC
+            LIMIT ${limit} OFFSET ${offset}
+          `;
+      } else if (safeSortBy === "category") {
+        expenses = orderDirection === "ASC"
+          ? await sql`
+            SELECT 
+              e.id, e.tenant_id, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
+              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
+              e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color,
+              u.first_name || ' ' || u.last_name as created_by_name
+            FROM expenses e
+            LEFT JOIN vendors v ON e.vendor_id = v.id
+            LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+            LEFT JOIN users u ON e.created_by = u.id
+            WHERE ${whereClause}
+            ORDER BY e.category ASC, e.created_at DESC
+            LIMIT ${limit} OFFSET ${offset}
+          `
+          : await sql`
+            SELECT 
+              e.id, e.tenant_id, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
+              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
+              e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color,
+              u.first_name || ' ' || u.last_name as created_by_name
+            FROM expenses e
+            LEFT JOIN vendors v ON e.vendor_id = v.id
+            LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+            LEFT JOIN users u ON e.created_by = u.id
+            WHERE ${whereClause}
+            ORDER BY e.category DESC, e.created_at DESC
+            LIMIT ${limit} OFFSET ${offset}
+          `;
+      } else if (safeSortBy === "amount") {
+        expenses = orderDirection === "ASC"
+          ? await sql`
+            SELECT 
+              e.id, e.tenant_id, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
+              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
+              e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color,
+              u.first_name || ' ' || u.last_name as created_by_name
+            FROM expenses e
+            LEFT JOIN vendors v ON e.vendor_id = v.id
+            LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+            LEFT JOIN users u ON e.created_by = u.id
+            WHERE ${whereClause}
+            ORDER BY e.amount ASC, e.created_at DESC
+            LIMIT ${limit} OFFSET ${offset}
+          `
+          : await sql`
+            SELECT 
+              e.id, e.tenant_id, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
+              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
+              e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color,
+              u.first_name || ' ' || u.last_name as created_by_name
+            FROM expenses e
+            LEFT JOIN vendors v ON e.vendor_id = v.id
+            LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+            LEFT JOIN users u ON e.created_by = u.id
+            WHERE ${whereClause}
+            ORDER BY e.amount DESC, e.created_at DESC
+            LIMIT ${limit} OFFSET ${offset}
+          `;
+      } else if (safeSortBy === "status") {
+        expenses = orderDirection === "ASC"
+          ? await sql`
+            SELECT 
+              e.id, e.tenant_id, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
+              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
+              e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color,
+              u.first_name || ' ' || u.last_name as created_by_name
+            FROM expenses e
+            LEFT JOIN vendors v ON e.vendor_id = v.id
+            LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+            LEFT JOIN users u ON e.created_by = u.id
+            WHERE ${whereClause}
+            ORDER BY e.status ASC, e.created_at DESC
+            LIMIT ${limit} OFFSET ${offset}
+          `
+          : await sql`
+            SELECT 
+              e.id, e.tenant_id, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
+              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
+              e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color,
+              u.first_name || ' ' || u.last_name as created_by_name
+            FROM expenses e
+            LEFT JOIN vendors v ON e.vendor_id = v.id
+            LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+            LEFT JOIN users u ON e.created_by = u.id
+            WHERE ${whereClause}
+            ORDER BY e.status DESC, e.created_at DESC
+            LIMIT ${limit} OFFSET ${offset}
+          `;
+      } else {
+        // Default to created_at
+        expenses = orderDirection === "ASC"
+          ? await sql`
+            SELECT 
+              e.id, e.tenant_id, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
+              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
+              e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color,
+              u.first_name || ' ' || u.last_name as created_by_name
+            FROM expenses e
+            LEFT JOIN vendors v ON e.vendor_id = v.id
+            LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+            LEFT JOIN users u ON e.created_by = u.id
+            WHERE ${whereClause}
+            ORDER BY e.created_at ASC
+            LIMIT ${limit} OFFSET ${offset}
+          `
+          : await sql`
+            SELECT 
+              e.id, e.tenant_id, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
+              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
+              e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color,
+              u.first_name || ' ' || u.last_name as created_by_name
+            FROM expenses e
+            LEFT JOIN vendors v ON e.vendor_id = v.id
+            LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+            LEFT JOIN users u ON e.created_by = u.id
+            WHERE ${whereClause}
+            ORDER BY e.created_at DESC
+            LIMIT ${limit} OFFSET ${offset}
+          `;
+      }
 
       console.log("💰 GET /api/expenses - Found expenses:", expenses.length, "Total:", total);
 
@@ -16784,8 +17074,10 @@ Please improve this email.`;
       const expenseData = {
         tenantId: req.user.tenantId,
         createdBy: req.user.id,
+        expenseNumber: req.body.expenseNumber || null,
         title: req.body.title || "",
         description: req.body.description || null,
+        quantity: req.body.quantity || 1,
         amount: req.body.amount,
         currency: req.body.currency || "USD",
         category: req.body.category || "",
@@ -16804,6 +17096,8 @@ Please improve this email.`;
         isRecurring: req.body.isRecurring || false,
         recurringFrequency: req.body.recurringFrequency || null,
         status: req.body.status || "pending",
+        amountPaid: req.body.amountPaid || 0,
+        amountDue: req.body.amountDue || 0,
         tags: req.body.tags || [],
         notes: req.body.notes || null,
         approvedBy: req.body.approvedBy || null,
@@ -16909,19 +17203,20 @@ Please improve this email.`;
 
       const [expense] = await sql`
         INSERT INTO expenses (
-          tenant_id, title, description, amount, currency, category, subcategory,
+          tenant_id, expense_number, title, description, quantity, amount, currency, category, subcategory,
           expense_date, payment_method, payment_reference, vendor_id, lead_type_id,
           expense_type, receipt_url, tax_amount, tax_rate, is_reimbursable, is_recurring,
-          recurring_frequency, status, approved_by, approved_at, rejection_reason,
+          recurring_frequency, status, amount_paid, amount_due, approved_by, approved_at, rejection_reason,
           tags, notes, created_by
         ) VALUES (
-          ${expenseData.tenantId}, ${expenseData.title}, ${expenseData.description},
-          ${expenseData.amount}, ${expenseData.currency}, ${expenseData.category},
+          ${expenseData.tenantId}, ${expenseData.expenseNumber}, ${expenseData.title}, ${expenseData.description},
+          ${expenseData.quantity || 1}, ${expenseData.amount}, ${expenseData.currency}, ${expenseData.category},
           ${expenseData.subcategory}, ${expenseData.expenseDate}, ${expenseData.paymentMethod},
           ${expenseData.paymentReference}, ${expenseData.vendorId}, ${expenseData.leadTypeId},
           ${expenseData.expenseType || "purchase"}, ${expenseData.receiptUrl}, ${expenseData.taxAmount || 0}, ${expenseData.taxRate || 0},
           ${expenseData.isReimbursable || false}, ${expenseData.isRecurring || false},
           ${expenseData.recurringFrequency}, ${expenseData.status || "pending"},
+          ${expenseData.amountPaid || 0}, ${expenseData.amountDue || 0},
           ${expenseData.approvedBy}, ${expenseData.approvedAt}, ${expenseData.rejectionReason},
           ${JSON.stringify(expenseData.tags || [])}, ${expenseData.notes}, ${expenseData.createdBy}
         )
@@ -16958,8 +17253,10 @@ Please improve this email.`;
       // Build update query - only update fields that are provided, otherwise keep existing values
       const [expense] = await sql`
         UPDATE expenses SET
+          expense_number = ${expenseData.expenseNumber !== undefined ? (expenseData.expenseNumber || null) : existingExpense.expense_number},
           title = ${expenseData.title !== undefined ? expenseData.title : existingExpense.title},
           description = ${expenseData.description !== undefined ? expenseData.description : existingExpense.description},
+          quantity = ${expenseData.quantity !== undefined ? (expenseData.quantity || 1) : (existingExpense.quantity || 1)},
           amount = ${expenseData.amount !== undefined ? expenseData.amount : existingExpense.amount},
           currency = ${expenseData.currency !== undefined ? expenseData.currency : existingExpense.currency},
           category = ${expenseData.category !== undefined ? expenseData.category : existingExpense.category},
@@ -16977,6 +17274,8 @@ Please improve this email.`;
           is_recurring = ${expenseData.isRecurring !== undefined ? (expenseData.isRecurring || false) : existingExpense.is_recurring},
           recurring_frequency = ${expenseData.recurringFrequency !== undefined ? (expenseData.recurringFrequency || null) : existingExpense.recurring_frequency},
           status = ${expenseData.status !== undefined ? expenseData.status : existingExpense.status},
+          amount_paid = ${expenseData.amountPaid !== undefined ? (expenseData.amountPaid || 0) : (existingExpense.amount_paid || 0)},
+          amount_due = ${expenseData.amountDue !== undefined ? (expenseData.amountDue || 0) : (existingExpense.amount_due || 0)},
           approved_by = ${expenseData.approvedBy !== undefined ? (expenseData.approvedBy || null) : existingExpense.approved_by},
           approved_at = ${expenseData.approvedAt !== undefined ? (expenseData.approvedAt || null) : existingExpense.approved_at},
           rejection_reason = ${expenseData.rejectionReason !== undefined ? (expenseData.rejectionReason || null) : existingExpense.rejection_reason},
@@ -16999,9 +17298,42 @@ Please improve this email.`;
     try {
       const expenseId = parseInt(req.params.id);
       
+      // Explicitly list all columns to avoid cached plan issues after schema changes
       const [expense] = await sql`
         SELECT 
-          e.*,
+          e.id,
+          e.tenant_id,
+          e.expense_number,
+          e.title,
+          e.description,
+          e.quantity,
+          e.amount,
+          e.currency,
+          e.category,
+          e.subcategory,
+          e.expense_date,
+          e.payment_method,
+          e.payment_reference,
+          e.vendor_id,
+          e.lead_type_id,
+          e.expense_type,
+          e.receipt_url,
+          e.tax_amount,
+          e.tax_rate,
+          e.is_reimbursable,
+          e.is_recurring,
+          e.recurring_frequency,
+          e.status,
+          e.amount_paid,
+          e.amount_due,
+          e.approved_by,
+          e.approved_at,
+          e.rejection_reason,
+          e.tags,
+          e.notes,
+          e.created_by,
+          e.created_at,
+          e.updated_at,
           v.name as vendor_name,
           lt.name as lead_type_name,
           lt.color as lead_type_color

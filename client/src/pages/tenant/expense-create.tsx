@@ -22,6 +22,7 @@ import {
   ArrowLeft,
   Receipt,
   HelpCircle,
+  Loader2,
 } from "lucide-react";
 import {
   Select,
@@ -81,16 +82,17 @@ export default function ExpenseCreate() {
 
   // Debug: Log route params
   useEffect(() => {
-    console.log("Route params:", { 
+    console.log("🔍 Route params:", { 
       location, 
       match, 
       params, 
       expenseId, 
       isEditMode,
       extractedFromParams: !!params?.id,
-      extractedFromPath: location.includes('/expenses/create/')
+      extractedFromPath: location.includes('/expenses/create/'),
+      tenantId: tenant?.id
     });
-  }, [location, match, params, expenseId, isEditMode]);
+  }, [location, match, params, expenseId, isEditMode, tenant?.id]);
 
   const [expenseItems, setExpenseItems] = useState([
     {
@@ -98,6 +100,7 @@ export default function ExpenseCreate() {
       title: "",
       vendorId: "",
       leadTypeId: "",
+      quantity: "1",
       amount: "",
       taxRateId: "",
       taxAmount: "0",
@@ -300,11 +303,18 @@ export default function ExpenseCreate() {
       });
       if (!response.ok) {
         console.error("Failed to fetch expense:", response.status, response.statusText);
+        const errorText = await response.text();
+        console.error("Error response:", errorText);
         throw new Error("Failed to fetch expense");
       }
       const data = await response.json();
-      console.log("Expense data fetched:", data);
-      return data;
+      console.log("Expense data fetched (raw):", data);
+      
+      // Handle different response formats
+      // If response has a 'data' property, use it; otherwise use the response directly
+      const expense = data.data || data;
+      console.log("Expense data (processed):", expense);
+      return expense;
     },
   });
 
@@ -327,45 +337,149 @@ export default function ExpenseCreate() {
     if (isEditMode && expenseData && !isLoadingExpense) {
       const expense = expenseData;
       console.log("Loading expense data:", expense);
+      console.log("Expense keys:", Object.keys(expense));
+      console.log("Expense amount:", expense.amount);
+      console.log("Expense quantity:", expense.quantity);
+      console.log("Expense amount_paid:", expense.amount_paid);
+      console.log("Expense amount_due:", expense.amount_due);
       
+      // Set basic expense fields
       setExpenseDate(expense.expense_date || expense.expenseDate || new Date().toISOString().split("T")[0]);
       setCurrency(expense.currency || "USD");
-      setNotesContent(expense.notes || "");
+      
+      // Clean notes - remove HTML tags if present
+      let notesText = expense.notes || expense.description || "";
+      if (notesText && typeof notesText === "string") {
+        notesText = notesText.replace(/<[^>]*>/g, "").trim();
+      }
+      setNotesContent(notesText);
+      
+      // Set expense number if available (might be in different fields)
+      if (expense.expense_number || expense.expenseNumber || expense.reference_number || expense.referenceNumber) {
+        const expNum = expense.expense_number || expense.expenseNumber || expense.reference_number || expense.referenceNumber;
+        setExpenseNumber(expNum);
+        console.log("Setting expense number:", expNum);
+      } else {
+        console.log("No expense number found in expense data");
+      }
       
       // Find tax rate ID from tax rate value - wait for gstRates to be available
       let taxRateId = "";
       if (expense.tax_rate && gstRates && gstRates.length > 0) {
         const taxRateValue = parseFloat(expense.tax_rate?.toString() || "0");
         const matchingRate = gstRates.find((rate: any) => {
-          const rateValue = parseFloat(rate.rate?.toString() || "0");
+          const rateValue = parseFloat(rate.rate?.toString() || rate.ratePercentage?.toString() || "0");
           return Math.abs(rateValue - taxRateValue) < 0.01; // Allow small floating point differences
         });
         if (matchingRate) {
           taxRateId = matchingRate.id?.toString() || "";
+          console.log("Found matching tax rate:", matchingRate, "for tax_rate:", taxRateValue);
+        } else {
+          console.log("No matching tax rate found for tax_rate:", taxRateValue, "Available rates:", gstRates);
+        }
+      } else {
+        console.log("Tax rate lookup skipped - tax_rate:", expense.tax_rate, "gstRates available:", !!gstRates, "gstRates length:", gstRates?.length);
+      }
+      
+      // Map expense status to payment status
+      // API status: "pending", "approved", "rejected", "paid"
+      // Form payment status: "paid", "credit", "due"
+      let paymentStatus = "due"; // default
+      if (expense.status === "paid") {
+        paymentStatus = "paid";
+      } else if (expense.status === "approved") {
+        paymentStatus = "credit";
+      } else if (expense.status === "pending" || expense.status === "rejected") {
+        paymentStatus = "due";
+      }
+      
+      // Calculate paid and due amounts
+      // First, try to use amount_paid and amount_due from the database if available
+      // Otherwise, calculate based on status and total
+      const totalAmount = parseFloat(expense.amount || "0") + parseFloat(expense.tax_amount || expense.taxAmount || "0");
+      let amountPaid = "";
+      let amountDue = "";
+      
+      // Check if amount_paid and amount_due are already in the database
+      const dbAmountPaid = expense.amount_paid !== undefined && expense.amount_paid !== null 
+        ? parseFloat(expense.amount_paid.toString()) 
+        : null;
+      const dbAmountDue = expense.amount_due !== undefined && expense.amount_due !== null 
+        ? parseFloat(expense.amount_due.toString()) 
+        : null;
+      
+      if (dbAmountPaid !== null || dbAmountDue !== null) {
+        // Use database values if available
+        amountPaid = (dbAmountPaid !== null ? dbAmountPaid : 0).toFixed(2);
+        amountDue = (dbAmountDue !== null ? dbAmountDue : 0).toFixed(2);
+      } else {
+        // Calculate based on status if database values not available
+        if (paymentStatus === "paid") {
+          amountPaid = totalAmount.toFixed(2);
+          amountDue = "0.00";
+        } else if (paymentStatus === "due") {
+          amountPaid = "0.00";
+          amountDue = totalAmount.toFixed(2);
+        } else if (paymentStatus === "credit") {
+          // For credit, we might have partial payment
+          amountPaid = expense.amount_paid?.toString() || expense.amountPaid?.toString() || "0.00";
+          const paid = parseFloat(amountPaid || "0");
+          amountDue = (totalAmount - paid).toFixed(2);
         }
       }
       
+      // Format tax amount to ensure it shows properly
+      const taxAmount = parseFloat(expense.tax_amount?.toString() || expense.taxAmount?.toString() || "0");
+      
       // Set expense items from the expense data
+      // Note: If expense has quantity, use it; otherwise default to 1
+      // If amount is total (quantity * unit price), we need to calculate unit price
+      const expenseQuantity = expense.quantity ? parseFloat(expense.quantity.toString()) : 1;
+      const expenseTotalAmount = parseFloat(expense.amount || "0");
+      const unitAmount = expenseQuantity > 0 ? expenseTotalAmount / expenseQuantity : expenseTotalAmount;
+      
+      // Clean notes - remove HTML tags if present
+      let cleanNotes = expense.notes || expense.description || "";
+      if (cleanNotes && typeof cleanNotes === "string") {
+        // Remove HTML tags but keep the text content
+        cleanNotes = cleanNotes.replace(/<[^>]*>/g, "").trim();
+      }
+      
       const expenseItem = {
         category: expense.category || "",
         title: expense.title || "",
         vendorId: expense.vendor_id?.toString() || expense.vendorId?.toString() || "",
         leadTypeId: expense.lead_type_id?.toString() || expense.leadTypeId?.toString() || "",
-        amount: expense.amount?.toString() || "",
+        quantity: expenseQuantity.toString(),
+        amount: unitAmount.toString(), // Store unit price
         taxRateId: taxRateId,
-        taxAmount: expense.tax_amount?.toString() || expense.taxAmount?.toString() || "0",
-        totalAmount: parseFloat(expense.amount || "0") + parseFloat(expense.tax_amount || expense.taxAmount || "0"),
+        taxAmount: taxAmount.toFixed(2),
+        totalAmount: totalAmount,
         paymentMethod: expense.payment_method || expense.paymentMethod || "credit_card",
-        paymentStatus: expense.status || "paid",
-        amountPaid: expense.amount_paid?.toString() || expense.amountPaid?.toString() || "",
-        amountDue: expense.amount_due?.toString() || expense.amountDue?.toString() || "",
-        notes: expense.notes || expense.description || "",
+        paymentStatus: paymentStatus,
+        amountPaid: amountPaid,
+        amountDue: amountDue,
+        notes: cleanNotes,
       };
       
+      console.log("Processed expense item:", expenseItem);
+      console.log("Original expense data:", expense);
       console.log("Setting expense item:", expenseItem);
+      console.log("Original expense status:", expense.status);
+      console.log("Mapped payment status:", paymentStatus);
+      
       setExpenseItems([expenseItem]);
+      console.log("Expense items state should be updated now");
+    } else {
+      console.log("Skipping expense data load:", {
+        isEditMode,
+        hasExpenseData: !!expenseData,
+        isLoadingExpense,
+        expenseId,
+        tenantId: tenant?.id,
+      });
     }
-  }, [isEditMode, expenseData, isLoadingExpense, gstRates]);
+  }, [isEditMode, expenseData, isLoadingExpense, gstRates, tenant?.id, expenseId]);
 
   // Fetch all expenses for title suggestions
   const { data: allExpenses = [] } = useQuery({
@@ -465,6 +579,7 @@ export default function ExpenseCreate() {
         title: "",
         vendorId: "",
         leadTypeId: "",
+        quantity: "1",
         amount: "",
         taxRateId: "",
         taxAmount: "0",
@@ -488,30 +603,38 @@ export default function ExpenseCreate() {
     const updatedItems = [...expenseItems];
     updatedItems[index] = { ...updatedItems[index], [field]: value };
 
-    // Calculate totals if amount or tax rate changes
-    if (field === "amount" || field === "taxRateId") {
-      const amount = parseFloat(updatedItems[index].amount || "0");
+    // Calculate totals if amount, quantity, or tax rate changes
+    if (field === "amount" || field === "quantity" || field === "taxRateId") {
+      const quantity = parseFloat(updatedItems[index].quantity || "1");
+      const unitAmount = parseFloat(updatedItems[index].amount || "0");
+      const totalAmountBeforeTax = unitAmount * quantity;
       let taxAmount = 0;
-      let totalAmount = amount;
+      let totalAmount = totalAmountBeforeTax;
       
       if (updatedItems[index].taxRateId) {
         const selectedRate = gstRates.find(
           (rate: any) => rate.id?.toString() === updatedItems[index].taxRateId
         );
         if (selectedRate) {
-          const ratePercentage = parseFloat(selectedRate.rate || "0");
+          // Use ratePercentage (or rate_percentage) field from the API response
+          const ratePercentage = parseFloat(
+            selectedRate.ratePercentage?.toString() || 
+            selectedRate.rate_percentage?.toString() || 
+            selectedRate.rate?.toString() || 
+            "0"
+          );
           
           if (isTaxInclusive) {
             // When tax is inclusive, tax is already in the price
             // Calculate: amount = subtotal + tax, so tax = amount - subtotal
             // Or: subtotal = amount / (1 + rate/100), tax = amount - subtotal
-            const subtotal = amount / (1 + ratePercentage / 100);
-            taxAmount = amount - subtotal;
-            totalAmount = amount; // Total is the amount itself when inclusive
+            const subtotal = totalAmountBeforeTax / (1 + ratePercentage / 100);
+            taxAmount = totalAmountBeforeTax - subtotal;
+            totalAmount = totalAmountBeforeTax; // Total is the amount itself when inclusive
           } else {
             // When tax is exclusive, calculate tax and add it
-            taxAmount = (amount * ratePercentage) / 100;
-            totalAmount = amount + taxAmount;
+            taxAmount = (totalAmountBeforeTax * ratePercentage) / 100;
+            totalAmount = totalAmountBeforeTax + taxAmount;
           }
         }
       }
@@ -527,7 +650,9 @@ export default function ExpenseCreate() {
   useEffect(() => {
     const recalculatedItems = expenseItems.map((item) => {
       if (item.amount && item.taxRateId) {
-        const amount = parseFloat(item.amount || "0");
+        const quantity = parseFloat(item.quantity || "1");
+        const unitAmount = parseFloat(item.amount || "0");
+        const amount = unitAmount * quantity;
         let taxAmount = 0;
         let totalAmount = amount;
         
@@ -535,7 +660,13 @@ export default function ExpenseCreate() {
           (rate: any) => rate.id?.toString() === item.taxRateId
         );
         if (selectedRate) {
-          const ratePercentage = parseFloat(selectedRate.rate || "0");
+          // Use ratePercentage (or rate_percentage) field from the API response
+          const ratePercentage = parseFloat(
+            selectedRate.ratePercentage?.toString() || 
+            selectedRate.rate_percentage?.toString() || 
+            selectedRate.rate?.toString() || 
+            "0"
+          );
           
           if (isTaxInclusive) {
             const subtotal = amount / (1 + ratePercentage / 100);
@@ -603,10 +734,10 @@ export default function ExpenseCreate() {
     cols.push("minmax(150px, 1.5fr)"); // Title (flexible, min 150px)
     if (expenseSettings?.showVendor !== false) cols.push("minmax(250px, 2fr)"); // Vendor - bigger (flexible, min 250px)
     if (expenseSettings?.showLeadType !== false) cols.push("minmax(250px, 2fr)"); // Lead Type/Provider - bigger (flexible, min 250px)
+    cols.push("minmax(100px, 1fr)"); // Quantity - small (flexible, min 100px)
     cols.push("minmax(130px, 1fr)"); // Amount - small (flexible, min 130px)
     if (expenseSettings?.showTax !== false) {
       cols.push("minmax(100px, 1fr)"); // Tax Rate - small (flexible, min 100px)
-      cols.push("minmax(100px, 1fr)"); // Tax Amt - small (flexible, min 100px)
     }
     cols.push("minmax(100px, 1fr)"); // Total - small (flexible, min 100px)
     if (expenseSettings?.showPaymentStatus !== false) cols.push("minmax(100px, 1fr)"); // Status - small (flexible, min 100px)
@@ -660,10 +791,18 @@ export default function ExpenseCreate() {
   const calculateSubtotal = () => {
     if (isTaxInclusive) {
       // When tax is inclusive, subtotal = sum of all amounts (tax is already included)
-      return expenseItems.reduce((sum, item) => sum + parseFloat(item.amount || "0"), 0);
+      return expenseItems.reduce((sum, item) => {
+        const quantity = parseFloat(item.quantity || "1");
+        const unitAmount = parseFloat(item.amount || "0");
+        return sum + (unitAmount * quantity);
+      }, 0);
     } else {
       // When tax is exclusive, subtotal = sum of amounts without tax
-      return expenseItems.reduce((sum, item) => sum + parseFloat(item.amount || "0"), 0);
+      return expenseItems.reduce((sum, item) => {
+        const quantity = parseFloat(item.quantity || "1");
+        const unitAmount = parseFloat(item.amount || "0");
+        return sum + (unitAmount * quantity);
+      }, 0);
     }
   };
 
@@ -690,36 +829,55 @@ export default function ExpenseCreate() {
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
-    const expenses = expenseItems.map((item) => ({
-      title: item.title,
-      description: item.notes,
-      amount: parseFloat(item.amount || "0"),
-      currency: expenseSettings?.defaultCurrency || currency,
-      category: item.category,
-      subcategory: "",
-      expenseDate: expenseDate,
-      paymentMethod: item.paymentMethod,
-      paymentReference: "",
-      vendorId: item.vendorId && item.vendorId !== "none" ? parseInt(item.vendorId) : null,
-      leadTypeId: item.leadTypeId && item.leadTypeId !== "none" ? parseInt(item.leadTypeId) : null,
-      expenseType: "purchase",
-      receiptUrl: "",
-      taxAmount: parseFloat(item.taxAmount || "0"),
-      taxRate: item.taxRateId
-        ? (() => {
-            const selectedRate = gstRates.find(
-              (rate: any) => rate.id?.toString() === item.taxRateId
-            );
-            return selectedRate ? parseFloat(selectedRate.rate || "0") : 0;
-          })()
-        : 0,
-      isReimbursable: false,
-      isRecurring: false,
-      recurringFrequency: "",
-      status: "pending",
-      tags: [],
-      notes: notesContent || item.notes,
-    }));
+    const expenses = expenseItems.map((item) => {
+      const quantity = parseFloat(item.quantity || "1");
+      const unitAmount = parseFloat(item.amount || "0");
+      const totalAmount = unitAmount * quantity;
+      
+      return {
+        title: item.title,
+        description: item.notes,
+        quantity: quantity,
+        amount: totalAmount, // Store total amount (unit price * quantity)
+        currency: expenseSettings?.defaultCurrency || currency,
+        category: item.category,
+        subcategory: "",
+        expenseDate: expenseDate,
+        expenseNumber: expenseNumber || undefined, // Include expense number if set
+        paymentMethod: item.paymentMethod,
+        paymentReference: "",
+        vendorId: item.vendorId && item.vendorId !== "none" ? parseInt(item.vendorId) : null,
+        leadTypeId: item.leadTypeId && item.leadTypeId !== "none" ? parseInt(item.leadTypeId) : null,
+        expenseType: "purchase",
+        receiptUrl: "",
+        taxAmount: parseFloat(item.taxAmount || "0"),
+        taxRate: item.taxRateId
+          ? (() => {
+              const selectedRate = gstRates.find(
+                (rate: any) => rate.id?.toString() === item.taxRateId
+              );
+              if (selectedRate) {
+                // Use ratePercentage (or rate_percentage) field from the API response
+                return parseFloat(
+                  selectedRate.ratePercentage?.toString() || 
+                  selectedRate.rate_percentage?.toString() || 
+                  selectedRate.rate?.toString() || 
+                  "0"
+                );
+              }
+              return 0;
+            })()
+          : 0,
+        isReimbursable: false,
+        isRecurring: false,
+        recurringFrequency: "",
+        status: "pending",
+        amountPaid: parseFloat(item.amountPaid || "0"),
+        amountDue: parseFloat(item.amountDue || "0"),
+        tags: [],
+        notes: notesContent || item.notes,
+      };
+    });
 
     createExpensesMutation.mutate(expenses);
   };
@@ -727,7 +885,19 @@ export default function ExpenseCreate() {
   return (
     <Layout initialSidebarCollapsed={true}>
       <div className="p-3 sm:p-4 md:p-6 mx-auto">
-        <div className="bg-white rounded-2xl shadow-sm">
+        <div className="bg-white rounded-2xl shadow-sm relative">
+          {/* Loading Overlay - only show when actively loading */}
+          {isEditMode && isLoadingExpense && (
+            <div className="absolute inset-0 bg-white/90 dark:bg-gray-900/90 backdrop-blur-sm z-50 flex items-center justify-center rounded-2xl">
+              <div className="flex flex-col items-center gap-4">
+                <Loader2 className="h-8 w-8 animate-spin text-gray-600 dark:text-gray-400" />
+                <p className="text-sm font-medium text-gray-600 dark:text-gray-400">
+                  Loading expense data...
+                </p>
+              </div>
+            </div>
+          )}
+          
           <div className="">
             <div className="w-full min-h-[72px] flex flex-col sm:flex-row items-start sm:items-center bg-white px-3 sm:px-4 md:px-[18px] py-3 sm:py-4 rounded-t-xl border-b border-[#E3E8EF] shadow-[0px_1px_6px_0px_rgba(0,0,0,0.05)] gap-3 sm:gap-0">
               <div className="flex items-center gap-2 sm:gap-0">
@@ -835,9 +1005,9 @@ export default function ExpenseCreate() {
                       <div className="flex items-center">Title *</div>
                       {expenseSettings?.showVendor !== false && <div className="flex items-center">Vendor</div>}
                       {expenseSettings?.showLeadType !== false && <div className="flex items-center">Lead Type</div>}
+                      <div className="flex items-center">Quantity *</div>
                       <div className="flex items-center">Amount ({currencySymbol}) *</div>
                       {expenseSettings?.showTax !== false && <div className="flex items-center">Tax Rate</div>}
-                      {expenseSettings?.showTax !== false && <div className="flex items-center">Tax Amt ({currencySymbol})</div>}
                       <div className="flex items-center">Total ({currencySymbol})</div>
                       {expenseSettings?.showPaymentStatus !== false && <div className="flex items-center">Status *</div>}
                       {expenseSettings?.showPaymentStatus !== false && <div className="flex items-center">Paid ({currencySymbol})</div>}
@@ -919,6 +1089,20 @@ export default function ExpenseCreate() {
 
                         <div className="flex items-center">
                           <Input
+                            data-testid={`input-quantity-${index}`}
+                            type="text"
+                            value={item.quantity || "1"}
+                            onChange={(e) =>
+                              updateExpenseItem(index, "quantity", e.target.value)
+                            }
+                            onKeyPress={handleNumericKeyPress}
+                            placeholder="1"
+                            required
+                          />
+                        </div>
+
+                        <div className="flex items-center">
+                          <Input
                             data-testid={`input-amount-${index}`}
                             type="text"
                             value={item.amount}
@@ -963,16 +1147,6 @@ export default function ExpenseCreate() {
                                 No tax rates available
                               </p>
                             )}
-                          </div>
-                        )}
-
-                        {expenseSettings?.showTax !== false && (
-                          <div className="flex items-center">
-                            <Input
-                              value={item.taxAmount}
-                              readOnly
-                              className="text-xs"
-                            />
                           </div>
                         )}
 
@@ -1085,19 +1259,21 @@ export default function ExpenseCreate() {
                   </div>
                 </div>
 
-                {/* Add New Line Button */}
-                <div className="p-3 border-t">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={addExpenseItem}
-                    className="w-full"
-                    data-testid="button-add-expense-item"
-                  >
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add Expense Item
-                  </Button>
-                </div>
+                {/* Add New Line Button - Hidden in edit mode */}
+                {!isEditMode && (
+                  <div className="p-3 border-t">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={addExpenseItem}
+                      className="w-full"
+                      data-testid="button-add-expense-item"
+                    >
+                      <Plus className="h-4 w-4 mr-2" />
+                      Add Expense Item
+                    </Button>
+                  </div>
+                )}
               </div>
 
 

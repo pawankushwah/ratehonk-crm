@@ -1301,39 +1301,59 @@ export default function InvoiceCreate() {
     const finalAmount = grandTotal;
 
     // Combine auto-generated and manual expenses
-    const autoExpenses = generateExpenses().map((expense) => ({
-      title: expense.title,
-      amount: expense.amount,
-      category: expense.category,
-      subcategory: expense.category,
-      vendorId: expense.vendorId,
-      leadTypeId: expense.leadTypeId,
-      expenseType: expense.expenseType,
-      expenseDate: formData.get("issueDate") as string,
-      paymentMethod: "bank_transfer",
-      currency: invoiceSettings?.defaultCurrency || "USD",
-      status: "pending",
-      notes: `Auto-generated from invoice ${formData.get("invoiceNumber")} - ${expense.invoiceNumber || expense.voucherNumber || ""}`,
-    }));
+    const invoiceNumber = formData.get("invoiceNumber") as string;
+    const autoExpenses = generateExpenses().map((expense, index) => {
+      const totalAmount = expense.amount || 0;
+      // Generate expense number based on invoice number
+      const expenseNumber = expense.invoiceNumber || expense.voucherNumber || `${invoiceNumber}-EXP-${index + 1}`;
+      
+      return {
+        title: expense.title,
+        amount: totalAmount,
+        quantity: expense.quantity || 1,
+        category: expense.category,
+        subcategory: expense.category,
+        vendorId: expense.vendorId,
+        leadTypeId: expense.leadTypeId,
+        expenseType: expense.expenseType,
+        expenseDate: formData.get("issueDate") as string,
+        expenseNumber: expenseNumber,
+        paymentMethod: "bank_transfer",
+        currency: invoiceSettings?.defaultCurrency || "USD",
+        taxAmount: 0, // Can be calculated if tax info is available
+        taxRate: 0,
+        amountPaid: 0,
+        amountDue: totalAmount,
+        status: "pending",
+        notes: `Auto-generated from invoice ${invoiceNumber} - ${expense.invoiceNumber || expense.voucherNumber || ""}`,
+      };
+    });
 
-    const manualExpensesData = manualExpenses.map((expense) => {
+    const manualExpensesData = manualExpenses.map((expense, index) => {
       const purchasePrice = parseFloat(expense.purchasePrice || "0");
       const quantity = parseInt(expense.quantity || "1");
       const amount = purchasePrice * quantity;
+      const expenseNumber = `${invoiceNumber}-MAN-${index + 1}`;
       
       return {
         title: expense.title || "Manual Expense",
         amount: amount,
+        quantity: quantity,
         category: expense.category || "General",
         subcategory: expense.category || "General",
         vendorId: expense.vendorId && expense.vendorId !== "none" ? parseInt(expense.vendorId) : null,
         leadTypeId: null,
         expenseType: "manual",
         expenseDate: formData.get("issueDate") as string,
+        expenseNumber: expenseNumber,
         paymentMethod: "bank_transfer",
         currency: invoiceSettings?.defaultCurrency || "USD",
+        taxAmount: 0,
+        taxRate: 0,
+        amountPaid: 0,
+        amountDue: amount,
         status: "pending",
-        notes: `Manual expense from invoice ${formData.get("invoiceNumber")}`,
+        notes: `Manual expense from invoice ${invoiceNumber}`,
       };
     });
 

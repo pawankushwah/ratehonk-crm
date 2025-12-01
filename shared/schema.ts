@@ -879,8 +879,10 @@ export const callLogs = pgTable("call_logs", {
 export const expenses = pgTable("expenses", {
   id: serial("id").primaryKey(),
   tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+  expenseNumber: varchar("expense_number", { length: 50 }), // Expense reference number
   title: text("title").notNull(),
   description: text("description"),
+  quantity: integer("quantity").default(1), // Quantity for the expense item
   amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
   currency: text("currency").notNull().default("USD"),
   category: text("category").notNull(), // travel, office, marketing, software, etc.
@@ -898,6 +900,8 @@ export const expenses = pgTable("expenses", {
   isRecurring: boolean("is_recurring").default(false),
   recurringFrequency: text("recurring_frequency"), // monthly, quarterly, yearly
   status: text("status").notNull().default("pending"), // pending, approved, rejected, paid
+  amountPaid: decimal("amount_paid", { precision: 10, scale: 2 }).default("0"), // Amount paid towards this expense
+  amountDue: decimal("amount_due", { precision: 10, scale: 2 }).default("0"), // Amount due for this expense
   approvedBy: integer("approved_by").references(() => users.id),
   approvedAt: timestamp("approved_at"),
   rejectionReason: text("rejection_reason"),
