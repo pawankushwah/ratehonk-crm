@@ -153,19 +153,28 @@ export default function ExpenseCreate() {
   });
 
   // Fetch existing expenses for number generation
-  const { data: expenses = [] } = useQuery<any[]>({
-    queryKey: ["/api/expenses", tenant?.id],
+  // Fetch with a high limit to get all expenses for number generation
+  const { data: expensesResponse } = useQuery<any>({
+    queryKey: ["/api/expenses-all", tenant?.id],
     enabled: !!tenant?.id && !isEditMode,
     queryFn: async () => {
       const token = auth.getToken();
-      const response = await fetch(`/api/expenses?tenantId=${tenant?.id}`, {
+      // Fetch with a high limit to get all expenses for number generation
+      const response = await fetch(`/api/expenses?limit=10000&page=1`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!response.ok) return [];
+      if (!response.ok) return { data: [] };
       const result = await response.json();
-      return Array.isArray(result) ? result : result.expenses || result.data || [];
+      // Handle both paginated and non-paginated responses
+      if (Array.isArray(result)) {
+        return { data: result };
+      }
+      return { data: result.data || result.expenses || [] };
     },
   });
+
+  // Extract expenses array from response
+  const expenses = expensesResponse?.data || [];
 
   // Update currency when settings load
   useEffect(() => {
@@ -186,13 +195,17 @@ export default function ExpenseCreate() {
       return `EXP-${String(startNumber).padStart(3, '0')}`;
     }
 
-    // Extract numbers from existing expense numbers (if they have one)
-    // Note: Expenses might not have expenseNumber field yet, so we'll use ID as fallback
+    // Extract numbers from existing expense numbers
+    // Handle both snake_case (expense_number) and camelCase (expenseNumber) field names
     const expenseNumbers = expenses
       .map((exp: any) => {
-        const expNum = exp.expenseNumber || exp.referenceNumber || "";
+        // Try multiple field name variations
+        const expNum = exp.expenseNumber || exp.expense_number || exp.referenceNumber || exp.reference_number || "";
+        if (!expNum || expNum === "") {
+          return 0;
+        }
         // Extract number from formats like EXP-001, EXP-1, EXP001, etc.
-        const match = expNum.match(/(\d+)/);
+        const match = expNum.toString().match(/(\d+)/);
         return match ? parseInt(match[1], 10) : 0;
       })
       .filter((num: number) => num > 0);
@@ -204,6 +217,15 @@ export default function ExpenseCreate() {
 
     // Use the higher of: max existing number + 1, or starting number
     const nextNumber = Math.max(maxNumber + 1, startNumber);
+    
+    console.log("Expense number generation:", {
+      expensesCount: expenses.length,
+      expenseNumbers,
+      maxNumber,
+      startNumber,
+      nextNumber,
+      generated: `EXP-${String(nextNumber).padStart(3, '0')}`
+    });
     
     return `EXP-${String(nextNumber).padStart(3, '0')}`;
   }, [expenses, expenseSettings?.expenseNumberStart]);
@@ -238,7 +260,7 @@ export default function ExpenseCreate() {
       // Initialize lastStartingNumber even if generateNextExpenseNumber isn't ready yet
       lastStartingNumber.current = expenseSettings.expenseNumberStart;
     }
-  }, [generateNextExpenseNumber, expenseSettings?.expenseNumberStart, isEditMode]);
+  }, [generateNextExpenseNumber, expenseSettings?.expenseNumberStart, isEditMode, expenses.length, expenseNumber]);
 
   // Fetch GST rates based on selected tax setting
   const { data: gstRates = [] } = useQuery<any[]>({
@@ -291,16 +313,50 @@ export default function ExpenseCreate() {
     },
   });
 
+  // Track if expense data has been loaded to prevent re-loading
+  const expenseDataLoadedRef = useRef<number | null>(null);
+
   // Fetch expense data for edit mode
-  const { data: expenseData, isLoading: isLoadingExpense } = useQuery({
+  const { data: expenseData, isLoading: isLoadingExpense, refetch: refetchExpense } = useQuery({
     queryKey: ["/api/expenses", expenseId],
     enabled: isEditMode && !!expenseId && !!tenant?.id,
     queryFn: async () => {
       console.log("Fetching expense data for ID:", expenseId);
       const token = auth.getToken();
-      const response = await fetch(`/api/expenses/${expenseId}`, {
-        headers: { Authorization: `Bearer ${token}` },
+      // Add timestamp to URL to prevent 304 cached responses
+      const url = `/api/expenses/${expenseId}?t=${Date.now()}`;
+      const response = await fetch(url, {
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache',
+        },
+        cache: 'no-store', // Bypass browser cache completely
       });
+      
+      // Handle 304 Not Modified - force a fresh request (fallback)
+      if (response.status === 304) {
+        console.warn("Received 304, forcing fresh fetch with new timestamp...");
+        // Retry with a new timestamp to bypass cache
+        const freshUrl = `/api/expenses/${expenseId}?t=${Date.now()}`;
+        const freshResponse = await fetch(freshUrl, {
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache',
+          },
+          cache: 'no-store',
+        });
+        if (!freshResponse.ok) {
+          console.error("Failed to fetch expense after 304 retry:", freshResponse.status, freshResponse.statusText);
+          throw new Error("Failed to fetch expense");
+        }
+        const data = await freshResponse.json();
+        const expense = data.data || data;
+        console.log("Expense data fetched (raw, after 304 retry):", expense);
+        return expense;
+      }
+      
       if (!response.ok) {
         console.error("Failed to fetch expense:", response.status, response.statusText);
         const errorText = await response.text();
@@ -316,6 +372,13 @@ export default function ExpenseCreate() {
       console.log("Expense data (processed):", expense);
       return expense;
     },
+    // Force refetch every time to ensure fresh data when editing
+    refetchOnMount: true,
+    refetchOnWindowFocus: false,
+    staleTime: 0, // Always consider data stale, so it refetches
+    cacheTime: 0, // Don't cache, always fetch fresh data
+    retry: 2, // Retry failed requests
+    retryDelay: 1000, // Wait 1 second between retries
   });
 
   // Debug: Log query state
@@ -332,11 +395,57 @@ export default function ExpenseCreate() {
     });
   }, [expenseId, tenant?.id, isEditMode, isLoadingExpense, expenseData, match, params]);
 
+  // Reset the loaded flag and force refetch when expenseId changes
+  useEffect(() => {
+    if (expenseId && expenseDataLoadedRef.current !== expenseId) {
+      expenseDataLoadedRef.current = null;
+      // Force refetch when expenseId changes
+      if (isEditMode && refetchExpense) {
+        console.log("Expense ID changed, forcing refetch for:", expenseId);
+        refetchExpense();
+      }
+    }
+  }, [expenseId, isEditMode, refetchExpense]);
+
   // Load expense data when in edit mode
   useEffect(() => {
-    if (isEditMode && expenseData && !isLoadingExpense) {
+    // Validate that we have valid expense data
+    const hasValidData = expenseData && 
+                        typeof expenseData === 'object' && 
+                        Object.keys(expenseData).length > 0 &&
+                        (expenseData.id || expenseData.title || expenseData.amount !== undefined);
+    
+    // Check if expenseItems are empty or don't have the expected data
+    const itemsEmpty = expenseItems.length === 0 || 
+                      (expenseItems.length === 1 && !expenseItems[0].title && expenseData?.title);
+    
+    // Only load if we have valid data, not loading, and either:
+    // 1. Haven't loaded this expense yet (ref doesn't match), OR
+    // 2. Items are empty even though we have data (fallback case)
+    const shouldLoad = isEditMode && 
+                      hasValidData && 
+                      !isLoadingExpense && 
+                      (expenseDataLoadedRef.current !== expenseId || itemsEmpty);
+    
+    console.log("🔍 Data loading check:", {
+      isEditMode,
+      hasValidData,
+      isLoadingExpense,
+      currentRef: expenseDataLoadedRef.current,
+      expenseId,
+      itemsEmpty,
+      shouldLoad,
+      expenseDataKeys: expenseData ? Object.keys(expenseData).length : 0,
+      expenseDataTitle: expenseData?.title,
+      expenseItemsLength: expenseItems.length,
+      firstItemTitle: expenseItems[0]?.title,
+    });
+    
+    if (shouldLoad) {
       const expense = expenseData;
-      console.log("Loading expense data:", expense);
+      console.log("🔄 Loading expense data into form:", expense);
+      console.log("🔄 Expense ID:", expenseId);
+      console.log("🔄 Expense keys:", Object.keys(expense));
       console.log("Expense keys:", Object.keys(expense));
       console.log("Expense amount:", expense.amount);
       console.log("Expense quantity:", expense.quantity);
@@ -469,17 +578,66 @@ export default function ExpenseCreate() {
       console.log("Mapped payment status:", paymentStatus);
       
       setExpenseItems([expenseItem]);
-      console.log("Expense items state should be updated now");
+      expenseDataLoadedRef.current = expenseId; // Mark as loaded AFTER setting all data
+      console.log("✅ Expense items state updated successfully");
+      console.log("✅ Expense items:", expenseItem);
     } else {
-      console.log("Skipping expense data load:", {
+      const skipReason = {
         isEditMode,
         hasExpenseData: !!expenseData,
         isLoadingExpense,
         expenseId,
         tenantId: tenant?.id,
-      });
+        alreadyLoaded: expenseDataLoadedRef.current === expenseId,
+        expenseDataType: typeof expenseData,
+        expenseDataKeys: expenseData ? Object.keys(expenseData).length : 0,
+      };
+      console.log("⏭️ Skipping expense data load:", skipReason);
+      
+      // If we're in edit mode but data isn't loading and we don't have data, try to refetch
+      if (isEditMode && !isLoadingExpense && !expenseData && expenseId && expenseDataLoadedRef.current !== expenseId) {
+        console.log("🔄 No data available, attempting to refetch...");
+        setTimeout(() => {
+          if (refetchExpense) {
+            refetchExpense();
+          }
+        }, 500);
+      }
+      
+      // If we have data but it's already loaded, check if expenseItems are empty
+      // This can happen if the data was loaded but items weren't set properly
+      if (isEditMode && expenseData && !isLoadingExpense && expenseDataLoadedRef.current === expenseId) {
+        console.log("ℹ️ Data already loaded for this expense ID");
+        // Check if expenseItems are empty or don't match the data
+        if (expenseItems.length === 0 || (expenseItems.length === 1 && !expenseItems[0].title && expenseData.title)) {
+          console.log("⚠️ Expense items are empty but data exists, forcing reload...");
+          expenseDataLoadedRef.current = null; // Reset to allow reload
+          // Force reload by clearing ref and triggering useEffect again
+          setTimeout(() => {
+            if (refetchExpense) {
+              refetchExpense();
+            }
+          }, 100);
+        }
+      }
     }
-  }, [isEditMode, expenseData, isLoadingExpense, gstRates, tenant?.id, expenseId]);
+  }, [isEditMode, expenseData, isLoadingExpense, gstRates, tenant?.id, expenseId, refetchExpense, expenseItems]);
+
+  // Fallback: If we have expense data but items are empty, force reload
+  useEffect(() => {
+    if (isEditMode && expenseData && !isLoadingExpense && expenseId) {
+      const hasData = expenseData.title || expenseData.amount;
+      const itemsEmpty = expenseItems.length === 0 || 
+                        (expenseItems.length === 1 && !expenseItems[0].title && !expenseItems[0].amount);
+      
+      if (hasData && itemsEmpty && expenseDataLoadedRef.current !== expenseId) {
+        console.log("🔄 Fallback: Data exists but items are empty, forcing load...");
+        // Reset ref and trigger data load
+        expenseDataLoadedRef.current = null;
+        // The main useEffect should pick this up on next render
+      }
+    }
+  }, [isEditMode, expenseData, isLoadingExpense, expenseId, expenseItems]);
 
   // Fetch all expenses for title suggestions
   const { data: allExpenses = [] } = useQuery({

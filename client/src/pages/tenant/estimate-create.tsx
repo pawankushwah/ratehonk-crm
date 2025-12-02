@@ -11,7 +11,7 @@ import { Combobox } from "@/components/ui/combobox";
 import { AutocompleteInput } from "@/components/ui/autocomplete-input";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Switch } from "@/components/ui/switch";
-import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Upload, FileText, Image, HelpCircle, Download } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Upload, FileText, Image, HelpCircle, Download, Loader2 } from "lucide-react";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useToast } from "@/hooks/use-toast";
 import { EstimateSettingsPanel } from "@/components/estimate-settings-panel";
@@ -189,24 +189,85 @@ export default function EstimateCreate() {
   });
 
   // Fetch existing estimates for title suggestions
-  const { data: estimates = [] } = useQuery<any[]>({
+  const { data: estimatesResponse } = useQuery<any>({
     queryKey: ["/api/estimates"],
     enabled: !!tenant?.id,
+    queryFn: async () => {
+      const token = auth.getToken();
+      const response = await fetch("/api/estimates", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        return [];
+      }
+      const result = await response.json();
+      // Handle both old format (array) and new format (object with data and pagination)
+      if (Array.isArray(result)) {
+        return result;
+      }
+      return result.data || [];
+    },
   });
 
+  // Extract estimates array from response
+  const estimates = Array.isArray(estimatesResponse) 
+    ? estimatesResponse 
+    : (estimatesResponse?.data || []);
+
+  // Track if estimate data has been loaded to prevent re-loading
+  const estimateDataLoadedRef = useRef<number | null>(null);
+
   // Fetch estimate data for editing
-  const { data: estimateData, isLoading: isLoadingEstimate } = useQuery({
+  const { data: estimateData, isLoading: isLoadingEstimate, refetch: refetchEstimate } = useQuery({
     queryKey: [`/api/estimates/${estimateId}`, estimateId],
     enabled: !!estimateId && !!tenant?.id,
     queryFn: async () => {
       if (!estimateId) return null;
       const token = auth.getToken();
-      const response = await fetch(`/api/estimates/${estimateId}`, {
-        headers: { Authorization: `Bearer ${token}` },
+      // Add timestamp to URL to prevent 304 cached responses
+      const url = `/api/estimates/${estimateId}?t=${Date.now()}`;
+      const response = await fetch(url, {
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache',
+        },
+        cache: 'no-store', // Bypass browser cache completely
       });
+      
+      // Handle 304 Not Modified - force a fresh request (fallback)
+      if (response.status === 304) {
+        console.warn("Received 304, forcing fresh fetch with new timestamp...");
+        const freshUrl = `/api/estimates/${estimateId}?t=${Date.now()}`;
+        const freshResponse = await fetch(freshUrl, {
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache',
+          },
+          cache: 'no-store',
+        });
+        if (!freshResponse.ok) {
+          console.error("Failed to fetch estimate after 304 retry:", freshResponse.status, freshResponse.statusText);
+          throw new Error("Failed to fetch estimate");
+        }
+        const data = await freshResponse.json();
+        console.log("Estimate data fetched (raw, after 304 retry):", data);
+        return data;
+      }
+      
       if (!response.ok) throw new Error("Failed to fetch estimate");
-      return response.json();
+      const data = await response.json();
+      console.log("Estimate data fetched (raw):", data);
+      return data;
     },
+    // Force refetch every time to ensure fresh data when editing
+    refetchOnMount: true,
+    refetchOnWindowFocus: false,
+    staleTime: 0, // Always consider data stale, so it refetches
+    gcTime: 0, // Don't cache, always fetch fresh data (gcTime replaces cacheTime in React Query v5)
+    retry: 2, // Retry failed requests
+    retryDelay: 1000, // Wait 1 second between retries
   });
 
   // Fetch estimate settings
@@ -257,7 +318,6 @@ export default function EstimateCreate() {
         return match ? parseInt(match[1], 10) : 0;
       })
       .filter((num: number) => num > 0);
-
     // Find the highest number
     const maxNumber = estimateNumbers.length > 0 
       ? Math.max(...estimateNumbers) 
@@ -279,11 +339,66 @@ export default function EstimateCreate() {
     }
   }, [estimateSettings?.defaultCurrency, estimateSettings?.defaultGstSettingId, isEditMode]);
 
+  // Reset the loaded flag and force refetch when estimateId changes
+  useEffect(() => {
+    if (estimateId) {
+      const previousEstimateId = estimateDataLoadedRef.current;
+      if (previousEstimateId !== estimateId) {
+        console.log("🔄 Estimate ID changed from", previousEstimateId, "to", estimateId);
+        estimateDataLoadedRef.current = null; // Reset before refetch
+        // Force refetch when estimateId changes
+        if (isEditMode && refetchEstimate) {
+          console.log("🔄 Forcing refetch for new estimate ID:", estimateId);
+          setTimeout(() => {
+            refetchEstimate();
+          }, 100);
+        }
+      }
+    } else {
+      // Reset when not in edit mode
+      estimateDataLoadedRef.current = null;
+    }
+  }, [estimateId, isEditMode, refetchEstimate]);
+
   // Load estimate data into form when editing
   useEffect(() => {
-    if (estimateData && isEditMode) {
-      const estimate = estimateData;
-      console.log("Loading estimate data for edit:", estimate);
+    // Validate that we have valid estimate data
+    const estimate = estimateData as any;
+    const hasValidData = estimate && 
+                        typeof estimate === 'object' && 
+                        Object.keys(estimate).length > 0 &&
+                        (estimate.id || estimate.title || estimate.totalAmount !== undefined);
+    
+    // Check if lineItems are empty or don't have the expected data
+    const lineItemsEmpty = !estimate?.lineItems || 
+                          (Array.isArray(estimate.lineItems) && estimate.lineItems.length === 0) ||
+                          (formData.lineItems.length === 0 && estimate?.lineItems?.length > 0);
+    
+    // Only load if we have valid data, not loading, and either:
+    // 1. Haven't loaded this estimate yet (ref doesn't match), OR
+    // 2. Line items are empty even though we have data (fallback case)
+    const shouldLoad = isEditMode && 
+                      hasValidData && 
+                      !isLoadingEstimate && 
+                      (estimateDataLoadedRef.current !== estimateId || lineItemsEmpty);
+    
+    console.log("🔍 Estimate data loading check:", {
+      isEditMode,
+      hasValidData,
+      isLoadingEstimate,
+      currentRef: estimateDataLoadedRef.current,
+      estimateId,
+      lineItemsEmpty,
+      shouldLoad,
+      estimateDataKeys: estimateData ? Object.keys(estimateData).length : 0,
+      estimateDataTitle: estimateData?.title,
+      formLineItemsLength: formData.lineItems.length,
+      dataLineItemsLength: estimateData?.lineItems?.length || 0,
+    });
+    
+    if (shouldLoad) {
+      estimateDataLoadedRef.current = estimateId; // Mark as loaded BEFORE setting data
+      console.log("🔄 Loading estimate data into form:", estimate);
       console.log("Line items:", estimate.lineItems);
       
       const leadIdValue = estimate.leadId ? estimate.leadId.toString() : "";
@@ -351,38 +466,66 @@ export default function EstimateCreate() {
         setShowLineItems(true);
       }
     }
-  }, [estimateData, isEditMode]);
+  }, [estimateData, isEditMode, isLoadingEstimate, estimateId, tenant?.id, refetchEstimate, formData.lineItems.length]);
   
+  // Track if we've already triggered the selection handlers to avoid infinite loops
+  const hasTriggeredSelection = useRef(false);
+
   // Separate effect to trigger selection handlers once customers/leads are loaded
-  // This ensures the dropdowns show the correct selected values
+  // This ensures the dropdowns show the correct selected values and populate customer/lead details
   useEffect(() => {
-    if (isEditMode && estimateData && (customers.length > 0 || leads.length > 0)) {
+    // Reset the flag when estimateId changes (new estimate being edited)
+    if (!isEditMode || !estimateId) {
+      hasTriggeredSelection.current = false;
+      return;
+    }
+
+    if (estimateData && !isLoadingEstimate && !hasTriggeredSelection.current) {
       const estimate = estimateData;
       const customerIdValue = estimate.customerId ? estimate.customerId.toString() : "";
       const leadIdValue = estimate.leadId ? estimate.leadId.toString() : "";
       
-      // Only trigger if the form data doesn't already match and we have the customer/lead in the list
-      if (customerIdValue && formData.selectedCustomerId !== customerIdValue) {
-        const customer = customers.find((c: any) => String(c.id) === customerIdValue);
-        if (customer) {
-          // Use a small delay to avoid race conditions
-          const timer = setTimeout(() => {
-            handleCustomerSelection(customerIdValue);
-          }, 50);
-          return () => clearTimeout(timer);
+      // Wait for both customers and leads lists to be available (or no selection needed)
+      const customersReady = customerIdValue === "" || customers.length > 0;
+      const leadsReady = leadIdValue === "" || leads.length > 0;
+      
+      if (customersReady && leadsReady) {
+        let timer1: ReturnType<typeof setTimeout> | null = null;
+        let timer2: ReturnType<typeof setTimeout> | null = null;
+        
+        // Check customer selection separately
+        if (customerIdValue && customerIdValue !== "none") {
+          const customer = customers.find((c: any) => String(c.id) === customerIdValue);
+          if (customer) {
+            // Use a small delay to avoid race conditions
+            timer1 = setTimeout(() => {
+              handleCustomerSelection(customerIdValue);
+            }, 100);
+          }
         }
-      } else if (leadIdValue && formData.selectedLeadId !== leadIdValue) {
-        const lead = leads.find((l: any) => String(l.id) === leadIdValue);
-        if (lead) {
-          // Use a small delay to avoid race conditions
-          const timer = setTimeout(() => {
-            handleLeadSelection(leadIdValue);
-          }, 50);
-          return () => clearTimeout(timer);
+        
+        // Check lead selection separately (not else if, so both can be checked)
+        if (leadIdValue && leadIdValue !== "none") {
+          const lead = leads.find((l: any) => String(l.id) === leadIdValue);
+          if (lead) {
+            // Use a slightly longer delay if customer was also set
+            timer2 = setTimeout(() => {
+              handleLeadSelection(leadIdValue);
+            }, customerIdValue && customerIdValue !== "none" ? 200 : 100);
+          }
         }
+        
+        // Mark as triggered to avoid re-running
+        hasTriggeredSelection.current = true;
+        
+        return () => {
+          if (timer1) clearTimeout(timer1);
+          if (timer2) clearTimeout(timer2);
+        };
       }
     }
-  }, [isEditMode, estimateData?.customerId, estimateData?.leadId, customers.length, leads.length]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEditMode, estimateData, isLoadingEstimate, customers.length, leads.length, estimateId]);
 
   // Track the last starting number used for auto-generation
   const lastStartingNumber = useRef<number | null>(null);
@@ -1141,7 +1284,19 @@ export default function EstimateCreate() {
   return (
     <Layout initialSidebarCollapsed={true}>
       <div className="p-3 sm:p-4 md:p-6 mx-auto">
-        <div className="bg-white rounded-2xl shadow-sm">
+        <div className="bg-white rounded-2xl shadow-sm relative">
+          {/* Loading Overlay - only show when actively loading */}
+          {isEditMode && isLoadingEstimate && (
+            <div className="absolute inset-0 bg-white/90 dark:bg-gray-900/90 backdrop-blur-sm z-50 flex items-center justify-center rounded-2xl">
+              <div className="flex flex-col items-center gap-4">
+                <Loader2 className="h-8 w-8 animate-spin text-gray-600 dark:text-gray-400" />
+                <p className="text-sm font-medium text-gray-600 dark:text-gray-400">
+                  Loading estimate data...
+                </p>
+              </div>
+            </div>
+          )}
+          
           {/* Top Bar */}
           <div className="w-full min-h-[72px] flex flex-col sm:flex-row items-start sm:items-center bg-white px-3 sm:px-4 md:px-[18px] py-3 sm:py-4 rounded-t-xl border-b border-[#E3E8EF] shadow-[0px_1px_6px_0px_rgba(0,0,0,0.05)] gap-3 sm:gap-0">
             <Button

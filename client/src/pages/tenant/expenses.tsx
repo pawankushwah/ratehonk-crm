@@ -535,6 +535,10 @@ export default function Expenses() {
   };
 
   const handleEdit = (expense: Expense) => {
+    // Invalidate the query cache for this expense to force a fresh fetch
+    queryClient.invalidateQueries({
+      queryKey: ["/api/expenses", expense.id],
+    });
     // Navigate to expense create page with ID for editing
     navigate(`/expenses/create/${expense.id}`);
   };

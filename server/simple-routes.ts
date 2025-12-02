@@ -17250,6 +17250,15 @@ Please improve this email.`;
         return res.status(404).json({ message: "Expense not found" });
       }
 
+      // Handle tags - ensure it's always a JSON string
+      let existingTagsString = existingExpense.tags;
+      if (existingTagsString && typeof existingTagsString !== 'string') {
+        // If tags is already parsed as an array/object, stringify it
+        existingTagsString = JSON.stringify(existingTagsString);
+      } else if (!existingTagsString) {
+        existingTagsString = '[]';
+      }
+
       // Build update query - only update fields that are provided, otherwise keep existing values
       const [expense] = await sql`
         UPDATE expenses SET
@@ -17279,7 +17288,7 @@ Please improve this email.`;
           approved_by = ${expenseData.approvedBy !== undefined ? (expenseData.approvedBy || null) : existingExpense.approved_by},
           approved_at = ${expenseData.approvedAt !== undefined ? (expenseData.approvedAt || null) : existingExpense.approved_at},
           rejection_reason = ${expenseData.rejectionReason !== undefined ? (expenseData.rejectionReason || null) : existingExpense.rejection_reason},
-          tags = ${expenseData.tags !== undefined ? JSON.stringify(expenseData.tags || []) : existingExpense.tags},
+          tags = ${expenseData.tags !== undefined ? JSON.stringify(expenseData.tags || []) : existingTagsString},
           notes = ${expenseData.notes !== undefined ? (expenseData.notes || null) : existingExpense.notes},
           updated_at = NOW()
         WHERE id = ${expenseId} AND tenant_id = ${req.user.tenantId}
@@ -18622,6 +18631,8 @@ Please improve this email.`;
   const handleFileStorage = async (req: any, res: any) => {
     try {
       console.log("📁 File storage request received (POST - multipart/form-data)");
+      console.log("📁 Request file:", req.file ? "present" : "missing");
+      console.log("📁 Request files:", req.files ? "present" : "missing");
 
       if (!req.file) {
         return res
@@ -18632,27 +18643,46 @@ Please improve this email.`;
       // Generate a unique object path
       const timestamp = Date.now();
       const randomSuffix = Math.random().toString(36).substring(2, 8);
-      const objectPath = `uploads/${timestamp}-${randomSuffix}-${req.file.originalname}`;
+      const sanitizedFilename = req.file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_'); // Sanitize filename
+      const objectPath = `uploads/${timestamp}-${randomSuffix}-${sanitizedFilename}`;
 
       // Also create a public URL for accessing the file
-      const publicUrl = `/uploads/${timestamp}-${randomSuffix}-${req.file.originalname}`;
+      const publicUrl = `/uploads/${timestamp}-${randomSuffix}-${sanitizedFilename}`;
+
+      // Save file to local filesystem
+      const fs = await import("fs");
+      const path = await import("path");
+      const uploadsDir = path.default.join(process.cwd(), "uploads");
+      
+      if (!fs.default.existsSync(uploadsDir)) {
+        fs.default.mkdirSync(uploadsDir, { recursive: true });
+      }
+      
+      const filePath = path.default.join(uploadsDir, `${timestamp}-${randomSuffix}-${sanitizedFilename}`);
+      fs.default.writeFileSync(filePath, req.file.buffer);
 
       console.log("📁 File stored with path:", objectPath);
+      console.log("📁 File saved to:", filePath);
       console.log("📁 Public URL:", publicUrl);
+      console.log("📁 File size:", req.file.size, "bytes");
 
       res.json({
         success: true,
         objectPath,
         publicUrl,
-        fileName: req.file.originalname,
+        fileName: sanitizedFilename,
         mimeType: req.file.mimetype,
         fileSize: req.file.size,
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error("❌ File storage error:", error);
       res
         .status(500)
-        .json({ success: false, message: "Failed to store file" });
+        .json({ 
+          success: false, 
+          message: "Failed to store file",
+          error: error.message 
+        });
     }
   };
 
@@ -18663,75 +18693,52 @@ Please improve this email.`;
       console.log("📁 Content-Type:", req.headers["content-type"]);
       console.log("📁 Content-Length:", req.headers["content-length"]);
       
-      // Uppy sends the file as raw binary in the request body
-      // We need to read it as a buffer
-      const chunks: Buffer[] = [];
+      // express.raw() middleware already consumed the body and put it in req.body as a Buffer
+      const fileBuffer = req.body;
       
-      req.on("data", (chunk: Buffer) => {
-        chunks.push(chunk);
-      });
-      
-      req.on("end", async () => {
-        try {
-          const fileBuffer = Buffer.concat(chunks);
-          
-          if (fileBuffer.length === 0) {
-            return res.status(400).json({
-              success: false,
-              message: "No file data received",
-            });
-          }
-
-          // Get filename from query parameter or use a default
-          const filename = (req.query.filename as string) || `file-${Date.now()}`;
-          const contentType = req.headers["content-type"] || "application/octet-stream";
-
-          // Generate a unique object path
-          const timestamp = Date.now();
-          const randomSuffix = Math.random().toString(36).substring(2, 8);
-          const objectPath = `uploads/${timestamp}-${randomSuffix}-${filename}`;
-          const publicUrl = `/uploads/${timestamp}-${randomSuffix}-${filename}`;
-
-          // Save file to local filesystem (or upload to object storage)
-          const fs = await import("fs");
-          const path = await import("path");
-          const uploadsDir = path.default.join(process.cwd(), "uploads");
-          
-          if (!fs.default.existsSync(uploadsDir)) {
-            fs.default.mkdirSync(uploadsDir, { recursive: true });
-          }
-          
-          const filePath = path.default.join(uploadsDir, `${timestamp}-${randomSuffix}-${filename}`);
-          fs.default.writeFileSync(filePath, fileBuffer);
-
-          console.log("📁 File saved to:", filePath);
-          console.log("📁 Public URL:", publicUrl);
-
-          res.json({
-            success: true,
-            objectPath,
-            publicUrl,
-            fileName: filename,
-            mimeType: contentType,
-            fileSize: fileBuffer.length,
-          });
-        } catch (error: any) {
-          console.error("❌ Error processing raw file upload:", error);
-          res.status(500).json({
-            success: false,
-            message: "Failed to store file",
-            error: error.message,
-          });
-        }
-      });
-
-      req.on("error", (error: any) => {
-        console.error("❌ Request stream error:", error);
-        res.status(500).json({
+      if (!fileBuffer || fileBuffer.length === 0) {
+        return res.status(400).json({
           success: false,
-          message: "Error reading file data",
-          error: error.message,
+          message: "No file data received",
         });
+      }
+
+      // Get filename from query parameter, header, or use a default
+      const filename = (req.query.filename as string) || 
+                      (req.headers["x-filename"] as string) || 
+                      `file-${Date.now()}`;
+      const contentType = req.headers["content-type"] || "application/octet-stream";
+
+      // Generate a unique object path
+      const timestamp = Date.now();
+      const randomSuffix = Math.random().toString(36).substring(2, 8);
+      const sanitizedFilename = filename.replace(/[^a-zA-Z0-9.-]/g, '_'); // Sanitize filename
+      const objectPath = `uploads/${timestamp}-${randomSuffix}-${sanitizedFilename}`;
+      const publicUrl = `/uploads/${timestamp}-${randomSuffix}-${sanitizedFilename}`;
+
+      // Save file to local filesystem (or upload to object storage)
+      const fs = await import("fs");
+      const path = await import("path");
+      const uploadsDir = path.default.join(process.cwd(), "uploads");
+      
+      if (!fs.default.existsSync(uploadsDir)) {
+        fs.default.mkdirSync(uploadsDir, { recursive: true });
+      }
+      
+      const filePath = path.default.join(uploadsDir, `${timestamp}-${randomSuffix}-${sanitizedFilename}`);
+      fs.default.writeFileSync(filePath, fileBuffer);
+
+      console.log("📁 File saved to:", filePath);
+      console.log("📁 Public URL:", publicUrl);
+      console.log("📁 File size:", fileBuffer.length, "bytes");
+
+      res.json({
+        success: true,
+        objectPath,
+        publicUrl,
+        fileName: sanitizedFilename,
+        mimeType: contentType,
+        fileSize: fileBuffer.length,
       });
     } catch (error: any) {
       console.error("❌ Raw file upload error:", error);

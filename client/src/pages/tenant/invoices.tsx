@@ -1259,7 +1259,7 @@ export default function Invoices() {
         const currency = invoiceData.currency || "USD";
         const currencySymbol = getCurrencySymbol(currency);
         return (
-          <div className="flex items-center font-semibold text-green-600">
+          <div className="flex items-center font-semibold">
             <span className="mr-1">{currencySymbol}</span>
             <span>{parseFloat(paidAmount.toString()).toLocaleString()}</span>
           </div>

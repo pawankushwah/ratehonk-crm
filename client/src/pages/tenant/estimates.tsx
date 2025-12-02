@@ -974,7 +974,13 @@ export default function Estimates() {
           <Button
             size="sm"
             variant="outline"
-            onClick={() => navigate(`/estimates/edit/${estimate.id}`)}
+            onClick={() => {
+              // Invalidate the query cache for this estimate to force a fresh fetch
+              queryClient.invalidateQueries({
+                queryKey: ["/api/estimates", estimate.id],
+              });
+              navigate(`/estimates/edit/${estimate.id}`);
+            }}
             className="h-8 w-8 p-0 text-purple-600 hover:text-purple-700"
             title="Edit Estimate"
           >

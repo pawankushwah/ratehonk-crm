@@ -353,25 +353,121 @@ export default function InvoiceCreate() {
       !!tenant?.id && !!selectedTaxSettingId && selectedTaxSettingId !== "none",
   });
 
+  // Track if invoice data has been loaded to prevent re-loading
+  const invoiceDataLoadedRef = useRef<number | null>(null);
+
   // Fetch invoice data when in edit mode
-  const { data: existingInvoice, isLoading: isLoadingInvoice } = useQuery({
+  const { data: existingInvoice, isLoading: isLoadingInvoice, refetch: refetchInvoice } = useQuery({
     queryKey: [`/api/tenants/${tenant?.id}/invoices/${invoiceId}`],
     enabled: isEditMode && !!invoiceId && !!tenant?.id,
     queryFn: async () => {
       const token = auth.getToken();
-      const response = await fetch(`/api/tenants/${tenant?.id}/invoices/${invoiceId}`, {
-        headers: { Authorization: `Bearer ${token}` },
+      // Add timestamp to URL to prevent 304 cached responses
+      const url = `/api/tenants/${tenant?.id}/invoices/${invoiceId}?t=${Date.now()}`;
+      const response = await fetch(url, {
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache',
+        },
+        cache: 'no-store', // Bypass browser cache completely
       });
+      
+      // Handle 304 Not Modified - force a fresh request (fallback)
+      if (response.status === 304) {
+        console.warn("Received 304, forcing fresh fetch with new timestamp...");
+        const freshUrl = `/api/tenants/${tenant?.id}/invoices/${invoiceId}?t=${Date.now()}`;
+        const freshResponse = await fetch(freshUrl, {
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache',
+          },
+          cache: 'no-store',
+        });
+        if (!freshResponse.ok) {
+          console.error("Failed to fetch invoice after 304 retry:", freshResponse.status, freshResponse.statusText);
+          throw new Error("Failed to fetch invoice");
+        }
+        const result = await freshResponse.json();
+        console.log("Invoice data fetched (raw, after 304 retry):", result);
+        return result.invoice || result.data || result;
+      }
+      
       if (!response.ok) throw new Error("Failed to fetch invoice");
       const result = await response.json();
+      console.log("Invoice data fetched (raw):", result);
       return result.invoice || result.data || result;
     },
+    // Force refetch every time to ensure fresh data when editing
+    refetchOnMount: true,
+    refetchOnWindowFocus: false,
+    staleTime: 0, // Always consider data stale, so it refetches
+    gcTime: 0, // Don't cache, always fetch fresh data
+    retry: 2, // Retry failed requests
+    retryDelay: 1000, // Wait 1 second between retries
   });
+
+  // Reset the loaded flag and force refetch when invoiceId changes
+  useEffect(() => {
+    if (invoiceId) {
+      const previousInvoiceId = invoiceDataLoadedRef.current;
+      if (previousInvoiceId !== invoiceId) {
+        console.log("🔄 Invoice ID changed from", previousInvoiceId, "to", invoiceId);
+        invoiceDataLoadedRef.current = null; // Reset before refetch
+        // Force refetch when invoiceId changes
+        if (isEditMode && refetchInvoice) {
+          console.log("🔄 Forcing refetch for new invoice ID:", invoiceId);
+          setTimeout(() => {
+            refetchInvoice();
+          }, 100);
+        }
+      }
+    } else {
+      // Reset when not in edit mode
+      invoiceDataLoadedRef.current = null;
+    }
+  }, [invoiceId, isEditMode, refetchInvoice]);
 
   // Populate form fields when invoice data loads
   useEffect(() => {
-    if (existingInvoice && isEditMode) {
-      const invoice = existingInvoice as any;
+    // Validate that we have valid invoice data
+    const invoice = existingInvoice as any;
+    const hasValidData = invoice && 
+                        typeof invoice === 'object' && 
+                        Object.keys(invoice).length > 0 &&
+                        (invoice.id || invoice.invoiceNumber || invoice.totalAmount !== undefined);
+    
+    // Check if lineItems are empty or don't have the expected data
+    const lineItemsEmpty = !invoice?.lineItems || 
+                          (Array.isArray(invoice.lineItems) && invoice.lineItems.length === 0) ||
+                          (lineItems.length === 0 && invoice?.lineItems?.length > 0);
+    
+    // Only load if we have valid data, not loading, and either:
+    // 1. Haven't loaded this invoice yet (ref doesn't match), OR
+    // 2. Line items are empty even though we have data (fallback case)
+    const shouldLoad = isEditMode && 
+                      hasValidData && 
+                      !isLoadingInvoice && 
+                      (invoiceDataLoadedRef.current !== invoiceId || lineItemsEmpty);
+    
+    console.log("🔍 Invoice data loading check:", {
+      isEditMode,
+      hasValidData,
+      isLoadingInvoice,
+      currentRef: invoiceDataLoadedRef.current,
+      invoiceId,
+      lineItemsEmpty,
+      shouldLoad,
+      invoiceDataKeys: invoice ? Object.keys(invoice).length : 0,
+      invoiceNumber: invoice?.invoiceNumber,
+      formLineItemsLength: lineItems.length,
+      dataLineItemsLength: invoice?.lineItems?.length || 0,
+    });
+    
+    if (shouldLoad) {
+      invoiceDataLoadedRef.current = invoiceId; // Mark as loaded BEFORE setting data
+      console.log("🔄 Loading invoice data into form:", invoice);
       
       // Set basic fields
       setSelectedCustomerId(invoice.customerId?.toString() || "");
@@ -455,8 +551,44 @@ export default function InvoiceCreate() {
           totalAmount: parseFloat(item.totalAmount?.toString() || item.totalPrice?.toString() || "0"),
         })));
       }
+      
+      console.log("✅ Invoice data loaded successfully");
+      console.log("✅ Line items count:", lineItems.length);
+    } else {
+      const skipReason = {
+        isEditMode,
+        hasInvoiceData: !!existingInvoice,
+        isLoadingInvoice,
+        invoiceId,
+        tenantId: tenant?.id,
+        alreadyLoaded: invoiceDataLoadedRef.current === invoiceId,
+        invoiceDataType: typeof existingInvoice,
+        invoiceDataKeys: existingInvoice ? Object.keys(existingInvoice).length : 0,
+      };
+      console.log("⏭️ Skipping invoice data load:", skipReason);
+      
+      // If we're in edit mode but data isn't loading and we don't have data, try to refetch
+      if (isEditMode && !isLoadingInvoice && !existingInvoice && invoiceId && invoiceDataLoadedRef.current !== invoiceId) {
+        console.log("🔄 No data available, attempting to refetch...");
+        setTimeout(() => {
+          if (refetchInvoice) {
+            refetchInvoice();
+          }
+        }, 500);
+      }
+      
+      // If we have data but lineItems are empty, force reload
+      if (isEditMode && existingInvoice && !isLoadingInvoice && lineItems.length === 0 && (existingInvoice as any).lineItems?.length > 0) {
+        console.log("⚠️ Line items are empty but data exists, forcing reload...");
+        invoiceDataLoadedRef.current = null; // Reset to allow reload
+        setTimeout(() => {
+          if (refetchInvoice) {
+            refetchInvoice();
+          }
+        }, 100);
+      }
     }
-  }, [existingInvoice, isEditMode]);
+  }, [existingInvoice, isEditMode, isLoadingInvoice, invoiceId, tenant?.id, refetchInvoice, lineItems.length]);
 
   // Create invoice mutation
   const createInvoiceMutation = useMutation({

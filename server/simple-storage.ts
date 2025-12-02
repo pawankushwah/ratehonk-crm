@@ -3297,45 +3297,35 @@ export class SimpleStorage {
       ? JSON.stringify(cleanDayWiseItinerary)
       : null;
 
+    // Handle inclusions and exclusions - they can be strings or arrays
+    let inclusionsParam = null;
+    if (inclusions) {
+      if (typeof inclusions === 'string') {
+        inclusionsParam = inclusions; // Store as string
+      } else if (Array.isArray(inclusions)) {
+        inclusionsParam = JSON.stringify(inclusions);
+      } else {
+        inclusionsParam = JSON.stringify(inclusions);
+      }
+    }
+
+    let exclusionsParam = null;
+    if (exclusions) {
+      if (typeof exclusions === 'string') {
+        exclusionsParam = exclusions; // Store as string
+      } else if (Array.isArray(exclusions)) {
+        exclusionsParam = JSON.stringify(exclusions);
+      } else {
+        exclusionsParam = JSON.stringify(exclusions);
+      }
+    }
+
     console.log("🔍 Creating package with data:", packageData);
-    console.log(`INSERT INTO travel_packages (
-        tenant_id, package_type_id, name, description, destination, duration, price, max_capacity, 
-        inclusions, exclusions, is_active, duration_type, region, country, city, 
-        package_staying_image, alt_name, vendor_name, rating, status, itinerary_images, 
-        itinerary_description, cancellation_policy, cancellation_benefit, day_wise_itinerary, 
-        itinerary, image
-      )
-      VALUES (
-        ${tenantId},
-        ${packageTypeId || 1},
-        ${name},
-        ${description || null},
-        ${destination},
-        ${duration},
-        ${price},
-        ${maxCapacity},
-        ${inclusions ? JSON.stringify(inclusions) : "[]"},   -- ✅ stringify arrays
-        ${exclusions ? JSON.stringify(exclusions) : "[]"},
-        ${isActive !== false},
-        ${durationType || null},
-        ${region || null},
-        ${country || null},
-        ${city || null},
-        ${packageStayingImage || null},
-        ${altName || null},
-        ${vendorName || null},
-        ${rating || null},
-        ${status || "draft"},
-        ${itineraryImages ? JSON.stringify(itineraryImages) : "[]"},
-        ${itineraryDescription || null},
-        ${cancellationPolicy || null},
-        ${cancellationBenefit || null},
-        ${dayWiseItinerary ? JSON.stringify(dayWiseItinerary) : "[]"},
-        ${itinerary || null},
-        ${image || null}
-                  )
-                  RETURNING id, tenant_id as "tenantId", name, description, destination, duration, price;
-                `);
+    console.log("🔍 Sanitized itineraryImages:", itineraryImagesParam);
+    console.log("🔍 Sanitized dayWiseItinerary:", dayWiseItineraryParam);
+    console.log("🔍 Inclusions:", inclusionsParam);
+    console.log("🔍 Exclusions:", exclusionsParam);
+
     const [travelPackage] = await sql`
       INSERT INTO travel_packages (
         tenant_id, package_type_id, name, description, destination, duration, price, max_capacity, 
@@ -3353,8 +3343,8 @@ export class SimpleStorage {
         ${duration},
         ${price},
         ${maxCapacity},
-        ${inclusions ? JSON.stringify(inclusions) : "[]"},   -- ✅ stringify arrays
-        ${exclusions ? JSON.stringify(exclusions) : "[]"},
+        ${inclusionsParam || null},
+        ${exclusionsParam || null},
         ${isActive !== false},
         ${durationType || null},
         ${region || null},
@@ -3365,11 +3355,11 @@ export class SimpleStorage {
         ${vendorName || null},
         ${rating || null},
         ${status || "draft"},
-        ${itineraryImages ? JSON.stringify(itineraryImages) : "[]"},
+        ${itineraryImagesParam || null},
         ${itineraryDescription || null},
         ${cancellationPolicy || null},
         ${cancellationBenefit || null},
-        ${dayWiseItinerary ? JSON.stringify(dayWiseItinerary) : "[]"},
+        ${dayWiseItineraryParam || null},
         ${itinerary || null},
         ${image || null}
       )
