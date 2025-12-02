@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Card,
   CardContent,
@@ -19,6 +19,9 @@ export function InvoiceStatusBar() {
   const [customDateFrom, setCustomDateFrom] = useState<Date | null>(null);
   const [customDateTo, setCustomDateTo] = useState<Date | null>(null);
 
+  // 🔥 Local loading added (UI stays stable during filter changes)
+  const [localLoading, setLocalLoading] = useState(false);
+
   const {
     data: invoiceGraphData = [],
     isLoading,
@@ -29,7 +32,13 @@ export function InvoiceStatusBar() {
     customDateTo
   );
 
-  
+  // 🔥 Trigger local loading on date filter change
+  useEffect(() => {
+    setLocalLoading(true);
+    const timer = setTimeout(() => setLocalLoading(false), 500);
+    return () => clearTimeout(timer);
+  }, [dateFilter, customDateFrom, customDateTo]);
+
   const dummyStatusData = {
     paid: 40,
     partialPaid: 20,
@@ -40,10 +49,12 @@ export function InvoiceStatusBar() {
   const realTotal = invoiceGraphData.length;
 
   const paid = invoiceGraphData.filter((inv) => inv.status === "paid")?.length || 0;
-  const partialPaid = invoiceGraphData.filter((inv) => inv.status === "partial")?.length || 0;
-  const pending = invoiceGraphData.filter((inv) => inv.status === "pending")?.length || 0;
-  const overdue = invoiceGraphData.filter((inv) => inv.status === "overdue")?.length || 0;
-
+  const partialPaid =
+    invoiceGraphData.filter((inv) => inv.status === "partial")?.length || 0;
+  const pending =
+    invoiceGraphData.filter((inv) => inv.status === "pending")?.length || 0;
+  const overdue =
+    invoiceGraphData.filter((inv) => inv.status === "overdue")?.length || 0;
 
   const finalPaid = realTotal > 0 ? paid : dummyStatusData.paid;
   const finalPartial = realTotal > 0 ? partialPaid : dummyStatusData.partialPaid;
@@ -64,11 +75,26 @@ export function InvoiceStatusBar() {
     overduePercentage: (finalOverdue / total) * 100,
   };
 
-  if (isLoading) {
-    return (
-      <div className="flex h-8 sm:h-12 overflow-hidden bg-gray-200 animate-pulse mt-12 rounded"></div>
-    );
-  }
+
+  if (isLoading || localLoading) {
+  return (
+    <Card className="lg:col-span-12 bg-white shadow-md rounded-xl">
+      <CardHeader>
+        <CardTitle className="text-[#000000] text-base sm:text-lg">
+          Invoice Status
+        </CardTitle>
+      </CardHeader>
+
+      <CardContent>
+        <div className="flex items-center justify-center h-40 sm:h-52 w-full rounded-lg bg-gray-100 animate-pulse">
+          <p className="text-gray-500 text-base sm:text-lg">
+            Loading invoices...
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
   return (
     <Card className="lg:col-span-12 bg-white shadow-md rounded-xl">
@@ -95,7 +121,6 @@ export function InvoiceStatusBar() {
       </CardHeader>
 
       <CardContent>
-        
         <div className="flex h-8 sm:h-12 overflow-hidden text-white text-sm sm:text-base font-medium mt-12 rounded">
 
           {invoiceMetrics.paid > 0 && (
@@ -135,7 +160,7 @@ export function InvoiceStatusBar() {
           )}
         </div>
 
-        {/* LEGENDS */}
+        {/* Legends */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-6 text-xs sm:text-sm mt-20">
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded-full bg-[#2374A9]"></div>

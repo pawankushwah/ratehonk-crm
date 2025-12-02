@@ -1,7 +1,6 @@
 import { useRef, useState, useMemo } from "react";
 import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
-
 import {
   Card,
   CardContent,
@@ -9,7 +8,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-
 import {
   BarChart,
   Bar,
@@ -18,77 +16,144 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-
 import { Button } from "@/components/ui/button";
 import { Download } from "lucide-react";
 import { useAuth } from "@/components/auth/auth-provider";
-import { useInvoicesForGraph } from "@/hooks/useDashboardData";
+
+import { useProfitLossData } from "@/hooks/useDashboardData";
 import { DateFilter } from "../ui/date-filter";
 
-function formatYMD(d: Date) {
-  return d.toISOString().split("T")[0];
+function formatYMD(d: Date): string {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
-function padDay(n: number) {
+function padDay(n: number): string {
   return String(n).padStart(2, "0");
 }
 
-function getMonthInfo(base: Date) {
-  const year = base.getFullYear();
-  const month = base.getMonth();
+function getRange(filter: string, customFrom: Date | null, customTo: Date | null) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
 
-  const start = new Date(year, month, 1);
-  const end = new Date(year, month + 1, 0);
-  const daysInMonth = end.getDate();
+  const year = today.getFullYear();
+  const month = today.getMonth();
 
-  return { year, month, start, end, daysInMonth };
-}
-
-function groupInvoicesByDate(invoices: any[]) {
-  const map: Record<string, number> = {};
-
-  invoices.forEach((inv) => {
-    const rawDate = inv.issueDate || inv.createdAt;
-    if (!rawDate) return;
-
-    const d = new Date(rawDate);
-    if (isNaN(d.getTime())) return;
-
-    const key = formatYMD(d);
-    map[key] = (map[key] || 0) + Number(inv.totalAmount || 0);
-  });
-
-  return map;
-}
-
-function buildMonthComparison(
-  invoiceMap: Record<string, number>,
-  baseDate: Date
-) {
-  const { year, month, start, daysInMonth } = getMonthInfo(baseDate);
-
-  // Previous month info
-  const prev = new Date(year, month - 1, 1);
-  const prevInfo = getMonthInfo(prev);
-
-  const rows = [];
-
-  for (let d = 1; d <= daysInMonth; d++) {
-    const currentDate = new Date(year, month, d);
-    const prevDate = new Date(prevInfo.year, prevInfo.month, d);
-
-    const dayString = padDay(d);
-
-    rows.push({
-      day: dayString,
-      current: invoiceMap[formatYMD(currentDate)] || 0,
-      previous: invoiceMap[formatYMD(prevDate)] || 0,
-      currentIso: formatYMD(currentDate),
-      prevIso: formatYMD(prevDate),
-    });
+  if (filter === "custom" && customFrom && customTo) {
+    const start = new Date(customFrom);
+    const end = new Date(customTo);
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+    return { start, end };
   }
 
-  return rows;
+  switch (filter) {
+    case "today":
+      return { start: today, end: today };
+
+    case "this_week": {
+      const start = new Date(today);
+      const day = today.getDay();
+      const diff = day === 0 ? 6 : day - 1;
+      start.setDate(today.getDate() - diff);
+      const end = new Date(start);
+      end.setDate(start.getDate() + 6);
+      end.setHours(23, 59, 59, 999);
+      return { start, end };
+    }
+
+    case "this_month":
+      return {
+        start: new Date(year, month, 1),
+        end: new Date(year, month + 1, 0, 23, 59, 59, 999),
+      };
+
+    case "this_year":
+      return {
+        start: new Date(year, 0, 1),
+        end: new Date(year, 11, 31, 23, 59, 59, 999),
+      };
+
+    default:
+      return {
+        start: new Date(year, month, 1),
+        end: new Date(year, month + 1, 0, 23, 59, 59, 999),
+      };
+  }
+}
+
+function buildChartData(
+  profitMap: Record<string, number>,
+  filter: string,
+  customFrom: Date | null,
+  customTo: Date | null
+) {
+  const { start, end } = getRange(filter, customFrom, customTo);
+  const daysDiff = Math.ceil(
+    (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)
+  );
+
+  const isMonthlyView =
+    filter === "this_year" || (filter === "custom" && daysDiff > 60);
+
+  
+  if (isMonthlyView) {
+    const result = [];
+
+    const startYear = start.getFullYear();
+    const startMonth = filter === "this_year" ? 0 : start.getMonth();
+
+    const endYear = end.getFullYear();
+    const endMonth = filter === "this_year" ? 11 : end.getMonth();
+
+    const totalMonths =
+      (endYear - startYear) * 12 + (endMonth - startMonth) + 1;
+
+    for (let i = 0; i < totalMonths; i++) {
+      const monthIndex = startMonth + i;
+      const year = startYear + Math.floor(monthIndex / 12);
+      const month = monthIndex % 12;
+
+      const key = `${year}-${String(month + 1).padStart(2, "0")}`;
+
+      result.push({
+        label: new Date(year, month, 1).toLocaleString("default", {
+          month: "short",
+        }),
+        date: key,
+        value: profitMap[key] || 0,
+      });
+    }
+
+    return result;
+  }
+
+
+  const result = [];
+  let curr = new Date(start);
+
+  while (curr <= end) {
+    const key = formatYMD(curr);
+    const value = profitMap[key] || 0;
+
+    result.push({
+      label:
+        filter === "today"
+          ? "Today"
+          : filter === "this_week"
+          ? curr.toLocaleDateString("en-US", { weekday: "short" })
+          : padDay(curr.getDate()),
+      current: value,
+      previous: 0,
+      date: key,
+    });
+
+    curr.setDate(curr.getDate() + 1);
+  }
+
+  return result;
 }
 
 export function RevenueChart() {
@@ -96,78 +161,89 @@ export function RevenueChart() {
   const [customDateFrom, setCustomDateFrom] = useState<Date | null>(null);
   const [customDateTo, setCustomDateTo] = useState<Date | null>(null);
 
-  const [page, setPage] = useState(1);
-  const DAYS_PER_PAGE = 15;
-
   const pdfRef = useRef<HTMLDivElement>(null);
   const { tenant } = useAuth();
 
-  const { data: invoices = [], isLoading } = useInvoicesForGraph(
-    tenant?.id,
+  const { data: profitLossData = {}, isLoading } = useProfitLossData(
     dateFilter,
     customDateFrom,
     customDateTo
   );
-  console.log("🚀 ~ RevenueChart ~ invoices===================:", invoices);
 
-  const invoiceMap = useMemo(() => groupInvoicesByDate(invoices), [invoices]);
 
-  const baseMonthDate = customDateTo ?? new Date();
+ 
+  const profitMap = useMemo(() => {
+    const map: Record<string, number> = {};
+
+  
+    profitLossData.daily?.forEach((r: any) => {
+      map[r.date] = r.profit || 0;
+    });
+
+   
+    profitLossData.monthly?.forEach((r: any) => {
+      map[r.month] = r.profit || 0;
+    });
+
+    return map;
+  }, [profitLossData]);
 
   const chartData = useMemo(
-    () => buildMonthComparison(invoiceMap, baseMonthDate),
-    [invoiceMap, baseMonthDate]
-  );
-  const paginatedData = useMemo(() => {
-    const startIndex = (page - 1) * DAYS_PER_PAGE;
-    const endIndex = startIndex + DAYS_PER_PAGE;
-    return chartData.slice(startIndex, endIndex);
-  }, [chartData, page]);
-
-  const totalCurrent = useMemo(
-    () => chartData.reduce((s, x) => s + x.current, 0),
-    [chartData]
+    () => buildChartData(profitMap, dateFilter, customDateFrom, customDateTo),
+    [profitMap, dateFilter, customDateFrom, customDateTo]
   );
 
-  const totalPrevious = useMemo(
-    () => chartData.reduce((s, x) => s + x.previous, 0),
-    [chartData]
-  );
+  const totals = useMemo(() => {
+    const current = chartData.reduce(
+      (sum, d: any) => sum + (d.current ?? d.value ?? 0),
+      0
+    );
 
-  const growth =
-    totalPrevious === 0
-      ? 0
-      : ((totalCurrent - totalPrevious) / totalPrevious) * 100;
+    if (dateFilter === "this_month") {
+      const prev = chartData.reduce((s, d: any) => s + (d.previous || 0), 0);
+      const growth = prev === 0 ? 0 : ((current - prev) / prev) * 100;
+      return { current, previous: prev, growth, showComparison: true };
+    }
 
-  const monthName = baseMonthDate.toLocaleString("default", {
-    month: "long",
-    year: "numeric",
-  });
+    return { current, previous: 0, growth: 0, showComparison: false };
+  }, [chartData, dateFilter]);
+
+  const formatNumberShort = (num: number) => {
+    if (!num) return "0";
+    if (num >= 1_000_000_000) return (num / 1e9).toFixed(1) + "B";
+    if (num >= 1_000_000) return (num / 1e6).toFixed(1) + "M";
+    if (num >= 1_000) return (num / 1e3).toFixed(1) + "K";
+    return num.toLocaleString();
+  };
+
+  const getPeriodLabel = () => {
+    switch (dateFilter) {
+      case "today":
+        return "Today's Revenue";
+      case "this_week":
+        return "This Week";
+      case "this_month":
+        return "This Month vs Previous Month";
+      case "this_year":
+        return "This Year (Monthly)";
+      case "custom":
+        return "Custom Period";
+      default:
+        return "Revenue";
+    }
+  };
 
   const handleDownloadPDF = async () => {
     if (!pdfRef.current) return;
-
     const canvas = await html2canvas(pdfRef.current, { scale: 2 });
     const img = canvas.toDataURL("image/png");
     const pdf = new jsPDF("p", "mm", "a4");
-
-    const w = pdf.internal.pageSize.getWidth();
-    const h = (canvas.height * w) / canvas.width;
-
-    pdf.addImage(img, "PNG", 0, 0, w, h);
+    const width = pdf.internal.pageSize.getWidth();
+    const height = (canvas.height * width) / canvas.width;
+    pdf.addImage(img, "PNG", 0, 0, width, height);
     pdf.save("revenue-report.pdf");
   };
-  const formatNumberShort = (num: number) => {
-    if (num === null || num === undefined) return "0";
 
-    if (num >= 1_000_000_000_000)
-      return (num / 1_000_000_000_000).toFixed(1) + "T";
-    if (num >= 1_000_000_000) return (num / 1_000_000_000).toFixed(1) + "B";
-    if (num >= 1_000_000) return (num / 1_000_000).toFixed(1) + "M";
-    if (num >= 1_000) return (num / 1_000).toFixed(1) + "K";
-
-    return num.toString();
-  };
   return (
     <Card className="lg:col-span-7 bg-white rounded-xl shadow-sm">
       <CardHeader className="pb-0">
@@ -192,89 +268,89 @@ export function RevenueChart() {
           </div>
         </div>
 
-        <p className="text-2xl sm:text-3xl font-semibold text-[#000000] mt-3">
-          USD {formatNumberShort(totalCurrent)}
+        <p className="text-2xl sm:text-3xl font-semibold text-[#000000] mt-4">
+          USD {formatNumberShort(totals.current)}
         </p>
 
-        <p
-          className={`text-xs font-medium mt-1 ${
-            growth >= 0 ? "text-green-600" : "text-red-500"
-          }`}
-        >
-          {growth >= 0 ? "↑" : "↓"} {Math.abs(growth).toFixed(1)}% vs last month
-        </p>
+        {totals.showComparison ? (
+          <p
+            className={`text-sm font-medium mt-1 ${
+              totals.growth >= 0 ? "text-green-600" : "text-red-600"
+            }`}
+          >
+            {totals.growth >= 0 ? "Up" : "Down"}{" "}
+            {Math.abs(totals.growth).toFixed(1)}% vs last month
+          </p>
+        ) : (
+          <p className="text-sm text-gray-500 mt-1">{getPeriodLabel()}</p>
+        )}
 
         <CardDescription className="mt-3 text-xs text-gray-500">
-          Showing month: {monthName}
+          {getPeriodLabel()}
         </CardDescription>
       </CardHeader>
 
-      <CardContent ref={pdfRef} className="p-4">
-        <div className="mt-2 h-44">
-          {isLoading ? (
-            <p>Loading...</p>
-          ) : (
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={paginatedData}>
-                <XAxis
-                  dataKey="day"
-                  tick={{ fontSize: 10, fill: "#9CA3AF" }}
-                  axisLine={false}
-                  tickLine={false}
-                  interval={0}
-                />
-                <YAxis hide />
-                <Tooltip
-                  formatter={(value: any) =>
-                    `USD ${Number(value).toLocaleString()}`
+      <CardContent ref={pdfRef} className="pt-6">
+        {isLoading ? (
+          <div className="h-64 flex items-center justify-center text-gray-500">
+            Loading...
+          </div>
+        ) : chartData.length === 0 ? (
+          <div className="h-64 flex items-center justify-center text-gray-500">
+            No data available for selected period
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart
+              data={chartData}
+              margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+            >
+              <XAxis
+                dataKey="label"
+                tick={{ fontSize: 12, fill: "#6B7280" }}
+                axisLine={false}
+                tickLine={false}
+              />
+              <YAxis hide />
+              <Tooltip
+                formatter={(value: number) => `USD ${value.toLocaleString()}`}
+                contentStyle={{
+                  borderRadius: "8px",
+                  border: "none",
+                  boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+                }}
+              />
+
+              {totals.showComparison ? (
+                <>
+                  <Bar dataKey="current" fill="#0A64A0" radius={[8, 8, 0, 0]} />
+                  <Bar dataKey="previous" fill="#7695C5" radius={[8, 8, 0, 0]} />
+                </>
+              ) : (
+                <Bar
+                  dataKey={
+                    chartData[0]?.value !== undefined ? "value" : "current"
                   }
-                  labelFormatter={(_, payload: any) => {
-                    if (!payload?.length) return "";
-
-                    const row = payload[0].payload;
-                    const selectedMonth = baseMonthDate
-                      .toISOString()
-                      .slice(0, 7);
-
-                    return `${selectedMonth}-${row.day}`;
-                  }}
+                  fill="#0A64A0"
+                  radius={[8, 8, 0, 0]}
                 />
+              )}
+            </BarChart>
+          </ResponsiveContainer>
+        )}
 
-                <Bar dataKey="current" fill="#0A64A0" barSize={7} />
-
-                <Bar dataKey="previous" fill="#7695C5" barSize={7} />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-        </div>
-
-        <div className="flex gap-4 mt-4 text-xs sm:text-sm">
-          <div className="flex items-center gap-1">
-            <span className="w-3 h-3 rounded bg-[#0A64A0]"></span> Current Month
+        {totals.showComparison && (
+          <div className="flex justify-center gap-8 mt-6 text-sm text-gray-600">
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 rounded bg-[#0A64A0]" />
+              <span>Current Month</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 rounded bg-[#7695C5]" />
+              <span>Previous Month</span>
+            </div>
           </div>
-          <div className="flex items-center gap-1">
-            <span className="w-3 h-3 rounded bg-[#7695C5]"></span> Previous
-            Month
-          </div>
-        </div>
-
-        <div className="flex justify-between mt-4">
-          <Button
-            variant="outline"
-            disabled={page === 1}
-            onClick={() => setPage((p) => p - 1)}
-          >
-            Previous
-          </Button>
-
-          <Button
-            variant="outline"
-            disabled={page * DAYS_PER_PAGE >= chartData.length}
-            onClick={() => setPage((p) => p + 1)}
-          >
-            Next
-          </Button>
-        </div>
+        )}
       </CardContent>
     </Card>
   );

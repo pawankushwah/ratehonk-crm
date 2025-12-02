@@ -28,23 +28,26 @@ export function ProfitLossCard() {
   const [customDateFrom, setCustomDateFrom] = useState<Date | null>(null);
   const [customDateTo, setCustomDateTo] = useState<Date | null>(null);
 
-  const { data: profitLossData = [], isLoading } = useProfitLossData(
+ 
+  const { data: profitLossData, isLoading } = useProfitLossData(
     dateFilter,
     customDateFrom,
     customDateTo
   );
 
+
+  const monthlyData = profitLossData?.monthly || [];
+
   const isDataEmpty =
-    !profitLossData ||
-    profitLossData.length === 0 ||
-    profitLossData.every(
-      (m) => m.expenses === 0 && m.revenue === 0 && m.profit === 0
+    monthlyData.length === 0 ||
+    monthlyData.every(
+      (m) =>
+        (m.expenses ?? 0) === 0 &&
+        (m.revenue ?? 0) === 0 &&
+        (m.profit ?? 0) === 0
     );
 
-  const finalProfitLoss = isDataEmpty ? dummyProfitLoss : profitLossData;
-
-
-
+  const finalProfitLoss = isDataEmpty ? dummyProfitLoss : monthlyData;
 
   return (
     <Card className="lg:col-span-5">
@@ -52,6 +55,7 @@ export function ProfitLossCard() {
         <CardTitle className="text-[#000000] text-base sm:text-lg font-semibold">
           Profit & Loss
         </CardTitle>
+
         <DateFilter
           dateFilter={dateFilter}
           setDateFilter={setDateFilter}

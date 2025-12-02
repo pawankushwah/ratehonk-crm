@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Card,
   CardContent,
@@ -10,83 +10,86 @@ import { DateFilter } from "@/components/ui/date-filter";
 import { useInvoicesForGraph } from "@/hooks/useDashboardData";
 import { useAuth } from "../auth/auth-provider";
 
+const COLORS = ["#3B82F6"];
+
 export function ServiceBookingScatter() {
   const { tenant } = useAuth();
 
   const [dateFilter, setDateFilter] = useState("this_month");
   const [customDateFrom, setCustomDateFrom] = useState<Date | null>(null);
   const [customDateTo, setCustomDateTo] = useState<Date | null>(null);
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
-  const {
-    data: invoiceGraphData = [],
-    isLoading,
-  } = useInvoicesForGraph(tenant?.id, dateFilter, customDateFrom, customDateTo);
+  const { data: invoices = [], isLoading } = useInvoicesForGraph(
+    tenant?.id,
+    dateFilter,
+    customDateFrom,
+    customDateTo
+  );
 
-  console.log("🚀 ~ invoiceGraphData:", invoiceGraphData);
+  const bubbleData = useMemo(() => {
+    const serviceCountMap: Record<string, number> = {};
 
-  
-  const serviceCountMap: Record<string, number> = {};
+    invoices.forEach((invoice: any) => {
+      if (!invoice.lineItems || !Array.isArray(invoice.lineItems)) return;
 
-  invoiceGraphData.forEach((invoice: any) => {
-    if (invoice.lineItems && Array.isArray(invoice.lineItems)) {
       invoice.lineItems.forEach((li: any) => {
         const service =
           li.travelCategory?.trim() ||
           li.itemTitle?.trim() ||
-          "Unknown Service";
+          li.description?.trim() ||
+          "Other Service";
 
-        serviceCountMap[service] = (serviceCountMap[service] || 0) + 1;
+        if (service) {
+          serviceCountMap[service] = (serviceCountMap[service] || 0) + 1;
+        }
       });
-    }
-  });
+    });
 
-  console.log("🚀 ~ serviceCountMap:", serviceCountMap);
+    const total = Object.values(serviceCountMap).reduce((a, b) => a + b, 0);
+    if (total === 0) return [];
 
-  const total = Object.values(serviceCountMap).reduce((a, b) => a + b, 0);
+    return Object.entries(serviceCountMap)
+      .map(([name, count]) => ({
+        name: name.length > 15 ? name.substring(0, 12) + "..." : name,
+        fullName: name,
+        count,
+        percentage: Math.round((count / total) * 100),
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+  }, [invoices]);
 
+  const positionedData = useMemo(() => {
+    return bubbleData.map((item, index) => {
+      const angle = (index / bubbleData.length) * 2 * Math.PI - Math.PI / 2;
+      const distance = 25 + (bubbleData.length - index) * 8;
 
-  const dummyData = [
-    { name: "Flight", count: 19, percentage: 79 },
-    { name: "Hotel", count: 2, percentage: 8 },
-    { name: "Event Booking", count: 1, percentage: 4 },
-    { name: "Package", count: 1, percentage: 4 },
-    { name: "Activities", count: 1, percentage: 4 },
-  ];
+      const x = 50 + Math.cos(angle) * distance;
+      const y = 50 + Math.sin(angle) * distance * 0.7;
 
- 
-  const bubbleData = Object.entries(serviceCountMap)
-    .map(([name, count]) => ({
-      name,
-      count,
-      percentage: total > 0 ? Math.round((count / total) * 100) : 0,
-    }))
-    .filter((b) => b.percentage > 0)
-    .sort((a, b) => b.percentage - a.percentage);
+      const size = 60 + item.percentage * 2.2;
 
-  console.log("🚀 ~ bubbleData:", bubbleData);
-
- 
-  const finalBubbleData = bubbleData.length > 0 ? bubbleData : dummyData;
-
-  
-  const getBubblePosition = (index: number) => {
-    if (index === 0) return { x: 68, y: 50 };
-    if (index === 1) return { x: 32, y: 30 };
-    if (index === 2) return { x: 35, y: 70 };
-    if (index === 3) return { x: 15, y: 50 };
-
-    
-    return { x: 25 + index * 6, y: 40 + index * 5 };
-  };
+      return {
+        ...item,
+        x: Math.max(15, Math.min(85, x)),
+        y: Math.max(20, Math.min(80, y)),
+        size,
+        color: COLORS[index % COLORS.length],
+      };
+    });
+  }, [bubbleData]);
 
   return (
     <Card className="col-span-6 bg-white shadow-xl rounded-xl">
-      <CardHeader>
-        <div className="flex items-center justify-between">
+      <CardHeader className="pb-3">
+        <div className="flex items-start justify-between">
           <div>
-            <CardTitle>Service Bookings</CardTitle>
-            <CardDescription>
-              Based on invoice service categories
+            <CardTitle className="text-xl font-bold text-gray-900">
+              Service Bookings
+            </CardTitle>
+            <CardDescription className="mt-1">
+              Most booked services • {dateFilter.replace("_", " ")}
             </CardDescription>
           </div>
 
@@ -101,38 +104,69 @@ export function ServiceBookingScatter() {
         </div>
       </CardHeader>
 
-      <CardContent>
-        <div className="relative w-full h-[360px] flex justify-center items-center">
+      <CardContent className="pt-6">
+        <div className="relative w-full h-96 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl overflow-hidden">
+          <div className="absolute inset-0 opacity-30">
+            <div className="absolute top-10 left-10 w-64 h-64 bg-blue-300 rounded-full blur-3xl" />
+            <div className="absolute bottom-10 right-10 w-80 h-80 bg-purple-300 rounded-full blur-3xl" />
+          </div>
+
           {isLoading ? (
-            <p className="text-gray-400 text-sm">Loading...</p>
+            <div className="flex h-full items-center justify-center">
+              <p className="text-gray-500 animate-pulse">Loading services...</p>
+            </div>
+          ) : bubbleData.length === 0 ? (
+            <div className="flex h-full flex-col items-center justify-center text-center px-8">
+              <div className="w-20 h-20 bg-gray-200 border-2 border-dashed rounded-xl mb-4" />
+              <p className="text-gray-500 font-medium">No bookings found</p>
+              <p className="text-sm text-gray-400 mt-2">
+                Try selecting a different date range
+              </p>
+            </div>
           ) : (
-            finalBubbleData.map((item, index) => {
-              const size = 60 + item.percentage * 1.2;
-              const pos = getBubblePosition(index);
+            <>
+              {positionedData.map((item, index) => {
+                const isActive = activeIndex === index;
 
-              return (
-                <div
-                  key={index}
-                  className="absolute flex flex-col justify-center items-center text-white font-semibold rounded-full shadow-xl transition-all duration-500"
-                  style={{
-                    width: size,
-                    height: size,
-                    left: `${pos.x}%`,
-                    top: `${pos.y}%`,
-                    transform: "translate(-50%, -50%)",
-                    backgroundColor: "#3B82F6",
-                  }}
-                >
+                return (
                   <div
-                    className="absolute inset-0 rounded-full border-[5px] border-white opacity-70"
-                    style={{ transform: "scale(1.12)" }}
-                  ></div>
+                    key={item.fullName}
+                    className="absolute flex flex-col items-center justify-center text-white font-bold rounded-full cursor-pointer"
+                    style={{
+                      width: item.size,
+                      height: item.size,
+                      left: `${item.x}%`,
+                      top: `${item.y}%`,
+                      backgroundColor: item.color,
 
-                  <span className="text-lg">{item.percentage}%</span>
-                  <span className="text-xs opacity-90 mt-1">{item.name}</span>
-                </div>
-              );
-            })
+                      transform: `translate(-50%, -50%) scale(${isActive ? 1.1 : 1})`,
+                      transition: "transform 0.3s ease, filter 0.3s ease",
+
+                      filter: isActive
+                        ? "drop-shadow(0px 0px 8px rgba(0,0,0,0.35))"
+                        : "none",
+
+                      zIndex: isActive ? 20 : 1,
+                    }}
+                    onMouseEnter={() => setActiveIndex(index)}
+                    onMouseLeave={() => setActiveIndex(null)}
+                  >
+                    <div className="text-center leading-tight z-10 px-1">
+                      <div className="text-2xl">{item.percentage}%</div>
+                      <div className="text-xs mt-1 opacity-90">{item.name}</div>
+                    </div>
+
+                    <div
+                      className="absolute inset-0 rounded-full animate-ping opacity-30"
+                      style={{
+                        backgroundColor: item.color,
+                        animationDelay: `${index * 0.2}s`,
+                      }}
+                    />
+                  </div>
+                );
+              })}
+            </>
           )}
         </div>
       </CardContent>

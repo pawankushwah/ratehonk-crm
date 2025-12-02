@@ -18950,9 +18950,9 @@ Please improve this email.`;
     "✅ SIMPLE ROUTES: Customer file API endpoints registered successfully",
   );
 
-  // ====================================================
+
   // DASHBOARD & REPORTS API ENDPOINTS
-  // ====================================================
+ 
 
   // Dashboard main metrics endpoint
   app.get("/api/reports/dashboard", authenticateToken, async (req, res) => {
@@ -19773,121 +19773,212 @@ Please improve this email.`;
   });
 
   // GET profit and loss data with date filtering
-  app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
-    try {
-      const tenantId = req.user.tenantId;
-      if (!tenantId) {
-        return res
-          .status(400)
-          .json({ error: "Tenant ID not found in user session" });
-      }
-
-      const { startDate = "", endDate = "" } = req.query;
-
-      // Build date filter for expenses
-      let expenseDateFilter = sql`1=1`;
-      if (startDate && endDate) {
-        expenseDateFilter = sql`expense_date >= ${startDate} AND expense_date <= ${endDate}`;
-      }
-
-      // Build date filter for bookings (revenue)
-      let bookingDateFilter = sql`1=1`;
-      if (startDate && endDate) {
-        bookingDateFilter = sql`created_at >= ${startDate} AND created_at <= ${endDate}`;
-      }
-
-      // Fetch expenses grouped by month
-      const expensesByMonth = await sql`
-        SELECT 
-          TO_CHAR(expense_date, 'YYYY-MM') as month,
-          SUM(amount) as total_expenses
-        FROM expenses
-        WHERE tenant_id = ${tenantId} AND ${expenseDateFilter}
-        GROUP BY TO_CHAR(expense_date, 'YYYY-MM')
-        ORDER BY month ASC
-      `;
-
-      // Fetch revenue grouped by month
-      const revenueByMonth = await sql`
-        SELECT 
-          TO_CHAR(created_at, 'YYYY-MM') as month,
-          SUM(total_amount) as total_revenue
-        FROM bookings
-        WHERE tenant_id = ${tenantId} AND ${bookingDateFilter}
-        GROUP BY TO_CHAR(created_at, 'YYYY-MM')
-        ORDER BY month ASC
-      `;
-
-      // Generate all months in the date range
-      const allMonths: string[] = [];
-      if (startDate && endDate) {
-        const start = new Date(startDate as string);
-        const end = new Date(endDate as string);
-
-        const current = new Date(start.getFullYear(), start.getMonth(), 1);
-        const endMonth = new Date(end.getFullYear(), end.getMonth(), 1);
-
-        while (current <= endMonth) {
-          const year = current.getFullYear();
-          const month = String(current.getMonth() + 1).padStart(2, "0");
-          allMonths.push(`${year}-${month}`);
-          current.setMonth(current.getMonth() + 1);
-        }
-      }
-
-      // Combine expenses and revenue by month
-      const monthsMap = new Map();
-
-      // Initialize all months with zero values
-      allMonths.forEach((month) => {
-        monthsMap.set(month, {
-          month: month,
-          expenses: 0,
-          revenue: 0,
-        });
-      });
-
-      // Add expenses
-      expensesByMonth.forEach((row: any) => {
-        if (monthsMap.has(row.month)) {
-          monthsMap.get(row.month).expenses =
-            parseFloat(row.total_expenses) || 0;
-        } else {
-          monthsMap.set(row.month, {
-            month: row.month,
-            expenses: parseFloat(row.total_expenses) || 0,
-            revenue: 0,
-          });
-        }
-      });
-
-      // Add revenue
-      revenueByMonth.forEach((row: any) => {
-        if (monthsMap.has(row.month)) {
-          monthsMap.get(row.month).revenue = parseFloat(row.total_revenue) || 0;
-        } else {
-          monthsMap.set(row.month, {
-            month: row.month,
-            expenses: 0,
-            revenue: parseFloat(row.total_revenue) || 0,
-          });
-        }
-      });
-
-      // Convert map to array and calculate profit, sorted by month
-      const profitLossData = Array.from(monthsMap.values())
-        .sort((a, b) => a.month.localeCompare(b.month))
-        .map((item) => ({
-          ...item,
-          profit: item.revenue - item.expenses,
-        }));
-
-      res.json(profitLossData || []);
-    } catch (error: any) {
-      console.error("❌ Profit/Loss API error:", error);
-      res.status(500).json({ error: error.message });
+app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
+  try {
+    const tenantId = req.user.tenantId;
+    if (!tenantId) {
+      return res.status(400).json({ error: "Tenant ID not found" });
     }
-  });
+
+    const { startDate = "", endDate = "" } = req.query;
+
+    // -----------------------------------
+    // DATE FILTER FOR INVOICES (issueDate)
+    // -----------------------------------
+    let invoiceDateFilter = sql`1=1`;
+    if (startDate && endDate) {
+      invoiceDateFilter = sql`
+        issue_date >= ${startDate}::date
+        AND issue_date < (${endDate}::date + INTERVAL '1 day')
+      `;
+    }
+
+    // -----------------------------------
+    // FETCH INVOICES (issueDate + revenue only)
+    // -----------------------------------
+    const invoices = await sql`
+      SELECT 
+        id,
+        issue_date AS "issueDate",
+        total_amount AS "totalAmount",
+        TO_CHAR(issue_date, 'YYYY-MM') AS "month"
+      FROM invoices
+      WHERE tenant_id = ${tenantId}
+        AND ${invoiceDateFilter}
+      ORDER BY issue_date ASC
+    `;
+
+    // -----------------------------------
+    // AGGREGATE REVENUE ONLY (NO PURCHASE)
+    // -----------------------------------
+    const invoiceMonthData: any = {};
+    const invoiceDateData: any = {};
+
+    invoices.forEach((inv) => {
+      const month = inv.month;
+
+      // Fix: avoid timezone issue
+      const date = inv.issueDate
+        ? inv.issueDate.toString().slice(0, 10)
+        : null;
+
+      const revenue = Number(inv.totalAmount || 0);
+
+      // MONTH WISE
+      if (!invoiceMonthData[month]) {
+        invoiceMonthData[month] = { revenue: 0 };
+      }
+      invoiceMonthData[month].revenue += revenue;
+
+      // DATE WISE
+      if (date) {
+        if (!invoiceDateData[date]) {
+          invoiceDateData[date] = { revenue: 0 };
+        }
+        invoiceDateData[date].revenue += revenue;
+      }
+    });
+
+    // -----------------------------------
+    // FETCH EXPENSES (ONLY FROM EXPENSE TABLE)
+    // -----------------------------------
+    let expenseDateFilter = sql`1=1`;
+    if (startDate && endDate) {
+      expenseDateFilter = sql`
+        expense_date >= ${startDate}::date
+        AND expense_date < (${endDate}::date + INTERVAL '1 day')
+      `;
+    }
+
+    const expensesByMonth = await sql`
+      SELECT 
+        TO_CHAR(expense_date, 'YYYY-MM') AS month,
+        SUM(amount)::numeric AS total
+      FROM expenses
+      WHERE tenant_id = ${tenantId}
+        AND ${expenseDateFilter}
+      GROUP BY 1
+      ORDER BY 1 ASC
+    `;
+
+    const expensesDaily = await sql`
+      SELECT 
+        TO_CHAR(expense_date, 'YYYY-MM-DD') AS date,
+        SUM(amount)::numeric AS total
+      FROM expenses
+      WHERE tenant_id = ${tenantId}
+        AND ${expenseDateFilter}
+      GROUP BY 1
+      ORDER BY 1 ASC
+    `;
+
+    // -----------------------------------
+    // DAILY MERGE (REVENUE + EXPENSES)
+    // -----------------------------------
+    const dailyMap = new Map();
+
+    // Seed revenue from invoices
+    Object.entries(invoiceDateData).forEach(([date, data]: any) => {
+      dailyMap.set(date, {
+        date,
+        revenue: data.revenue,
+        expenses: 0,
+        profit: 0,
+      });
+    });
+
+    // Add expenses ONLY from expense table
+    expensesDaily.forEach((row: any) => {
+      if (!dailyMap.has(row.date)) {
+        dailyMap.set(row.date, {
+          date: row.date,
+          revenue: 0,
+          expenses: Number(row.total),
+          profit: 0,
+        });
+      } else {
+        dailyMap.get(row.date).expenses += Number(row.total);
+      }
+    });
+
+    const daily = Array.from(dailyMap.values()).map((d) => ({
+      ...d,
+      profit: d.revenue - d.expenses,
+    }));
+
+    // -----------------------------------
+    // MONTH RANGE
+    // -----------------------------------
+    const allMonths: string[] = [];
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+
+      let current = new Date(start.getFullYear(), start.getMonth(), 1);
+      const endMonth = new Date(end.getFullYear(), end.getMonth(), 1);
+
+      while (current <= endMonth) {
+        allMonths.push(current.toISOString().slice(0, 7));
+        current.setMonth(current.getMonth() + 1);
+      }
+    }
+
+    
+    const monthsMap = new Map();
+
+ 
+    allMonths.forEach((m) => {
+      monthsMap.set(m, { month: m, revenue: 0, expenses: 0, profit: 0 });
+    });
+
+ 
+    expensesByMonth.forEach((row: any) => {
+      if (!monthsMap.has(row.month)) {
+        monthsMap.set(row.month, {
+          month: row.month,
+          revenue: 0,
+          expenses: Number(row.total),
+          profit: 0,
+        });
+      } else {
+        monthsMap.get(row.month).expenses += Number(row.total);
+      }
+    });
+
+    // Add invoice revenue
+    Object.entries(invoiceMonthData).forEach(([month, data]: any) => {
+      if (!monthsMap.has(month)) {
+        monthsMap.set(month, {
+          month,
+          revenue: data.revenue,
+          expenses: 0,
+          profit: 0,
+        });
+      } else {
+        monthsMap.get(month).revenue += data.revenue;
+      }
+    });
+
+    const monthly = Array.from(monthsMap.values()).map((m) => ({
+      ...m,
+      profit: m.revenue - m.expenses,
+    }));
+
+    // -----------------------------------
+    // FINAL RESPONSE
+    // -----------------------------------
+    res.json({
+      daily,
+      monthly,
+    });
+  } catch (error) {
+    console.error("❌ Profit & Loss Error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
+
 
   app.get("/api/gst-settings", authenticateVendor, async (req, res) => {
     try {

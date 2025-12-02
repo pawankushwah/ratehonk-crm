@@ -32,15 +32,18 @@ export function ExpensePieChart() {
 
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
-  const expenseAmountByCategory = expensesData.reduce((acc: any, exp: any) => {
-    const cat = exp.category || "Other";
-    const amt = safeParseNumber(exp?.amount);
+  const approvedExpenses = expensesData.filter(
+  (exp: any) => exp.status?.toLowerCase() === "approved"
+);
+ const expenseAmountByCategory = approvedExpenses.reduce((acc: any, exp: any) => {
+  const cat = exp.category || "Other";
+  const amt = safeParseNumber(exp?.amount);
 
-    if (!acc[cat]) acc[cat] = 0;
-    acc[cat] += amt;
+  if (!acc[cat]) acc[cat] = 0;
+  acc[cat] += amt;
 
-    return acc;
-  }, {});
+  return acc;
+}, {});
 
   const categoryArray = Object.entries(expenseAmountByCategory).map(
     ([category, amount]: any) => ({
@@ -82,7 +85,7 @@ export function ExpensePieChart() {
 };
 
   return (
-    <Card className="col-span-12 md:col-span-6 bg-white shadow-md rounded-xl h-[500px]">
+    <Card className="col-span-6 bg-white shadow-xl rounded-xl">
       <CardHeader className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-4 gap-3 p-4">
         <div>
           <CardTitle className="text-[#000000] font-medium text-base sm:text-lg">
