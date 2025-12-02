@@ -1,11 +1,4 @@
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-} from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+
 import { Link } from "wouter";
 import { Layout } from "@/components/layout/layout";
 import { DashboardCustomizationDialog } from "@/components/dashboard-customization-dialog";
@@ -44,19 +37,10 @@ import { ConsolidatedVendorBookingChart } from "@/components/dashboard/Consolida
 import { ServiceProviderChart } from "@/components/dashboard/ServiceProviderChart";
 
 
-const safeParseNumber = (value: any): number => {
-  if (value === null || value === undefined) return 0;
-  if (typeof value === "number") return isNaN(value) ? 0 : value;
-  if (typeof value === "string") {
-    const cleanValue = value.replace("%", "");
-    const parsed = parseFloat(cleanValue);
-    return isNaN(parsed) ? 0 : parsed;
-  }
-  return 0;
-};
+
 
 export default function TenantDashboard() {
-  const [profitPage, setProfitPage] = useState(0);
+
   const [isOpen, setIsOpen] = useState(false);
   const [showCalendar, setShowCalendar] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -94,11 +78,7 @@ export default function TenantDashboard() {
     useState<Date | null>(null);
   const [businessMetricsCustomTo, setBusinessMetricsCustomTo] =
     useState<Date | null>(null);
-  const [leadTypesDateFilter, setLeadTypesDateFilter] = useState("this_month");
-  const [leadTypesCustomFrom, setLeadTypesCustomFrom] = useState<Date | null>(
-    null
-  );
-  const [leadTypesCustomTo, setLeadTypesCustomTo] = useState<Date | null>(null);
+  
   const [revenueLeadTypeDateFilter, setRevenueLeadTypeDateFilter] =
     useState("this_month");
   const [revenueLeadTypeCustomFrom, setRevenueLeadTypeCustomFrom] =
@@ -116,27 +96,16 @@ export default function TenantDashboard() {
     null
   );
   const [estimatesCustomTo, setEstimatesCustomTo] = useState<Date | null>(null);
-  const [expensesDateFilter, setExpensesDateFilter] = useState("this_month");
-  const [expensesCustomFrom, setExpensesCustomFrom] = useState<Date | null>(
-    null
-  );
-  const [expensesCustomTo, setExpensesCustomTo] = useState<Date | null>(null);
+ 
+ 
   const [emailCampaignsDateFilter, setEmailCampaignsDateFilter] =
     useState("this_month");
   const [emailCampaignsCustomFrom, setEmailCampaignsCustomFrom] =
     useState<Date | null>(null);
   const [emailCampaignsCustomTo, setEmailCampaignsCustomTo] =
     useState<Date | null>(null);
-  const [profitLossDateFilter, setProfitLossDateFilter] = useState("this_year");
-  const [profitLossCustomFrom, setProfitLossCustomFrom] = useState<Date | null>(
-    null
-  );
-  const [profitLossCustomTo, setProfitLossCustomTo] = useState<Date | null>(
-    null
-  );
-  const [invoiceDateFilter, setInvoiceDateFilter] = useState("this_year");
-  const [invoiceCustomFrom, setInvoiceCustomFrom] = useState<Date | null>(null);
-  const [invoiceCustomTo, setInvoiceCustomTo] = useState<Date | null>(null);
+  
+ 
   const [isCustomizationOpen, setIsCustomizationOpen] = useState(false);
   const getQueryParams = () => {
     const params: any = {};
@@ -165,7 +134,7 @@ export default function TenantDashboard() {
     }
     return params;
   };
-  const graphQueryParams = getGraphQueryParams();
+
   const buildFilterParamsFromDateFilter = (
     dateFilter: string,
     customFrom: Date | null,
@@ -186,11 +155,7 @@ export default function TenantDashboard() {
     businessMetricsCustomFrom,
     businessMetricsCustomTo
   );
-  const leadTypesQueryParams = buildFilterParamsFromDateFilter(
-    leadTypesDateFilter,
-    leadTypesCustomFrom,
-    leadTypesCustomTo
-  );
+
   const revenueByLeadTypeQueryParams = buildFilterParamsFromDateFilter(
     revenueLeadTypeDateFilter,
     revenueLeadTypeCustomFrom,
@@ -201,31 +166,14 @@ export default function TenantDashboard() {
     bookingsVendorCustomFrom,
     bookingsVendorCustomTo
   );
-  const estimatesQueryParams = buildFilterParamsFromDateFilter(
-    estimatesDateFilter,
-    estimatesCustomFrom,
-    estimatesCustomTo
-  );
-  const expensesQueryParams = buildFilterParamsFromDateFilter(
-    expensesDateFilter,
-    expensesCustomFrom,
-    expensesCustomTo
-  );
+
   const emailCampaignsQueryParams = buildFilterParamsFromDateFilter(
     emailCampaignsDateFilter,
     emailCampaignsCustomFrom,
     emailCampaignsCustomTo
   );
-  const profitLossQueryParams = buildFilterParamsFromDateFilter(
-    profitLossDateFilter,
-    profitLossCustomFrom,
-    profitLossCustomTo
-  );
-  const invoiceQueryParams = buildFilterParamsFromDateFilter(
-    invoiceDateFilter,
-    invoiceCustomFrom,
-    invoiceCustomTo
-  );
+
+
   const { data: topLeads } = useQuery({
     queryKey: [`/api/leads`, { limit: 10, sort: "score", ...queryParams }],
     enabled: !!tenant?.id,
@@ -244,24 +192,7 @@ export default function TenantDashboard() {
     ],
     enabled: !!tenant?.id,
   });
-  const { data: leadTypesData } = useQuery({
-    queryKey: [`/api/reports/lead-types`, leadTypesQueryParams],
-    queryFn: async () => {
-      const params = new URLSearchParams(
-        leadTypesQueryParams as any
-      ).toString();
-      const url = `/api/reports/lead-types${params ? `?${params}` : ""}`;
-      const res = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("auth_token")}`,
-        },
-        credentials: "include",
-      });
-      if (!res.ok) throw new Error("Failed to fetch lead types data");
-      return res.json();
-    },
-    enabled: !!tenant?.id,
-  });
+ 
   const { data: revenueByLeadTypeData } = useQuery({
     queryKey: [
       `/api/reports/revenue-by-lead-type`,
@@ -301,48 +232,9 @@ export default function TenantDashboard() {
     },
     enabled: !!tenant?.id,
   });
-  const { data: estimatesData, isLoading: estimatesLoading } = useQuery<
-    Estimate[]
-  >({
-    queryKey: [`/api/estimates`, estimatesQueryParams],
-    queryFn: async () => {
-      const params = new URLSearchParams(
-        estimatesQueryParams as any
-      ).toString();
-      const url = `/api/estimates${params ? `?${params}` : ""}`;
-      const res = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("auth_token")}`,
-        },
-        credentials: "include",
-      });
-      if (!res.ok) throw new Error("Failed to fetch estimates data");
-      return res.json();
-    },
-    enabled: !!tenant?.id,
-    refetchInterval: 30000,
-    staleTime: 25000,
-  });
-  const { data: expensesData, isLoading: expensesLoading } = useQuery<
-    Expense[]
-  >({
-    queryKey: [`/api/expenses`, expensesQueryParams],
-    queryFn: async () => {
-      const params = new URLSearchParams(expensesQueryParams as any).toString();
-      const url = `/api/expenses${params ? `?${params}` : ""}`;
-      const res = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("auth_token")}`,
-        },
-        credentials: "include",
-      });
-      if (!res.ok) throw new Error("Failed to fetch expenses data");
-      return res.json();
-    },
-    enabled: !!tenant?.id,
-    refetchInterval: 30000,
-    staleTime: 25000,
-  });
+ 
+
+
   const { data: emailCampaignsData, isLoading: emailCampaignsLoading } =
     useQuery<EmailCampaign[]>({
       queryKey: [`/api/email-campaigns`, emailCampaignsQueryParams],
@@ -364,46 +256,8 @@ export default function TenantDashboard() {
       refetchInterval: 30000,
       staleTime: 25000,
     });
-  const { data: profitLossData, isLoading: profitLossLoading } = useQuery<
-    Array<{ month: string; expenses: number; revenue: number; profit: number }>
-  >({
-    queryKey: [`/api/dashboard/profit-loss`, profitLossQueryParams],
-    queryFn: async () => {
-      const params = new URLSearchParams(
-        profitLossQueryParams as any
-      ).toString();
-      const url = `/api/dashboard/profit-loss${params ? `?${params}` : ""}`;
-      const res = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("auth_token")}`,
-        },
-        credentials: "include",
-      });
-      if (!res.ok) throw new Error("Failed to fetch profit/loss data");
-      return res.json();
-    },
-    enabled: !!tenant?.id,
-    refetchInterval: 30000,
-    staleTime: 25000,
-  });
-  const { data: invoicesForGraph, isLoading: invoicesGraphLoading } = useQuery({
-    queryKey: [`/api/tenants/${tenant?.id}/invoices`, invoiceQueryParams],
-    queryFn: async () => {
-      const params = new URLSearchParams(invoiceQueryParams as any).toString();
-      const url = `/api/tenants/${tenant?.id}/invoices${params ? `?${params}` : ""}`;
-      const res = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("auth_token")}`,
-        },
-        credentials: "include",
-      });
-      if (!res.ok) return [];
-      const result = await res.json();
-      return Array.isArray(result) ? result : result.invoices || [];
-    },
-    enabled: !!tenant?.id,
-    refetchInterval: 30000,
-  });
+ 
+ 
 
   const formatNumberShort = (num: number) => {
   if (num === null || num === undefined) return "0";
@@ -447,7 +301,7 @@ export default function TenantDashboard() {
       chartDataResponse.length > 0
     ) {
       return chartDataResponse;
-    }
+    } 
     const now = new Date();
     const period = businessMetricsDateFilter;
     let dataPoints: any[] = [];
@@ -527,16 +381,12 @@ export default function TenantDashboard() {
     : [];
     
   
-  console.log("revenueByLeadTypeArray :",revenueByLeadTypeArray)
+ 
   const bookingsByVendorArray = Array.isArray(bookingsByVendorData)
     ? bookingsByVendorData
     : [];
   console.log("bookingsByVendorArray :",bookingsByVendorArray)
 
-
-
-  
-  
   const followUpsArray = topLeadsArray ?? [];
   const customersArray = topCustomersArray ?? [];
   const activitiesArray = topBookingsArray ?? [];

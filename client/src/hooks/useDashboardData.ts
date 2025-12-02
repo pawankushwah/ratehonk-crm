@@ -11,6 +11,76 @@ export interface DateFilterState {
   endDate?: Date;
 }
 
+function formatLocalYMD(date: Date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+// Add this function to format with time for proper range comparison
+function formatLocalYMDWithTime(date: Date, endOfDay = false) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  if (endOfDay) {
+    return `${y}-${m}-${d} 23:59:59`;
+  }
+  return `${y}-${m}-${d} 00:00:00`;
+}
+
+export function buildFilterParamsFromDateFilter(
+  filter: string,
+  customFrom: Date | null,
+  customTo: Date | null
+) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  let startDate: string | undefined;
+  let endDate: string | undefined;
+
+  const y = today.getFullYear();
+  const m = today.getMonth();
+
+  if (filter === "custom" && customFrom && customTo) {
+    startDate = formatLocalYMDWithTime(customFrom, false);
+    endDate = formatLocalYMDWithTime(customTo, true);
+  }
+
+  else if (filter === "today") {
+    startDate = formatLocalYMDWithTime(today, false);
+    endDate = formatLocalYMDWithTime(today, true);
+  }
+
+  else if (filter === "this_week") {
+    const start = new Date(today);
+    const day = today.getDay();
+    const diff = day === 0 ? 6 : day - 1; // Monday
+    start.setDate(today.getDate() - diff);
+
+    const end = new Date(start);
+    end.setDate(start.getDate() + 6);
+
+    startDate = formatLocalYMDWithTime(start, false);
+    endDate = formatLocalYMDWithTime(end, true);
+  }
+
+  else if (filter === "this_month") {
+    startDate = formatLocalYMDWithTime(new Date(y, m, 1), false);
+    endDate = formatLocalYMDWithTime(new Date(y, m + 1, 0), true);
+  }
+
+  else if (filter === "this_year") {
+    startDate = formatLocalYMDWithTime(new Date(y, 0, 1), false); // Jan 1
+    endDate = formatLocalYMDWithTime(new Date(y, 11, 31), true); // Dec 31
+  }
+
+  return { startDate, endDate };
+}
+
+
+
 export const useDashboardData = (dateFilter: DateFilterState) => {
   const { tenant } = useAuth();
   const queryParams =
@@ -304,17 +374,17 @@ export const useProfitLossData = (
     customTo
   );
 
-  return useQuery<
-    Array<{ month: string; expenses: number; revenue: number; profit: number }>
-  >({
+  return useQuery<{
+    daily: Array<{ date: string; revenue: number; expenses: number; profit: number }>;
+    monthly: Array<{ month: string; revenue: number; expenses: number; profit: number }>;
+  }>({
     queryKey: ["profitLoss", tenant?.id, params],
 
     queryFn: async () => {
       const searchParams = new URLSearchParams(params as any).toString();
+      const url = `/api/dashboard/profit-loss${searchParams ? `?${searchParams}` : ""}`;
 
-       const url = `/api/dashboard/profit-loss${searchParams ? `?${searchParams}` : ""}`;
-
-      console.log("📌 Profit/Loss API URL:", url);
+      
 
       const res = await fetch(url, {
         headers: {
@@ -327,9 +397,13 @@ export const useProfitLossData = (
 
       const data = await res.json();
 
-      console.log("📊 Profit/Loss API Response:", data);
+     
 
-      return Array.isArray(data) ? data : data.result ?? [];
+      // Expect shape: { daily: [...], monthly: [...] }
+      return {
+        daily: Array.isArray(data.daily) ? data.daily : [],
+        monthly: Array.isArray(data.monthly) ? data.monthly : [],
+      };
     },
 
     enabled: !!tenant?.id,
@@ -346,13 +420,15 @@ export const useInvoicesForGraph = (
   customFrom: Date | null,
   customTo: Date | null
 ) => {
+
   const params = buildFilterParamsFromDateFilter(dateFilter, customFrom, customTo);
 
   return useQuery({
-    queryKey: ["invoice-graph-data", tenantId, dateFilter, customFrom, customTo],
+    queryKey: ["invoice-graph-data", tenantId, params],
 
     queryFn: async () => {
       const searchParams = new URLSearchParams(params as any).toString();
+
       const url = `/api/tenants/${tenantId}/All-invoices${searchParams ? `?${searchParams}` : ""}`;
 
       const res = await fetch(url, {
@@ -364,9 +440,8 @@ export const useInvoicesForGraph = (
 
       const json = await res.json();
       const invoices = Array.isArray(json) ? json : json.invoices;
-      console.log("🚀 ~ useInvoicesForGraph ~ invoices:", invoices)
 
-      return invoices; 
+      return invoices;
     },
 
     enabled: !!tenantId,
@@ -418,20 +493,4 @@ const getQueryParams = (dateFilter: DateFilterState) => {
       ? format(dateFilter.endDate, "yyyy-MM-dd")
       : undefined,
   };
-};
-
-const buildFilterParamsFromDateFilter = (
-  dateFilter: string,
-  customFrom: Date | null,
-  customTo: Date | null
-) => {
-  const dateFilters = buildDateFilters(dateFilter, customFrom, customTo);
-  if (dateFilters) {
-    return {
-      startDate: dateFilters.startDate,
-      endDate: dateFilters.endDate,
-      period: dateFilters.filterType,
-    };
-  }
-  return {};
 };

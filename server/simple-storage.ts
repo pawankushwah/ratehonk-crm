@@ -4256,17 +4256,17 @@ async getAllInvoicesByTenant(tenantId: number, startDate?: string, endDate?: str
       }
     };
 
-    let dateFilter = sql`1=1`;
-    if (startDate && endDate) {
-      dateFilter = sql`created_at >= ${startDate} AND created_at <= ${endDate}`;
-    }
+   let dateFilter = sql`1=1`;
 
-    // Fetch invoices with date filter
+if (startDate && endDate) {
+  dateFilter = sql`issue_date >= ${startDate} AND issue_date <= ${endDate}`;
+}
+
     const invoices = await sql`
-      SELECT * FROM invoices
-      WHERE tenant_id = ${tenantId} AND ${dateFilter}
-      ORDER BY created_at DESC
-    `;
+  SELECT * FROM invoices
+  WHERE tenant_id = ${tenantId} AND ${dateFilter}
+  ORDER BY issue_date DESC
+`;
 
     if (invoices.length === 0) return [];
 
@@ -9159,144 +9159,139 @@ async getAllInvoicesByTenant(tenantId: number, startDate?: string, endDate?: str
     return result[0];
   }
 
-  // ====================================================
+
   // DASHBOARD & REPORTS METHODS
-  // ====================================================
+ 
 
-  async getDashboardMetrics(
-    tenantId: number,
-    startDate?: string,
-    endDate?: string,
-    period?: string,
-  ) {
-    console.log(
-      `📊 STORAGE: Getting dashboard metrics for tenant ${tenantId}`,
-      { startDate, endDate, period },
-    );
+async getDashboardMetrics(
+  tenantId: number,
+  startDate?: string,
+  endDate?: string,
+  period?: string
+) {
+  try {
+    console.log(`📊 STORAGE: Dashboard metrics for tenant ${tenantId}`, {
+      startDate,
+      endDate,
+      period,
+    });
 
-    try {
-      // Calculate date range based on period or use provided dates
-      let dateFilter = sql`1=1`;
-      if (startDate && endDate) {
-        dateFilter = sql`created_at BETWEEN ${startDate} AND ${endDate}`;
-      } else if (period) {
-        const now = new Date();
-        let filterDate = new Date();
+   
+    // DATE FILTER FOR INVOICES
+    
+    let invoiceDateFilter = sql`1=1`;
+    let expenseDateFilter = sql`1=1`;
 
-        switch (period) {
-          case "week":
-            filterDate.setDate(now.getDate() - 7);
-            break;
-          case "month":
-            filterDate.setMonth(now.getMonth() - 1);
-            break;
-          case "year":
-            filterDate.setFullYear(now.getFullYear() - 1);
-            break;
-          default:
-            filterDate.setMonth(now.getMonth() - 1); // Default to 1 month
-        }
-
-        dateFilter = sql`created_at >= ${filterDate.toISOString()}`;
-      }
-
-      // Get main metrics
-     const [revenueResult] = await sql`
-  SELECT COALESCE(SUM(ii.total_price), 0) AS revenue
-  FROM invoice_items ii
-  JOIN invoices i ON ii.invoice_id = i.id
-  WHERE i.tenant_id = ${tenantId} AND ${dateFilter}
-`;
-
-      const [bookingsResult] = await sql`
-        SELECT COUNT(*) as active_bookings
-        FROM bookings 
-        WHERE tenant_id = ${tenantId} AND ${dateFilter}
+    if (startDate && endDate) {
+      invoiceDateFilter = sql`
+        i.issue_date >= ${startDate}::date
+        AND i.issue_date < (${endDate}::date + INTERVAL '1 day')
       `;
 
-      const [customersResult] = await sql`
-        SELECT COUNT(*) as customers
-        FROM customers 
-        WHERE tenant_id = ${tenantId} AND ${dateFilter}
+      expenseDateFilter = sql`
+        e.expense_date >= ${startDate}::date
+        AND e.expense_date < (${endDate}::date + INTERVAL '1 day')
       `;
-
-      const [leadsResult] = await sql`
-        SELECT COUNT(*) as leads
-        FROM leads 
-        WHERE tenant_id = ${tenantId} AND ${dateFilter}
-      `;
-
-      // Get monthly revenue data for charts
-      const monthlyRevenue = await sql`
-  SELECT 
-    TO_CHAR(i.created_at, 'Mon') AS month,
-    COUNT(i.id) AS bookings,
-    COALESCE(SUM(ii.total_price), 0) AS revenue
-  FROM invoices i
-  LEFT JOIN invoice_items ii ON i.id = ii.invoice_id
-  WHERE i.tenant_id = ${tenantId}
-    AND i.created_at >= NOW() - INTERVAL '6 months'
-  GROUP BY TO_CHAR(i.created_at, 'Mon'), DATE_TRUNC('month', i.created_at)
-  ORDER BY DATE_TRUNC('month', i.created_at)
-  LIMIT 6
-`;
-
-      // Get leads data for charts
-      const leadsData = await sql`
-        SELECT 
-          TO_CHAR(created_at, 'Mon') as month,
-          COUNT(*) as leads
-        FROM leads 
-        WHERE tenant_id = ${tenantId} 
-          AND created_at >= NOW() - INTERVAL '6 months'
-        GROUP BY TO_CHAR(created_at, 'Mon'), DATE_TRUNC('month', created_at)
-        ORDER BY DATE_TRUNC('month', created_at)
-        LIMIT 6
-      `;
-
-      // Combine revenue and leads data for chart
-      const chartData = monthlyRevenue.map((revenueRow) => {
-        const leadsRow = leadsData.find(
-          (l) => l.month === revenueRow.month,
-        ) || { leads: 0 };
-        return {
-          month: revenueRow.month,
-          bookings: parseInt(revenueRow.bookings),
-          leads: parseInt(leadsRow.leads),
-          revenue: parseFloat(revenueRow.revenue),
-        };
-      });
-
-      const metrics = {
-        revenue: parseFloat(revenueResult.revenue) || 0,
-        activeBookings: parseInt(bookingsResult.active_bookings) || 0,
-        customers: parseInt(customersResult.customers) || 0,
-        leads: parseInt(leadsResult.leads) || 0,
-      };
-
-      console.log(`📊 STORAGE: Dashboard metrics calculated:`, metrics);
-
-      return {
-        metrics,
-        monthlyRevenue: chartData,
-        stats: {
-          conversionRate:
-            metrics.leads > 0
-              ? ((metrics.customers / metrics.leads) * 100).toFixed(1)
-              : 0,
-          avgBookingValue:
-            metrics.activeBookings > 0
-              ? (metrics.revenue / metrics.activeBookings).toFixed(2)
-              : 0,
-          customerSatisfaction: 85, // Mock value - implement based on your satisfaction tracking
-          avgResponseTime: 2.5, // Mock value - implement based on your response time tracking
-        },
-      };
-    } catch (error) {
-      console.error("❌ STORAGE: Error getting dashboard metrics:", error);
-      throw error;
     }
+
+    
+    // REVENUE FROM INVOICES
+   
+    const [revRow] = await sql`
+      SELECT COALESCE(SUM(i.total_amount), 0) AS revenue
+      FROM invoices i
+      WHERE i.tenant_id = ${tenantId}
+      AND ${invoiceDateFilter}
+    `;
+
+    const revenue = Number(revRow.revenue || 0);
+
+   
+    // MANUAL EXPENSES FROM EXPENSE TABLE
+   
+    const [expRow] = await sql`
+      SELECT COALESCE(SUM(e.amount), 0) AS expenses
+      FROM expenses e
+      WHERE e.tenant_id = ${tenantId}
+      AND e.expense_type = 'purchase'
+      AND ${expenseDateFilter}
+    `;
+
+    const expenses = Number(expRow.expenses || 0);
+
+   
+    // PROFIT CALCULATION
+
+    const profit = revenue - expenses;
+
+  
+    // ACTIVE BOOKINGS
+ 
+    const [bookingsRow] = await sql`
+      SELECT COUNT(*) AS active_bookings
+      FROM bookings
+      WHERE tenant_id = ${tenantId}
+      AND ${invoiceDateFilter}
+    `;
+
+  
+    // CUSTOMERS
+  
+    const [customersRow] = await sql`
+      SELECT COUNT(*) AS customers
+      FROM customers
+      WHERE tenant_id = ${tenantId}
+      AND ${invoiceDateFilter}
+    `;
+
+   
+    // LEADS
+ 
+    const [leadsRow] = await sql`
+      SELECT COUNT(*) AS leads
+      FROM leads
+      WHERE tenant_id = ${tenantId}
+      AND ${invoiceDateFilter}
+    `;
+
+ 
+    // MONTHLY REVENUE CHART (same as earlier)
+
+    const monthlyRevenue = await sql`
+      SELECT 
+        TO_CHAR(i.issue_date, 'Mon') AS month,
+        COUNT(i.id) AS bookings,
+        COALESCE(SUM(i.total_amount), 0) AS revenue
+      FROM invoices i
+      WHERE i.tenant_id = ${tenantId}
+        AND i.issue_date >= NOW() - INTERVAL '6 months'
+      GROUP BY TO_CHAR(i.issue_date, 'Mon'), DATE_TRUNC('month', i.issue_date)
+      ORDER BY DATE_TRUNC('month', i.issue_date)
+      LIMIT 6
+    `;
+
+
+    // FINAL RETURN
+   
+    return {
+      metrics: {
+        revenue: profit, 
+        actualRevenue: revenue,
+        expenses,
+        profit,
+        activeBookings: Number(bookingsRow.active_bookings),
+        customers: Number(customersRow.customers),
+        leads: Number(leadsRow.leads),
+      },
+      monthlyRevenue,
+    };
+
+  } catch (error) {
+    console.error("❌ STORAGE: Dashboard Metrics Error:", error);
+    throw error;
   }
+}
+
 
   async getChartData(
     tenantId: number,
