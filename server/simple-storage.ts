@@ -408,7 +408,7 @@ export class SimpleStorage {
         const trimmedSearch = search.trim();
         const searchTerm = `%${trimmedSearch.toLowerCase()}%`;
         const phoneSearchTerm = `%${trimmedSearch}%`; // Phone numbers should not be lowercased
-        
+
         whereParts.push(`
           (LOWER(c.name) LIKE $${paramIndex}
            OR LOWER(c.email) LIKE $${paramIndex}
@@ -430,9 +430,9 @@ export class SimpleStorage {
         // Ensure dates are in YYYY-MM-DD format, then append time
         const startDateTime = `${startDate.trim()} 00:00:00`;
         const endDateTime = `${endDate.trim()} 23:59:59.999`;
-        
+
         console.log(`🔍 Date filter applied: ${startDateTime} to ${endDateTime}`);
-        
+
         whereParts.push(
           `c.created_at >= $${paramIndex++}::timestamp AND c.created_at <= $${paramIndex++}::timestamp`,
         );
@@ -607,14 +607,14 @@ export class SimpleStorage {
       if (!phone || phone.trim() === "") {
         return null;
       }
-      
+
       // Normalize phone number by removing spaces, dashes, parentheses, dots
       const normalizePhone = (phoneNum: string): string => {
         return phoneNum.replace(/[\s\-\(\)\.]/g, "").trim();
       };
-      
+
       const normalizedPhone = normalizePhone(phone);
-      
+
       // Use SQL to find customers with matching phone after normalization
       // This approach checks if any customer's phone (after normalization) matches
       const customers = await sql`
@@ -624,7 +624,7 @@ export class SimpleStorage {
         AND phone != ''
         AND LENGTH(phone) > 0
       `;
-      
+
       // Check if any customer's phone matches after normalization
       // This handles cases like: "123-456-7890" vs "1234567890" vs "(123) 456-7890"
       for (const customer of customers) {
@@ -635,7 +635,7 @@ export class SimpleStorage {
           }
         }
       }
-      
+
       return null;
     } catch (error) {
       console.error("Error getting customer by phone:", error);
@@ -882,22 +882,22 @@ export class SimpleStorage {
   async deleteCustomer(customerId: number, tenantId: number): Promise<boolean> {
     try {
       console.log(`🔍 Deleting customer ${customerId} for tenant ${tenantId}`);
-      
+
       // Delete customer, ensuring it belongs to the tenant
       const result = await sql`
         DELETE FROM customers 
         WHERE id = ${customerId} AND tenant_id = ${tenantId}
       `;
-      
+
       // Check if any rows were deleted
       const deleted = result && result.count > 0;
-      
+
       if (deleted) {
         console.log(`🔍 ✅ Customer ${customerId} deleted successfully`);
       } else {
         console.log(`🔍 ⚠️ No customer found with id ${customerId} for tenant ${tenantId}`);
       }
-      
+
       return deleted;
     } catch (error) {
       console.error("Error deleting customer:", error);
@@ -3667,7 +3667,7 @@ export class SimpleStorage {
       let customerEmail = null;
       let customerPhone = null;
       let customerAddress = null;
-      
+
       try {
         if (invoice.customer_id) {
           const customers = await sql`
@@ -3808,7 +3808,7 @@ export class SimpleStorage {
     }
   }
 
- async getInvoicesByTenant(
+  async getInvoicesByTenant(
     tenantId: number,
     filters?: {
       customerId?: number;
@@ -3827,10 +3827,10 @@ export class SimpleStorage {
       const page = filters?.page || 1;
       const pageSize = filters?.pageSize || 10;
       const offset = (page - 1) * pageSize;
-      console.log("🔍 getInvoicesByTenant - filters:",filters);
+      console.log("🔍 getInvoicesByTenant - filters:", filters);
       // Initialize filters object if not provided
       const filterParams = filters || {};
-      
+
       console.log("🔍 getInvoicesByTenant - Filters received:", JSON.stringify(filterParams, null, 2));
       console.log("🔍 getInvoicesByTenant - Tenant ID:", tenantId);
       console.log("🔍 getInvoicesByTenant - Page:", page, "PageSize:", pageSize, "Offset:", offset);
@@ -3838,9 +3838,9 @@ export class SimpleStorage {
       // Build WHERE clause dynamically - always use table prefix to avoid ambiguity
       let whereClause = sql`invoices.tenant_id = ${tenantId}`;
       let needsJoin = false;
-      
+
       console.log("🔍 Initial WHERE clause: invoices.tenant_id =", tenantId);
-      
+
       // Handle customer filter - can be single ID or array of IDs
       if (filterParams?.customerId) {
         if (Array.isArray(filterParams.customerId)) {
@@ -3870,7 +3870,7 @@ export class SimpleStorage {
       let joinClause = sql``;
       const hasSearch = filterParams?.search && filterParams.search.trim() !== "";
       const shouldFilterAfterFetch = filterParams?.vendorId || filterParams?.providerId || filterParams?.leadTypeId || hasSearch;
-      
+
       // Only apply search in SQL WHERE clause if we're NOT filtering after fetch
       // (i.e., when we don't need to check line items)
       // If we need to check line items, we'll filter in JavaScript after fetching
@@ -3886,7 +3886,7 @@ export class SimpleStorage {
         needsJoin = true;
         joinClause = sql`LEFT JOIN customers c ON invoices.customer_id = c.id`;
       }
-      
+
       console.log("🔍 shouldFilterAfterFetch:", shouldFilterAfterFetch);
       console.log("🔍 Filter breakdown:");
       console.log("🔍   - vendorId:", filterParams?.vendorId, "(type:", typeof filterParams?.vendorId, ")");
@@ -3897,21 +3897,21 @@ export class SimpleStorage {
       console.log("🔍   - status:", filterParams?.status, "(type:", typeof filterParams?.status, ")");
       console.log("🔍   - sortBy:", filterParams?.sortBy, "sortOrder:", filterParams?.sortOrder);
       console.log("🔍 ========================================");
-      
+
       // Determine sort column and order
       const sortBy = filterParams?.sortBy || 'created_at';
       const sortOrder = filterParams?.sortOrder || 'desc';
-      
+
       // Whitelist of valid sort columns for security
       const validSortColumns = [
         'invoice_number', 'customer_id', 'issue_date', 'due_date',
         'total_amount', 'paid_amount', 'status', 'created_at'
       ];
-      
+
       // Validate and map sort column
       const safeSortBy = validSortColumns.includes(sortBy) ? sortBy : 'created_at';
       const orderDirection = sortOrder.toUpperCase() === 'ASC' ? sql`ASC` : sql`DESC`;
-      
+
       // Build ORDER BY based on whether we need join prefix
       let orderByColumn;
       if (needsJoin) {
@@ -3971,7 +3971,7 @@ export class SimpleStorage {
             break;
         }
       }
-      
+
       let invoices;
       if (shouldFilterAfterFetch) {
         // Fetch all matching invoices (without pagination limit) to filter by line items
@@ -4009,7 +4009,7 @@ export class SimpleStorage {
           `;
         }
       }
-      
+
       // Get total count - will be recalculated after filtering if needed
       let totalCount = 0;
       if (!shouldFilterAfterFetch) {
@@ -4085,13 +4085,13 @@ export class SimpleStorage {
           if (filterParams?.search && filterParams.search.trim() !== "") {
             const searchTerm = filterParams.search.trim().toLowerCase();
             console.log("🔍 Checking search for invoice ID:", invoice.id, "Search term:", searchTerm);
-            
+
             // Check main invoice number
             const invoiceNumberMatch = invoice.invoice_number?.toLowerCase().includes(searchTerm);
-            
+
             // Check customer name
             const customerNameMatch = customerName?.toLowerCase().includes(searchTerm);
-            
+
             // Check if search matches any line item's invoice/voucher number
             const lineItemMatch = lineItems.some((item: any) => {
               const itemInvoiceNumber = (item.invoiceNumber?.toString() || "").toLowerCase();
@@ -4102,7 +4102,7 @@ export class SimpleStorage {
               }
               return matches;
             });
-            
+
             // Include invoice if it matches in invoice number, customer name, or line items
             const hasMatch = invoiceNumberMatch || customerNameMatch || lineItemMatch;
             console.log("🔍 Invoice ID:", invoice.id, "invoiceNumberMatch:", invoiceNumberMatch, "customerNameMatch:", customerNameMatch, "lineItemMatch:", lineItemMatch);
@@ -4134,7 +4134,7 @@ export class SimpleStorage {
               }
               return true;
             });
-            
+
             console.log("🔍 Invoice ID:", invoice.id, "hasMatchingItem:", hasMatchingItem, "lineItems count:", lineItems.length);
             if (!hasMatchingItem && lineItems.length > 0) {
               console.log("🔍 Excluding invoice ID:", invoice.id, "- no matching vendor/provider in line items");
@@ -4233,10 +4233,10 @@ export class SimpleStorage {
           totalPages: Math.ceil(totalCount / pageSize),
         },
       };
-      
+
       console.log("🔍 Final result - Data count:", result.data.length, "Total:", result.pagination.total, "TotalPages:", result.pagination.totalPages);
       console.log("🔍 ========================================");
-      
+
       return result;
     } catch (error) {
       console.error("getInvoicesByTenant error:", error);
@@ -4244,131 +4244,131 @@ export class SimpleStorage {
     }
   }
 
-async getAllInvoicesByTenant(tenantId: number, startDate?: string, endDate?: string) {
-  try {
-    const parseJsonSafe = (value: any) => {
-      if (!value) return [];
-      if (typeof value === "object") return value;
-      try {
-        return JSON.parse(value);
-      } catch {
-        return [];
+  async getAllInvoicesByTenant(tenantId: number, startDate?: string, endDate?: string) {
+    try {
+      const parseJsonSafe = (value: any) => {
+        if (!value) return [];
+        if (typeof value === "object") return value;
+        try {
+          return JSON.parse(value);
+        } catch {
+          return [];
+        }
+      };
+
+      let dateFilter = sql`1=1`;
+
+      if (startDate && endDate) {
+        dateFilter = sql`issue_date >= ${startDate} AND issue_date <= ${endDate}`;
       }
-    };
 
-   let dateFilter = sql`1=1`;
-
-if (startDate && endDate) {
-  dateFilter = sql`issue_date >= ${startDate} AND issue_date <= ${endDate}`;
-}
-
-    const invoices = await sql`
+      const invoices = await sql`
   SELECT * FROM invoices
   WHERE tenant_id = ${tenantId} AND ${dateFilter}
   ORDER BY issue_date DESC
 `;
 
-    if (invoices.length === 0) return [];
+      if (invoices.length === 0) return [];
 
-    const invoiceIds = invoices.map(i => i.id);
+      const invoiceIds = invoices.map(i => i.id);
 
-    //  Fetch invoice_items 
-    const invoiceItems = await sql`
+      //  Fetch invoice_items 
+      const invoiceItems = await sql`
       SELECT * FROM invoice_items
       WHERE invoice_id = ANY(${invoiceIds})
     `;
 
-    const itemMap: any = {};
-    invoiceItems.forEach(item => {
-      if (!itemMap[item.invoice_id]) itemMap[item.invoice_id] = [];
-      itemMap[item.invoice_id].push(item);
-    });
+      const itemMap: any = {};
+      invoiceItems.forEach(item => {
+        if (!itemMap[item.invoice_id]) itemMap[item.invoice_id] = [];
+        itemMap[item.invoice_id].push(item);
+      });
 
-    //  Extract provider/vendor IDs from JSON
-    const allJsonLineItems = invoices.flatMap(inv => parseJsonSafe(inv.line_items));
+      //  Extract provider/vendor IDs from JSON
+      const allJsonLineItems = invoices.flatMap(inv => parseJsonSafe(inv.line_items));
 
-    const providerIds = [
-      ...new Set(
-        allJsonLineItems
-          .map(li => Number(li.serviceProviderId))
-          .filter(id => !isNaN(id))
-      ),
-    ];
+      const providerIds = [
+        ...new Set(
+          allJsonLineItems
+            .map(li => Number(li.serviceProviderId))
+            .filter(id => !isNaN(id))
+        ),
+      ];
 
-    const vendorIds = [
-      ...new Set(
-        allJsonLineItems
-          .map(li => Number(li.vendor))
-          .filter(id => !isNaN(id))
-      ),
-    ];
+      const vendorIds = [
+        ...new Set(
+          allJsonLineItems
+            .map(li => Number(li.vendor))
+            .filter(id => !isNaN(id))
+        ),
+      ];
 
-    //  Providers lookup 
-    const providers = providerIds.length
-      ? await sql`
+      //  Providers lookup 
+      const providers = providerIds.length
+        ? await sql`
           SELECT id, name
           FROM service_providers
           WHERE id = ANY(${providerIds})
         `
-      : [];
+        : [];
 
-    const providerMap = Object.fromEntries(
-      providers.map(p => [p.id, p])
-    );
+      const providerMap = Object.fromEntries(
+        providers.map(p => [p.id, p])
+      );
 
-    // Vendors lookup 
-    const vendors = vendorIds.length
-      ? await sql`
+      // Vendors lookup 
+      const vendors = vendorIds.length
+        ? await sql`
           SELECT id, name
           FROM vendors
           WHERE id = ANY(${vendorIds})
         `
-      : [];
+        : [];
 
-    const vendorMap = Object.fromEntries(
-      vendors.map(v => [v.id, v])
-    );
+      const vendorMap = Object.fromEntries(
+        vendors.map(v => [v.id, v])
+      );
 
-    // Build final invoice response 
-    return invoices.map(inv => {
-      const rawLineItems = parseJsonSafe(inv.line_items);
+      // Build final invoice response 
+      return invoices.map(inv => {
+        const rawLineItems = parseJsonSafe(inv.line_items);
 
-      const lineItems = rawLineItems.map(li => ({
-        ...li,
-        serviceProviderName: providerMap[Number(li.serviceProviderId)]?.name || null,
-        vendorName: vendorMap[Number(li.vendor)]?.name || null,
-      }));
+        const lineItems = rawLineItems.map(li => ({
+          ...li,
+          serviceProviderName: providerMap[Number(li.serviceProviderId)]?.name || null,
+          vendorName: vendorMap[Number(li.vendor)]?.name || null,
+        }));
 
-      return {
-        id: inv.id,
-        tenantId: inv.tenant_id,
-        customerId: inv.customer_id,
-        bookingId: inv.booking_id,
-        invoiceNumber: inv.invoice_number,
+        return {
+          id: inv.id,
+          tenantId: inv.tenant_id,
+          customerId: inv.customer_id,
+          bookingId: inv.booking_id,
+          invoiceNumber: inv.invoice_number,
 
-        status: inv.status,
-        issueDate: inv.issue_date,
-        dueDate: inv.due_date,
+          status: inv.status,
+          issueDate: inv.issue_date,
+          dueDate: inv.due_date,
 
-        subtotal: parseFloat(inv.subtotal),
-        taxAmount: parseFloat(inv.tax_amount || "0"),
-        discountAmount: parseFloat(inv.discount_amount || "0"),
-        totalAmount: parseFloat(inv.total_amount),
+          subtotal: parseFloat(inv.subtotal),
+          taxAmount: parseFloat(inv.tax_amount || "0"),
+          discountAmount: parseFloat(inv.discount_amount || "0"),
+          totalAmount: parseFloat(inv.total_amount),
 
-        notes: inv.notes,
-        additionalNotes: inv.additional_notes,
-        createdAt: inv.created_at,
+          notes: inv.notes,
+          additionalNotes: inv.additional_notes,
+          createdAt: inv.created_at,
 
-        lineItems,
-        items: itemMap[inv.id] || []
-      };
-    });
+          lineItems,
+          items: itemMap[inv.id] || []
+        };
+      });
 
-  } catch (error) {
-    console.error("❌ getAllInvoicesByTenant error:", error);
-    throw error;
+    } catch (error) {
+      console.error("❌ getAllInvoicesByTenant error:", error);
+      throw error;
+    }
   }
-}
 
 
 
@@ -4412,8 +4412,8 @@ if (startDate && endDate) {
       // Sanitize numeric fields to ensure they're not undefined
       const subtotal = parseFloat(
         invoiceData.subtotal?.toString() ||
-          invoiceData.totalAmount?.toString() ||
-          "0",
+        invoiceData.totalAmount?.toString() ||
+        "0",
       );
       const taxAmount = parseFloat(invoiceData.taxAmount?.toString() || "0");
       const totalAmount = parseFloat(
@@ -4425,7 +4425,7 @@ if (startDate && endDate) {
       // Prepare issue date - use issueDate if provided, otherwise invoiceDate, otherwise today
       const issueDate = invoiceData.issueDate || invoiceData.invoiceDate || new Date().toISOString().split("T")[0];
       const dueDate = invoiceData.dueDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
-      
+
       // Store full line items as JSON for complete data preservation
       const lineItemsJson = JSON.stringify(invoiceData.lineItems || invoiceData.items || []);
 
@@ -4469,12 +4469,12 @@ if (startDate && endDate) {
 
       // Handle line items - check both lineItems and items for compatibility
       const lineItems = invoiceData.lineItems || invoiceData.items || [];
-      
+
       if (lineItems.length > 0) {
         for (const item of lineItems) {
           // Build description from available fields
           const description = item.itemTitle || item.description || item.travelCategory || "Item";
-          
+
           // Calculate unit price and total price
           const unitPrice = parseFloat(item.sellingPrice?.toString() || item.unitPrice?.toString() || "0");
           const quantity = parseInt(item.quantity?.toString() || "1");
@@ -4700,12 +4700,12 @@ if (startDate && endDate) {
       }
 
       const updatedInvoice = invoice[0];
-      
+
       // Also update invoice_items table if line items are provided
       if (invoiceData.lineItems && Array.isArray(invoiceData.lineItems)) {
         // Delete existing items
         await sql`DELETE FROM invoice_items WHERE invoice_id = ${invoiceId}`;
-        
+
         // Insert new items
         for (const item of invoiceData.lineItems) {
           const description = item.itemTitle || item.description || item.travelCategory || "Item";
@@ -4733,10 +4733,10 @@ if (startDate && endDate) {
       if (invoiceData.installments !== undefined) {
         // Get tenantId from invoiceData or updatedInvoice
         const tenantId = invoiceData.tenantId || updatedInvoice.tenant_id;
-        
+
         // Delete existing installments
         await sql`DELETE FROM payment_installments WHERE invoice_id = ${invoiceId} AND tenant_id = ${tenantId}`;
-        
+
         // Create new installments if provided
         if (Array.isArray(invoiceData.installments) && invoiceData.installments.length > 0) {
           try {
@@ -5699,9 +5699,9 @@ if (startDate && endDate) {
         entityId: record.entity_id,
         previousUser: record.previous_user_id
           ? {
-              id: record.previous_user_id,
-              name: `${record.previous_user_first_name} ${record.previous_user_last_name}`,
-            }
+            id: record.previous_user_id,
+            name: `${record.previous_user_first_name} ${record.previous_user_last_name}`,
+          }
           : null,
         newUser: {
           id: record.new_user_id,
@@ -8070,7 +8070,7 @@ if (startDate && endDate) {
       } catch (error: any) {
         // If columns don't exist, try with category and tax_rate_id only
         if (error && error.message && (
-          error.message.includes('column "tax"') || 
+          error.message.includes('column "tax"') ||
           error.message.includes('column "discount"') ||
           error.message.includes('column tax') ||
           error.message.includes('column discount')
@@ -8093,7 +8093,7 @@ if (startDate && endDate) {
           } catch (error2: any) {
             // If category or tax_rate_id don't exist either, try basic fields
             if (error2 && error2.message && (
-              error2.message.includes('column "category"') || 
+              error2.message.includes('column "category"') ||
               error2.message.includes('column "tax_rate_id"')
             )) {
               console.log("⚠️ Category/tax_rate_id columns not found, using basic fields only");
@@ -9161,136 +9161,142 @@ if (startDate && endDate) {
 
 
   // DASHBOARD & REPORTS METHODS
- 
+
 
 async getDashboardMetrics(
-  tenantId: number,
-  startDate?: string,
-  endDate?: string,
-  period?: string
-) {
-  try {
-    console.log(`📊 STORAGE: Dashboard metrics for tenant ${tenantId}`, {
-      startDate,
-      endDate,
-      period,
-    });
+    tenantId: number,
+    startDate?: string,
+    endDate?: string,
+    period?: string,
+  ) {
+    console.log(
+      `📊 STORAGE: Getting dashboard metrics for tenant ${tenantId}`,
+      { startDate, endDate, period },
+    );
 
-   
-    // DATE FILTER FOR INVOICES
-    
-    let invoiceDateFilter = sql`1=1`;
-    let expenseDateFilter = sql`1=1`;
+    try {
+      // Calculate date range based on period or use provided dates
+      let dateFilter = sql`1=1`;
+      if (startDate && endDate) {
+        dateFilter = sql`created_at BETWEEN ${startDate} AND ${endDate}`;
+      } else if (period) {
+        const now = new Date();
+        let filterDate = new Date();
 
-    if (startDate && endDate) {
-      invoiceDateFilter = sql`
-        i.issue_date >= ${startDate}::date
-        AND i.issue_date < (${endDate}::date + INTERVAL '1 day')
+        switch (period) {
+          case "week":
+            filterDate.setDate(now.getDate() - 7);
+            break;
+          case "month":
+            filterDate.setMonth(now.getMonth() - 1);
+            break;
+          case "year":
+            filterDate.setFullYear(now.getFullYear() - 1);
+            break;
+          default:
+            filterDate.setMonth(now.getMonth() - 1); // Default to 1 month
+        }
+
+        dateFilter = sql`created_at >= ${filterDate.toISOString()}`;
+      }
+
+      // Get main metrics
+     const [revenueResult] = await sql`
+  SELECT COALESCE(SUM(ii.total_price), 0) AS revenue
+  FROM invoice_items ii
+  JOIN invoices i ON ii.invoice_id = i.id
+  WHERE i.tenant_id = ${tenantId} AND ${dateFilter}
+`;
+
+      const [bookingsResult] = await sql`
+        SELECT COUNT(*) as active_bookings
+        FROM bookings 
+        WHERE tenant_id = ${tenantId} AND ${dateFilter}
       `;
 
-      expenseDateFilter = sql`
-        e.expense_date >= ${startDate}::date
-        AND e.expense_date < (${endDate}::date + INTERVAL '1 day')
+      const [customersResult] = await sql`
+        SELECT COUNT(*) as customers
+        FROM customers 
+        WHERE tenant_id = ${tenantId} AND ${dateFilter}
       `;
+
+      const [leadsResult] = await sql`
+        SELECT COUNT(*) as leads
+        FROM leads 
+        WHERE tenant_id = ${tenantId} AND ${dateFilter}
+      `;
+
+      // Get monthly revenue data for charts
+      const monthlyRevenue = await sql`
+  SELECT 
+    TO_CHAR(i.created_at, 'Mon') AS month,
+    COUNT(i.id) AS bookings,
+    COALESCE(SUM(ii.total_price), 0) AS revenue
+  FROM invoices i
+  LEFT JOIN invoice_items ii ON i.id = ii.invoice_id
+  WHERE i.tenant_id = ${tenantId}
+    AND i.created_at >= NOW() - INTERVAL '6 months'
+  GROUP BY TO_CHAR(i.created_at, 'Mon'), DATE_TRUNC('month', i.created_at)
+  ORDER BY DATE_TRUNC('month', i.created_at)
+  LIMIT 6
+`;
+
+      // Get leads data for charts
+      const leadsData = await sql`
+        SELECT 
+          TO_CHAR(created_at, 'Mon') as month,
+          COUNT(*) as leads
+        FROM leads 
+        WHERE tenant_id = ${tenantId} 
+          AND created_at >= NOW() - INTERVAL '6 months'
+        GROUP BY TO_CHAR(created_at, 'Mon'), DATE_TRUNC('month', created_at)
+        ORDER BY DATE_TRUNC('month', created_at)
+        LIMIT 6
+      `;
+
+      // Combine revenue and leads data for chart
+      const chartData = monthlyRevenue.map((revenueRow) => {
+        const leadsRow = leadsData.find(
+          (l) => l.month === revenueRow.month,
+        ) || { leads: 0 };
+        return {
+          month: revenueRow.month,
+          bookings: parseInt(revenueRow.bookings),
+          leads: parseInt(leadsRow.leads),
+          revenue: parseFloat(revenueRow.revenue),
+        };
+      });
+
+      const metrics = {
+        revenue: parseFloat(revenueResult.revenue) || 0,
+        activeBookings: parseInt(bookingsResult.active_bookings) || 0,
+        customers: parseInt(customersResult.customers) || 0,
+        leads: parseInt(leadsResult.leads) || 0,
+      };
+
+      console.log(`📊 STORAGE: Dashboard metrics calculated:`, metrics);
+
+      return {
+        metrics,
+        monthlyRevenue: chartData,
+        stats: {
+          conversionRate:
+            metrics.leads > 0
+              ? ((metrics.customers / metrics.leads) * 100).toFixed(1)
+              : 0,
+          avgBookingValue:
+            metrics.activeBookings > 0
+              ? (metrics.revenue / metrics.activeBookings).toFixed(2)
+              : 0,
+          customerSatisfaction: 85, // Mock value - implement based on your satisfaction tracking
+          avgResponseTime: 2.5, // Mock value - implement based on your response time tracking
+        },
+      };
+    } catch (error) {
+      console.error("❌ STORAGE: Error getting dashboard metrics:", error);
+      throw error;
     }
-
-    
-    // REVENUE FROM INVOICES
-   
-    const [revRow] = await sql`
-      SELECT COALESCE(SUM(i.total_amount), 0) AS revenue
-      FROM invoices i
-      WHERE i.tenant_id = ${tenantId}
-      AND ${invoiceDateFilter}
-    `;
-
-    const revenue = Number(revRow.revenue || 0);
-
-   
-    // MANUAL EXPENSES FROM EXPENSE TABLE
-   
-    const [expRow] = await sql`
-      SELECT COALESCE(SUM(e.amount), 0) AS expenses
-      FROM expenses e
-      WHERE e.tenant_id = ${tenantId}
-      AND e.expense_type = 'purchase'
-      AND ${expenseDateFilter}
-    `;
-
-    const expenses = Number(expRow.expenses || 0);
-
-   
-    // PROFIT CALCULATION
-
-    const profit = revenue - expenses;
-
-  
-    // ACTIVE BOOKINGS
- 
-    const [bookingsRow] = await sql`
-      SELECT COUNT(*) AS active_bookings
-      FROM bookings
-      WHERE tenant_id = ${tenantId}
-      AND ${invoiceDateFilter}
-    `;
-
-  
-    // CUSTOMERS
-  
-    const [customersRow] = await sql`
-      SELECT COUNT(*) AS customers
-      FROM customers
-      WHERE tenant_id = ${tenantId}
-      AND ${invoiceDateFilter}
-    `;
-
-   
-    // LEADS
- 
-    const [leadsRow] = await sql`
-      SELECT COUNT(*) AS leads
-      FROM leads
-      WHERE tenant_id = ${tenantId}
-      AND ${invoiceDateFilter}
-    `;
-
- 
-    // MONTHLY REVENUE CHART (same as earlier)
-
-    const monthlyRevenue = await sql`
-      SELECT 
-        TO_CHAR(i.issue_date, 'Mon') AS month,
-        COUNT(i.id) AS bookings,
-        COALESCE(SUM(i.total_amount), 0) AS revenue
-      FROM invoices i
-      WHERE i.tenant_id = ${tenantId}
-        AND i.issue_date >= NOW() - INTERVAL '6 months'
-      GROUP BY TO_CHAR(i.issue_date, 'Mon'), DATE_TRUNC('month', i.issue_date)
-      ORDER BY DATE_TRUNC('month', i.issue_date)
-      LIMIT 6
-    `;
-
-
-    // FINAL RETURN
-   
-    return {
-      metrics: {
-        revenue: profit, 
-        actualRevenue: revenue,
-        expenses,
-        profit,
-        activeBookings: Number(bookingsRow.active_bookings),
-        customers: Number(customersRow.customers),
-        leads: Number(leadsRow.leads),
-      },
-      monthlyRevenue,
-    };
-
-  } catch (error) {
-    console.error("❌ STORAGE: Dashboard Metrics Error:", error);
-    throw error;
   }
-}
 
 
   async getChartData(
@@ -10094,12 +10100,12 @@ async getDashboardMetrics(
         showDiscount: true,
         showNotes: true,
         showVoucherInvoice: true,
-          showProvider: true,
-          showVendor: true,
-          showUnitPrice: true,
-          showAdditionalCommission: false,
-          sendInvoiceViaEmail: true,
-          sendInvoiceViaWhatsapp: false,
+        showProvider: true,
+        showVendor: true,
+        showUnitPrice: true,
+        showAdditionalCommission: false,
+        sendInvoiceViaEmail: true,
+        sendInvoiceViaWhatsapp: false,
       };
     }
   }
