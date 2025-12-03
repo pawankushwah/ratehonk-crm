@@ -13,7 +13,6 @@ export function ServiceProviderChart() {
   const [customDateTo, setCustomDateTo] = useState<Date | null>(null);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
-
   const [selectedCategory, setSelectedCategory] = useState<string>("");
 
   const { data: invoices = [], isLoading } = useInvoicesForGraph(
@@ -97,7 +96,6 @@ export function ServiceProviderChart() {
 
     return prepareProviderData(mapped);
   }, [invoices, selectedCategory]);
- 
 
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
@@ -113,11 +111,10 @@ export function ServiceProviderChart() {
   };
 
   useEffect(() => {
-  if (categories.length > 0) {
-    setSelectedCategory(categories[2]); 
-  }
-}, [categories]);
-
+    if (categories.length > 0) {
+      setSelectedCategory(categories[2]);
+    }
+  }, [categories]);
 
   return (
     <Card className="col-span-12 lg:col-span-6 bg-white shadow-md rounded-xl p-4">
@@ -127,22 +124,29 @@ export function ServiceProviderChart() {
             Service Providers
           </CardTitle>
 
-       
-            <div className="mb-5">
-              <select
-                className="border px-3 py-2 rounded-md text-sm w-full sm:w-60"
-                value={selectedCategory}
-                onChange={(e) => setSelectedCategory(e.target.value)}
-              >
-          
-                {categories.map((cat, i) => (
-                  <option key={i} value={cat}>
-                    {cat}
-                  </option>
-                ))}
-              </select>
-            </div>
+          <DateFilter
+            dateFilter={dateFilter}
+            setDateFilter={setDateFilter}
+            customDateFrom={customDateFrom}
+            setCustomDateFrom={setCustomDateFrom}
+            customDateTo={customDateTo}
+            setCustomDateTo={setCustomDateTo}
+          />
         </div>
+
+          <div className="mb-5">
+            <select
+              className="border px-3 py-2 rounded-md text-sm w-full sm:w-60"
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value)}
+            >
+              {categories.map((cat, i) => (
+                <option key={i} value={cat}>
+                  {cat}
+                </option>
+              ))}
+            </select>
+          </div>
       </CardHeader>
 
       <CardContent>
@@ -151,51 +155,58 @@ export function ServiceProviderChart() {
         ) : (
           <>
             {providerData.length === 0 ? (
-              <p className="text-center text-gray-500 text-sm">
-                No data available for the selected category.
-              </p>
+              <div className="flex h-full flex-col items-center justify-center text-center px-6">
+                <div className="w-16 h-16 bg-gray-200 border-2 border-dashed rounded-xl mb-4" />
+                <p className="text-gray-600 font-medium">
+                  No Service Provider Data found
+                </p>
+                <p className="text-xs text-gray-400 mt-2">
+                  Try selecting a different date
+                </p>
+              </div>
             ) : (
               <div className="flex flex-col sm:flex-row items-center justify-between gap-6">
                 <div className="w-full h-72">
-                 <ResponsiveContainer width="100%" height="100%">
-  <PieChart>
-    <Tooltip content={<CustomTooltip />} />
-
-    <Pie
-      data={providerData}
-      dataKey="value"
-      nameKey="name"
-      cx="50%"
-      cy="50%"
-      innerRadius={70}
-      outerRadius={110}
-      paddingAngle={3}
-      startAngle={90}
-      endAngle={450}
-      stroke="none"
-      onMouseEnter={(_, index) => setActiveIndex(index)}
-      onMouseLeave={() => setActiveIndex(null)}
-    >
-      {providerData.map((entry, idx) => (
-        <Cell
-          key={idx}
-          fill={entry.color}
-          style={{
-            transition: "0.3s ease",
-            transformOrigin: "center",
-            cursor: "pointer",
-            transform: activeIndex === idx ? "scale(1.08)" : "scale(1)",
-            filter:
-              activeIndex === idx
-                ? "drop-shadow(0px 0px 6px rgba(0,0,0,0.3))"
-                : "none",
-          }}
-        />
-      ))}
-    </Pie>
-  </PieChart>
-</ResponsiveContainer>
-
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Tooltip content={<CustomTooltip />} />
+                      <Pie
+                        data={providerData}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={70}
+                        outerRadius={110}
+                        paddingAngle={3}
+                        startAngle={90}
+                        endAngle={450}
+                        stroke="none"
+                        onMouseEnter={(_, index) => setActiveIndex(index)}
+                        onMouseLeave={() => setActiveIndex(null)}
+                      >
+                        {providerData.map((entry, idx) => (
+                          <Cell
+                            key={idx}
+                            fill={entry.color}
+                            style={{
+                              transition: "0.3s ease",
+                              transformOrigin: "center",
+                              cursor: "pointer",
+                              transform:
+                                activeIndex === idx
+                                  ? "scale(1.08)"
+                                  : "scale(1)",
+                              filter:
+                                activeIndex === idx
+                                  ? "drop-shadow(0px 0px 6px rgba(0,0,0,0.3))"
+                                  : "none",
+                            }}
+                          />
+                        ))}
+                      </Pie>
+                    </PieChart>
+                  </ResponsiveContainer>
                 </div>
                 <div className="grid grid-cols-2 gap-y-3 gap-x-6 text-xs">
                   {providerData.map((item, index) => (

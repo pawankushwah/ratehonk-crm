@@ -1,6 +1,7 @@
 import { useRef, useState, useMemo } from "react";
 import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
+
 import {
   Card,
   CardContent,
@@ -8,6 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+
 import {
   BarChart,
   Bar,
@@ -15,38 +17,77 @@ import {
   YAxis,
   Tooltip,
   ResponsiveContainer,
+  Legend,
 } from "recharts";
+
 import { Button } from "@/components/ui/button";
 import { Download } from "lucide-react";
 import { useAuth } from "@/components/auth/auth-provider";
-
-import { useProfitLossData } from "@/hooks/useDashboardData";
+import { useInvoicesForGraph } from "@/hooks/useDashboardData";
 import { DateFilter } from "../ui/date-filter";
 
-function formatYMD(d: Date): string {
+
+
+function formatYMDLocal(d: Date) {
   const year = d.getFullYear();
   const month = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
 
-function padDay(n: number): string {
-  return String(n).padStart(2, "0");
+function parseInvoiceDate(raw: any) {
+  if (!raw) return null;
+  const iso = new Date(raw);
+  if (!isNaN(iso.getTime())) return iso;
+
+  const alt = new Date(String(raw).replace(" ", "T"));
+  if (!isNaN(alt.getTime())) return alt;
+
+  return null;
+}
+
+const formatShort = (num: number) => {
+  const abs = Math.abs(num);
+
+  if (abs >= 1_000_000_000_000) return (num / 1_000_000_000_000).toFixed(1) + "T";
+  if (abs >= 1_000_000_000) return (num / 1_000_000_000).toFixed(1) + "B";
+  if (abs >= 1_000_000) return (num / 1_000_000).toFixed(1) + "M";
+  if (abs >= 1_000) return (num / 1_000).toFixed(1) + "K";
+
+  return num.toFixed(2);
+};
+
+function groupInvoicesByDate(invoices: any[]) {
+  const map: Record<string, number> = {};
+  invoices.forEach((inv) => {
+    const rawDate = inv.issueDate ?? inv.createdAt;
+    const d = parseInvoiceDate(rawDate);
+    if (!d) return;
+
+    const key = formatYMDLocal(d);
+    map[key] = (map[key] || 0) + Number(inv.totalAmount || 0);
+  });
+  return map;
+}
+
+function startOfDay(d: Date) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+function endOfDay(d: Date) {
+  const x = new Date(d);
+  x.setHours(23, 59, 59, 999);
+  return x;
 }
 
 function getRange(filter: string, customFrom: Date | null, customTo: Date | null) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
+  const today = startOfDay(new Date());
   const year = today.getFullYear();
   const month = today.getMonth();
 
   if (filter === "custom" && customFrom && customTo) {
-    const start = new Date(customFrom);
-    const end = new Date(customTo);
-    start.setHours(0, 0, 0, 0);
-    end.setHours(23, 59, 59, 999);
-    return { start, end };
+    return { start: startOfDay(customFrom), end: endOfDay(customTo) };
   }
 
   switch (filter) {
@@ -54,107 +95,148 @@ function getRange(filter: string, customFrom: Date | null, customTo: Date | null
       return { start: today, end: today };
 
     case "this_week": {
-      const start = new Date(today);
       const day = today.getDay();
       const diff = day === 0 ? 6 : day - 1;
+      const start = new Date(today);
       start.setDate(today.getDate() - diff);
       const end = new Date(start);
       end.setDate(start.getDate() + 6);
-      end.setHours(23, 59, 59, 999);
       return { start, end };
     }
 
     case "this_month":
       return {
         start: new Date(year, month, 1),
-        end: new Date(year, month + 1, 0, 23, 59, 59, 999),
+        end: new Date(year, month + 1, 0),
       };
 
     case "this_year":
       return {
         start: new Date(year, 0, 1),
-        end: new Date(year, 11, 31, 23, 59, 59, 999),
+        end: new Date(year, 11, 31),
       };
 
     default:
       return {
         start: new Date(year, month, 1),
-        end: new Date(year, month + 1, 0, 23, 59, 59, 999),
+        end: new Date(year, month + 1, 0),
       };
   }
 }
 
-function buildChartData(
-  profitMap: Record<string, number>,
+
+function buildChartDataFromInvoiceMap(
+  invoiceMap: Record<string, number>,
   filter: string,
   customFrom: Date | null,
   customTo: Date | null
 ) {
   const { start, end } = getRange(filter, customFrom, customTo);
-  const daysDiff = Math.ceil(
-    (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)
-  );
 
-  const isMonthlyView =
-    filter === "this_year" || (filter === "custom" && daysDiff > 60);
+  const daysDiff = Math.ceil((end.getTime() - start.getTime()) / 86400000);
+  const isMonthlyView = filter === "this_year" || (filter === "custom" && daysDiff > 60);
 
-  
   if (isMonthlyView) {
-    const result = [];
-
+    const rows: any[] = [];
     const startYear = start.getFullYear();
     const startMonth = filter === "this_year" ? 0 : start.getMonth();
-
     const endYear = end.getFullYear();
     const endMonth = filter === "this_year" ? 11 : end.getMonth();
 
-    const totalMonths =
-      (endYear - startYear) * 12 + (endMonth - startMonth) + 1;
+    const totalMonths = (endYear - startYear) * 12 + (endMonth - startMonth) + 1;
 
     for (let i = 0; i < totalMonths; i++) {
-      const monthIndex = startMonth + i;
-      const year = startYear + Math.floor(monthIndex / 12);
-      const month = monthIndex % 12;
+      const index = startMonth + i;
+      const y = startYear + Math.floor(index / 12);
+      const m = index % 12;
 
-      const key = `${year}-${String(month + 1).padStart(2, "0")}`;
+      const monthKey = `${y}-${String(m + 1).padStart(2, "0")}`;
 
-      result.push({
-        label: new Date(year, month, 1).toLocaleString("default", {
-          month: "short",
-        }),
-        date: key,
-        value: profitMap[key] || 0,
+      let value = 0;
+      Object.keys(invoiceMap).forEach((dateKey) => {
+        if (dateKey.startsWith(monthKey)) value += invoiceMap[dateKey] || 0;
+      });
+
+      rows.push({
+        label: new Date(y, m, 1).toLocaleString("default", { month: "short" }),
+        fullDate: monthKey,
+        value,
       });
     }
 
-    return result;
+    return rows;
   }
 
+  
+  const rows: any[] = [];
+  const cursor = new Date(start);
 
-  const result = [];
-  let curr = new Date(start);
-
-  while (curr <= end) {
-    const key = formatYMD(curr);
-    const value = profitMap[key] || 0;
-
-    result.push({
+  while (cursor <= end) {
+    const key = formatYMDLocal(cursor);
+    rows.push({
       label:
         filter === "today"
           ? "Today"
           : filter === "this_week"
-          ? curr.toLocaleDateString("en-US", { weekday: "short" })
-          : padDay(curr.getDate()),
-      current: value,
+          ? cursor.toLocaleDateString("en-US", { weekday: "short" })
+          : String(cursor.getDate()).padStart(2, "0"),
+      fullDate: key,
+      current: invoiceMap[key] || 0,
       previous: 0,
       date: key,
     });
-
-    curr.setDate(curr.getDate() + 1);
+    cursor.setDate(cursor.getDate() + 1);
   }
 
-  return result;
+  if (filter === "this_month") {
+    const today = customTo ? new Date(customTo) : new Date();
+    const y = today.getFullYear();
+    const m = today.getMonth();
+    const prev = new Date(y, m - 1, 1);
+    const py = prev.getFullYear();
+    const pm = prev.getMonth();
+
+    rows.forEach((r) => {
+      const dd = Number(r.label);
+      const prevKey = formatYMDLocal(new Date(py, pm, dd));
+      r.previous = invoiceMap[prevKey] || 0;
+    });
+  }
+
+  return rows;
 }
+
+
+const CustomTooltip = ({ active, payload }: any) => {
+  if (!active || !payload || !payload.length) return null;
+
+  const row = payload[0].payload;
+  const value = Number(payload[0].value ?? 0);
+
+
+  const formattedDate = new Date(row.fullDate).toLocaleDateString("en-US", {
+    weekday: "short",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+
+  return (
+    <div style={{
+      background: "white",
+      padding: "8px 12px",
+      borderRadius: "6px",
+      boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+    }}>
+      <div style={{ marginBottom: 4 }}>
+        <strong>{formattedDate}</strong>
+      </div>
+      <div>USD ${value.toLocaleString()}</div>
+      <div style={{ color: "#6B7280", fontSize: 12 }}>{formatShort(value)}</div>
+    </div>
+  );
+};
+
 
 export function RevenueChart() {
   const [dateFilter, setDateFilter] = useState("this_month");
@@ -164,193 +246,130 @@ export function RevenueChart() {
   const pdfRef = useRef<HTMLDivElement>(null);
   const { tenant } = useAuth();
 
-  const { data: profitLossData = {}, isLoading } = useProfitLossData(
+  const { data: invoices = [], isLoading } = useInvoicesForGraph(
+    tenant?.id,
     dateFilter,
     customDateFrom,
     customDateTo
   );
 
-
- 
-  const profitMap = useMemo(() => {
-    const map: Record<string, number> = {};
-
-  
-    profitLossData.daily?.forEach((r: any) => {
-      map[r.date] = r.profit || 0;
-    });
-
-   
-    profitLossData.monthly?.forEach((r: any) => {
-      map[r.month] = r.profit || 0;
-    });
-
-    return map;
-  }, [profitLossData]);
+  const invoiceMap = useMemo(() => groupInvoicesByDate(invoices), [invoices]);
 
   const chartData = useMemo(
-    () => buildChartData(profitMap, dateFilter, customDateFrom, customDateTo),
-    [profitMap, dateFilter, customDateFrom, customDateTo]
+    () => buildChartDataFromInvoiceMap(invoiceMap, dateFilter, customDateFrom, customDateTo),
+    [invoiceMap, dateFilter, customDateFrom, customDateTo]
   );
 
-  const totals = useMemo(() => {
-    const current = chartData.reduce(
-      (sum, d: any) => sum + (d.current ?? d.value ?? 0),
-      0
-    );
+  const totalCurrent = chartData.reduce(
+    (s, x) => s + Number(x.current ?? x.value ?? 0),
+    0
+  );
 
-    if (dateFilter === "this_month") {
-      const prev = chartData.reduce((s, d: any) => s + (d.previous || 0), 0);
-      const growth = prev === 0 ? 0 : ((current - prev) / prev) * 100;
-      return { current, previous: prev, growth, showComparison: true };
-    }
+  const totalPrevious =
+    dateFilter === "this_month"
+      ? chartData.reduce((s, x) => s + (x.previous || 0), 0)
+      : 0;
 
-    return { current, previous: 0, growth: 0, showComparison: false };
-  }, [chartData, dateFilter]);
-
-  const formatNumberShort = (num: number) => {
-    if (!num) return "0";
-    if (num >= 1_000_000_000) return (num / 1e9).toFixed(1) + "B";
-    if (num >= 1_000_000) return (num / 1e6).toFixed(1) + "M";
-    if (num >= 1_000) return (num / 1e3).toFixed(1) + "K";
-    return num.toLocaleString();
-  };
-
-  const getPeriodLabel = () => {
-    switch (dateFilter) {
-      case "today":
-        return "Today's Revenue";
-      case "this_week":
-        return "This Week";
-      case "this_month":
-        return "This Month vs Previous Month";
-      case "this_year":
-        return "This Year (Monthly)";
-      case "custom":
-        return "Custom Period";
-      default:
-        return "Revenue";
-    }
-  };
+  const growth =
+    dateFilter === "this_month" && totalPrevious !== 0
+      ? ((totalCurrent - totalPrevious) / totalPrevious) * 100
+      : 0;
 
   const handleDownloadPDF = async () => {
     if (!pdfRef.current) return;
     const canvas = await html2canvas(pdfRef.current, { scale: 2 });
     const img = canvas.toDataURL("image/png");
     const pdf = new jsPDF("p", "mm", "a4");
-    const width = pdf.internal.pageSize.getWidth();
-    const height = (canvas.height * width) / canvas.width;
-    pdf.addImage(img, "PNG", 0, 0, width, height);
+    const W = pdf.internal.pageSize.getWidth();
+    const H = (canvas.height * W) / canvas.width;
+    pdf.addImage(img, "PNG", 0, 0, W, H);
     pdf.save("revenue-report.pdf");
   };
 
   return (
     <Card className="lg:col-span-7 bg-white rounded-xl shadow-sm">
+ 
       <CardHeader className="pb-0">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-[#000000] text-lg font-semibold">
-            Revenue
-          </CardTitle>
+          <CardTitle className="text-lg font-semibold text-black">Revenue</CardTitle>
 
           <div className="flex gap-2">
-            <DateFilter
-              dateFilter={dateFilter}
-              setDateFilter={setDateFilter}
-              customDateFrom={customDateFrom}
-              setCustomDateFrom={setCustomDateFrom}
-              customDateTo={customDateTo}
-              setCustomDateTo={setCustomDateTo}
-            />
-
+             <DateFilter
+            dateFilter={dateFilter}
+            setDateFilter={setDateFilter}
+            customDateFrom={customDateFrom}
+            setCustomDateFrom={setCustomDateFrom}
+            customDateTo={customDateTo}
+            setCustomDateTo={setCustomDateTo}
+          />
             <Button variant="outline" size="icon" onClick={handleDownloadPDF}>
               <Download size={16} />
             </Button>
           </div>
         </div>
 
-        <p className="text-2xl sm:text-3xl font-semibold text-[#000000] mt-4">
-          USD {formatNumberShort(totals.current)}
+        <p className="text-2xl sm:text-3xl font-semibold mt-3 text-black">
+          C$ {formatShort(totalCurrent)}
         </p>
 
-        {totals.showComparison ? (
-          <p
-            className={`text-sm font-medium mt-1 ${
-              totals.growth >= 0 ? "text-green-600" : "text-red-600"
-            }`}
-          >
-            {totals.growth >= 0 ? "Up" : "Down"}{" "}
-            {Math.abs(totals.growth).toFixed(1)}% vs last month
+        {dateFilter === "this_month" && (
+          <p className={`text-xs font-medium mt-1 ${growth >= 0 ? "text-green-600" : "text-red-500"}`}>
+            {growth >= 0 ? "↑" : "↓"} {Math.abs(growth).toFixed(1)}% vs last month
           </p>
-        ) : (
-          <p className="text-sm text-gray-500 mt-1">{getPeriodLabel()}</p>
         )}
 
         <CardDescription className="mt-3 text-xs text-gray-500">
-          {getPeriodLabel()}
+          {dateFilter === "today" ? "Today's Revenue" :
+           dateFilter === "this_week" ? "This Week" :
+           dateFilter === "this_month" ? "This Month vs Previous Month" :
+           dateFilter === "this_year" ? "This Year (Monthly)" :
+           dateFilter === "custom" ? "Custom Period" : "Revenue"}
         </CardDescription>
       </CardHeader>
 
-      <CardContent ref={pdfRef} className="pt-6">
-        {isLoading ? (
-          <div className="h-64 flex items-center justify-center text-gray-500">
-            Loading...
-          </div>
-        ) : chartData.length === 0 ? (
-          <div className="h-64 flex items-center justify-center text-gray-500">
-            No data available for selected period
-          </div>
-        ) : (
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart
-              data={chartData}
-              margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-            >
-              <XAxis
-                dataKey="label"
-                tick={{ fontSize: 12, fill: "#6B7280" }}
-                axisLine={false}
-                tickLine={false}
-              />
-              <YAxis hide />
-              <Tooltip
-                formatter={(value: number) => `USD ${value.toLocaleString()}`}
-                contentStyle={{
-                  borderRadius: "8px",
-                  border: "none",
-                  boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
-                }}
-              />
-
-              {totals.showComparison ? (
-                <>
-                  <Bar dataKey="current" fill="#0A64A0" radius={[8, 8, 0, 0]} />
-                  <Bar dataKey="previous" fill="#7695C5" radius={[8, 8, 0, 0]} />
-                </>
-              ) : (
-                <Bar
-                  dataKey={
-                    chartData[0]?.value !== undefined ? "value" : "current"
-                  }
-                  fill="#0A64A0"
-                  radius={[8, 8, 0, 0]}
+      <CardContent ref={pdfRef} className="p-4">
+        <div className="mt-2 h-60">
+          {isLoading ? (
+            <div className="h-full flex items-center justify-center text-gray-500">Loading...</div>
+          ) : chartData.length === 0 ? (
+            <div className="h-full flex items-center justify-center text-gray-500">No data available for selected period</div>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartData}>
+                <XAxis
+                  dataKey="label"
+                  tick={{ fontSize: 10, fill: "#9CA3AF" }}
+                  axisLine={false}
+                  tickLine={false}
                 />
-              )}
-            </BarChart>
-          </ResponsiveContainer>
-        )}
+                <YAxis hide />
+                <Tooltip content={<CustomTooltip />} />
 
-        {totals.showComparison && (
-          <div className="flex justify-center gap-8 mt-6 text-sm text-gray-600">
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded bg-[#0A64A0]" />
-              <span>Current Month</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded bg-[#7695C5]" />
-              <span>Previous Month</span>
-            </div>
-          </div>
-        )}
+                <Legend
+                  align="center"
+                  verticalAlign="bottom"
+                  formatter={(value) => {
+                    if (value === "current") return "Current Month";
+                    if (value === "previous") return "Previous Month";
+                    if (value === "value") return "Revenue";
+                    return value;
+                  }}
+                />
+
+                {chartData[0]?.value !== undefined ? (
+                  <Bar dataKey="value" fill="#0A64A0" barSize={7} />
+                ) : (
+                  <>
+                    <Bar dataKey="current" fill="#0A64A0" barSize={7} />
+                    {dateFilter === "this_month" && (
+                      <Bar dataKey="previous" fill="#7695C5" barSize={7} />
+                    )}
+                  </>
+                )}
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
       </CardContent>
     </Card>
   );

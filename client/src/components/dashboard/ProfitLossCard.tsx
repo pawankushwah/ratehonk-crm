@@ -6,19 +6,19 @@ import { useProfitLossData } from "@/hooks/useDashboardData";
 
 
 const dummyProfitLoss = [
-  { month: "2024-12", expenses: 12000, revenue: 18000, profit: 6000 },
-  { month: "2025-01", expenses: 15000, revenue: 23000, profit: 8000 },
-  { month: "2025-02", expenses: 14000, revenue: 22000, profit: 8000 },
-  { month: "2025-03", expenses: 10000, revenue: 26000, profit: 16000 },
-  { month: "2025-04", expenses: 9000, revenue: 20000, profit: 11000 },
-  { month: "2025-05", expenses: 13000, revenue: 28000, profit: 15000 },
-  { month: "2025-06", expenses: 11000, revenue: 25000, profit: 14000 },
-  { month: "2025-07", expenses: 14000, revenue: 30000, profit: 16000 },
-  { month: "2025-08", expenses: 12000, revenue: 27000, profit: 15000 },
-  { month: "2025-09", expenses: 15000, revenue: 32000, profit: 17000 },
-  { month: "2025-10", expenses: 18000, revenue: 35000, profit: 17000 },
-  { month: "2025-11", expenses: 20000, revenue: 42000, profit: 22000 },
-  { month: "2025-12", expenses: 16000, revenue: 30000, profit: 14000 },
+  { month: "2024-12", expenses: 0, revenue: 0, profit: 0 },
+  { month: "2025-01", expenses: 0, revenue: 0, profit: 0 },
+  { month: "2025-02", expenses: 0, revenue: 0, profit: 0 },
+  { month: "2025-03", expenses: 0, revenue: 0, profit: 0 },
+  { month: "2025-04", expenses: 0, revenue: 0, profit: 0 },
+  { month: "2025-05", expenses: 0, revenue: 0, profit: 0 },
+  { month: "2025-06", expenses: 0, revenue: 0, profit: 0 },
+  { month: "2025-07", expenses: 0, revenue: 0, profit: 0 },
+  { month: "2025-08", expenses: 0, revenue: 0, profit: 0 },
+  { month: "2025-09", expenses: 0, revenue: 0, profit: 0 },
+  { month: "2025-10", expenses: 0, revenue: 0, profit: 0 },
+  { month: "2025-11", expenses: 0, revenue: 0, profit: 0 },
+  { month: "2025-12", expenses: 0, revenue: 0, profit: 0 },
 ];
 
 export function ProfitLossCard() {

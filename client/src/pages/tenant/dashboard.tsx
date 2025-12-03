@@ -91,11 +91,6 @@ export default function TenantDashboard() {
     useState<Date | null>(null);
   const [bookingsVendorCustomTo, setBookingsVendorCustomTo] =
     useState<Date | null>(null);
-  const [estimatesDateFilter, setEstimatesDateFilter] = useState("this_month");
-  const [estimatesCustomFrom, setEstimatesCustomFrom] = useState<Date | null>(
-    null
-  );
-  const [estimatesCustomTo, setEstimatesCustomTo] = useState<Date | null>(null);
  
  
   const [emailCampaignsDateFilter, setEmailCampaignsDateFilter] =
@@ -438,7 +433,7 @@ export default function TenantDashboard() {
                   <MetricCard
                     
                     title="Total Revenue"
-                    value={`$${formatNumberShort(metrics.revenue)}`}
+                    value={`C$ ${formatNumberShort(metrics.revenue)}`}
                     icon={DollarSign}
                     trend={`${(
                       ((monthlyData.revenue.current -

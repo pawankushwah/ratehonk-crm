@@ -10,14 +10,6 @@ import { useExpenses } from "@/hooks/useDashboardData";
 
 const COLORS = ["#0A64A0", "#3E85C5", "#6DA9DB", "#8EC1E7", "#A7D5F0"];
 
-const dummyExpenseCategories = [
-  { category: "Travel", amount: 1200 },
-  { category: "Food", amount: 800 },
-  { category: "Office Supplies", amount: 450 },
-  { category: "Software", amount: 600 },
-  { category: "Misc", amount: 300 },
-];
-
 export function ExpensePieChart() {
   const [dateFilter, setDateFilter] = useState("this_month");
   const [customDateFrom, setCustomDateFrom] = useState<Date | null>(null);
@@ -28,22 +20,21 @@ export function ExpensePieChart() {
     customDateFrom,
     customDateTo
   );
-  console.log("🚀 ~ ExpensePieChart ~ expensesData:", expensesData)
 
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
   const approvedExpenses = expensesData.filter(
-  (exp: any) => exp.status?.toLowerCase() === "approved"
-);
- const expenseAmountByCategory = approvedExpenses.reduce((acc: any, exp: any) => {
-  const cat = exp.category || "Other";
-  const amt = safeParseNumber(exp?.amount);
+    (exp: any) => exp.status?.toLowerCase() === "approved"
+  );
 
-  if (!acc[cat]) acc[cat] = 0;
-  acc[cat] += amt;
+  const expenseAmountByCategory = approvedExpenses.reduce((acc: any, exp: any) => {
+    const cat = exp.category || "Other";
+    const amt = safeParseNumber(exp?.amount);
 
-  return acc;
-}, {});
+    if (!acc[cat]) acc[cat] = 0;
+    acc[cat] += amt;
+    return acc;
+  }, {});
 
   const categoryArray = Object.entries(expenseAmountByCategory).map(
     ([category, amount]: any) => ({
@@ -61,28 +52,20 @@ export function ExpensePieChart() {
     fill: COLORS[i % COLORS.length],
   }));
 
-  const finalPieData =
-    pieData.length > 0 && totalAmount > 0
-      ? pieData
-      : dummyExpenseCategories.map((item, i) => ({
-          name: item.category,
-          value: Number(((item.amount / 3350) * 100).toFixed(1)),
-          amount: item.amount,
-          fill: COLORS[i % COLORS.length],
-      }));
-  
+  const finalPieData = pieData;
+
   const CustomTooltip = ({ active, payload }: any) => {
-  if (active && payload && payload.length) {
-    const item = payload[0].payload;
-    return (
-      <div className="bg-white shadow-lg rounded-md p-2 border text-xs text-black">
-        <p className="font-semibold">{item.name}</p>
-        <p>{item.value}%</p>
-      </div>
-    );
-  }
-  return null;
-};
+    if (active && payload && payload.length) {
+      const item = payload[0].payload;
+      return (
+        <div className="bg-white shadow-lg rounded-md p-2 border text-xs text-black">
+          <p className="font-semibold">{item.name}</p>
+          <p>{item.value}%</p>
+        </div>
+      );
+    }
+    return null;
+  };
 
   return (
     <Card className="col-span-6 bg-white shadow-xl rounded-xl">
@@ -92,7 +75,7 @@ export function ExpensePieChart() {
             Expense by Category
           </CardTitle>
           <p className="text-xl sm:text-2xl font-semibold text-[#000000] mt-1">
-            USD {(totalAmount / 1000).toFixed(1)}k
+            C$ {(totalAmount / 1000).toFixed(1)}k
           </p>
         </div>
 
@@ -116,63 +99,81 @@ export function ExpensePieChart() {
         <div className="flex justify-center items-center">
           <div className="relative w-36 h-36 sm:w-52 sm:h-52 mb-10">
             <ResponsiveContainer width="100%" height="100%">
-  {isLoading ? (
-    <div>Loading...</div>
-  ) : (
-    <PieChart>
-      <Tooltip content={<CustomTooltip />} />
+              
+             
+              {isLoading ? (
+                <div className="flex h-full items-center justify-center">
+                  <p className="text-gray-500 animate-pulse text-sm">
+                    Loading expenses...
+                  </p>
+                </div>
+              ) : finalPieData.length === 0 ? (
+                <div className="flex h-full flex-col items-center justify-center text-center px-6">
+                  <div className="w-16 h-16 bg-gray-200 border-2 border-dashed rounded-xl mb-4" />
+                  <p className="text-gray-600 font-medium">No expense data found</p>
+                  <p className="text-xs text-gray-400 mt-2">
+                    Try selecting a different date
+                  </p>
+                </div>
+              ) : (
+                <PieChart>
+                  <Tooltip content={<CustomTooltip />} />
 
-      <Pie
-        data={finalPieData}
-        cx="50%"
-        cy="50%"
-        innerRadius="60%"
-        outerRadius="80%"
-        startAngle={90}
-        endAngle={-270}
-        dataKey="value"
-        onMouseEnter={(_, index) => setActiveIndex(index)}
-        onMouseLeave={() => setActiveIndex(null)}
-      >
-        {finalPieData.map((entry, index) => (
-          <Cell
-            key={`cell-${index}`}
-            fill={entry.fill}
-            style={{
-              transition: "0.3s",
-              transform: activeIndex === index ? "scale(1.08)" : "scale(1)",
-              filter:
-                activeIndex === index
-                  ? "drop-shadow(0px 0px 6px rgba(0,0,0,0.3))"
-                  : "none",
-              transformOrigin: "center",
-              cursor: "pointer",
-            }}
-          />
-        ))}
-      </Pie>
-    </PieChart>
-  )}
-</ResponsiveContainer>
+                  <Pie
+                    data={finalPieData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius="60%"
+                    outerRadius="80%"
+                    startAngle={90}
+                    endAngle={-270}
+                    dataKey="value"
+                    onMouseEnter={(_, index) => setActiveIndex(index)}
+                    onMouseLeave={() => setActiveIndex(null)}
+                  >
+                    {finalPieData.map((entry, index) => (
+                      <Cell
+                        key={`cell-${index}`}
+                        fill={entry.fill}
+                        style={{
+                          transition: "0.3s",
+                          transform: activeIndex === index ? "scale(1.08)" : "scale(1)",
+                          filter:
+                            activeIndex === index
+                              ? "drop-shadow(0px 0px 6px rgba(0,0,0,0.3))"
+                              : "none",
+                          transformOrigin: "center",
+                          cursor: "pointer",
+                        }}
+                      />
+                    ))}
+                  </Pie>
+                </PieChart>
+              )}
+             
+            </ResponsiveContainer>
           </div>
         </div>
-        <div className="flex flex-row flex-wrap gap-2 pt-4 text-xs sm:text-sm text-gray-700">
-          {finalPieData.map((item, i) => (
-            <div
-              key={i}
-              className="flex items-center justify-between px-2 py-1 border-b"
-            >
-              <div className="flex items-center gap-2">
-                <span
-                  className="w-2.5 h-2.5 rounded-full"
-                  style={{ backgroundColor: item.fill }}
-                ></span>
-                {item.name}
+
+        {finalPieData.length > 0 && (
+          <div className="flex flex-row flex-wrap gap-2 pt-4 text-xs sm:text-sm text-gray-700">
+            {finalPieData.map((item, i) => (
+              <div
+                key={i}
+                className="flex items-center justify-between px-2 py-1 border-b"
+              >
+                <div className="flex items-center gap-2">
+                  <span
+                    className="w-2.5 h-2.5 rounded-full"
+                    style={{ backgroundColor: item.fill }}
+                  ></span>
+                  {item.name}
+                </div>
+                <span>{item.value}%</span>
               </div>
-              <span>{item.value}%</span>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
