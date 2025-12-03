@@ -43,6 +43,23 @@ export function AutocompleteInput({
 }: AutocompleteInputProps) {
   const [open, setOpen] = React.useState(false);
   const [inputValue, setInputValue] = React.useState("");
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  const justOpenedRef = React.useRef(false);
+
+  // Handle open state changes
+  const handleOpenChange = React.useCallback((newOpen: boolean) => {
+    setOpen(newOpen);
+    if (newOpen) {
+      // Mark as just opened to prevent immediate closing
+      justOpenedRef.current = true;
+      // Reset flag after a delay to allow click events to process
+      setTimeout(() => {
+        justOpenedRef.current = false;
+      }, 300);
+    } else {
+      justOpenedRef.current = false;
+    }
+  }, []);
 
   // Find the selected option's label to display
   const selectedOption = React.useMemo(() => {
@@ -86,7 +103,9 @@ export function AutocompleteInput({
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newValue = e.target.value;
     setInputValue(newValue);
-    if (!open) setOpen(true);
+    if (!open) {
+      handleOpenChange(true);
+    }
     
     // If custom values are allowed, update the parent value immediately
     if (allowCustomValue) {
@@ -97,37 +116,73 @@ export function AutocompleteInput({
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     // Close popover on Escape
     if (e.key === "Escape") {
-      setOpen(false);
+      handleOpenChange(false);
     }
     // On Enter, if custom values allowed and there's input, use it
     if (e.key === "Enter" && allowCustomValue && inputValue) {
       onValueChange(inputValue);
       setInputValue("");
-      setOpen(false);
+      handleOpenChange(false);
       e.preventDefault();
     }
   };
 
+  const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
+    e.stopPropagation();
+    setInputValue("");
+    if (suggestions.length > 0) {
+      // Mark as just opened before opening
+      justOpenedRef.current = true;
+      handleOpenChange(true);
+      // Reset flag after delay
+      setTimeout(() => {
+        justOpenedRef.current = false;
+      }, 300);
+    }
+  };
+
+  const handleClick = (e: React.MouseEvent<HTMLInputElement>) => {
+    // Prevent the PopoverTrigger from toggling
+    e.stopPropagation();
+    e.preventDefault();
+    setInputValue("");
+    if (suggestions.length > 0) {
+      // Mark as just opened before opening
+      justOpenedRef.current = true;
+      handleOpenChange(true);
+      // Reset flag after delay
+      setTimeout(() => {
+        justOpenedRef.current = false;
+      }, 300);
+    }
+  };
+
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
         <div className="relative w-full">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
             <input
               {...props}
+              ref={inputRef}
               value={displayValue}
               onChange={handleInputChange}
-              onFocus={() => {
-                setInputValue("");
-                setOpen(suggestions.length > 0);
+              onFocus={handleFocus}
+              onClick={handleClick}
+              onMouseDown={(e) => {
+                // Prevent PopoverTrigger from toggling when clicking input
+                e.stopPropagation();
               }}
               onBlur={() => {
-                // If custom values are allowed and there's input, save it before clearing
-                if (allowCustomValue && inputValue) {
-                  onValueChange(inputValue);
-                }
-                setInputValue("");
+                // Delay blur handling to allow click events to process first
+                setTimeout(() => {
+                  // If custom values are allowed and there's input, save it before clearing
+                  if (allowCustomValue && inputValue) {
+                    onValueChange(inputValue);
+                  }
+                  setInputValue("");
+                }, 200);
               }}
               onKeyDown={handleKeyDown}
               className={cn(
@@ -146,10 +201,35 @@ export function AutocompleteInput({
         className="w-[var(--radix-popover-trigger-width)] p-0 rounded-lg border border-gray-200 dark:border-gray-700 shadow-xl bg-white dark:bg-gray-900" 
         align="start"
         onOpenAutoFocus={(e) => e.preventDefault()}
-        onPointerDownOutside={(e) => {
-          // Keep menu open when clicking inside
+        onInteractOutside={(e) => {
+          // Prevent closing when clicking on the input field or its container, or if just opened
+          if (justOpenedRef.current) {
+            e.preventDefault();
+            return;
+          }
           const target = e.target as HTMLElement;
-          if (target.closest('[data-radix-popper-content-wrapper]')) {
+          const container = inputRef.current?.closest('.relative');
+          if (inputRef.current && (
+            inputRef.current.contains(target) || 
+            target === inputRef.current ||
+            (container && container.contains(target))
+          )) {
+            e.preventDefault();
+          }
+        }}
+        onPointerDownOutside={(e) => {
+          // Prevent closing when clicking on the input field or its container, or if just opened
+          if (justOpenedRef.current) {
+            e.preventDefault();
+            return;
+          }
+          const target = e.target as HTMLElement;
+          const container = inputRef.current?.closest('.relative');
+          if (inputRef.current && (
+            inputRef.current.contains(target) || 
+            target === inputRef.current ||
+            (container && container.contains(target))
+          )) {
             e.preventDefault();
           }
         }}

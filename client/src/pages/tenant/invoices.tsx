@@ -1014,10 +1014,34 @@ export default function Invoices() {
       const result = await response.json();
       
       // Handle both old format (array) and new format (object with data and pagination)
+      let invoicesData: Invoice[] = [];
+      let paginationData = { page: 1, pageSize: 10, total: 0, totalPages: 0 };
+      
       if (Array.isArray(result)) {
-        return { data: result, pagination: { page: 1, pageSize: result.length, total: result.length, totalPages: 1 } };
+        invoicesData = result;
+        paginationData = { page: 1, pageSize: result.length, total: result.length, totalPages: 1 };
+      } else {
+        invoicesData = result.data || [];
+        paginationData = result.pagination || { page: 1, pageSize: 10, total: 0, totalPages: 0 };
       }
-      return result;
+      
+      // Filter out void status invoices
+      const filteredInvoices = invoicesData.filter(
+        (invoice) => invoice.status?.toLowerCase() !== "void"
+      );
+      
+      // Recalculate pagination for filtered results
+      const filteredTotal = filteredInvoices.length;
+      const filteredTotalPages = Math.ceil(filteredTotal / paginationData.pageSize);
+      
+      return {
+        data: filteredInvoices,
+        pagination: {
+          ...paginationData,
+          total: filteredTotal,
+          totalPages: filteredTotalPages,
+        },
+      };
     },
   });
 

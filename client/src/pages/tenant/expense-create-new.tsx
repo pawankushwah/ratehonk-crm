@@ -49,69 +49,72 @@ import { useAuth } from "@/components/auth/auth-provider";
 import { auth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation, useRoute } from "wouter";
-import { CustomerCreateForm } from "@/components/forms/customer-create-form";
 import { VendorCreateForm } from "@/components/forms/vendor-create-form";
 import { LeadTypeCreateForm } from "@/components/forms/lead-type-create-form";
-import { ServiceProviderCreateForm } from "@/components/forms/service-provider-create-form";
-import { InvoiceSettingsPanel } from "@/components/invoice-settings-panel";
+import { ExpenseSettingsPanel } from "@/components/expense-settings-panel";
 import { DatePicker } from "@/components/ui/date-picker";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { ModernTemplate, InvoiceData } from "@/components/invoices/invoice-templates";
 
-export default function InvoiceCreate() {
+const EXPENSE_CATEGORIES = [
+  { value: "travel", label: "Travel & Transportation", icon: "🚗" },
+  { value: "office", label: "Office Supplies", icon: "🏢" },
+  { value: "marketing", label: "Marketing & Advertising", icon: "📢" },
+  { value: "software", label: "Software & Tools", icon: "💻" },
+  { value: "meals", label: "Meals & Entertainment", icon: "🍽️" },
+  { value: "training", label: "Training & Education", icon: "📚" },
+  { value: "equipment", label: "Equipment & Hardware", icon: "⚙️" },
+  { value: "communication", label: "Communication", icon: "📞" },
+  { value: "utilities", label: "Utilities", icon: "⚡" },
+  { value: "other", label: "Other", icon: "📦" },
+];
+
+export default function ExpenseCreate() {
   const { tenant } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
-  const [match, params] = useRoute("/invoice-create/:id?");
-  const invoiceId = params?.id ? parseInt(params.id) : null;
-  const isEditMode = !!invoiceId;
+  const [location, navigate] = useLocation();
+  const [match, params] = useRoute("/expenses/create/:id?");
+  
+  // Extract expense ID from route params or URL path
+  const expenseId = useMemo(() => {
+    if (params?.id) {
+      const id = parseInt(params.id);
+      return isNaN(id) ? null : id;
+    }
+    // Fallback: extract from URL path
+    const pathMatch = location.match(/\/expenses\/create\/(\d+)/);
+    if (pathMatch && pathMatch[1]) {
+      const id = parseInt(pathMatch[1]);
+      return isNaN(id) ? null : id;
+    }
+    return null;
+  }, [params?.id, location]);
+  
+  const isEditMode = !!expenseId;
 
-  const [lineItems, setLineItems] = useState([
+  const [expenseItems, setExpenseItems] = useState([
     {
-      travelCategory: "",
-      vendor: "",
-      serviceProviderId: "",
-      itemTitle: "",
-      invoiceNumber: "",
-      voucherNumber: "",
+      category: "",
+      title: "",
+      vendorId: "",
+      leadTypeId: "",
       quantity: "1",
-      unitPrice: "",
-      sellingPrice: "",
-      purchasePrice: "",
-      tax: "",
+      amount: "",
       taxRateId: "",
-      additionalCommissionPercentage: "",
-      additionalCommission: "",
+      taxAmount: "0",
       totalAmount: 0,
+      paymentMethod: "credit_card",
+      paymentStatus: "paid", // paid, credit, due
+      amountPaid: "",
+      amountDue: "",
+      notes: "",
     },
   ]);
 
-  const [selectedBookingId, setSelectedBookingId] = useState("");
-  const [selectedCustomerId, setSelectedCustomerId] = useState("");
-  const [discountAmount, setDiscountAmount] = useState("");
-  const [amountPaid, setAmountPaid] = useState("");
-  const [existingPaidAmount, setExistingPaidAmount] = useState(0); // Store original paid amount for edit mode
-  const [paymentStatus, setPaymentStatus] = useState("pending");
-  const [paymentMethod, setPaymentMethod] = useState<string[]>([]);
-  const [paymentTerms, setPaymentTerms] = useState("30");
-  const [customDays, setCustomDays] = useState("");
-  const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split("T")[0]);
-  const [dueDate, setDueDate] = useState(
-    new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
-  );
-  const [invoiceNumber, setInvoiceNumber] = useState("");
-
-  // Payment reminder states
-  const [enableReminder, setEnableReminder] = useState(false);
-  const [reminderFrequency, setReminderFrequency] = useState("weekly");
-  const [reminderSpecificDate, setReminderSpecificDate] = useState("");
-
-  // Payment installments states
-  const [enableInstallments, setEnableInstallments] = useState(false);
-  const [numberOfInstallments, setNumberOfInstallments] = useState("2");
-  const [installmentFrequency, setInstallmentFrequency] = useState("monthly");
+  const [expenseDate, setExpenseDate] = useState(new Date().toISOString().split("T")[0]);
+  const [expenseNumber, setExpenseNumber] = useState("");
+  const [currency, setCurrency] = useState("USD");
 
   // Tax states
   const [selectedTaxSettingId, setSelectedTaxSettingId] = useState("none");
@@ -119,42 +122,30 @@ export default function InvoiceCreate() {
   const [isTaxInclusive, setIsTaxInclusive] = useState(false);
 
   // Slide panel states
-  const [isCustomerPanelOpen, setIsCustomerPanelOpen] = useState(false);
   const [isVendorPanelOpen, setIsVendorPanelOpen] = useState(false);
   const [isLeadTypePanelOpen, setIsLeadTypePanelOpen] = useState(false);
-  const [isServiceProviderPanelOpen, setIsServiceProviderPanelOpen] =
-    useState(false);
   const [currentItemIndex, setCurrentItemIndex] = useState(0);
-
-  // Manual expenses state
-  const [manualExpenses, setManualExpenses] = useState<any[]>([]);
 
   // Notes state for rich text editor
   const [notesContent, setNotesContent] = useState("");
-  const [additionalNotesContent, setAdditionalNotesContent] = useState("");
 
-  // Preview state
-  const [showPreview, setShowPreview] = useState(false);
-  const [previewInvoiceData, setPreviewInvoiceData] = useState<InvoiceData | null>(null);
-
-  // Fetch invoice settings
-  const { data: invoiceSettings = {
-    invoiceNumberStart: 1,
-    showTax: true,
-    showDiscount: true,
-    showNotes: true,
-    showVoucherInvoice: true,
-    showProvider: true,
-    showVendor: true,
-    showUnitPrice: true,
-    showAdditionalCommission: false,
+  // Fetch expense settings
+  const { data: expenseSettings = {
+    expenseNumberStart: 1,
     defaultCurrency: "USD",
     defaultGstSettingId: null,
-  }, refetch: refetchInvoiceSettings } = useQuery({
-    queryKey: ["/api/invoice-settings", tenant?.id],
+    showTax: true,
+    showVendor: true,
+    showLeadType: true,
+    showCategory: true,
+    showPaymentMethod: true,
+    showPaymentStatus: true,
+    showNotes: true,
+  }, refetch: refetchExpenseSettings } = useQuery({
+    queryKey: ["/api/expense-settings", tenant?.id],
     enabled: !!tenant?.id,
     queryFn: async () => {
-      const response = await fetch(`/api/invoice-settings/${tenant?.id}`);
+      const response = await fetch(`/api/expense-settings/${tenant?.id}`);
       if (!response.ok) throw new Error("Failed to fetch settings");
       const result = await response.json();
       return result.data;
@@ -164,76 +155,79 @@ export default function InvoiceCreate() {
     staleTime: 0,
   });
 
-  // Fetch existing invoices for number generation
-  const { data: invoices = [] } = useQuery<any[]>({
-    queryKey: ["/api/invoices", tenant?.id],
+  // Fetch existing expenses for number generation
+  const { data: expenses = [] } = useQuery<any[]>({
+    queryKey: ["/api/expenses", tenant?.id],
     enabled: !!tenant?.id && !isEditMode,
     queryFn: async () => {
       const token = auth.getToken();
-      const response = await fetch(`/api/tenants/${tenant?.id}/invoices`, {
+      const response = await fetch(`/api/expenses?limit=10000&page=1`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!response.ok) return [];
       const result = await response.json();
-      return Array.isArray(result) ? result : [];
+      return Array.isArray(result) ? result : (result.data || result.expenses || []);
     },
   });
 
-  // Refetch invoice settings when page loads
+  // Refetch expense settings when page loads
   useEffect(() => {
     if (tenant?.id) {
-      refetchInvoiceSettings();
+      refetchExpenseSettings();
     }
-  }, [tenant?.id, refetchInvoiceSettings]);
+  }, [tenant?.id, refetchExpenseSettings]);
 
-  // Auto-select tax setting from invoice settings
+  // Auto-select tax setting from Expense settings
   useEffect(() => {
-    if (invoiceSettings?.defaultGstSettingId) {
-      setSelectedTaxSettingId(invoiceSettings.defaultGstSettingId.toString());
+    if (expenseSettings?.defaultGstSettingId) {
+      setSelectedTaxSettingId(expenseSettings.defaultGstSettingId.toString());
     }
-  }, [invoiceSettings?.defaultGstSettingId]);
+  }, [expenseSettings?.defaultGstSettingId]);
 
-  // Function to generate next invoice number
-  const generateNextInvoiceNumber = useMemo(() => {
-    const startNumber = invoiceSettings?.invoiceNumberStart || 1;
+  // Function to generate next expense number
+  const generateNextExpenseNumber = useMemo(() => {
+    const startNumber = expenseSettings?.expenseNumberStart || 1;
     
-    if (!invoices || invoices.length === 0) {
-      // No existing invoices, use starting number from settings
-      return `INV-${String(startNumber).padStart(3, '0')}`;
+    if (!expenses || expenses.length === 0) {
+      // No existing expenses, use starting number from settings
+      return `EXP-${String(startNumber).padStart(3, '0')}`;
     }
 
-    // Extract numbers from existing invoice numbers
-    const invoiceNumbers = invoices
-      .map((inv: any) => {
-        const invNum = inv.invoiceNumber || "";
-        // Extract number from formats like INV-001, INV-1, INV001, etc.
-        const match = invNum.match(/(\d+)/);
+    // Extract numbers from existing expense numbers
+    const expenseNumbers = expenses
+      .map((exp: any) => {
+        const expNum = exp.expenseNumber || exp.expense_number || exp.referenceNumber || exp.reference_number || "";
+        if (!expNum || expNum === "") {
+          return 0;
+        }
+        // Extract number from formats like EXP-001, EXP-1, EXP001, etc.
+        const match = expNum.toString().match(/(\d+)/);
         return match ? parseInt(match[1], 10) : 0;
       })
       .filter((num: number) => num > 0);
 
     // Find the highest number
-    const maxNumber = invoiceNumbers.length > 0 
-      ? Math.max(...invoiceNumbers) 
+    const maxNumber = expenseNumbers.length > 0 
+      ? Math.max(...expenseNumbers) 
       : startNumber - 1;
 
     // Use the higher of: max existing number + 1, or starting number
     const nextNumber = Math.max(maxNumber + 1, startNumber);
     
-    return `INV-${String(nextNumber).padStart(3, '0')}`;
-  }, [invoices, invoiceSettings?.invoiceNumberStart]);
+    return `EXP-${String(nextNumber).padStart(3, '0')}`;
+  }, [expenses, expenseSettings?.expenseNumberStart]);
 
   // Track the last starting number used for auto-generation
   const lastStartingNumber = useRef<number | null>(null);
   const hasInitialized = useRef(false);
 
-  // Auto-generate invoice number when invoices/settings are loaded
+  // Auto-generate expense number when expenses/settings are loaded
   useEffect(() => {
     if (isEditMode) return; // Don't auto-generate in edit mode
     
-    const currentStartNumber = invoiceSettings?.invoiceNumberStart || 1;
+    const currentStartNumber = expenseSettings?.expenseNumberStart || 1;
     
-    if (generateNextInvoiceNumber) {
+    if (generateNextExpenseNumber) {
       // Check if starting number changed
       const startingNumberChanged = lastStartingNumber.current !== null && 
                                     lastStartingNumber.current !== currentStartNumber;
@@ -241,39 +235,26 @@ export default function InvoiceCreate() {
       // On first initialization, always update (even if field has a value)
       // After that, update if field is empty OR starting number changed
       const shouldUpdate = !hasInitialized.current || 
-                          !invoiceNumber || 
+                          !expenseNumber || 
                           startingNumberChanged;
       
       if (shouldUpdate) {
         lastStartingNumber.current = currentStartNumber;
         hasInitialized.current = true;
-        setInvoiceNumber(generateNextInvoiceNumber);
+        setExpenseNumber(generateNextExpenseNumber);
       }
-    } else if (invoiceSettings?.invoiceNumberStart && !hasInitialized.current) {
-      // Initialize lastStartingNumber even if generateNextInvoiceNumber isn't ready yet
-      lastStartingNumber.current = invoiceSettings.invoiceNumberStart;
+    } else if (expenseSettings?.expenseNumberStart && !hasInitialized.current) {
+      // Initialize lastStartingNumber even if generateNextExpenseNumber isn't ready yet
+      lastStartingNumber.current = expenseSettings.expenseNumberStart;
     }
-  }, [generateNextInvoiceNumber, invoiceSettings?.invoiceNumberStart, isEditMode]);
+  }, [generateNextExpenseNumber, expenseSettings?.expenseNumberStart, isEditMode]);
 
-  // Fetch customers
-  const { data: customers = [] } = useQuery({
-    queryKey: [`customers-tenant-${tenant?.id}`],
-    enabled: !!tenant?.id,
-    queryFn: async () => {
-      const token = auth.getToken();
-      const response = await fetch(
-        `/api/customers?action=get-customers&tenantId=${tenant?.id}`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        },
-      );
-      if (!response.ok) return [];
-      const result = await response.json();
-      return Array.isArray(result)
-        ? result
-        : result.customers || result.data || result.rows || [];
-    },
-  });
+  // Update currency when settings load
+  useEffect(() => {
+    if (expenseSettings?.defaultCurrency) {
+      setCurrency(expenseSettings.defaultCurrency);
+    }
+  }, [expenseSettings?.defaultCurrency]);
 
   // Fetch vendors
   const { data: vendors = [] } = useQuery<any[]>({
@@ -305,41 +286,6 @@ export default function InvoiceCreate() {
     },
   });
 
-  // Fetch service providers
-  const { data: serviceProviders = [] } = useQuery<any[]>({
-    queryKey: [`/api/service-providers`, tenant?.id],
-    enabled: !!tenant?.id,
-    queryFn: async () => {
-      const token = auth.getToken();
-      const response = await fetch(
-        `/api/tenants/${tenant?.id}/service-providers`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        },
-      );
-      if (!response.ok) return [];
-      const result = await response.json();
-      return Array.isArray(result) ? result : [];
-    },
-  });
-
-  // Fetch bookings
-  const { data: bookings = [] } = useQuery({
-    queryKey: [`/api/tenants/${tenant?.id}/bookings`],
-    enabled: !!tenant?.id,
-    queryFn: async () => {
-      const token = auth.getToken();
-      const response = await fetch(`/api/tenants/${tenant?.id}/bookings`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!response.ok) return [];
-      const result = await response.json();
-      return Array.isArray(result)
-        ? result
-        : result.data || result.bookings || [];
-    },
-  });
-
   // Fetch GST settings
   const { data: gstSettings = [] } = useQuery<any[]>({
     queryKey: ["/api/gst-settings"],
@@ -353,17 +299,17 @@ export default function InvoiceCreate() {
       !!tenant?.id && !!selectedTaxSettingId && selectedTaxSettingId !== "none",
   });
 
-  // Track if invoice data has been loaded to prevent re-loading
-  const invoiceDataLoadedRef = useRef<number | null>(null);
+  // Track if Expense data has been loaded to prevent re-loading
+  const expenseDataLoadedRef = useRef<number | null>(null);
 
-  // Fetch invoice data when in edit mode
-  const { data: existingInvoice, isLoading: isLoadingInvoice, refetch: refetchInvoice } = useQuery({
-    queryKey: [`/api/tenants/${tenant?.id}/invoices/${invoiceId}`],
-    enabled: isEditMode && !!invoiceId && !!tenant?.id,
+  // Fetch Expense data when in edit mode
+  const { data: existingExpense, isLoading: isLoadingExpense, refetch: refetchExpense } = useQuery({
+    queryKey: [`/api/expenses/${expenseId}`],
+    enabled: isEditMode && !!expenseId && !!tenant?.id,
     queryFn: async () => {
       const token = auth.getToken();
       // Add timestamp to URL to prevent 304 cached responses
-      const url = `/api/tenants/${tenant?.id}/invoices/${invoiceId}?t=${Date.now()}`;
+      const url = `/api/expenses/${expenseId}?t=${Date.now()}`;
       const response = await fetch(url, {
         headers: { 
           Authorization: `Bearer ${token}`,
@@ -376,7 +322,7 @@ export default function InvoiceCreate() {
       // Handle 304 Not Modified - force a fresh request (fallback)
       if (response.status === 304) {
         console.warn("Received 304, forcing fresh fetch with new timestamp...");
-        const freshUrl = `/api/tenants/${tenant?.id}/invoices/${invoiceId}?t=${Date.now()}`;
+        const freshUrl = `/api/expenses/${expenseId}?t=${Date.now()}`;
         const freshResponse = await fetch(freshUrl, {
           headers: { 
             Authorization: `Bearer ${token}`,
@@ -386,18 +332,18 @@ export default function InvoiceCreate() {
           cache: 'no-store',
         });
         if (!freshResponse.ok) {
-          console.error("Failed to fetch invoice after 304 retry:", freshResponse.status, freshResponse.statusText);
-          throw new Error("Failed to fetch invoice");
+          console.error("Failed to fetch Expense after 304 retry:", freshResponse.status, freshResponse.statusText);
+          throw new Error("Failed to fetch Expense");
         }
         const result = await freshResponse.json();
-        console.log("Invoice data fetched (raw, after 304 retry):", result);
-        return result.invoice || result.data || result;
+        console.log("Expense data fetched (raw, after 304 retry):", result);
+        return result.Expense || result.data || result;
       }
       
-      if (!response.ok) throw new Error("Failed to fetch invoice");
+      if (!response.ok) throw new Error("Failed to fetch Expense");
       const result = await response.json();
-      console.log("Invoice data fetched (raw):", result);
-      return result.invoice || result.data || result;
+      console.log("Expense data fetched (raw):", result);
+      return result.Expense || result.data || result;
     },
     // Force refetch every time to ensure fresh data when editing
     refetchOnMount: true,
@@ -408,311 +354,208 @@ export default function InvoiceCreate() {
     retryDelay: 1000, // Wait 1 second between retries
   });
 
-  // Reset the loaded flag and force refetch when invoiceId changes
+  // Reset the loaded flag and force refetch when expenseId changes
   useEffect(() => {
-    if (invoiceId) {
-      const previousInvoiceId = invoiceDataLoadedRef.current;
-      if (previousInvoiceId !== invoiceId) {
-        console.log("🔄 Invoice ID changed from", previousInvoiceId, "to", invoiceId);
-        invoiceDataLoadedRef.current = null; // Reset before refetch
-        // Force refetch when invoiceId changes
-        if (isEditMode && refetchInvoice) {
-          console.log("🔄 Forcing refetch for new invoice ID:", invoiceId);
+    if (expenseId) {
+      const previousexpenseId = expenseDataLoadedRef.current;
+      if (previousexpenseId !== expenseId) {
+        console.log("🔄 Expense ID changed from", previousexpenseId, "to", expenseId);
+        expenseDataLoadedRef.current = null; // Reset before refetch
+        // Force refetch when expenseId changes
+        if (isEditMode && refetchExpense) {
+          console.log("🔄 Forcing refetch for new Expense ID:", expenseId);
           setTimeout(() => {
-            refetchInvoice();
+            refetchExpense();
           }, 100);
         }
       }
     } else {
       // Reset when not in edit mode
-      invoiceDataLoadedRef.current = null;
+      expenseDataLoadedRef.current = null;
     }
-  }, [invoiceId, isEditMode, refetchInvoice]);
+  }, [expenseId, isEditMode, refetchExpense]);
 
-  // Populate form fields when invoice data loads
+  // Populate form fields when Expense data loads
   useEffect(() => {
-    // Validate that we have valid invoice data
-    const invoice = existingInvoice as any;
-    const hasValidData = invoice && 
-                        typeof invoice === 'object' && 
-                        Object.keys(invoice).length > 0 &&
-                        (invoice.id || invoice.invoiceNumber || invoice.totalAmount !== undefined);
+    // Validate that we have valid Expense data
+    const Expense = existingExpense as any;
+    const hasValidData = Expense && 
+                        typeof Expense === 'object' && 
+                        Object.keys(Expense).length > 0 &&
+                        (Expense.id || Expense.expenseNumber || Expense.totalAmount !== undefined);
     
-    // Check if lineItems are empty or don't have the expected data
-    const lineItemsEmpty = !invoice?.lineItems || 
-                          (Array.isArray(invoice.lineItems) && invoice.lineItems.length === 0) ||
-                          (lineItems.length === 0 && invoice?.lineItems?.length > 0);
+    // Check if expenseItems are empty or don't have the expected data
+    const expenseItemsEmpty = !Expense?.expenseItems || 
+                          (Array.isArray(Expense.expenseItems) && Expense.expenseItems.length === 0) ||
+                          (expenseItems.length === 0 && Expense?.expenseItems?.length > 0);
     
     // Only load if we have valid data, not loading, and either:
-    // 1. Haven't loaded this invoice yet (ref doesn't match), OR
+    // 1. Haven't loaded this Expense yet (ref doesn't match), OR
     // 2. Line items are empty even though we have data (fallback case)
     const shouldLoad = isEditMode && 
                       hasValidData && 
-                      !isLoadingInvoice && 
-                      (invoiceDataLoadedRef.current !== invoiceId || lineItemsEmpty);
+                      !isLoadingExpense && 
+                      (expenseDataLoadedRef.current !== expenseId || expenseItemsEmpty);
     
-    console.log("🔍 Invoice data loading check:", {
+    console.log("🔍 Expense data loading check:", {
       isEditMode,
       hasValidData,
-      isLoadingInvoice,
-      currentRef: invoiceDataLoadedRef.current,
-      invoiceId,
-      lineItemsEmpty,
+      isLoadingExpense,
+      currentRef: expenseDataLoadedRef.current,
+      expenseId,
+      expenseItemsEmpty,
       shouldLoad,
-      invoiceDataKeys: invoice ? Object.keys(invoice).length : 0,
-      invoiceNumber: invoice?.invoiceNumber,
-      formLineItemsLength: lineItems.length,
-      dataLineItemsLength: invoice?.lineItems?.length || 0,
+      ExpenseDataKeys: Expense ? Object.keys(Expense).length : 0,
+      expenseNumber: Expense?.expenseNumber,
+      formexpenseItemsLength: expenseItems.length,
+      dataexpenseItemsLength: Expense?.expenseItems?.length || 0,
     });
     
     if (shouldLoad) {
-      invoiceDataLoadedRef.current = invoiceId; // Mark as loaded BEFORE setting data
-      console.log("🔄 Loading invoice data into form:", invoice);
+      expenseDataLoadedRef.current = expenseId; // Mark as loaded BEFORE setting data
+      console.log("🔄 Loading Expense data into form:", Expense);
       
-      // Set basic fields
-      setSelectedCustomerId(invoice.customerId?.toString() || "");
-      setSelectedBookingId(invoice.bookingId?.toString() || "none");
-      setInvoiceDate(invoice.issueDate || invoice.invoiceDate || new Date().toISOString().split("T")[0]);
-      setDueDate(invoice.dueDate || new Date().toISOString().split("T")[0]);
-      setDiscountAmount(invoice.discountAmount?.toString() || "0");
-      // In edit mode, store existing paid amount separately and set amount paid field to 0
-      const existingPaid = parseFloat(invoice.paidAmount?.toString() || "0");
-      setExistingPaidAmount(existingPaid);
-      setAmountPaid("0"); // Start with 0 for new payment
-      setPaymentStatus(invoice.status || "pending");
-      // Handle both array and string for backward compatibility
-      const paymentMethodValue = invoice.paymentMethod;
-      if (Array.isArray(paymentMethodValue)) {
-        setPaymentMethod(paymentMethodValue);
-      } else if (typeof paymentMethodValue === 'string') {
-        setPaymentMethod([paymentMethodValue]);
-      } else {
-        setPaymentMethod(["credit_card"]);
+      // Set basic expense fields
+      setExpenseDate(Expense.expenseDate || Expense.expense_date || new Date().toISOString().split("T")[0]);
+      setCurrency(Expense.currency || "USD");
+      
+      // Clean notes - remove HTML tags if present
+      let notesText = Expense.notes || Expense.description || "";
+      if (notesText && typeof notesText === "string") {
+        notesText = notesText.replace(/<[^>]*>/g, "").trim();
       }
-      setPaymentTerms(invoice.paymentTerms?.toString() || "30");
-      setIsTaxInclusive(invoice.isTaxInclusive || false);
-      setNotesContent(invoice.notes || "");
-      setAdditionalNotesContent(invoice.additionalNotes || "");
-      setEnableReminder(invoice.enableReminder || false);
-      setReminderFrequency(invoice.reminderFrequency || "weekly");
-      setReminderSpecificDate(invoice.reminderSpecificDate || "");
-
-      // Set payment installments if they exist
-      if (invoice.installments && Array.isArray(invoice.installments) && invoice.installments.length > 0) {
-        setEnableInstallments(true);
-        setNumberOfInstallments(invoice.installments.length.toString());
-        // Calculate installment frequency based on dates if available
-        if (invoice.installments.length > 1) {
-          const firstDate = new Date(invoice.installments[0].dueDate);
-          const secondDate = new Date(invoice.installments[1].dueDate);
-          const daysDiff = Math.round((secondDate.getTime() - firstDate.getTime()) / (1000 * 60 * 60 * 24));
-          if (daysDiff >= 28 && daysDiff <= 31) {
-            setInstallmentFrequency("monthly");
-          } else if (daysDiff >= 7 && daysDiff <= 14) {
-            setInstallmentFrequency("weekly");
-          } else if (daysDiff >= 85 && daysDiff <= 95) {
-            setInstallmentFrequency("quarterly");
-          }
-        }
+      setNotesContent(notesText);
+      
+      // Set expense number if available
+      if (Expense.expenseNumber || Expense.expense_number || Expense.referenceNumber || Expense.reference_number) {
+        const expNum = Expense.expenseNumber || Expense.expense_number || Expense.referenceNumber || Expense.reference_number;
+        setExpenseNumber(expNum);
       }
 
       // Parse and set line items
-      let parsedLineItems = [];
-      if (invoice.lineItems) {
-        if (typeof invoice.lineItems === "string") {
+      let parsedexpenseItems = [];
+      if (Expense.expenseItems) {
+        if (typeof Expense.expenseItems === "string") {
           try {
-            parsedLineItems = JSON.parse(invoice.lineItems);
+            parsedexpenseItems = JSON.parse(Expense.expenseItems);
           } catch (e) {
             console.warn("Failed to parse line items:", e);
           }
-        } else if (Array.isArray(invoice.lineItems)) {
-          parsedLineItems = invoice.lineItems;
+        } else if (Array.isArray(Expense.expenseItems)) {
+          parsedexpenseItems = Expense.expenseItems;
         }
-      } else if (invoice.items && Array.isArray(invoice.items)) {
-        parsedLineItems = invoice.items;
+      } else if (Expense.items && Array.isArray(Expense.items)) {
+        parsedexpenseItems = Expense.items;
       }
 
-      if (parsedLineItems.length > 0) {
-        setLineItems(parsedLineItems.map((item: any) => ({
-          travelCategory: item.travelCategory || "",
-          vendor: item.vendor?.toString() || item.vendorId?.toString() || "",
-          serviceProviderId: item.serviceProviderId?.toString() || "",
-          itemTitle: item.itemTitle || item.description || "",
-          invoiceNumber: item.invoiceNumber || "",
-          voucherNumber: item.voucherNumber || "",
+      if (parsedexpenseItems.length > 0) {
+        setExpenseItems(parsedexpenseItems.map((item: any) => ({
+          category: item.category || "",
+          title: item.title || item.itemTitle || item.description || "",
+          vendorId: item.vendorId?.toString() || item.vendor_id?.toString() || item.vendor?.toString() || "",
+          leadTypeId: item.leadTypeId?.toString() || item.lead_type_id?.toString() || "",
           quantity: item.quantity?.toString() || "1",
-          unitPrice: item.unitPrice?.toString() || "",
-          sellingPrice: item.sellingPrice?.toString() || item.unitPrice?.toString() || "",
-          purchasePrice: item.purchasePrice?.toString() || "0",
-          tax: item.tax?.toString() || "0",
+          amount: item.amount?.toString() || item.unitPrice?.toString() || item.sellingPrice?.toString() || "",
           taxRateId: item.taxRateId?.toString() || "",
-          additionalCommissionPercentage: item.additionalCommissionPercentage?.toString() || "",
-          additionalCommission: item.additionalCommission?.toString() || "",
+          taxAmount: item.taxAmount?.toString() || item.tax?.toString() || "0",
           totalAmount: parseFloat(item.totalAmount?.toString() || item.totalPrice?.toString() || "0"),
+          paymentMethod: item.paymentMethod || item.payment_method || "credit_card",
+          paymentStatus: item.paymentStatus || item.payment_status || "paid",
+          amountPaid: item.amountPaid?.toString() || item.amount_paid?.toString() || "",
+          amountDue: item.amountDue?.toString() || item.amount_due?.toString() || "",
+          notes: item.notes || "",
         })));
       }
       
-      console.log("✅ Invoice data loaded successfully");
-      console.log("✅ Line items count:", lineItems.length);
+      expenseDataLoadedRef.current = expenseId;
+      console.log("✅ Expense data loaded successfully");
+      console.log("✅ Expense items count:", expenseItems.length);
     } else {
       const skipReason = {
         isEditMode,
-        hasInvoiceData: !!existingInvoice,
-        isLoadingInvoice,
-        invoiceId,
+        hasExpenseData: !!existingExpense,
+        isLoadingExpense,
+        expenseId,
         tenantId: tenant?.id,
-        alreadyLoaded: invoiceDataLoadedRef.current === invoiceId,
-        invoiceDataType: typeof existingInvoice,
-        invoiceDataKeys: existingInvoice ? Object.keys(existingInvoice).length : 0,
+        alreadyLoaded: expenseDataLoadedRef.current === expenseId,
+        ExpenseDataType: typeof existingExpense,
+        ExpenseDataKeys: existingExpense ? Object.keys(existingExpense).length : 0,
       };
-      console.log("⏭️ Skipping invoice data load:", skipReason);
+      console.log("⏭️ Skipping Expense data load:", skipReason);
       
       // If we're in edit mode but data isn't loading and we don't have data, try to refetch
-      if (isEditMode && !isLoadingInvoice && !existingInvoice && invoiceId && invoiceDataLoadedRef.current !== invoiceId) {
+      if (isEditMode && !isLoadingExpense && !existingExpense && expenseId && expenseDataLoadedRef.current !== expenseId) {
         console.log("🔄 No data available, attempting to refetch...");
         setTimeout(() => {
-          if (refetchInvoice) {
-            refetchInvoice();
+          if (refetchExpense) {
+            refetchExpense();
           }
         }, 500);
       }
       
-      // If we have data but lineItems are empty, force reload
-      if (isEditMode && existingInvoice && !isLoadingInvoice && lineItems.length === 0 && (existingInvoice as any).lineItems?.length > 0) {
+      // If we have data but expenseItems are empty, force reload
+      if (isEditMode && existingExpense && !isLoadingExpense && expenseItems.length === 0 && (existingExpense as any).expenseItems?.length > 0) {
         console.log("⚠️ Line items are empty but data exists, forcing reload...");
-        invoiceDataLoadedRef.current = null; // Reset to allow reload
+        expenseDataLoadedRef.current = null; // Reset to allow reload
         setTimeout(() => {
-          if (refetchInvoice) {
-            refetchInvoice();
+          if (refetchExpense) {
+            refetchExpense();
           }
         }, 100);
       }
     }
-  }, [existingInvoice, isEditMode, isLoadingInvoice, invoiceId, tenant?.id, refetchInvoice, lineItems.length]);
+  }, [existingExpense, isEditMode, isLoadingExpense, expenseId, tenant?.id, refetchExpense, expenseItems.length]);
 
-  // Create invoice mutation
-  const createInvoiceMutation = useMutation({
-    mutationFn: async (invoiceData: any) => {
+  // Create expense mutation
+  const createExpensesMutation = useMutation({
+    mutationFn: async (expenses: any[]) => {
       const token = auth.getToken();
-      const response = await fetch(`/api/tenants/${tenant?.id}/invoices`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(invoiceData),
-      });
-      if (!response.ok) throw new Error("Failed to create invoice");
-      return response.json();
-    },
-    onSuccess: async (data) => {
-      // Installments are now created in the server during invoice creation
-      // No need to create them separately here
-      toast({
-        title: "Invoice Created",
-        description: enableInstallments 
-          ? "Invoice and payment installments created successfully."
-          : "Invoice has been created successfully.",
-      });
-
-      queryClient.invalidateQueries({
-        queryKey: [`/api/tenants/${tenant?.id}/invoices`],
-      });
-
-      // Send invoice via email/WhatsApp if enabled
-      const selectedCustomer = customers.find((c: any) => c.id.toString() === selectedCustomerId);
-      if (data.invoice?.id && selectedCustomer) {
-        try {
-          const token = auth.getToken();
-          
-          // Send via email if enabled
-          if (invoiceSettings?.sendInvoiceViaEmail && selectedCustomer.email) {
-            try {
-              await fetch(`/api/invoices/${data.invoice.id}/send-email`, {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  Authorization: `Bearer ${token}`,
-                },
-                body: JSON.stringify({
-                  email: selectedCustomer.email,
-                }),
-              });
-            } catch (error) {
-              console.error("Failed to send invoice via email:", error);
-            }
-          }
-
-          // Send via WhatsApp if enabled
-          if (invoiceSettings?.sendInvoiceViaWhatsapp && selectedCustomer.phone) {
-            try {
-              await fetch(`/api/invoices/${data.invoice.id}/send-whatsapp`, {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  Authorization: `Bearer ${token}`,
-                },
-                body: JSON.stringify({
-                  phone: selectedCustomer.phone,
-                }),
-              });
-            } catch (error) {
-              console.error("Failed to send invoice via WhatsApp:", error);
-            }
-          }
-        } catch (error) {
-          console.error("Error sending invoice:", error);
-        }
+      if (isEditMode && expenseId) {
+        // Update existing expense
+        const expense = expenses[0];
+        const response = await fetch(`/api/expenses/${expenseId}`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(expense),
+        });
+        if (!response.ok) throw new Error("Failed to update expense");
+        return [await response.json()];
+      } else {
+        // Create new expenses
+        const promises = expenses.map((expense) =>
+          fetch("/api/expenses", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify(expense),
+          }).then((res) => {
+            if (!res.ok) throw new Error("Failed to create expense");
+            return res.json();
+          })
+        );
+        return Promise.all(promises);
       }
-
-      navigate("/invoices");
-    },
-    onError: () => {
-      toast({
-        title: "Creation Failed",
-        description: "Failed to create invoice. Please try again.",
-        variant: "destructive",
-      });
-    },
-  });
-
-  // Update invoice mutation
-  const updateInvoiceMutation = useMutation({
-    mutationFn: async (invoiceData: any) => {
-      const token = auth.getToken();
-      const response = await fetch(`/api/tenants/${tenant?.id}/invoices/${invoiceId}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(invoiceData),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to update invoice: ${response.status} - ${errorText}`);
-      }
-
-      return response.json();
     },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/expenses"] });
       toast({
-        title: "Invoice Updated",
-        description: "Invoice has been updated successfully.",
+        title: "Success",
+        description: isEditMode 
+          ? "Expense updated successfully"
+          : `${expenseItems.length} expense(s) created successfully`,
       });
-      queryClient.invalidateQueries({
-        queryKey: [`/api/tenants/${tenant?.id}/invoices`],
-      });
-      queryClient.invalidateQueries({
-        queryKey: [`/api/tenants/${tenant?.id}/invoices/${invoiceId}`],
-      });
-      navigate("/invoices");
+      navigate("/expenses");
     },
-    onError: () => {
+    onError: (error: any) => {
+      console.error(`Error ${isEditMode ? 'updating' : 'creating'} expenses:`, error);
       toast({
-        title: "Update Failed",
-        description: "Failed to update invoice. Please try again.",
+        title: "Error",
+        description: `Failed to ${isEditMode ? 'update' : 'create'} expense${isEditMode ? '' : 's'}`,
         variant: "destructive",
       });
     },
@@ -743,27 +586,13 @@ export default function InvoiceCreate() {
     }
   };
 
-  // Get travel categories from lead types
-  const getTravelCategories = (): AutocompleteOption[] => {
-    const leadTypeCategories = leadTypes.map((lt: any) => ({
-      value: lt.name || lt.type_name || lt.typeName || `Lead Type ${lt.id}`,
-      label: lt.name || lt.type_name || lt.typeName || `Lead Type ${lt.id}`,
+  // Get category options for expense categories
+  const getCategoryOptions = (): AutocompleteOption[] => {
+    return EXPENSE_CATEGORIES.map((cat) => ({
+      value: cat.value,
+      label: cat.label,
     }));
-
-    const defaultCategories =
-      leadTypeCategories.length === 0
-        ? [
-          { value: "Flight", label: "Flight" },
-          { value: "Hotel", label: "Hotel" },
-          { value: "Transport", label: "Transport" },
-          { value: "Tour Package", label: "Tour Package" },
-          { value: "Visa Services", label: "Visa Services" },
-          { value: "Insurance", label: "Insurance" },
-          { value: "Meals", label: "Meals" },
-          { value: "Activities", label: "Activities" },
-          { value: "Other Services", label: "Other Services" },
-        ]
-        : leadTypeCategories;
+  };
 
     return [
       { value: "create_new", label: "➕ New" },
@@ -874,8 +703,8 @@ export default function InvoiceCreate() {
     return symbols[currencyCode] || currencyCode;
   };
 
-  // Get current currency from invoice settings
-  const currentCurrency = invoiceSettings?.defaultCurrency || "USD";
+  // Get current currency from Expense settings
+  const currentCurrency = expenseSettings?.defaultCurrency || "USD";
   const currencySymbol = getCurrencySymbol(currentCurrency);
 
   // Get currency options
@@ -887,108 +716,162 @@ export default function InvoiceCreate() {
     ];
   };
 
-  const calculateLineItemTotals = (item: typeof lineItems[number]) => {
-    const sellingPrice = parseFloat(item.sellingPrice || "0");
-    const quantity = parseInt(item.quantity || "1");
-    const subtotal = sellingPrice * quantity;
+  // Calculate expense item totals
+  const calculateExpenseItemTotals = (item: typeof expenseItems[number]) => {
+    const quantity = parseFloat(item.quantity || "1");
+    const unitAmount = parseFloat(item.amount || "0");
+    const totalAmountBeforeTax = unitAmount * quantity;
     let taxAmount = 0;
-    let totalAmount = subtotal;
+    let totalAmount = totalAmountBeforeTax;
 
-    const activeRate = item.taxRateId
-      ? gstRates.find((rate: any) => rate.id?.toString() === item.taxRateId)
-      : null;
-
-    if (activeRate) {
-      const ratePercentage = parseFloat(activeRate.ratePercentage) || 0;
-      if (isTaxInclusive) {
-        // When tax is inclusive, tax is already in the price, so show 0
-        taxAmount = 0;
-        totalAmount = subtotal; // Total is the selling price (tax already included)
-      } else {
-        // When tax is exclusive, calculate tax and add it
-        taxAmount = subtotal * (ratePercentage / 100);
-        totalAmount = subtotal + taxAmount;
+    if (item.taxRateId) {
+      const selectedRate = gstRates.find(
+        (rate: any) => rate.id?.toString() === item.taxRateId
+      );
+      if (selectedRate) {
+        const ratePercentage = parseFloat(
+          selectedRate.ratePercentage?.toString() || 
+          selectedRate.rate_percentage?.toString() || 
+          selectedRate.rate?.toString() || 
+          "0"
+        );
+        
+        if (isTaxInclusive) {
+          const subtotal = totalAmountBeforeTax / (1 + ratePercentage / 100);
+          taxAmount = totalAmountBeforeTax - subtotal;
+          totalAmount = totalAmountBeforeTax;
+        } else {
+          taxAmount = (totalAmountBeforeTax * ratePercentage) / 100;
+          totalAmount = totalAmountBeforeTax + taxAmount;
+        }
       }
-    } else {
-      // No tax rate selected
-      taxAmount = 0;
-      totalAmount = subtotal;
     }
-
-    // Additional commission is now a direct value (not percentage-based)
-    const additionalCommission = parseFloat(item.additionalCommission || "0") || 0;
 
     return {
       ...item,
-      tax: taxAmount ? taxAmount.toFixed(2) : "",
-      totalAmount,
-      additionalCommission: additionalCommission > 0 ? additionalCommission.toFixed(2) : "" as any,
-    } as typeof item;
+      taxAmount: taxAmount.toFixed(2),
+      totalAmount: totalAmount,
+    };
   };
 
-  // Update line item
-  const updateLineItem = (index: number, field: string, value: any) => {
-    const updatedItems = [...lineItems];
-    updatedItems[index] = calculateLineItemTotals({
-      ...updatedItems[index],
-      [field]: value,
-    });
+  // Update expense item
+  const updateExpenseItem = (index: number, field: string, value: any) => {
+    const updatedItems = [...expenseItems];
+    updatedItems[index] = { ...updatedItems[index], [field]: value };
 
-    setLineItems(updatedItems);
+    // Calculate totals if amount, quantity, or tax rate changes
+    if (field === "amount" || field === "quantity" || field === "taxRateId") {
+      const quantity = parseFloat(updatedItems[index].quantity || "1");
+      const unitAmount = parseFloat(updatedItems[index].amount || "0");
+      const totalAmountBeforeTax = unitAmount * quantity;
+      let taxAmount = 0;
+      let totalAmount = totalAmountBeforeTax;
+      
+      if (updatedItems[index].taxRateId) {
+        const selectedRate = gstRates.find(
+          (rate: any) => rate.id?.toString() === updatedItems[index].taxRateId
+        );
+        if (selectedRate) {
+          const ratePercentage = parseFloat(
+            selectedRate.ratePercentage?.toString() || 
+            selectedRate.rate_percentage?.toString() || 
+            selectedRate.rate?.toString() || 
+            "0"
+          );
+          
+          if (isTaxInclusive) {
+            const subtotal = totalAmountBeforeTax / (1 + ratePercentage / 100);
+            taxAmount = totalAmountBeforeTax - subtotal;
+            totalAmount = totalAmountBeforeTax;
+          } else {
+            taxAmount = (totalAmountBeforeTax * ratePercentage) / 100;
+            totalAmount = totalAmountBeforeTax + taxAmount;
+          }
+        }
+      }
+      
+      updatedItems[index].taxAmount = taxAmount.toFixed(2);
+      updatedItems[index].totalAmount = totalAmount;
+    }
+
+    setExpenseItems(updatedItems);
   };
 
+  // Recalculate all items when tax inclusive setting changes
   useEffect(() => {
-    setLineItems((prev) => prev.map((item) => calculateLineItemTotals(item)));
+    const recalculatedItems = expenseItems.map((item) => {
+      if (item.amount && item.taxRateId) {
+        const quantity = parseFloat(item.quantity || "1");
+        const unitAmount = parseFloat(item.amount || "0");
+        const amount = unitAmount * quantity;
+        let taxAmount = 0;
+        let totalAmount = amount;
+        
+        const selectedRate = gstRates.find(
+          (rate: any) => rate.id?.toString() === item.taxRateId
+        );
+        if (selectedRate) {
+          const ratePercentage = parseFloat(
+            selectedRate.ratePercentage?.toString() || 
+            selectedRate.rate_percentage?.toString() || 
+            selectedRate.rate?.toString() || 
+            "0"
+          );
+          
+          if (isTaxInclusive) {
+            const subtotal = amount / (1 + ratePercentage / 100);
+            taxAmount = amount - subtotal;
+            totalAmount = amount;
+          } else {
+            taxAmount = (amount * ratePercentage) / 100;
+            totalAmount = amount + taxAmount;
+          }
+        }
+        
+        return {
+          ...item,
+          taxAmount: taxAmount.toFixed(2),
+          totalAmount: totalAmount,
+        };
+      }
+      return item;
+    });
+    setExpenseItems(recalculatedItems);
   }, [isTaxInclusive, gstRates]);
 
-  // Auto-set amount paid to full total when payment status is "paid"
-  useEffect(() => {
-    if (paymentStatus === "paid") {
-      const grandTotal = calculateGrandTotal();
-      // In edit mode, set to the difference needed to make it fully paid
-      if (isEditMode) {
-        const totalNeeded = grandTotal - existingPaidAmount;
-        setAmountPaid(totalNeeded > 0 ? totalNeeded.toFixed(2) : "0");
-      } else {
-        setAmountPaid(grandTotal.toFixed(2));
-      }
-    }
-  }, [paymentStatus, lineItems, discountAmount, isTaxInclusive, gstRates, isEditMode, existingPaidAmount]);
-
-  // Add line item
-  const addLineItem = () => {
-    setLineItems([
-      ...lineItems,
+  // Add expense item
+  const addExpenseItem = () => {
+    setExpenseItems([
+      ...expenseItems,
       {
-        travelCategory: "",
-        vendor: "",
-        serviceProviderId: "",
-        itemTitle: "",
-        invoiceNumber: "",
-        voucherNumber: "",
+        category: "",
+        title: "",
+        vendorId: "",
+        leadTypeId: "",
         quantity: "1",
-        unitPrice: "",
-        sellingPrice: "",
-        purchasePrice: "",
-        tax: "",
+        amount: "",
         taxRateId: "",
-        additionalCommissionPercentage: "",
-        additionalCommission: "",
+        taxAmount: "0",
         totalAmount: 0,
+        paymentMethod: "credit_card",
+        paymentStatus: "paid",
+        amountPaid: "",
+        amountDue: "",
+        notes: "",
       },
     ]);
   };
 
-  // Remove line item
-  const removeLineItem = (index: number) => {
-    if (lineItems.length > 1) {
-      setLineItems(lineItems.filter((_, i) => i !== index));
+  // Remove expense item
+  const removeExpenseItem = (index: number) => {
+    if (expenseItems.length > 1) {
+      setExpenseItems(expenseItems.filter((_, i) => i !== index));
     }
   };
 
   // Calculate subtotal (without tax)
   const calculateSubtotal = () => {
-    return lineItems.reduce(
+    return expenseItems.reduce(
       (total, item) => {
         const sellingPrice = parseFloat(item.sellingPrice || "0");
         const quantity = parseInt(item.quantity || "1");
@@ -1000,7 +883,7 @@ export default function InvoiceCreate() {
 
   // Calculate total tax
   const calculateTotalTax = () => {
-    return lineItems.reduce(
+    return expenseItems.reduce(
       (total, item) => total + parseFloat(item.tax || "0"),
       0,
     );
@@ -1008,7 +891,7 @@ export default function InvoiceCreate() {
 
   // Calculate total additional commission
   const calculateTotalAdditionalCommission = () => {
-    return lineItems.reduce(
+    return expenseItems.reduce(
       (total, item) => total + parseFloat(item.additionalCommission || "0"),
       0,
     );
@@ -1074,7 +957,7 @@ export default function InvoiceCreate() {
 
   // Generate expenses from line items
   const generateExpenses = () => {
-    return lineItems
+    return expenseItems
       .filter(
         (item) => item.purchasePrice && parseFloat(item.purchasePrice) > 0,
       )
@@ -1105,7 +988,7 @@ export default function InvoiceCreate() {
           leadTypeName: item.travelCategory || "Not specified",
           expenseType: "purchase",
           quantity: quantity,
-          invoiceNumber: item.invoiceNumber,
+          expenseNumber: item.expenseNumber,
           voucherNumber: item.voucherNumber,
         };
       });
@@ -1185,7 +1068,7 @@ export default function InvoiceCreate() {
       setCurrentItemIndex(index);
       setIsLeadTypePanelOpen(true);
     } else {
-      updateLineItem(index, "travelCategory", value);
+      updateExpenseItem(index, "travelCategory", value);
     }
   };
 
@@ -1195,7 +1078,7 @@ export default function InvoiceCreate() {
       setCurrentItemIndex(index);
       setIsVendorPanelOpen(true);
     } else {
-      updateLineItem(index, "vendor", value);
+      updateExpenseItem(index, "vendor", value);
     }
   };
 
@@ -1205,7 +1088,7 @@ export default function InvoiceCreate() {
       setCurrentItemIndex(index);
       setIsServiceProviderPanelOpen(true);
     } else {
-      updateLineItem(index, "serviceProviderId", value);
+      updateExpenseItem(index, "serviceProviderId", value);
     }
   };
 
@@ -1238,9 +1121,9 @@ export default function InvoiceCreate() {
         const purchasePrice = unitPrice * 0.8;
         const taxAmount = totalAmount * 0.18;
 
-        const newLineItems = [...lineItems];
-        newLineItems[0] = {
-          ...newLineItems[0],
+        const newexpenseItems = [...expenseItems];
+        newexpenseItems[0] = {
+          ...newexpenseItems[0],
           travelCategory: getTravelCategories()[1]?.value || "Tour Package",
           itemTitle:
             bookingPackage ||
@@ -1249,7 +1132,7 @@ export default function InvoiceCreate() {
           unitPrice: unitPrice.toString(),
           sellingPrice: unitPrice.toString(),
           purchasePrice: purchasePrice.toString(),
-          invoiceNumber:
+          expenseNumber:
             selectedBooking.bookingNumber ||
             selectedBooking.booking_number ||
             `BK-${selectedBooking.id}`,
@@ -1261,7 +1144,7 @@ export default function InvoiceCreate() {
           totalAmount: totalAmount,
         };
 
-        setLineItems(newLineItems);
+        setExpenseItems(newexpenseItems);
 
         const bookingPaidAmount =
           selectedBooking.paidAmount || selectedBooking.paid_amount || 0;
@@ -1276,7 +1159,7 @@ export default function InvoiceCreate() {
     }
   };
 
-  // Calculate due date based on invoice date and payment terms
+  // Calculate due date based on Expense date and payment terms
   const calculateDueDate = (date: string, terms: string, custom: string = "") => {
     const baseDate = new Date(date);
     let daysToAdd = 0;
@@ -1291,9 +1174,9 @@ export default function InvoiceCreate() {
     return newDueDate.toISOString().split("T")[0];
   };
 
-  // Handle invoice date change
-  const handleInvoiceDateChange = (date: string) => {
-    setInvoiceDate(date);
+  // Handle Expense date change
+  const handleexpenseDateChange = (date: string) => {
+    setexpenseDate(date);
     const newDueDate = calculateDueDate(date, paymentTerms, customDays);
     setDueDate(newDueDate);
   };
@@ -1301,7 +1184,7 @@ export default function InvoiceCreate() {
   // Handle payment terms change
   const handlePaymentTermsChange = (terms: string) => {
     setPaymentTerms(terms);
-    const newDueDate = calculateDueDate(invoiceDate, terms, customDays);
+    const newDueDate = calculateDueDate(expenseDate, terms, customDays);
     setDueDate(newDueDate);
   };
 
@@ -1309,13 +1192,122 @@ export default function InvoiceCreate() {
   const handleCustomDaysChange = (days: string) => {
     setCustomDays(days);
     if (paymentTerms === "custom") {
-      const newDueDate = calculateDueDate(invoiceDate, "custom", days);
+      const newDueDate = calculateDueDate(expenseDate, "custom", days);
       setDueDate(newDueDate);
     }
   };
 
-  // Prepare invoice data for preview
-  const prepareInvoiceData = (): InvoiceData | null => {
+  // Calculate subtotal
+  const calculateSubtotal = () => {
+    if (isTaxInclusive) {
+      return expenseItems.reduce((sum, item) => {
+        const quantity = parseFloat(item.quantity || "1");
+        const unitAmount = parseFloat(item.amount || "0");
+        return sum + (unitAmount * quantity);
+      }, 0);
+    } else {
+      return expenseItems.reduce((sum, item) => {
+        const quantity = parseFloat(item.quantity || "1");
+        const unitAmount = parseFloat(item.amount || "0");
+        return sum + (unitAmount * quantity);
+      }, 0);
+    }
+  };
+
+  const calculateTotalTax = () => {
+    if (isTaxInclusive) {
+      return 0;
+    } else {
+      return expenseItems.reduce((sum, item) => sum + parseFloat(item.taxAmount || "0"), 0);
+    }
+  };
+
+  const calculateGrandTotal = () => {
+    if (isTaxInclusive) {
+      return calculateSubtotal();
+    } else {
+      return calculateSubtotal() + calculateTotalTax();
+    }
+  };
+
+  // Calculate grid template columns dynamically (matching invoice-create design)
+  const gridTemplate = useMemo(() => {
+    const columns = [
+      '30px', // # column - smaller (fixed)
+      ...(expenseSettings?.showCategory !== false ? ['minmax(180px, 1.5fr)'] : []), // Category - reduced width (flexible, min 180px)
+      'minmax(180px, 1.5fr)', // Title - reduced width (flexible, min 180px)
+      ...(expenseSettings?.showVendor !== false ? ['minmax(180px, 1.5fr)'] : []), // Vendor - reduced width (flexible, min 180px)
+      ...(expenseSettings?.showLeadType !== false ? ['minmax(180px, 1.5fr)'] : []), // Lead Type - reduced width (flexible, min 180px)
+      'minmax(60px, 1fr)', // Quantity - small (flexible, min 60px)
+      'minmax(130px, 1fr)', // Amount - small (flexible, min 130px)
+      ...(expenseSettings?.showTax !== false ? ['minmax(100px, 1fr)'] : []), // Tax - small (flexible, min 100px)
+      'minmax(100px, 1fr)', // Total - small (flexible, min 100px)
+      ...(expenseSettings?.showPaymentStatus !== false ? ['minmax(100px, 1fr)'] : []), // Status - small (flexible, min 100px)
+      ...(expenseSettings?.showPaymentStatus !== false ? ['minmax(100px, 1fr)'] : []), // Paid - small (flexible, min 100px)
+      ...(expenseSettings?.showPaymentStatus !== false ? ['minmax(100px, 1fr)'] : []), // Due - small (flexible, min 100px)
+      ...(expenseSettings?.showPaymentMethod !== false ? ['minmax(100px, 1fr)'] : []), // Payment - small (flexible, min 100px)
+      '50px', // Delete button - small (fixed)
+    ];
+    return columns.join(' ');
+  }, [expenseSettings?.showCategory, expenseSettings?.showVendor, expenseSettings?.showLeadType, expenseSettings?.showTax, expenseSettings?.showPaymentStatus, expenseSettings?.showPaymentMethod]);
+
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+
+    const expenses = expenseItems.map((item) => {
+      const quantity = parseFloat(item.quantity || "1");
+      const unitAmount = parseFloat(item.amount || "0");
+      const totalAmount = unitAmount * quantity;
+      
+      return {
+        title: item.title,
+        description: item.notes,
+        quantity: quantity,
+        amount: totalAmount,
+        currency: expenseSettings?.defaultCurrency || currency,
+        category: item.category,
+        subcategory: "",
+        expenseDate: expenseDate,
+        expenseNumber: expenseNumber || undefined,
+        paymentMethod: item.paymentMethod,
+        paymentReference: "",
+        vendorId: item.vendorId && item.vendorId !== "none" ? parseInt(item.vendorId) : null,
+        leadTypeId: item.leadTypeId && item.leadTypeId !== "none" ? parseInt(item.leadTypeId) : null,
+        expenseType: "purchase",
+        receiptUrl: "",
+        taxAmount: parseFloat(item.taxAmount || "0"),
+        taxRate: item.taxRateId
+          ? (() => {
+              const selectedRate = gstRates.find(
+                (rate: any) => rate.id?.toString() === item.taxRateId
+              );
+              if (selectedRate) {
+                return parseFloat(
+                  selectedRate.ratePercentage?.toString() || 
+                  selectedRate.rate_percentage?.toString() || 
+                  selectedRate.rate?.toString() || 
+                  "0"
+                );
+              }
+              return 0;
+            })()
+          : 0,
+        isReimbursable: false,
+        isRecurring: false,
+        recurringFrequency: "",
+        status: "pending",
+        amountPaid: parseFloat(item.amountPaid || "0"),
+        amountDue: parseFloat(item.amountDue || "0"),
+        tags: [],
+        notes: notesContent || item.notes,
+      };
+    });
+
+    createExpensesMutation.mutate(expenses);
+  };
+
+  // OLD CODE - REMOVED: Prepare Expense data for preview
+  const prepareExpenseData_OLD = (): ExpenseData | null => {
     const form = document.querySelector('form') as HTMLFormElement;
     if (!form) return null;
     
@@ -1342,9 +1334,9 @@ export default function InvoiceCreate() {
     const companyEmail = tenant?.contactEmail || "company@example.com";
     const companyPhone = tenant?.contactPhone || "";
 
-    const invoiceData: InvoiceData = {
-      invoiceNumber: invoiceNumber || formData.get("invoiceNumber") as string || "INV-001",
-      issueDate: invoiceDate,
+    const ExpenseData: ExpenseData = {
+      expenseNumber: expenseNumber || formData.get("expenseNumber") as string || "INV-001",
+      issueDate: expenseDate,
       dueDate: dueDate,
       customerName: selectedCustomer.name || selectedCustomer.customerName || "Customer",
       customerEmail: selectedCustomer.email || selectedCustomer.customerEmail || "",
@@ -1354,7 +1346,7 @@ export default function InvoiceCreate() {
       companyEmail: companyEmail,
       companyPhone: companyPhone,
       companyAddress: tenant?.address || "",
-      items: lineItems
+      items: expenseItems
         .map((item, originalIndex) => {
           const sellingPrice = parseFloat(item.sellingPrice || "0");
           const quantity = parseInt(item.quantity || "1");
@@ -1406,22 +1398,22 @@ export default function InvoiceCreate() {
       })) : undefined,
     };
 
-    return invoiceData;
+    return ExpenseData;
   };
 
   // Handle preview button click
   const handlePreview = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const invoiceData = prepareInvoiceData();
-    if (invoiceData) {
-      setPreviewInvoiceData(invoiceData);
+    const ExpenseData = prepareExpenseData();
+    if (ExpenseData) {
+      setPreviewExpenseData(ExpenseData);
       setShowPreview(true);
     }
   };
 
   // Handle actual save from preview
   const handleSaveFromPreview = async () => {
-    if (!previewInvoiceData) return;
+    if (!previewExpenseData) return;
 
     const form = document.querySelector('form') as HTMLFormElement;
     if (!form) return;
@@ -1433,11 +1425,11 @@ export default function InvoiceCreate() {
     const finalAmount = grandTotal;
 
     // Combine auto-generated and manual expenses
-    const invoiceNumber = formData.get("invoiceNumber") as string;
+    const expenseNumber = formData.get("expenseNumber") as string;
     const autoExpenses = generateExpenses().map((expense, index) => {
       const totalAmount = expense.amount || 0;
-      // Generate expense number based on invoice number
-      const expenseNumber = expense.invoiceNumber || expense.voucherNumber || `${invoiceNumber}-EXP-${index + 1}`;
+      // Generate expense number based on Expense number
+      const expenseNumber = expense.expenseNumber || expense.voucherNumber || `${expenseNumber}-EXP-${index + 1}`;
       
       return {
         title: expense.title,
@@ -1451,13 +1443,13 @@ export default function InvoiceCreate() {
         expenseDate: formData.get("issueDate") as string,
         expenseNumber: expenseNumber,
         paymentMethod: "bank_transfer",
-        currency: invoiceSettings?.defaultCurrency || "USD",
+        currency: expenseSettings?.defaultCurrency || "USD",
         taxAmount: 0, // Can be calculated if tax info is available
         taxRate: 0,
         amountPaid: 0,
         amountDue: totalAmount,
         status: "pending",
-        notes: `Auto-generated from invoice ${invoiceNumber} - ${expense.invoiceNumber || expense.voucherNumber || ""}`,
+        notes: `Auto-generated from Expense ${expenseNumber} - ${expense.expenseNumber || expense.voucherNumber || ""}`,
       };
     });
 
@@ -1465,7 +1457,7 @@ export default function InvoiceCreate() {
       const purchasePrice = parseFloat(expense.purchasePrice || "0");
       const quantity = parseInt(expense.quantity || "1");
       const amount = purchasePrice * quantity;
-      const expenseNumber = `${invoiceNumber}-MAN-${index + 1}`;
+      const expenseNumber = `${expenseNumber}-MAN-${index + 1}`;
       
       return {
         title: expense.title || "Manual Expense",
@@ -1479,20 +1471,20 @@ export default function InvoiceCreate() {
         expenseDate: formData.get("issueDate") as string,
         expenseNumber: expenseNumber,
         paymentMethod: "bank_transfer",
-        currency: invoiceSettings?.defaultCurrency || "USD",
+        currency: expenseSettings?.defaultCurrency || "USD",
         taxAmount: 0,
         taxRate: 0,
         amountPaid: 0,
         amountDue: amount,
         status: "pending",
-        notes: `Manual expense from invoice ${invoiceNumber}`,
+        notes: `Manual expense from Expense ${expenseNumber}`,
       };
     });
 
     const expenses = [...autoExpenses, ...manualExpensesData];
 
-    const invoiceData = {
-      invoiceNumber: formData.get("invoiceNumber") as string,
+    const ExpenseData = {
+      expenseNumber: formData.get("expenseNumber") as string,
       customerId: parseInt(selectedCustomerId),
       bookingId:
         selectedBookingId && selectedBookingId !== "none"
@@ -1507,13 +1499,13 @@ export default function InvoiceCreate() {
           ? existingPaidAmount + parseFloat(amountPaid || "0") // Add new payment to existing
           : parseFloat(amountPaid || "0"),
       subtotal: grandTotal,
-      taxAmount: lineItems.reduce(
+      taxAmount: expenseItems.reduce(
         (total, item) => total + parseFloat(item.tax || "0"),
         0,
       ),
       discountAmount: discount,
       status: paymentStatus,
-      currency: invoiceSettings?.defaultCurrency || "USD",
+      currency: expenseSettings?.defaultCurrency || "USD",
       notes: notesContent || undefined,
       additionalNotes: additionalNotesContent || undefined,
       paymentTerms: paymentTerms || undefined,
@@ -1522,7 +1514,7 @@ export default function InvoiceCreate() {
       enableReminder,
       reminderFrequency: enableReminder ? reminderFrequency : null,
       reminderSpecificDate: enableReminder && reminderFrequency === "specific_date" ? reminderSpecificDate : null,
-      lineItems: lineItems.map((item) => ({
+      expenseItems: expenseItems.map((item) => ({
         ...item,
         quantity: parseInt(item.quantity || "1"),
         unitPrice: parseFloat(item.unitPrice || "0"),
@@ -1541,21 +1533,21 @@ export default function InvoiceCreate() {
       })) : undefined,
     };
 
-    if (isEditMode && invoiceId) {
-      updateInvoiceMutation.mutate(invoiceData);
+    if (isEditMode && expenseId) {
+      updateExpenseMutation.mutate(ExpenseData);
     } else {
-      createInvoiceMutation.mutate(invoiceData);
+      createExpenseMutation.mutate(ExpenseData);
     }
   };
 
-  const [currency, setCurrency] = useState(invoiceSettings?.defaultCurrency || "USD");
+  const [currency, setCurrency] = useState(expenseSettings?.defaultCurrency || "USD");
 
-  // Update currency when invoice settings change
+  // Update currency when Expense settings change
   useEffect(() => {
-    if (invoiceSettings?.defaultCurrency) {
-      setCurrency(invoiceSettings.defaultCurrency);
+    if (expenseSettings?.defaultCurrency) {
+      setCurrency(expenseSettings.defaultCurrency);
     }
-  }, [invoiceSettings?.defaultCurrency]);
+  }, [expenseSettings?.defaultCurrency]);
 
   // Payment method options
   const paymentMethodOptions = [
@@ -1585,20 +1577,20 @@ export default function InvoiceCreate() {
     const columns = [
       '30px', // # column - smaller (fixed)
       'minmax(180px, 1.5fr)', // Category - reduced width (flexible, min 180px)
-      ...(invoiceSettings?.showVendor ? ['minmax(180px, 1.5fr)'] : []), // Vendor - reduced width (flexible, min 180px)
-      ...(invoiceSettings?.showProvider ? ['minmax(180px, 1.5fr)'] : []), // Provider - reduced width (flexible, min 180px)
+      ...(expenseSettings?.showVendor ? ['minmax(180px, 1.5fr)'] : []), // Vendor - reduced width (flexible, min 180px)
+      ...(expenseSettings?.showProvider ? ['minmax(180px, 1.5fr)'] : []), // Provider - reduced width (flexible, min 180px)
       'minmax(60px, 1fr)', // Pax - small (flexible, min 60px)
-      ...(invoiceSettings?.showUnitPrice ? ['minmax(130px, 1fr)'] : []), // Unit Price - small (flexible, min 100px)
+      ...(expenseSettings?.showUnitPrice ? ['minmax(130px, 1fr)'] : []), // Unit Price - small (flexible, min 100px)
       'minmax(130px, 1fr)', // Selling Price - small (flexible, min 100px)
       'minmax(130px, 1fr)', // Purchase Price - small (flexible, min 100px)
-      ...(invoiceSettings?.showTax ? ['minmax(100px, 1fr)'] : []), // Tax - small (flexible, min 100px)
+      ...(expenseSettings?.showTax ? ['minmax(100px, 1fr)'] : []), // Tax - small (flexible, min 100px)
       'minmax(100px, 1fr)', // Amount - small (flexible, min 100px)
-      ...(invoiceSettings?.showAdditionalCommission ? ['minmax(100px, 1fr)'] : []), // Additional Commission - small (flexible, min 100px)
-      ...(invoiceSettings?.showVoucherInvoice ? ['minmax(100px, 1fr)'] : []), // Invoice/Voucher - small (flexible, min 100px)
+      ...(expenseSettings?.showAdditionalCommission ? ['minmax(100px, 1fr)'] : []), // Additional Commission - small (flexible, min 100px)
+      ...(expenseSettings?.showVoucherExpense ? ['minmax(100px, 1fr)'] : []), // Expense/Voucher - small (flexible, min 100px)
       '50px', // Delete button - small (fixed)
     ];
     return columns.join(' ');
-  }, [invoiceSettings?.showVendor, invoiceSettings?.showProvider, invoiceSettings?.showUnitPrice, invoiceSettings?.showTax, invoiceSettings?.showAdditionalCommission, invoiceSettings?.showVoucherInvoice]);
+  }, [expenseSettings?.showVendor, expenseSettings?.showProvider, expenseSettings?.showUnitPrice, expenseSettings?.showTax, expenseSettings?.showAdditionalCommission, expenseSettings?.showVoucherExpense]);
 
   // Grid template for expense table
   const expenseGridTemplate = useMemo(() => {
@@ -1615,13 +1607,13 @@ export default function InvoiceCreate() {
     return columns.join(' ');
   }, []);
 
-  // Show loading state when fetching invoice data
-  if (isEditMode && isLoadingInvoice) {
+  // Show loading state when fetching Expense data
+  if (isEditMode && isLoadingExpense) {
     return (
       <Layout initialSidebarCollapsed={true}>
         <div className="p-6 max-w-[1600px] mx-auto">
           <div className="bg-white rounded-2xl shadow-sm p-8">
-            <div className="text-center">Loading invoice data...</div>
+            <div className="text-center">Loading Expense data...</div>
           </div>
         </div>
       </Layout>
@@ -1638,7 +1630,7 @@ export default function InvoiceCreate() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => navigate("/invoices")}
+                  onClick={() => navigate("/Expenses")}
                   data-testid="button-back"
                   className="flex-shrink-0"
                 >
@@ -1647,7 +1639,7 @@ export default function InvoiceCreate() {
                 </Button>
                 {isEditMode && (
                   <h1 className="ml-2 sm:ml-4 font-inter font-medium text-base sm:text-[20px] leading-[24px] text-[#121926] truncate">
-                    Edit Invoice
+                    Edit Expense
                   </h1>
                 )}
               </div>
@@ -1657,7 +1649,7 @@ export default function InvoiceCreate() {
 
               <div className="flex gap-2 sm:gap-3 ml-auto">
                 {" "}
-                {tenant?.id && <InvoiceSettingsPanel tenantId={tenant.id} />}
+                {tenant?.id && <expenseSettingsPanel tenantId={tenant.id} />}
                 <div className="w-10 h-10 flex items-center justify-center rounded-lg border border-gray-200 bg-white shadow-sm">
                   <HelpCircle className="h-5 w-5 text-gray-600" />
                 </div>
@@ -1689,10 +1681,10 @@ export default function InvoiceCreate() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
                 <div>
                   <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">
-                    Invoice
+                    Expense
                   </h1>
                   {/* <p className="text-gray-600 dark:text-gray-400">
-              Fill in the details to create a new invoice
+              Fill in the details to create a new Expense
             </p> */}
                 </div>
                 <div></div>
@@ -1700,19 +1692,19 @@ export default function InvoiceCreate() {
                 <div></div>
                 <div></div>
                 <div>
-                  <Label htmlFor="invoiceNumber">Invoice Number *</Label>
+                  <Label htmlFor="expenseNumber">Expense Number *</Label>
                   <Input
-                    data-testid="input-invoice-number"
-                    id="invoiceNumber"
-                    name="invoiceNumber"
-                    value={invoiceNumber}
-                    onChange={(e) => setInvoiceNumber(e.target.value)}
+                    data-testid="input-Expense-number"
+                    id="expenseNumber"
+                    name="expenseNumber"
+                    value={expenseNumber}
+                    onChange={(e) => setexpenseNumber(e.target.value)}
                     placeholder="INV-001"
                     required
                   />
                 </div>
               </div>
-              {/* Customer and Invoice Date Row */}
+              {/* Customer and Expense Date Row */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="lg:col-span-2">
                   <Label htmlFor="customerId">Customer *</Label>
@@ -1728,14 +1720,14 @@ export default function InvoiceCreate() {
                 </div>
 
                 <div>
-                  <Label htmlFor="issueDate">Invoice Date *</Label>
+                  <Label htmlFor="issueDate">Expense Date *</Label>
                   <DatePicker
-                    value={invoiceDate}
-                    onChange={handleInvoiceDateChange}
-                    placeholder="Select invoice date"
+                    value={expenseDate}
+                    onChange={handleexpenseDateChange}
+                    placeholder="Select Expense date"
                     className="w-full"
                   />
-                  <input type="hidden" name="issueDate" value={invoiceDate} />
+                  <input type="hidden" name="issueDate" value={expenseDate} />
                 </div>
               </div>
 
@@ -1753,7 +1745,7 @@ export default function InvoiceCreate() {
                       <TooltipContent>
                         <p className="max-w-xs">
                           Payment terms specify when payment is due. For example, "30 Days" means
-                          payment is due 30 days after the invoice date. "Due on Receipt" means
+                          payment is due 30 days after the Expense date. "Due on Receipt" means
                           immediate payment is expected.
                         </p>
                       </TooltipContent>
@@ -1914,21 +1906,21 @@ export default function InvoiceCreate() {
                   >
                     <div className="text-center flex items-center justify-center">#</div>
                     <div className="flex items-center">Category *</div>
-                    {invoiceSettings?.showVendor && <div className="flex items-center">Vendor</div>}
-                    {invoiceSettings?.showProvider && <div className="flex items-center">Provider</div>}
+                    {expenseSettings?.showVendor && <div className="flex items-center">Vendor</div>}
+                    {expenseSettings?.showProvider && <div className="flex items-center">Provider</div>}
                     <div className="flex items-center">Pax *</div>
-                    {invoiceSettings?.showUnitPrice && <div className="flex items-center">Unit Price ({currencySymbol}) *</div>}
+                    {expenseSettings?.showUnitPrice && <div className="flex items-center">Unit Price ({currencySymbol}) *</div>}
                     <div className="flex items-center">Selling Price ({currencySymbol}) *</div>
                     <div className="flex items-center">Purchase Price ({currencySymbol}) *</div>
-                    {invoiceSettings?.showTax && <div className="flex items-center">Tax ({currencySymbol})</div>}
+                    {expenseSettings?.showTax && <div className="flex items-center">Tax ({currencySymbol})</div>}
                     <div className="flex items-center">Amount ({currencySymbol})</div>
-                    {invoiceSettings?.showAdditionalCommission && <div className="flex items-center">Commission ({currencySymbol})</div>}
-                    {invoiceSettings?.showVoucherInvoice && <div className="flex items-center">Invoice/Voucher</div>}
+                    {expenseSettings?.showAdditionalCommission && <div className="flex items-center">Commission ({currencySymbol})</div>}
+                    {expenseSettings?.showVoucherExpense && <div className="flex items-center">Expense/Voucher</div>}
                     <div className="flex items-center"></div>
                   </div>
 
                   {/* Table Body */}
-                  {lineItems.map((item, index) => (
+                  {expenseItems.map((item, index) => (
                     <div
                       key={index}
                       className="grid gap-2 p-3 border-b last:border-b-0"
@@ -1951,7 +1943,7 @@ export default function InvoiceCreate() {
                         />
                       </div>
 
-                      {invoiceSettings?.showVendor && (
+                      {expenseSettings?.showVendor && (
                         <div className="flex items-center">
                           <AutocompleteInput
                             data-testid={`autocomplete-vendor-${index}`}
@@ -1966,7 +1958,7 @@ export default function InvoiceCreate() {
                         </div>
                       )}
 
-                      {invoiceSettings?.showProvider && (
+                      {expenseSettings?.showProvider && (
                         <div className="flex items-center">
                           <AutocompleteInput
                             data-testid={`autocomplete-service-provider-${index}`}
@@ -1988,20 +1980,20 @@ export default function InvoiceCreate() {
                           data-testid={`input-quantity-${index}`}
                           value={item.quantity}
                           onChange={(e) =>
-                            updateLineItem(index, "quantity", e.target.value)
+                            updateExpenseItem(index, "quantity", e.target.value)
                           }
                           onKeyPress={handleNumericKeyPress}
                           placeholder="1"
                         />
                       </div>
 
-                      {invoiceSettings?.showUnitPrice && (
+                      {expenseSettings?.showUnitPrice && (
                         <div className="flex items-center">
                           <Input
                             data-testid={`input-unit-price-${index}`}
                             value={item.unitPrice}
                             onChange={(e) =>
-                              updateLineItem(index, "unitPrice", e.target.value)
+                              updateExpenseItem(index, "unitPrice", e.target.value)
                             }
                             onKeyPress={handleNumericKeyPress}
                             placeholder="0"
@@ -2014,7 +2006,7 @@ export default function InvoiceCreate() {
                           data-testid={`input-selling-price-${index}`}
                           value={item.sellingPrice}
                           onChange={(e) =>
-                            updateLineItem(
+                            updateExpenseItem(
                               index,
                               "sellingPrice",
                               e.target.value,
@@ -2030,7 +2022,7 @@ export default function InvoiceCreate() {
                           data-testid={`input-purchase-price-${index}`}
                           value={item.purchasePrice}
                           onChange={(e) =>
-                            updateLineItem(
+                            updateExpenseItem(
                               index,
                               "purchasePrice",
                               e.target.value,
@@ -2041,12 +2033,12 @@ export default function InvoiceCreate() {
                         />
                       </div>
 
-                      {invoiceSettings?.showTax && (
+                      {expenseSettings?.showTax && (
                         <div className="flex items-center">
                           <Select
                             value={item.taxRateId || "none"}
                             onValueChange={(value) =>
-                              updateLineItem(index, "taxRateId", value === "none" ? "" : value)
+                              updateExpenseItem(index, "taxRateId", value === "none" ? "" : value)
                             }
                             disabled={!selectedTaxSettingId || selectedTaxSettingId === "none" || gstRates.length === 0}
                           >
@@ -2087,14 +2079,14 @@ export default function InvoiceCreate() {
                         />
                       </div>
 
-                      {invoiceSettings?.showAdditionalCommission && (
+                      {expenseSettings?.showAdditionalCommission && (
                         <div className="flex items-center">
                           <Input
                             data-testid={`input-additional-commission-${index}`}
                             type="text"
                             value={item.additionalCommission || ""}
                             onChange={(e) =>
-                              updateLineItem(
+                              updateExpenseItem(
                                 index,
                                 "additionalCommission",
                                 e.target.value,
@@ -2106,15 +2098,15 @@ export default function InvoiceCreate() {
                         </div>
                       )}
 
-                      {invoiceSettings?.showVoucherInvoice && (
+                      {expenseSettings?.showVoucherExpense && (
                         <div className="flex items-center">
                           <Input
-                            data-testid={`input-line-invoice-number-${index}`}
-                            value={item.invoiceNumber}
+                            data-testid={`input-line-Expense-number-${index}`}
+                            value={item.expenseNumber}
                             onChange={(e) =>
-                              updateLineItem(
+                              updateExpenseItem(
                                 index,
-                                "invoiceNumber",
+                                "expenseNumber",
                                 e.target.value,
                               )
                             }
@@ -2124,12 +2116,12 @@ export default function InvoiceCreate() {
                       )}
 
                       <div className="flex items-center justify-center">
-                        {lineItems.length > 1 && (
+                        {expenseItems.length > 1 && (
                           <Button
                             type="button"
                             variant="ghost"
                             size="sm"
-                            onClick={() => removeLineItem(index)}
+                            onClick={() => removeExpenseItem(index)}
                             data-testid={`button-remove-item-${index}`}
                           >
                             <Trash2 className="h-4 w-4 text-gray-900 dark:text-white" />
@@ -2145,7 +2137,7 @@ export default function InvoiceCreate() {
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={addLineItem}
+                  onClick={addExpenseItem}
                   data-testid="button-add-item"
                 >
                   <Plus className="h-4 w-4 mr-2" />
@@ -2158,7 +2150,7 @@ export default function InvoiceCreate() {
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   {/* Left Side - Tax and Discount Inputs */}
                   <div className="space-y-4">
-                    {invoiceSettings?.showTax && (
+                    {expenseSettings?.showTax && (
                       <div className="flex items-center justify-between p-3 border rounded-lg">
                         <div className="flex flex-col">
                           <Label htmlFor="taxInclusive" className="text-sm font-medium">
@@ -2181,7 +2173,7 @@ export default function InvoiceCreate() {
                       </div>
                     )}
 
-                    {invoiceSettings?.showDiscount && (
+                    {expenseSettings?.showDiscount && (
                       <div>
                         <Label htmlFor="discountAmount">Discount Amount ({currencySymbol})</Label>
                         <Input
@@ -2251,9 +2243,9 @@ export default function InvoiceCreate() {
 
                           <div className="col-span-full">
                             <p className="text-sm text-gray-600 dark:text-gray-400">
-                              {reminderFrequency === "daily" && "Customer will receive payment reminders every day until the invoice is paid."}
-                              {reminderFrequency === "weekly" && "Customer will receive payment reminders every week until the invoice is paid."}
-                              {reminderFrequency === "monthly" && "Customer will receive payment reminders every month until the invoice is paid."}
+                              {reminderFrequency === "daily" && "Customer will receive payment reminders every day until the Expense is paid."}
+                              {reminderFrequency === "weekly" && "Customer will receive payment reminders every week until the Expense is paid."}
+                              {reminderFrequency === "monthly" && "Customer will receive payment reminders every month until the Expense is paid."}
                               {reminderFrequency === "specific_date" && "Customer will receive a payment reminder on the selected date."}
                             </p>
                           </div>
@@ -2276,7 +2268,7 @@ export default function InvoiceCreate() {
                       </span>
                     </div>
 
-                    {invoiceSettings?.showTax && (
+                    {expenseSettings?.showTax && (
                       <div className="flex justify-between items-center py-2 border-b">
                         <span className="text-gray-700 dark:text-gray-300">Tax:</span>
                         <span className="font-medium" data-testid="text-tax">
@@ -2285,7 +2277,7 @@ export default function InvoiceCreate() {
                       </div>
                     )}
 
-                    {invoiceSettings?.showDiscount && (
+                    {expenseSettings?.showDiscount && (
                       <div className="flex justify-between items-center py-2 border-b">
                         <span className="text-gray-700 dark:text-gray-300">Discount:</span>
                         <span className="font-medium text-gray-900 dark:text-white" data-testid="text-discount">
@@ -2423,7 +2415,7 @@ export default function InvoiceCreate() {
               </div>
 
               {/* Notes Section with Rich Text Editor - Side by Side */}
-              {invoiceSettings?.showNotes && (
+              {expenseSettings?.showNotes && (
                 <div className="border-t pt-6">
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     <div className="rounded-lg p-2 sm:p-4">
@@ -2431,7 +2423,7 @@ export default function InvoiceCreate() {
                         Notes
                       </Label>
                       <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-2 sm:mb-3">
-                        Add notes for the invoice.
+                        Add notes for the Expense.
                       </p>
                        <div className="bg-white dark:bg-gray-900 rounded-lg" data-testid="rich-text-editor-notes">
                          <ReactQuill
@@ -2463,7 +2455,7 @@ export default function InvoiceCreate() {
                         Additional Notes 
                       </Label>
                       <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-2 sm:mb-3">
-                         It will be hidden to the invoice .
+                         It will be hidden to the Expense .
                       </p>
                       <div className="bg-white dark:bg-gray-900 rounded-lg" data-testid="rich-text-editor-additional-notes">
                         <ReactQuill
@@ -2722,7 +2714,7 @@ export default function InvoiceCreate() {
                         {/* Left Side - Values */}
                         <div className="space-y-3">
                           <div className="flex justify-between items-center py-2 border-b">
-                            <span className="text-gray-700 dark:text-gray-300 font-medium">Total Invoice Amount:</span>
+                            <span className="text-gray-700 dark:text-gray-300 font-medium">Total Expense Amount:</span>
                             <span className="font-semibold text-lg">
                               {currencySymbol}{calculateGrandTotal().toFixed(2)}
                             </span>
@@ -2742,7 +2734,7 @@ export default function InvoiceCreate() {
                             <span className="text-gray-700 dark:text-gray-300 font-medium">Tax Amount:</span>
                             <span className="font-semibold text-lg text-gray-900 dark:text-white">
                               {currencySymbol}
-                              {lineItems.reduce(
+                              {expenseItems.reduce(
                                 (total, item) => total + parseFloat(item.tax || "0"),
                                 0
                               ).toFixed(2)}
@@ -2761,7 +2753,7 @@ export default function InvoiceCreate() {
                               ).toFixed(2)}
                             </p>
                             <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 text-center">
-                              (Invoice Amount - Expenses)
+                              (Expense Amount - Expenses)
                             </p>
                           </div>
                         </div>
@@ -2774,19 +2766,19 @@ export default function InvoiceCreate() {
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => navigate("/invoices")}
+                  onClick={() => navigate("/Expenses")}
                   data-testid="button-cancel"
                 >
                   Cancel
                 </Button>
                 <Button
                   type="submit"
-                  disabled={createInvoiceMutation.isPending}
-                  data-testid="button-create-invoice"
+                  disabled={createExpenseMutation.isPending}
+                  data-testid="button-create-Expense"
                 >
-                  {createInvoiceMutation.isPending
+                  {createExpenseMutation.isPending
                     ? "Creating..."
-                    : "Save Invoice"}
+                    : "Save Expense"}
                 </Button>
               </div>
             </CardContent>
@@ -2794,20 +2786,20 @@ export default function InvoiceCreate() {
         </form>
       </div>
 
-      {/* Invoice Preview Dialog */}
+      {/* Expense Preview Dialog */}
       <Dialog open={showPreview} onOpenChange={setShowPreview}>
         <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Invoice Preview</DialogTitle>
+            <DialogTitle>Expense Preview</DialogTitle>
             <DialogDescription>
-              Review your invoice before saving. All invoice data will be displayed as shown below.
+              Review your Expense before saving. All Expense data will be displayed as shown below.
             </DialogDescription>
           </DialogHeader>
           <div className="mt-4">
-            {previewInvoiceData && (
+            {previewExpenseData && (
               <>
-                {/* Use actual invoice template */}
-                <ModernTemplate data={previewInvoiceData} />
+                {/* Use actual Expense template */}
+                <ModernTemplate data={previewExpenseData} />
                 
               </>
             )}
@@ -2823,12 +2815,12 @@ export default function InvoiceCreate() {
             <Button
               type="button"
               onClick={handleSaveFromPreview}
-              disabled={isEditMode ? updateInvoiceMutation.isPending : createInvoiceMutation.isPending}
+              disabled={isEditMode ? updateExpenseMutation.isPending : createExpenseMutation.isPending}
               className="bg-gray-900 hover:bg-gray-800 dark:bg-gray-100 dark:hover:bg-gray-200 text-white dark:text-gray-900"
             >
               {isEditMode 
-                ? (updateInvoiceMutation.isPending ? "Updating..." : "Update Invoice")
-                : (createInvoiceMutation.isPending ? "Saving..." : "Save Invoice")
+                ? (updateExpenseMutation.isPending ? "Updating..." : "Update Expense")
+                : (createExpenseMutation.isPending ? "Saving..." : "Save Expense")
               }
             </Button>
           </div>
@@ -2871,7 +2863,7 @@ export default function InvoiceCreate() {
             <VendorCreateForm
               onSuccess={(vendor) => {
                 queryClient.invalidateQueries({ queryKey: ["/api/vendors"] });
-                updateLineItem(
+                updateExpenseItem(
                   currentItemIndex,
                   "vendor",
                   vendor.id?.toString() || "",
@@ -2900,7 +2892,7 @@ export default function InvoiceCreate() {
                 queryClient.invalidateQueries({
                   queryKey: [`/api/tenants/${tenant?.id}/lead-types`],
                 });
-                updateLineItem(
+                updateExpenseItem(
                   currentItemIndex,
                   "travelCategory",
                   leadType.name || "",
@@ -2929,12 +2921,12 @@ export default function InvoiceCreate() {
           <div className="mt-6">
             <ServiceProviderCreateForm
               preselectedLeadTypeId={
-                lineItems[currentItemIndex]?.travelCategory
+                expenseItems[currentItemIndex]?.travelCategory
                   ? leadTypes
                     .find(
                       (lt: any) =>
                         lt.name ===
-                        lineItems[currentItemIndex].travelCategory,
+                        expenseItems[currentItemIndex].travelCategory,
                     )
                     ?.id.toString()
                   : undefined
@@ -2943,7 +2935,7 @@ export default function InvoiceCreate() {
                 queryClient.invalidateQueries({
                   queryKey: [`/api/service-providers`, tenant?.id],
                 });
-                updateLineItem(
+                updateExpenseItem(
                   currentItemIndex,
                   "serviceProviderId",
                   provider.id?.toString() || "",

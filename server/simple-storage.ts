@@ -3244,6 +3244,44 @@ export class SimpleStorage {
     return packages;
   }
 
+  async getPackage(packageId: number) {
+    const [package_] = await sql`
+      SELECT 
+        id,
+        tenant_id as "tenantId",
+        package_type_id as "packageTypeId",
+        name,
+        description,
+        destination,
+        duration,
+        duration_type as "durationType",
+        region,
+        country,
+        city,
+        price,
+        max_capacity as "maxCapacity",
+        package_staying_image as "packageStayingImage",
+        alt_name as "altName",
+        vendor_name as "vendorName",
+        rating,
+        status,
+        inclusions,
+        exclusions,
+        itinerary_images as "itineraryImages",
+        itinerary_description as "itineraryDescription",
+        cancellation_policy as "cancellationPolicy",
+        cancellation_benefit as "cancellationBenefit",
+        day_wise_itinerary as "dayWiseItinerary",
+        itinerary,
+        image,
+        is_active as "isActive",
+        created_at as "createdAt"
+      FROM travel_packages 
+      WHERE id = ${packageId}
+    `;
+    return package_;
+  }
+
   async createPackage(packageData: any) {
     const {
       tenantId,
@@ -3275,7 +3313,22 @@ export class SimpleStorage {
       image,
     } = packageData;
 
-    // Sanitize JSON fields to prevent invalid JSON errors
+    // Handle itineraryImages - check if column is JSON or TEXT
+    // If it's a string (comma-separated), convert to array for JSON column
+    // If it's already an array, use it directly
+    let itineraryImagesParam = null;
+    if (itineraryImages) {
+      if (typeof itineraryImages === 'string') {
+        // If comma-separated string, split and store as JSON array
+        const imageArray = itineraryImages.split(',').map(img => img.trim()).filter(img => img);
+        itineraryImagesParam = imageArray.length > 0 ? JSON.stringify(imageArray) : null;
+      } else if (Array.isArray(itineraryImages)) {
+        // If already an array, stringify it
+        itineraryImagesParam = JSON.stringify(itineraryImages);
+      }
+    }
+
+    // Sanitize JSON fields to prevent invalid JSON errors (for dayWiseItinerary)
     const sanitizeJsonArray = (arr) => {
       if (!arr || !Array.isArray(arr)) return null;
       // Filter out empty objects and invalid entries
@@ -3286,22 +3339,21 @@ export class SimpleStorage {
       return cleaned.length > 0 ? cleaned : null;
     };
 
-    const cleanItineraryImages = sanitizeJsonArray(itineraryImages);
     const cleanDayWiseItinerary = sanitizeJsonArray(dayWiseItinerary);
 
-    // Create properly serialized JSON parameters
-    const itineraryImagesParam = cleanItineraryImages
-      ? JSON.stringify(cleanItineraryImages)
-      : null;
+    // Create properly serialized JSON parameters for dayWiseItinerary
     const dayWiseItineraryParam = cleanDayWiseItinerary
       ? JSON.stringify(cleanDayWiseItinerary)
       : null;
 
     // Handle inclusions and exclusions - they can be strings or arrays
+    // Always JSON.stringify to ensure valid JSON format for PostgreSQL JSON columns
     let inclusionsParam = null;
     if (inclusions) {
       if (typeof inclusions === 'string') {
-        inclusionsParam = inclusions; // Store as string
+        // If it's a string, wrap it in an array to make it valid JSON
+        // This ensures the database receives valid JSON format
+        inclusionsParam = JSON.stringify([inclusions]);
       } else if (Array.isArray(inclusions)) {
         inclusionsParam = JSON.stringify(inclusions);
       } else {
@@ -3312,7 +3364,9 @@ export class SimpleStorage {
     let exclusionsParam = null;
     if (exclusions) {
       if (typeof exclusions === 'string') {
-        exclusionsParam = exclusions; // Store as string
+        // If it's a string, wrap it in an array to make it valid JSON
+        // This ensures the database receives valid JSON format
+        exclusionsParam = JSON.stringify([exclusions]);
       } else if (Array.isArray(exclusions)) {
         exclusionsParam = JSON.stringify(exclusions);
       } else {
@@ -3363,7 +3417,7 @@ export class SimpleStorage {
         ${itinerary || null},
         ${image || null}
       )
-      RETURNING id, tenant_id as "tenantId", package_type_id, name, description, destination, duration, price, max_capacity, inclusions, exclusions, is_active, duration_type, region, country, city, package_staying_image, alt_name, vendor_name, rating, status, itinerary_images, itinerary_description, cancellation_policy, cancellation_benefit, day_wise_itinerary, 
+      RETURNING id, tenant_id as "tenantId", package_type_id as "packageTypeId", name, description, destination, duration, price, max_capacity as "maxCapacity", inclusions, exclusions, is_active as "isActive", duration_type as "durationType", region, country, city, package_staying_image as "packageStayingImage", alt_name as "altName", vendor_name as "vendorName", rating, status, itinerary_images as "itineraryImages", itinerary_description as "itineraryDescription", cancellation_policy as "cancellationPolicy", cancellation_benefit as "cancellationBenefit", day_wise_itinerary as "dayWiseItinerary", 
         itinerary, image;
     `;
 
@@ -3382,11 +3436,37 @@ export class SimpleStorage {
       exclusions,
       isActive,
     } = packageData;
+
+    // Handle inclusions and exclusions - they can be strings or arrays
+    // Always JSON.stringify to ensure valid JSON format for PostgreSQL JSON columns
+    let inclusionsParam = null;
+    if (inclusions) {
+      if (typeof inclusions === 'string') {
+        // If it's a string, wrap it in an array to make it valid JSON
+        inclusionsParam = JSON.stringify([inclusions]);
+      } else if (Array.isArray(inclusions)) {
+        inclusionsParam = JSON.stringify(inclusions);
+      } else {
+        inclusionsParam = JSON.stringify(inclusions);
+      }
+    }
+
+    let exclusionsParam = null;
+    if (exclusions) {
+      if (typeof exclusions === 'string') {
+        // If it's a string, wrap it in an array to make it valid JSON
+        exclusionsParam = JSON.stringify([exclusions]);
+      } else if (Array.isArray(exclusions)) {
+        exclusionsParam = JSON.stringify(exclusions);
+      } else {
+        exclusionsParam = JSON.stringify(exclusions);
+      }
+    }
     const [travelPackage] = await sql`
       UPDATE travel_packages 
       SET name = ${name}, description = ${description || null}, destination = ${destination}, 
           duration = ${duration}, price = ${price}, max_capacity = ${maxCapacity},
-          inclusions = ${inclusions || null}, exclusions = ${exclusions || null}, is_active = ${isActive !== false}
+          inclusions = ${inclusionsParam || null}, exclusions = ${exclusionsParam || null}, is_active = ${isActive !== false}
       WHERE id = ${packageId}
       RETURNING 
         id,
@@ -3863,7 +3943,10 @@ export class SimpleStorage {
         whereClause = sql`${whereClause} AND invoices.status = ${filterParams.status}`;
         console.log("🔍 WHERE clause after status filter");
       } else {
-        console.log("🔍 No status filter applied (status:", filterParams?.status, ")");
+        // When status is "all" or not specified, exclude void invoices
+        console.log("🔍 No status filter applied - excluding void invoices");
+        whereClause = sql`${whereClause} AND LOWER(invoices.status) != 'void'`;
+        console.log("🔍 WHERE clause after excluding void invoices");
       }
 
       // Build JOIN clause for search if needed

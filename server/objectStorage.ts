@@ -182,29 +182,61 @@ export class ObjectStorageService {
       }
 
       // Fallback to local file system storage
-      const uploadsDir = path.join(process.cwd(), "uploads", "email-attachments");
+      // Use the fileName path structure (e.g., packages/45/itinerary/...)
+      // Ensure fileName doesn't start with / and sanitize it
+      let cleanFileName = fileName.startsWith("/") ? fileName.slice(1) : fileName;
+      cleanFileName = cleanFileName.replace(/^\.\//, ''); // Remove leading ./
+      
+      // Split path into directory and filename
+      const pathParts = cleanFileName.split('/').filter(part => part && part !== '.' && part !== '..');
+      const directoryParts = pathParts.slice(0, -1); // All parts except the last one
+      const originalFilename = pathParts[pathParts.length - 1] || 'file'; // Last part is the filename
+      
+      // Sanitize directory parts (only allow alphanumeric, dots, hyphens, underscores)
+      const sanitizedDirParts = directoryParts.map(segment => 
+        segment.replace(/[^a-zA-Z0-9._-]/g, '')
+      ).filter(segment => segment.length > 0);
+      
+      // Sanitize filename - remove spaces, hyphens, and special chars (keep only alphanumeric and dots)
+      const sanitizedFilename = originalFilename
+        .replace(/\s+/g, '') // Remove all spaces
+        .replace(/-/g, '') // Remove all hyphens
+        .replace(/[^a-zA-Z0-9.]/g, '') // Keep only alphanumeric and dots
+        .toLowerCase();
+      
+      // Build the full uploads directory path
+      const uploadsBaseDir = path.join(process.cwd(), "uploads");
+      const fullUploadsDir = sanitizedDirParts.length > 0
+        ? path.join(uploadsBaseDir, ...sanitizedDirParts)
+        : uploadsBaseDir;
       
       // Ensure uploads directory exists
-      if (!fs.existsSync(uploadsDir)) {
-        fs.mkdirSync(uploadsDir, { recursive: true });
-        console.log(`📁 Created uploads directory: ${uploadsDir}`);
+      if (!fs.existsSync(fullUploadsDir)) {
+        fs.mkdirSync(fullUploadsDir, { recursive: true });
+        console.log(`📁 Created uploads directory: ${fullUploadsDir}`);
       }
 
-      // Clean fileName to prevent path traversal
-      const cleanFileName = path.basename(fileName);
+      // Add timestamp and random suffix to filename (no hyphens)
       const timestamp = Date.now();
       const randomSuffix = Math.random().toString(36).substring(2, 8);
-      const safeFileName = `${timestamp}-${randomSuffix}-${cleanFileName}`;
-      const filePath = path.join(uploadsDir, safeFileName);
+      const safeFileName = `${timestamp}${randomSuffix}${sanitizedFilename}`;
+      const filePath = path.join(fullUploadsDir, safeFileName);
 
       // Write file to local filesystem
       fs.writeFileSync(filePath, buffer);
       console.log(`✅ File saved to local storage: ${filePath}`);
 
-      // Return a URL that can be served by the Express server
-      // The server should serve files from /uploads/email-attachments/
-      const publicUrl = `/uploads/email-attachments/${safeFileName}`;
-      console.log(`✅ File uploaded to local storage successfully: ${publicUrl}`);
+      // Return a URL that matches the directory structure
+      // e.g., /uploads/packages/45/itinerary/...
+      const urlPath = sanitizedDirParts.length > 0
+        ? `${sanitizedDirParts.join('/')}/${safeFileName}`
+        : safeFileName;
+      const publicUrl = `/uploads/${urlPath}`;
+      console.log(`✅ File uploaded to local storage successfully:`);
+      console.log(`   Original fileName: ${fileName}`);
+      console.log(`   Directory parts: ${sanitizedDirParts.join('/')}`);
+      console.log(`   Safe filename: ${safeFileName}`);
+      console.log(`   Public URL: ${publicUrl}`);
       return publicUrl;
     } catch (error: any) {
       console.error(`❌ Error uploading file ${fileName}:`, error);

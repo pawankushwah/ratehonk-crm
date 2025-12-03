@@ -9259,17 +9259,281 @@ David,Brown,david.brown@example.com,555-0127,email_campaign,contacted,Prefers lu
     }
   });
 
-  app.post("/api/tenants/:tenantId/packages", async (req, res) => {
+  app.get("/api/tenants/:tenantId/packages/:packageId", async (req, res) => {
     try {
-      const { tenantId } = req.params;
-      const packageData = { ...req.body, tenantId: parseInt(tenantId) };
-      const travelPackage = await simpleStorage.createPackage(packageData);
-      res.status(201).json(travelPackage);
+      const { packageId } = req.params;
+      const package_ = await simpleStorage.getPackage(parseInt(packageId));
+      if (!package_) {
+        return res.status(404).json({ message: "Package not found" });
+      }
+      res.json(package_);
     } catch (error) {
-      console.error("Create package error:", error);
+      console.error("Get package error:", error);
       res.status(500).json({ message: "Internal server error" });
     }
   });
+
+  // Configure multer for package image uploads (accepts any field names for flexibility)
+  const packageImageUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+      fileSize: 10 * 1024 * 1024, // 10MB per file
+    },
+    fileFilter: (req, file, cb) => {
+      const allowedTypes = [
+        "image/jpeg",
+        "image/jpg",
+        "image/png",
+        "image/gif",
+        "image/webp",
+      ];
+      if (allowedTypes.includes(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(new Error(`Unsupported file type: ${file.mimetype}`) as any, false);
+      }
+    },
+  });
+
+  app.post(
+    "/api/tenants/:tenantId/packages",
+    packageImageUpload.any(), // Accept any field names for flexibility with day-wise images
+    async (req: any, res) => {
+      // Optional authentication - verify token if provided, but don't block on database errors
+      try {
+        const authHeader = req.headers["authorization"];
+        const token = authHeader && authHeader.split(" ")[1]; // Bearer TOKEN
+
+        if (token) {
+          try {
+            const decoded = jwt.verify(token, JWT_SECRET) as any;
+            // Try to get user, but don't fail if database quota is exceeded
+            try {
+              const user = await simpleStorage.getUser(decoded.userId);
+              if (user) {
+                req.user = {
+                  id: user.id,
+                  email: user.email,
+                  role: user.role,
+                  tenantId: user.tenant_id,
+                  firstName: user.first_name,
+                  lastName: user.last_name,
+                  isActive: user.is_active,
+                };
+              }
+            } catch (dbError: any) {
+              // If database quota exceeded, log but continue
+              if (dbError.code === 'XX000' || dbError.message?.includes('quota')) {
+                console.warn("⚠️ Database quota exceeded during auth, continuing with package creation");
+              } else {
+                throw dbError;
+              }
+            }
+          } catch (tokenError: any) {
+            // Invalid token - return error
+            return res.status(403).json({ message: "Invalid or expired token" });
+          }
+        }
+        // If no token, continue without authentication (matching other package routes pattern)
+      } catch (authError: any) {
+        // If outer auth check fails, log but continue (handles any unexpected errors)
+        console.error("Auth check error:", authError);
+      }
+
+      try {
+        const { tenantId } = req.params;
+        const { ObjectStorageService } = await import("./objectStorage.js");
+        const objectStorage = new ObjectStorageService();
+
+        // Process uploaded images
+        const imageUrls: any = {
+          packageStayingImage: "",
+          itineraryImages: "",
+          dayWiseItinerary: [],
+        };
+
+        // Organize files by field name
+        const filesByField: { [key: string]: any[] } = {};
+        if (req.files && Array.isArray(req.files)) {
+          console.log(`📁 Total files received: ${req.files.length}`);
+          req.files.forEach((file: any) => {
+            const fieldName = file.fieldname || "";
+            console.log(`📁 File field name: "${fieldName}", originalname: "${file.originalname}"`);
+            if (!filesByField[fieldName]) {
+              filesByField[fieldName] = [];
+            }
+            filesByField[fieldName].push(file);
+          });
+          console.log(`📁 Files organized by field:`, Object.keys(filesByField).map(key => `${key}: ${filesByField[key].length} files`));
+        }
+
+        // Helper function to sanitize filename (remove spaces, hyphens, and special chars)
+        const sanitizeFileName = (filename: string) => {
+          // Remove all spaces, hyphens, and special characters (keep only alphanumeric and dots)
+          return filename
+            .replace(/\s+/g, '') // Remove all spaces
+            .replace(/-/g, '') // Remove all hyphens
+            .replace(/[^a-zA-Z0-9.]/g, '') // Keep only alphanumeric and dots
+            .toLowerCase();
+        };
+
+        // Upload package staying image
+        if (filesByField["packageStayingImage"]?.[0]) {
+          const file = filesByField["packageStayingImage"][0];
+          const sanitizedName = sanitizeFileName(file.originalname);
+          // Don't add timestamp/random here - objectStorage will add it
+          const fileName = `packages/${tenantId}/${sanitizedName}`;
+          const url = await objectStorage.uploadFile(
+            fileName,
+            file.buffer,
+            file.mimetype
+          );
+          imageUrls.packageStayingImage = url;
+        }
+
+        // Upload general itinerary images
+        // Only process files with exact field name "itineraryImages" (not dayWiseItineraryImages)
+        if (filesByField["itineraryImages"] && filesByField["itineraryImages"].length > 0) {
+          console.log(`📸 Uploading ${filesByField["itineraryImages"].length} general itinerary images`);
+          const uploadedUrls = await Promise.all(
+            filesByField["itineraryImages"].map(async (file: any) => {
+              const sanitizedName = sanitizeFileName(file.originalname);
+              // Don't add timestamp/random here - objectStorage will add it
+              const fileName = `packages/${tenantId}/itinerary/${sanitizedName}`;
+              console.log(`📸 Uploading itinerary image: ${fileName}`);
+              return await objectStorage.uploadFile(
+                fileName,
+                file.buffer,
+                file.mimetype
+              );
+            })
+          );
+          imageUrls.itineraryImages = uploadedUrls.join(", ");
+          console.log(`✅ General itinerary images uploaded: ${uploadedUrls.length}`);
+        }
+
+        // Process day-wise itinerary images
+        let dayWiseItinerary = [];
+        if (req.body.dayWiseItinerary) {
+          try {
+            dayWiseItinerary = typeof req.body.dayWiseItinerary === 'string' 
+              ? JSON.parse(req.body.dayWiseItinerary) 
+              : req.body.dayWiseItinerary;
+          } catch (e) {
+            console.error("Error parsing dayWiseItinerary:", e);
+          }
+        }
+
+        // Upload day-wise images if provided
+        if (dayWiseItinerary.length > 0) {
+          // Get all day-wise image files from filesByField
+          // IMPORTANT: Only process files that start with "dayWiseItineraryImages" (not "itineraryImages")
+          // This ensures general itinerary images don't get mixed with day-wise images
+          const dayWiseFiles: any[] = [];
+          Object.keys(filesByField).forEach((fieldName) => {
+            // Strict check: must start with "dayWiseItineraryImages" and NOT be just "itineraryImages"
+            if (fieldName.startsWith('dayWiseItineraryImages') && fieldName !== 'itineraryImages') {
+              console.log(`📸 Processing day-wise files with field: "${fieldName}"`);
+              filesByField[fieldName].forEach((file: any) => {
+                // Extract day index from field name like "dayWiseItineraryImages[0]"
+                const match = fieldName.match(/\[(\d+)\]/);
+                const dayIndex = match ? parseInt(match[1]) : null;
+                if (dayIndex === null) {
+                  console.warn(`⚠️ Warning: Could not extract day index from field name: "${fieldName}"`);
+                }
+                console.log(`📸 Day-wise file: dayIndex=${dayIndex}, originalname="${file.originalname}"`);
+                dayWiseFiles.push({ ...file, dayIndex });
+              });
+            } else if (fieldName === 'itineraryImages') {
+              console.log(`✅ Skipping field "${fieldName}" - this is for general itinerary images, not day-wise`);
+            }
+          });
+          console.log(`📸 Total day-wise files found: ${dayWiseFiles.length}`);
+
+          // Process each day and upload its images
+          const processedDayWise = await Promise.all(
+            dayWiseItinerary.map(async (day: any, index: number) => {
+              // Find images for this day index
+              const dayImages = dayWiseFiles.filter(
+                (file: any) => file.dayIndex === index
+              );
+
+              let itineraryImageNames = "";
+              if (dayImages.length > 0) {
+                console.log(`📸 Uploading ${dayImages.length} images for Day ${day.day} to day-${day.day} folder`);
+                const uploadedDayUrls = await Promise.all(
+                  dayImages.map(async (file: any) => {
+                    const sanitizedName = sanitizeFileName(file.originalname);
+                    // Don't add timestamp/random here - objectStorage will add it
+                    const fileName = `packages/${tenantId}/day-${day.day}/${sanitizedName}`;
+                    console.log(`📸 Uploading day-${day.day} image: ${fileName}`);
+                    return await objectStorage.uploadFile(
+                      fileName,
+                      file.buffer,
+                      file.mimetype
+                    );
+                  })
+                );
+                itineraryImageNames = uploadedDayUrls.join(", ");
+                console.log(`✅ Day ${day.day} images uploaded: ${uploadedDayUrls.length}`);
+              }
+
+              return {
+                day: day.day,
+                place: day.place,
+                itineraryDescription: day.itineraryDescription || "",
+                itineraryImageNames,
+              };
+            })
+          );
+          imageUrls.dayWiseItinerary = processedDayWise;
+        }
+
+        // Parse other form fields
+        const packageData = {
+          tenantId: parseInt(tenantId),
+          packageTypeId: parseInt(req.body.packageTypeId) || 1,
+          name: req.body.name,
+          description: req.body.description || "",
+          destination: req.body.destination || "",
+          duration: parseInt(req.body.duration) || 1,
+          price: parseFloat(req.body.price) || 0,
+          maxCapacity: parseInt(req.body.maxCapacity) || 1,
+          inclusions: req.body.inclusions || "",
+          exclusions: req.body.exclusions || "",
+          isActive: req.body.isActive !== "false",
+          durationType: req.body.durationType || null,
+          region: req.body.region || null,
+          country: req.body.country || null,
+          city: req.body.city || null,
+          altName: req.body.altName || null,
+          vendorName: req.body.vendorName || null,
+          rating: req.body.rating ? parseFloat(req.body.rating) : null,
+          status: req.body.status || "draft",
+          itineraryDescription: req.body.itineraryDescription || null,
+          cancellationPolicy: req.body.cancellationPolicy || null,
+          cancellationBenefit: req.body.cancellationBenefit || null,
+          itinerary: req.body.itinerary || null,
+          // Add processed image URLs
+          packageStayingImage: imageUrls.packageStayingImage,
+          itineraryImages: imageUrls.itineraryImages,
+          dayWiseItinerary: imageUrls.dayWiseItinerary.length > 0 
+            ? imageUrls.dayWiseItinerary 
+            : (dayWiseItinerary.length > 0 ? dayWiseItinerary : null),
+          image: imageUrls.packageStayingImage, // Legacy field
+        };
+
+        const travelPackage = await simpleStorage.createPackage(packageData);
+        res.status(201).json(travelPackage);
+      } catch (error: any) {
+        console.error("Create package error:", error);
+        res.status(500).json({ 
+          message: "Internal server error",
+          error: error.message 
+        });
+      }
+    }
+  );
 
   app.put("/api/tenants/:tenantId/packages/:packageId", async (req, res) => {
     try {
@@ -17062,169 +17326,176 @@ Please improve this email.`;
 });
 
 
+  // Configure multer for expense bill uploads
+  const expenseBillUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+      fileSize: 10 * 1024 * 1024, // 10MB per file
+    },
+    fileFilter: (req, file, cb) => {
+      const allowedTypes = [
+        "application/pdf",
+        "image/jpeg",
+        "image/jpg",
+        "image/png",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      ];
+      if (allowedTypes.includes(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(new Error(`Unsupported file type: ${file.mimetype}`) as any, false);
+      }
+    },
+  });
+
   // Create new expense
-  app.post("/api/expenses", authenticateVendor, async (req: any, res) => {
+  app.post("/api/expenses", expenseBillUpload.any(), authenticateVendor, async (req: any, res) => {
     try {
-      console.log("💰 Creating expense - Request body:", req.body);
+      const { ObjectStorageService } = await import("./objectStorage.js");
+      const objectStorage = new ObjectStorageService();
+      
+      // Check if request has files (FormData) or is JSON
+      const hasFiles = req.files && req.files.length > 0;
+      
+      let expensesData = [];
+      
+      if (hasFiles) {
+        // Handle FormData request with files
+        console.log("💰 Creating expenses with FormData - Files received:", req.files.length);
+        
+        // Parse expenses from FormData
+        if (req.body.expenses) {
+          expensesData = typeof req.body.expenses === 'string' 
+            ? JSON.parse(req.body.expenses) 
+            : req.body.expenses;
+        }
+        
+        // Organize bill files by index
+        const billFilesByIndex: { [key: number]: any } = {};
+        if (req.files && Array.isArray(req.files)) {
+          req.files.forEach((file: any) => {
+            const fieldName = file.fieldname || "";
+            // Match pattern: billFiles[0], billFiles[1], etc.
+            const match = fieldName.match(/billFiles\[(\d+)\]/);
+            if (match) {
+              const index = parseInt(match[1]);
+              billFilesByIndex[index] = file;
+            }
+          });
+        }
+        
+        // Helper function to sanitize filename
+        const sanitizeFileName = (filename: string) => {
+          return filename
+            .replace(/\s+/g, '')
+            .replace(/-/g, '')
+            .replace(/[^a-zA-Z0-9.]/g, '')
+            .toLowerCase();
+        };
+        
+        // Upload bill files and update receiptUrl
+        for (let i = 0; i < expensesData.length; i++) {
+          if (billFilesByIndex[i]) {
+            const file = billFilesByIndex[i];
+            const sanitizedName = sanitizeFileName(file.originalname);
+            const fileName = `expenses/${req.user.tenantId}/${sanitizedName}`;
+            
+            try {
+              const url = await objectStorage.uploadFile(
+                fileName,
+                file.buffer,
+                file.mimetype
+              );
+              expensesData[i].receiptUrl = url;
+              console.log(`✅ Bill uploaded for expense ${i}: ${url}`);
+            } catch (uploadError) {
+              console.error(`❌ Failed to upload bill for expense ${i}:`, uploadError);
+              // Continue without bill URL if upload fails
+            }
+          }
+        }
+      } else {
+        // Handle JSON request (single expense)
+        console.log("💰 Creating expense - Request body:", req.body);
+        expensesData = [req.body];
+      }
+      
       console.log("💰 Creating expense - User info:", {
         id: req.user.id,
         tenantId: req.user.tenantId,
       });
 
-      const expenseData = {
-        tenantId: req.user.tenantId,
-        createdBy: req.user.id,
-        expenseNumber: req.body.expenseNumber || null,
-        title: req.body.title || "",
-        description: req.body.description || null,
-        quantity: req.body.quantity || 1,
-        amount: req.body.amount,
-        currency: req.body.currency || "USD",
-        category: req.body.category || "",
-        subcategory: req.body.subcategory || null,
-        expenseDate:
-          req.body.expenseDate || new Date().toISOString().split("T")[0],
-        paymentMethod: req.body.paymentMethod || "credit_card",
-        paymentReference: req.body.paymentReference || null,
-        vendorId: req.body.vendorId || null,
-        leadTypeId: req.body.leadTypeId || null,
-        expenseType: req.body.expenseType || "purchase",
-        receiptUrl: req.body.receiptUrl || null,
-        taxAmount: req.body.taxAmount || 0,
-        taxRate: req.body.taxRate || 0,
-        isReimbursable: req.body.isReimbursable || false,
-        isRecurring: req.body.isRecurring || false,
-        recurringFrequency: req.body.recurringFrequency || null,
-        status: req.body.status || "pending",
-        amountPaid: req.body.amountPaid || 0,
-        amountDue: req.body.amountDue || 0,
-        tags: req.body.tags || [],
-        notes: req.body.notes || null,
-        approvedBy: req.body.approvedBy || null,
-        approvedAt: req.body.approvedAt || null,
-        rejectionReason: req.body.rejectionReason || null,
-      };
+      // Process each expense
+      const createdExpenses = [];
+      for (const expense of expensesData) {
+        const expenseData = {
+          tenantId: req.user.tenantId,
+          createdBy: req.user.id,
+          expenseNumber: expense.expenseNumber || req.body.expenseNumber || null,
+          title: expense.title || "",
+          description: expense.description || null,
+          quantity: expense.quantity || 1,
+          amount: expense.amount,
+          currency: expense.currency || req.body.currency || "USD",
+          category: expense.category || "",
+          subcategory: expense.subcategory || null,
+          expenseDate: expense.expenseDate || req.body.expenseDate || new Date().toISOString().split("T")[0],
+          paymentMethod: expense.paymentMethod || "credit_card",
+          paymentReference: expense.paymentReference || null,
+          vendorId: expense.vendorId || null,
+          leadTypeId: expense.leadTypeId || null,
+          expenseType: expense.expenseType || "purchase",
+          receiptUrl: expense.receiptUrl || null,
+          taxAmount: expense.taxAmount || 0,
+          taxRate: expense.taxRate || 0,
+          isReimbursable: expense.isReimbursable || false,
+          isRecurring: expense.isRecurring || false,
+          recurringFrequency: expense.recurringFrequency || null,
+          status: expense.status || "pending",
+          amountPaid: expense.amountPaid || 0,
+          amountDue: expense.amountDue || 0,
+          tags: expense.tags || [],
+          notes: expense.notes || req.body.notes || null,
+          approvedBy: expense.approvedBy || null,
+          approvedAt: expense.approvedAt || null,
+          rejectionReason: expense.rejectionReason || null,
+        };
 
-      console.log("💰 Creating expense - Expense data:", expenseData);
+        console.log("💰 Creating expense - Expense data:", expenseData);
 
-      // Debug each field individually to identify undefined values
-      console.log("💰 Field-by-field debug:");
-      console.log(
-        "tenantId:",
-        expenseData.tenantId,
-        typeof expenseData.tenantId,
-      );
-      console.log("title:", expenseData.title, typeof expenseData.title);
-      console.log(
-        "description:",
-        expenseData.description,
-        typeof expenseData.description,
-      );
-      console.log("amount:", expenseData.amount, typeof expenseData.amount);
-      console.log(
-        "currency:",
-        expenseData.currency,
-        typeof expenseData.currency,
-      );
-      console.log(
-        "category:",
-        expenseData.category,
-        typeof expenseData.category,
-      );
-      console.log(
-        "subcategory:",
-        expenseData.subcategory,
-        typeof expenseData.subcategory,
-      );
-      console.log(
-        "expenseDate:",
-        expenseData.expenseDate,
-        typeof expenseData.expenseDate,
-      );
-      console.log(
-        "paymentMethod:",
-        expenseData.paymentMethod,
-        typeof expenseData.paymentMethod,
-      );
-      console.log(
-        "paymentReference:",
-        expenseData.paymentReference,
-        typeof expenseData.paymentReference,
-      );
-      console.log(
-        "vendorId:",
-        expenseData.vendorId,
-        typeof expenseData.vendorId,
-      );
-      console.log(
-        "leadTypeId:",
-        expenseData.leadTypeId,
-        typeof expenseData.leadTypeId,
-      );
-      console.log(
-        "expenseType:",
-        expenseData.expenseType,
-        typeof expenseData.expenseType,
-      );
-      console.log(
-        "receiptUrl:",
-        expenseData.receiptUrl,
-        typeof expenseData.receiptUrl,
-      );
-      console.log(
-        "taxAmount:",
-        expenseData.taxAmount,
-        typeof expenseData.taxAmount,
-      );
-      console.log("taxRate:", expenseData.taxRate, typeof expenseData.taxRate);
-      console.log(
-        "isReimbursable:",
-        expenseData.isReimbursable,
-        typeof expenseData.isReimbursable,
-      );
-      console.log(
-        "isRecurring:",
-        expenseData.isRecurring,
-        typeof expenseData.isRecurring,
-      );
-      console.log(
-        "recurringFrequency:",
-        expenseData.recurringFrequency,
-        typeof expenseData.recurringFrequency,
-      );
-      console.log("status:", expenseData.status, typeof expenseData.status);
-      console.log("tags:", expenseData.tags, typeof expenseData.tags);
-      console.log("notes:", expenseData.notes, typeof expenseData.notes);
-      console.log(
-        "createdBy:",
-        expenseData.createdBy,
-        typeof expenseData.createdBy,
-      );
+        const [createdExpense] = await sql`
+          INSERT INTO expenses (
+            tenant_id, expense_number, title, description, quantity, amount, currency, category, subcategory,
+            expense_date, payment_method, payment_reference, vendor_id, lead_type_id,
+            expense_type, receipt_url, tax_amount, tax_rate, is_reimbursable, is_recurring,
+            recurring_frequency, status, amount_paid, amount_due, approved_by, approved_at, rejection_reason,
+            tags, notes, created_by
+          ) VALUES (
+            ${expenseData.tenantId}, ${expenseData.expenseNumber}, ${expenseData.title}, ${expenseData.description},
+            ${expenseData.quantity || 1}, ${expenseData.amount}, ${expenseData.currency}, ${expenseData.category},
+            ${expenseData.subcategory}, ${expenseData.expenseDate}, ${expenseData.paymentMethod},
+            ${expenseData.paymentReference}, ${expenseData.vendorId}, ${expenseData.leadTypeId},
+            ${expenseData.expenseType || "purchase"}, ${expenseData.receiptUrl}, ${expenseData.taxAmount || 0}, ${expenseData.taxRate || 0},
+            ${expenseData.isReimbursable || false}, ${expenseData.isRecurring || false},
+            ${expenseData.recurringFrequency}, ${expenseData.status || "pending"},
+            ${expenseData.amountPaid || 0}, ${expenseData.amountDue || 0},
+            ${expenseData.approvedBy}, ${expenseData.approvedAt}, ${expenseData.rejectionReason},
+            ${JSON.stringify(expenseData.tags || [])}, ${expenseData.notes}, ${expenseData.createdBy}
+          )
+          RETURNING *
+        `;
 
-      const [expense] = await sql`
-        INSERT INTO expenses (
-          tenant_id, expense_number, title, description, quantity, amount, currency, category, subcategory,
-          expense_date, payment_method, payment_reference, vendor_id, lead_type_id,
-          expense_type, receipt_url, tax_amount, tax_rate, is_reimbursable, is_recurring,
-          recurring_frequency, status, amount_paid, amount_due, approved_by, approved_at, rejection_reason,
-          tags, notes, created_by
-        ) VALUES (
-          ${expenseData.tenantId}, ${expenseData.expenseNumber}, ${expenseData.title}, ${expenseData.description},
-          ${expenseData.quantity || 1}, ${expenseData.amount}, ${expenseData.currency}, ${expenseData.category},
-          ${expenseData.subcategory}, ${expenseData.expenseDate}, ${expenseData.paymentMethod},
-          ${expenseData.paymentReference}, ${expenseData.vendorId}, ${expenseData.leadTypeId},
-          ${expenseData.expenseType || "purchase"}, ${expenseData.receiptUrl}, ${expenseData.taxAmount || 0}, ${expenseData.taxRate || 0},
-          ${expenseData.isReimbursable || false}, ${expenseData.isRecurring || false},
-          ${expenseData.recurringFrequency}, ${expenseData.status || "pending"},
-          ${expenseData.amountPaid || 0}, ${expenseData.amountDue || 0},
-          ${expenseData.approvedBy}, ${expenseData.approvedAt}, ${expenseData.rejectionReason},
-          ${JSON.stringify(expenseData.tags || [])}, ${expenseData.notes}, ${expenseData.createdBy}
-        )
-        RETURNING *
-      `;
+        createdExpenses.push(createdExpense);
+        console.log("💰 Expense created successfully:", createdExpense);
+      }
 
-      console.log("💰 Expense created successfully:", expense);
-      res.status(201).json(expense);
+      // Return array if multiple expenses, single object if one
+      if (createdExpenses.length === 1) {
+        res.status(201).json(createdExpenses[0]);
+      } else {
+        res.status(201).json(createdExpenses);
+      }
     } catch (error: unknown) {
       console.error("💰 Error creating expense:", error);
       res.status(500).json({
@@ -18041,9 +18312,38 @@ Please improve this email.`;
   });
 
   // Serve uploaded email attachments from local filesystem
-  app.get("/uploads/email-attachments/:filename", (req, res) => {
-    const fs = require("fs");
-    const path = require("path");
+  // Serve files from uploads directory (supports nested paths like packages/45/itinerary/...)
+  app.get("/uploads/*", async (req, res) => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const filePath = req.params[0]; // Get the path after /uploads/
+    
+    // Security: prevent path traversal
+    if (filePath.includes("..") || filePath.includes("//")) {
+      return res.status(403).json({ message: "Invalid path" });
+    }
+    
+    // Build the full file path
+    const fullPath = path.default.join(process.cwd(), "uploads", filePath);
+    
+    // Security: ensure the resolved path is within the uploads directory
+    const safePath = path.default.normalize(fullPath);
+    const uploadsDir = path.default.join(process.cwd(), "uploads");
+    if (!safePath.startsWith(path.default.normalize(uploadsDir))) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+    
+    if (fs.default.existsSync(safePath) && fs.default.statSync(safePath).isFile()) {
+      res.sendFile(safePath);
+    } else {
+      res.status(404).json({ message: "File not found" });
+    }
+  });
+
+  // Legacy route for email-attachments (for backward compatibility)
+  app.get("/uploads/email-attachments/:filename", async (req, res) => {
+    const fs = await import("fs");
+    const path = await import("path");
     const filename = req.params.filename;
     
     // Security: prevent path traversal - only allow alphanumeric, dash, underscore, and dot
@@ -18051,16 +18351,16 @@ Please improve this email.`;
       return res.status(403).json({ message: "Invalid filename" });
     }
     
-    const filePath = path.join(process.cwd(), "uploads", "email-attachments", filename);
+    const filePath = path.default.join(process.cwd(), "uploads", "email-attachments", filename);
     
     // Security: ensure the resolved path is within the uploads directory
-    const safePath = path.normalize(filePath);
-    const uploadsDir = path.join(process.cwd(), "uploads", "email-attachments");
-    if (!safePath.startsWith(path.normalize(uploadsDir))) {
+    const safePath = path.default.normalize(filePath);
+    const uploadsDir = path.default.join(process.cwd(), "uploads", "email-attachments");
+    if (!safePath.startsWith(path.default.normalize(uploadsDir))) {
       return res.status(403).json({ message: "Access denied" });
     }
     
-    if (fs.existsSync(safePath) && fs.statSync(safePath).isFile()) {
+    if (fs.default.existsSync(safePath) && fs.default.statSync(safePath).isFile()) {
       res.sendFile(safePath);
     } else {
       res.status(404).json({ message: "File not found" });

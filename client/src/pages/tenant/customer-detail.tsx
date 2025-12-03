@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useParams, Link } from "wouter";
+import { useParams, Link, useLocation } from "wouter";
 import { Layout } from "@/components/layout/layout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
+  DialogDescription,
 } from "@/components/ui/dialog";
 import {
   Collapsible,
@@ -92,10 +93,13 @@ import { useToast } from "@/hooks/use-toast";
 import { ZoomPhoneEmbed } from "@/components/zoom/zoom-phone-embed";
 import { CallLogsSection } from "@/components/customer/call-logs-section";
 import { WhatsAppMessageDialog } from "@/components/customer/whatsapp-message-dialog";
+import { ModernTemplate, InvoiceData } from "@/components/invoices/invoice-templates";
+import { CustomerEditForm } from "@/components/forms/customer-edit-form";
 
 export default function CustomerDetail() {
   const { customerId } = useParams();
   const { tenant, user } = useAuth();
+  const [, navigate] = useLocation();
   const [activeTab, setActiveTab] = useState("notes");
   const [customerDetailsOpen, setCustomerDetailsOpen] = useState(true);
   const [organizationDetailsOpen, setOrganizationDetailsOpen] = useState(false);
@@ -116,6 +120,9 @@ export default function CustomerDetail() {
   const [editableItem, setEditableItem] = useState(null);
   const [isZoomPhoneOpen, setIsZoomPhoneOpen] = useState(false);
   const [isWhatsAppDialogOpen, setIsWhatsAppDialogOpen] = useState(false);
+  const [isViewInvoiceOpen, setIsViewInvoiceOpen] = useState(false);
+  const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
+  const [isEditCustomerOpen, setIsEditCustomerOpen] = useState(false);
 
   // Helper functions for activity display
   const getActivityIcon = (activityType: number) => {
@@ -588,31 +595,37 @@ export default function CustomerDetail() {
     staleTime: 0,
   });
 
-  // Fetch customer bookings from API
+  // Fetch customer invoices from API
   const {
-    data: bookingsData,
-    isLoading: bookingsLoading,
-    refetch: refetchBookings,
-  } = useQuery<Booking[]>({
-    queryKey: [`/api/tenants/${tenant?.id}/bookings`],
+    data: invoicesData,
+    isLoading: invoicesLoading,
+    refetch: refetchInvoices,
+  } = useQuery({
+    queryKey: [`/api/tenants/${tenant?.id}/invoices`, customerId],
     enabled:
       !!customerId &&
       !!tenant?.id &&
-      (activeTab === "bookings" || activeTab === "analytics"),
+      (activeTab === "invoice" || activeTab === "analytics"),
     queryFn: async () => {
       const token = auth.getToken();
-      const response = await fetch(`/api/tenants/${tenant?.id}/bookings`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!response.ok) throw new Error("Failed to fetch bookings");
-      const result = await response.json();
-      const allBookings = Array.isArray(result)
-        ? result
-        : result.bookings || [];
-      // Filter bookings for this customer
-      return allBookings.filter(
-        (booking: any) => booking.customerId === parseInt(customerId!),
+      const params = new URLSearchParams();
+      params.append("customerId", customerId!);
+      params.append("page", "1");
+      params.append("pageSize", "100");
+      
+      const response = await fetch(
+        `/api/tenants/${tenant?.id}/invoices?${params.toString()}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        },
       );
+      if (!response.ok) throw new Error("Failed to fetch invoices");
+      const result = await response.json();
+      // Handle both old format (array) and new format (object with data)
+      const invoices = Array.isArray(result)
+        ? result
+        : result.data || result.invoices || [];
+      return invoices;
     },
   });
 
@@ -665,7 +678,7 @@ export default function CustomerDetail() {
   const messages = Array.isArray(messagesData)
     ? messagesData
     : (messagesData as any)?.messages || [];
-  const bookings = bookingsData || [];
+  const invoices = invoicesData || [];
 
   // Create note mutation
   const createNoteMutation = useMutation({
@@ -1471,25 +1484,122 @@ export default function CustomerDetail() {
       );
     }
 
-    if (activeTab === "bookings") {
-      if (bookings.length === 0) {
+    if (activeTab === "invoice") {
+      if (invoices.length === 0) {
         return (
           <div className="text-center py-8 text-gray-500">
             <Receipt className="w-8 h-8 mx-auto mb-2 opacity-50" />
-            <p>No bookings created for this customer yet</p>
+            <p>No invoices created for this customer yet</p>
             <p className="text-sm mt-1">
-              Click "Create Booking" to create your first booking
+              Click "Create Invoice" to create your first invoice
             </p>
           </div>
         );
       }
 
+      // Define invoice columns for customer detail view
+      const invoiceColumns: TableColumn<any>[] = [
+        {
+          key: "invoiceNumber",
+          label: "Invoice #",
+          sortable: true,
+          render: (value, invoice) => (
+            <div className="font-medium">{value || `INV-${invoice.id}`}</div>
+          ),
+        },
+        {
+          key: "issueDate",
+          label: "Issue Date",
+          sortable: true,
+          render: (issueDate) => (
+            <div className="flex items-center">
+              <Calendar className="h-4 w-4 mr-2 text-gray-400" />
+              <span>
+                {issueDate ? new Date(issueDate).toLocaleDateString() : "-"}
+              </span>
+            </div>
+          ),
+        },
+        {
+          key: "dueDate",
+          label: "Due Date",
+          sortable: true,
+          render: (dueDate) => (
+            <div className="flex items-center">
+              <Calendar className="h-4 w-4 mr-2 text-gray-400" />
+              <span>
+                {dueDate ? new Date(dueDate).toLocaleDateString() : "-"}
+              </span>
+            </div>
+          ),
+        },
+        {
+          key: "totalAmount",
+          label: "Total Amount",
+          sortable: true,
+          render: (totalAmount, invoice) => {
+            const currency = invoice.currency || "USD";
+            const currencySymbol = currency === "INR" ? "₹" : "$";
+            return (
+              <div className="flex items-center font-semibold">
+                <span className="mr-1">{currencySymbol}</span>
+                <span>
+                  {totalAmount
+                    ? parseFloat(totalAmount.toString()).toLocaleString()
+                    : "0"}
+                </span>
+              </div>
+            );
+          },
+        },
+        {
+          key: "status",
+          label: "Status",
+          sortable: true,
+          render: (status) => {
+            const statusConfig = getStatusBadge(status || "pending", "payment");
+            return (
+              <Badge className={statusConfig.color}>{statusConfig.label}</Badge>
+            );
+          },
+        },
+        {
+          key: "actions",
+          label: "Actions",
+          sortable: false,
+          className: "text-right",
+          render: (_, invoice) => (
+            <div className="flex space-x-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => navigate(`/invoice-create/${invoice.id}`)}
+                title="Edit Invoice"
+              >
+                <Edit className="h-4 w-4" />
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setSelectedInvoice(invoice);
+                  setIsViewInvoiceOpen(true);
+                }}
+                title="View Invoice"
+              >
+                <Eye className="h-4 w-4" />
+              </Button>
+            </div>
+          ),
+        },
+      ];
+
       return (
         <div className="space-y-4">
           <EnhancedTable
-            data={bookings}
-            columns={bookingColumns}
-            isLoading={bookingsLoading}
+            data={invoices}
+            columns={invoiceColumns}
+            isLoading={invoicesLoading}
           />
         </div>
       );
@@ -1598,7 +1708,7 @@ export default function CustomerDetail() {
         <CustomerAnalytics
           customerId={customerId}
           customer={customer}
-          bookings={bookings}
+          bookings={[]}
         />
       );
     }
@@ -1717,12 +1827,13 @@ export default function CustomerDetail() {
                     Send WhatsApp
                   </Button>
                 )}
-                <Button variant="outline" size="sm">
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={() => setIsEditCustomerOpen(true)}
+                >
                   <Settings className="h-4 w-4 mr-2" />
                   Edit
-                </Button>
-                <Button variant="outline" size="sm">
-                  <MoreHorizontal className="h-4 w-4" />
                 </Button>
               </div>
             </div>
@@ -1808,9 +1919,9 @@ export default function CustomerDetail() {
                           </span>
                         </div>
                         <div className="flex justify-between mb-2">
-                          <span className="text-gray-600">Total Bookings</span>
+                          <span className="text-gray-600">Total Invoices</span>
                           <span className="text-gray-900 font-medium">
-                            {bookings?.length || 0}
+                            {invoices?.length || 0}
                           </span>
                         </div>
                         <div className="flex justify-between">
@@ -1838,7 +1949,7 @@ export default function CustomerDetail() {
                       "email",
                       "call",
                       "messages",
-                      "bookings",
+                      "invoice",
                       // "calls",
                       "analytics",
                       "files",
@@ -1853,8 +1964,8 @@ export default function CustomerDetail() {
                           if (item === "email") refetchEmails();
                           if (item === "call") refetchCalls();
                           if (item === "messages") refetchMessages();
-                          if (item === "bookings" || item === "analytics")
-                            refetchBookings();
+                          if (item === "invoice" || item === "analytics")
+                            refetchInvoices();
                         }}
                         className={`px-4 py-2 capitalize whitespace-nowrap text-sm md:text-base ${
                           activeTab === item
@@ -1902,15 +2013,15 @@ export default function CustomerDetail() {
                       </Button>
                     )}
 
-                    {activeTab === "bookings" && (
+                    {activeTab === "invoice" && (
                       <Button
                         size="sm"
-                        onClick={() => setIsCreateBookingOpen(true)}
+                        onClick={() => navigate(`/invoice-create?customerId=${customerId}`)}
                         className="bg-cyan-600 hover:bg-cyan-700"
-                        data-testid="button-create-booking"
+                        data-testid="button-create-invoice"
                       >
                         <Plus className="h-4 w-4 mr-1" />
-                        Create Booking
+                        Create Invoice
                       </Button>
                     )}
                     {activeTab === "email" && (
@@ -2123,6 +2234,199 @@ export default function CustomerDetail() {
         customerName={displayName}
         customerId={parseInt(customerId || "0")}
       />
+
+      {/* Invoice Preview Dialog */}
+      <Dialog open={isViewInvoiceOpen} onOpenChange={setIsViewInvoiceOpen}>
+        <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Invoice Preview</DialogTitle>
+            <DialogDescription>
+              View invoice details as it appears to customers.
+            </DialogDescription>
+          </DialogHeader>
+          {selectedInvoice && (() => {
+            // Get currency symbol helper
+            const getCurrencySymbol = (currencyCode: string): string => {
+              const symbols: { [key: string]: string } = {
+                USD: "$",
+                INR: "₹",
+                EUR: "€",
+                GBP: "£",
+                JPY: "¥",
+                AUD: "A$",
+                CAD: "C$",
+                CHF: "CHF",
+                CNY: "¥",
+                SGD: "S$",
+                HKD: "HK$",
+                NZD: "NZ$",
+              };
+              return symbols[currencyCode] || currencyCode;
+            };
+
+            // Parse line items
+            const invoiceData = selectedInvoice as any;
+            let lineItems: any[] = [];
+            
+            if (invoiceData.lineItems) {
+              if (typeof invoiceData.lineItems === "string") {
+                try {
+                  lineItems = JSON.parse(invoiceData.lineItems);
+                } catch (e) {
+                  console.warn("Failed to parse line items:", e);
+                }
+              } else if (Array.isArray(invoiceData.lineItems)) {
+                lineItems = invoiceData.lineItems;
+              }
+            }
+            
+            if (lineItems.length === 0) {
+              if (invoiceData.line_items) {
+                if (typeof invoiceData.line_items === "string") {
+                  try {
+                    lineItems = JSON.parse(invoiceData.line_items);
+                  } catch (e) {
+                    console.warn("Failed to parse line_items:", e);
+                  }
+                } else if (Array.isArray(invoiceData.line_items)) {
+                  lineItems = invoiceData.line_items;
+                }
+              } else if (invoiceData.items && Array.isArray(invoiceData.items)) {
+                lineItems = invoiceData.items;
+              }
+            }
+
+            // Get customer data
+            const invoiceCustomer = customers.find(
+              (c: any) => c.id === selectedInvoice.customerId,
+            ) || customer;
+
+            // Get company info from tenant
+            const companyName = tenant?.companyName || "Company Name";
+            const companyEmail = tenant?.contactEmail || "company@example.com";
+            const companyPhone = tenant?.contactPhone || "";
+
+            // Get currency symbol
+            const currency = selectedInvoice.currency || "USD";
+            const currencySymbol = getCurrencySymbol(currency);
+
+            // Prepare invoice data for template
+            const previewData: InvoiceData = {
+              invoiceNumber: selectedInvoice.invoiceNumber || `INV-${selectedInvoice.id}`,
+              issueDate: selectedInvoice.issueDate || new Date().toISOString().split("T")[0],
+              dueDate: selectedInvoice.dueDate || new Date().toISOString().split("T")[0],
+              customerName: invoiceCustomer?.name || invoiceCustomer?.firstName + " " + invoiceCustomer?.lastName || "Customer",
+              customerEmail: invoiceCustomer?.email || "",
+              customerPhone: invoiceCustomer?.phone || "",
+              customerAddress: invoiceCustomer?.address || "",
+              companyName: companyName,
+              companyEmail: companyEmail,
+              companyPhone: companyPhone,
+              companyAddress: tenant?.address || "",
+              items: lineItems.length > 0
+                ? lineItems
+                    .map((item, index) => {
+                      const sellingPrice = parseFloat(
+                        item.sellingPrice?.toString() || 
+                        item.unitPrice?.toString() || 
+                        item.price?.toString() || 
+                        "0"
+                      );
+                      const quantity = parseInt(
+                        item.quantity?.toString() || 
+                        item.qty?.toString() || 
+                        "1"
+                      );
+                      const totalAmount = parseFloat(
+                        item.totalAmount?.toString() || 
+                        item.totalPrice?.toString() || 
+                        item.amount?.toString() || 
+                        "0"
+                      );
+                      
+                      let description = item.itemTitle?.trim() || item.description?.trim();
+                      if (!description && item.travelCategory) {
+                        description = item.travelCategory;
+                      }
+                      if (!description && item.name) {
+                        description = item.name;
+                      }
+                      if (!description) {
+                        description = `Item ${index + 1}`;
+                      }
+                      
+                      const calculatedTotal = totalAmount > 0 
+                        ? totalAmount 
+                        : (sellingPrice * quantity);
+                      
+                      return {
+                        description: description,
+                        quantity: quantity || 1,
+                        unitPrice: sellingPrice || 0,
+                        totalPrice: calculatedTotal || 0,
+                        invoiceNumber: item.invoiceNumber || item.invoice_number || undefined,
+                        voucherNumber: item.voucherNumber || item.voucher_number || undefined,
+                      };
+                    })
+                    .filter((item) => item !== null) as { description: string; quantity: number; unitPrice: number; totalPrice: number; invoiceNumber?: string; voucherNumber?: string; }[]
+                : [
+                    {
+                      description: "No line items available",
+                      quantity: 1,
+                      unitPrice: 0,
+                      totalPrice: 0,
+                    }
+                  ],
+              subtotal: parseFloat((invoiceData.subtotal || invoiceData.totalAmount || 0).toString()),
+              taxAmount: parseFloat((invoiceData.taxAmount || 0).toString()),
+              discountAmount: parseFloat((invoiceData.discountAmount || 0).toString()),
+              totalAmount: parseFloat(selectedInvoice.totalAmount || 0),
+              currency: currencySymbol,
+              notes: selectedInvoice.notes || undefined,
+              paymentTerms: invoiceData.paymentTerms || undefined,
+              paymentStatus: invoiceData.status || selectedInvoice.status || "pending",
+              paidAmount: parseFloat((invoiceData.paidAmount || 0).toString()),
+              installments: invoiceData.installments || undefined,
+            };
+
+            return (
+              <div className="mt-4">
+                <ModernTemplate data={previewData} />
+                <div className="flex justify-end gap-2 pt-4 border-t mt-4">
+                  <Button onClick={() => setIsViewInvoiceOpen(false)}>Close</Button>
+                </div>
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
+      {/* Customer Edit Dialog */}
+      <Dialog open={isEditCustomerOpen} onOpenChange={setIsEditCustomerOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit Customer</DialogTitle>
+            <DialogDescription>
+              Update customer information below.
+            </DialogDescription>
+          </DialogHeader>
+          {customer && (
+            <CustomerEditForm
+              customer={customer}
+              tenantId={tenant?.id?.toString() || ""}
+              onSuccess={() => {
+                setIsEditCustomerOpen(false);
+                queryClient.invalidateQueries({ queryKey: [`customer-detail-${customerId}`] });
+                toast({
+                  title: "Success",
+                  description: "Customer updated successfully",
+                });
+              }}
+              onCancel={() => setIsEditCustomerOpen(false)}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </Layout>
   );
 }

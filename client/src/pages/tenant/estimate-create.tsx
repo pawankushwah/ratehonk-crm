@@ -1535,11 +1535,11 @@ export default function EstimateCreate() {
                     <div className="min-w-[1300px]">
                       {/* Table Header */}
                       <div 
-                        className="sticky top-0 z-[100] grid gap-2 p-3 font-medium text-sm border-b bg-gray-50 dark:bg-gray-800" 
+                        className="top-0 z-[100] grid gap-2 p-3 font-medium text-sm border-b bg-gray-50 dark:bg-gray-800" 
                         style={{ 
                           gridTemplateColumns: gridTemplate,
                           backgroundColor: 'rgb(249, 250, 251)',
-                          position: 'sticky',
+                          // position: 'sticky',
                           top: 0,
                           zIndex: 100,
                           minWidth: '1300px',

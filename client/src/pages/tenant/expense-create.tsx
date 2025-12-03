@@ -110,6 +110,8 @@ export default function ExpenseCreate() {
       amountPaid: "",
       amountDue: "",
       notes: "",
+      billFile: null as File | null,
+      billUrl: "",
     },
   ]);
 
@@ -134,6 +136,7 @@ export default function ExpenseCreate() {
     showPaymentMethod: true,
     showPaymentStatus: true,
     showNotes: true,
+    showBills: true,
   }, refetch: refetchExpenseSettings } = useQuery({
     queryKey: ["/api/expense-settings", tenant?.id],
     queryFn: async () => {
@@ -569,6 +572,8 @@ export default function ExpenseCreate() {
         amountPaid: amountPaid,
         amountDue: amountDue,
         notes: cleanNotes,
+        billFile: null as File | null,
+        billUrl: expense.receipt_url || expense.receiptUrl || "",
       };
       
       console.log("Processed expense item:", expenseItem);
@@ -670,11 +675,11 @@ export default function ExpenseCreate() {
   };
 
   const createExpensesMutation = useMutation({
-    mutationFn: async (expenses: any[]) => {
+    mutationFn: async (data: any) => {
       const token = auth.getToken();
       if (isEditMode && expenseId) {
-        // Update existing expense
-        const expense = expenses[0];
+        // Update existing expense (keep JSON for now, can be updated later)
+        const expense = Array.isArray(data) ? data[0] : data.formData ? JSON.parse(data.formData.get("expenses"))[0] : data;
         const response = await fetch(`/api/expenses/${expenseId}`, {
           method: "PUT",
           headers: {
@@ -687,29 +692,50 @@ export default function ExpenseCreate() {
         return [await response.json()];
       } else {
         // Create new expenses
-        const promises = expenses.map((expense) =>
-          fetch("/api/expenses", {
+        if (data.isFormData && data.formData) {
+          // Use FormData approach for file uploads
+          const response = await fetch("/api/expenses", {
             method: "POST",
             headers: {
-              "Content-Type": "application/json",
               Authorization: `Bearer ${token}`,
             },
-            body: JSON.stringify(expense),
-          }).then((res) => {
-            if (!res.ok) throw new Error("Failed to create expense");
-            return res.json();
-          })
-        );
-        return Promise.all(promises);
+            body: data.formData,
+          });
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ message: "Failed to create expenses" }));
+            throw new Error(errorData.message || "Failed to create expenses");
+          }
+          const result = await response.json();
+          // Server returns array if multiple, single object if one
+          return Array.isArray(result) ? result : [result];
+        } else {
+          // Use JSON approach for expenses without files
+          const expenses = Array.isArray(data) ? data : [];
+          const promises = expenses.map((expense) =>
+            fetch("/api/expenses", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify(expense),
+            }).then((res) => {
+              if (!res.ok) throw new Error("Failed to create expense");
+              return res.json();
+            })
+          );
+          return Promise.all(promises);
+        }
       }
     },
-    onSuccess: () => {
+    onSuccess: (result: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/expenses"] });
+      const expenseCount = Array.isArray(result) ? result.length : 1;
       toast({
         title: "Success",
         description: isEditMode 
           ? "Expense updated successfully"
-          : `${expenseItems.length} expense(s) created successfully`,
+          : `${expenseCount} expense(s) created successfully`,
       });
       navigate("/expenses");
     },
@@ -747,6 +773,8 @@ export default function ExpenseCreate() {
         amountPaid: "",
         amountDue: "",
         notes: "",
+        billFile: null,
+        billUrl: "",
       },
     ]);
   };
@@ -883,33 +911,27 @@ export default function ExpenseCreate() {
     }));
   };
 
-  // Build dynamic grid template based on visible fields - matching invoice-create design
-  const getGridTemplate = useMemo(() => {
-    const cols: string[] = [];
-    
-    cols.push("30px"); // # column - smaller (fixed)
-    if (expenseSettings?.showCategory !== false) cols.push("minmax(250px, 2fr)"); // Category - bigger (flexible, min 250px)
-    cols.push("minmax(150px, 1.5fr)"); // Title (flexible, min 150px)
-    if (expenseSettings?.showVendor !== false) cols.push("minmax(250px, 2fr)"); // Vendor - bigger (flexible, min 250px)
-    if (expenseSettings?.showLeadType !== false) cols.push("minmax(250px, 2fr)"); // Lead Type/Provider - bigger (flexible, min 250px)
-    cols.push("minmax(100px, 1fr)"); // Quantity - small (flexible, min 100px)
-    cols.push("minmax(130px, 1fr)"); // Amount - small (flexible, min 130px)
-    if (expenseSettings?.showTax !== false) {
-      cols.push("minmax(100px, 1fr)"); // Tax Rate - small (flexible, min 100px)
-    }
-    cols.push("minmax(100px, 1fr)"); // Total - small (flexible, min 100px)
-    if (expenseSettings?.showPaymentStatus !== false) cols.push("minmax(100px, 1fr)"); // Status - small (flexible, min 100px)
-    if (expenseSettings?.showPaymentStatus !== false) {
-      cols.push("minmax(100px, 1fr)"); // Paid - small (flexible, min 100px)
-      cols.push("minmax(100px, 1fr)"); // Due - small (flexible, min 100px)
-    }
-    if (expenseSettings?.showPaymentMethod !== false) cols.push("minmax(100px, 1fr)"); // Payment - small (flexible, min 100px)
-    cols.push("50px"); // Delete button - small (fixed)
-    
-    return cols.join(" ");
-  }, [expenseSettings?.showCategory, expenseSettings?.showVendor, expenseSettings?.showLeadType, expenseSettings?.showTax, expenseSettings?.showPaymentStatus, expenseSettings?.showPaymentMethod]);
-  
-  const gridTemplate = getGridTemplate;
+  // Calculate grid template columns dynamically (matching invoice-create design)
+  const gridTemplate = useMemo(() => {
+    const columns = [
+      '30px', // # column - smaller (fixed)
+      ...(expenseSettings?.showCategory !== false ? ['minmax(180px, 1.5fr)'] : []), // Category - reduced width (flexible, min 180px)
+      'minmax(180px, 1.5fr)', // Title - reduced width (flexible, min 180px)
+      ...(expenseSettings?.showVendor !== false ? ['minmax(180px, 1.5fr)'] : []), // Vendor - reduced width (flexible, min 180px)
+      ...(expenseSettings?.showLeadType !== false ? ['minmax(180px, 1.5fr)'] : []), // Lead Type - reduced width (flexible, min 180px)
+      'minmax(60px, 1fr)', // Quantity - small (flexible, min 60px)
+      'minmax(130px, 1fr)', // Amount - small (flexible, min 130px)
+      ...(expenseSettings?.showTax !== false ? ['minmax(100px, 1fr)'] : []), // Tax - small (flexible, min 100px)
+      'minmax(100px, 1fr)', // Total - small (flexible, min 100px)
+      ...(expenseSettings?.showPaymentStatus !== false ? ['minmax(100px, 1fr)'] : []), // Status - small (flexible, min 100px)
+      ...(expenseSettings?.showPaymentStatus !== false ? ['minmax(100px, 1fr)'] : []), // Paid - small (flexible, min 100px)
+      ...(expenseSettings?.showPaymentStatus !== false ? ['minmax(100px, 1fr)'] : []), // Due - small (flexible, min 100px)
+      ...(expenseSettings?.showPaymentMethod !== false ? ['minmax(100px, 1fr)'] : []), // Payment - small (flexible, min 100px)
+      ...(expenseSettings?.showBills !== false ? ['minmax(120px, 1fr)'] : []), // Bills - small (flexible, min 120px)
+      '50px', // Delete button - small (fixed)
+    ];
+    return columns.join(' ');
+  }, [expenseSettings?.showCategory, expenseSettings?.showVendor, expenseSettings?.showLeadType, expenseSettings?.showTax, expenseSettings?.showPaymentStatus, expenseSettings?.showPaymentMethod, expenseSettings?.showBills]);
 
   // Get currency symbol
   const getCurrencySymbol = () => {
@@ -984,66 +1006,139 @@ export default function ExpenseCreate() {
     }
   };
 
-  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
-    const expenses = expenseItems.map((item) => {
-      const quantity = parseFloat(item.quantity || "1");
-      const unitAmount = parseFloat(item.amount || "0");
-      const totalAmount = unitAmount * quantity;
-      
-      return {
-        title: item.title,
-        description: item.notes,
-        quantity: quantity,
-        amount: totalAmount, // Store total amount (unit price * quantity)
-        currency: expenseSettings?.defaultCurrency || currency,
-        category: item.category,
-        subcategory: "",
-        expenseDate: expenseDate,
-        expenseNumber: expenseNumber || undefined, // Include expense number if set
-        paymentMethod: item.paymentMethod,
-        paymentReference: "",
-        vendorId: item.vendorId && item.vendorId !== "none" ? parseInt(item.vendorId) : null,
-        leadTypeId: item.leadTypeId && item.leadTypeId !== "none" ? parseInt(item.leadTypeId) : null,
-        expenseType: "purchase",
-        receiptUrl: "",
-        taxAmount: parseFloat(item.taxAmount || "0"),
-        taxRate: item.taxRateId
-          ? (() => {
-              const selectedRate = gstRates.find(
-                (rate: any) => rate.id?.toString() === item.taxRateId
-              );
-              if (selectedRate) {
-                // Use ratePercentage (or rate_percentage) field from the API response
-                return parseFloat(
-                  selectedRate.ratePercentage?.toString() || 
-                  selectedRate.rate_percentage?.toString() || 
-                  selectedRate.rate?.toString() || 
-                  "0"
-                );
-              }
-              return 0;
-            })()
-          : 0,
-        isReimbursable: false,
-        isRecurring: false,
-        recurringFrequency: "",
-        status: "pending",
-        amountPaid: parseFloat(item.amountPaid || "0"),
-        amountDue: parseFloat(item.amountDue || "0"),
-        tags: [],
-        notes: notesContent || item.notes,
-      };
-    });
+    // Check if there are any bill files to upload
+    const hasBillFiles = expenseItems.some(item => item.billFile);
 
-    createExpensesMutation.mutate(expenses);
+    if (hasBillFiles) {
+      // Use FormData approach like packages - send all expenses with files in one request
+      const formData = new FormData();
+      
+      // Add expense items data as JSON
+      const expensesData = expenseItems.map((item, index) => {
+        const quantity = parseFloat(item.quantity || "1");
+        const unitAmount = parseFloat(item.amount || "0");
+        const totalAmount = unitAmount * quantity;
+        
+        return {
+          title: item.title,
+          description: item.notes,
+          quantity: quantity,
+          amount: totalAmount,
+          currency: expenseSettings?.defaultCurrency || currency,
+          category: item.category,
+          subcategory: "",
+          expenseDate: expenseDate,
+          expenseNumber: expenseNumber || undefined,
+          paymentMethod: item.paymentMethod,
+          paymentReference: "",
+          vendorId: item.vendorId && item.vendorId !== "none" ? parseInt(item.vendorId) : null,
+          leadTypeId: item.leadTypeId && item.leadTypeId !== "none" ? parseInt(item.leadTypeId) : null,
+          expenseType: "purchase",
+          receiptUrl: item.billUrl || "", // Will be updated by server after upload
+          taxAmount: parseFloat(item.taxAmount || "0"),
+          taxRate: item.taxRateId
+            ? (() => {
+                const selectedRate = gstRates.find(
+                  (rate: any) => rate.id?.toString() === item.taxRateId
+                );
+                if (selectedRate) {
+                  return parseFloat(
+                    selectedRate.ratePercentage?.toString() || 
+                    selectedRate.rate_percentage?.toString() || 
+                    selectedRate.rate?.toString() || 
+                    "0"
+                  );
+                }
+                return 0;
+              })()
+            : 0,
+          isReimbursable: false,
+          isRecurring: false,
+          recurringFrequency: "",
+          status: "pending",
+          amountPaid: parseFloat(item.amountPaid || "0"),
+          amountDue: parseFloat(item.amountDue || "0"),
+          tags: [],
+          notes: notesContent || item.notes,
+        };
+      });
+      
+      formData.append("expenses", JSON.stringify(expensesData));
+      formData.append("expenseDate", expenseDate);
+      formData.append("expenseNumber", expenseNumber || "");
+      formData.append("currency", expenseSettings?.defaultCurrency || currency);
+      formData.append("notes", notesContent || "");
+      
+      // Add bill files with index-based field names
+      expenseItems.forEach((item, index) => {
+        if (item.billFile) {
+          formData.append(`billFiles[${index}]`, item.billFile);
+        }
+      });
+      
+      createExpensesMutation.mutate({ formData, isFormData: true });
+    } else {
+      // No files, use JSON approach
+      const expenses = expenseItems.map((item) => {
+        const quantity = parseFloat(item.quantity || "1");
+        const unitAmount = parseFloat(item.amount || "0");
+        const totalAmount = unitAmount * quantity;
+        
+        return {
+          title: item.title,
+          description: item.notes,
+          quantity: quantity,
+          amount: totalAmount,
+          currency: expenseSettings?.defaultCurrency || currency,
+          category: item.category,
+          subcategory: "",
+          expenseDate: expenseDate,
+          expenseNumber: expenseNumber || undefined,
+          paymentMethod: item.paymentMethod,
+          paymentReference: "",
+          vendorId: item.vendorId && item.vendorId !== "none" ? parseInt(item.vendorId) : null,
+          leadTypeId: item.leadTypeId && item.leadTypeId !== "none" ? parseInt(item.leadTypeId) : null,
+          expenseType: "purchase",
+          receiptUrl: item.billUrl || "",
+          taxAmount: parseFloat(item.taxAmount || "0"),
+          taxRate: item.taxRateId
+            ? (() => {
+                const selectedRate = gstRates.find(
+                  (rate: any) => rate.id?.toString() === item.taxRateId
+                );
+                if (selectedRate) {
+                  return parseFloat(
+                    selectedRate.ratePercentage?.toString() || 
+                    selectedRate.rate_percentage?.toString() || 
+                    selectedRate.rate?.toString() || 
+                    "0"
+                  );
+                }
+                return 0;
+              })()
+            : 0,
+          isReimbursable: false,
+          isRecurring: false,
+          recurringFrequency: "",
+          status: "pending",
+          amountPaid: parseFloat(item.amountPaid || "0"),
+          amountDue: parseFloat(item.amountDue || "0"),
+          tags: [],
+          notes: notesContent || item.notes,
+        };
+      });
+      
+      createExpensesMutation.mutate(expenses);
+    }
   };
 
   return (
     <Layout initialSidebarCollapsed={true}>
-      <div className="p-3 sm:p-4 md:p-6 mx-auto">
-        <div className="bg-white rounded-2xl shadow-sm relative">
+      <div className="p-3 sm:p-4 md:p-6 mx-auto max-w-full overflow-x-hidden">
+        <div className="bg-white rounded-2xl shadow-sm relative max-w-full overflow-x-hidden">
           {/* Loading Overlay - only show when actively loading */}
           {isEditMode && isLoadingExpense && (
             <div className="absolute inset-0 bg-white/90 dark:bg-gray-900/90 backdrop-blur-sm z-50 flex items-center justify-center rounded-2xl">
@@ -1083,10 +1178,10 @@ export default function ExpenseCreate() {
             </div>
           </div>
 
-          <div className="p-6">
-            <form onSubmit={handleSubmit}>
-              <Card>
-            <CardContent className="p-6 space-y-6">
+          <div className="p-6 max-w-full">
+            <form onSubmit={handleSubmit} className="max-w-full">
+              <Card className="max-w-full">
+            <CardContent className="p-6 space-y-6 max-w-full">
               {/* Expense Number and Date Row */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
                 <div>
@@ -1141,47 +1236,46 @@ export default function ExpenseCreate() {
               </div>
 
               {/* Expense Line Items */}
-              <div className="border rounded-lg">
-                <div className="overflow-x-auto">
-                  <div className="min-w-[2200px]">
-                    {/* Table Header */}
-                    <div 
-                      className="sticky top-0 z-[100] grid gap-2 p-3 font-medium text-sm border-b bg-gray-50 dark:bg-gray-800" 
-                      style={{ 
-                        gridTemplateColumns: gridTemplate,
-                        backgroundColor: 'rgb(249, 250, 251)',
-                        position: 'sticky',
-                        top: 0,
-                        zIndex: 100,
-                        minWidth: '2200px',
-                        width: '100%',
-                        willChange: 'transform'
-                      }}
-                    >
-                      <div className="text-center flex items-center justify-center">#</div>
-                      {expenseSettings?.showCategory !== false && <div className="flex items-center">Category *</div>}
-                      <div className="flex items-center">Title *</div>
-                      {expenseSettings?.showVendor !== false && <div className="flex items-center">Vendor</div>}
-                      {expenseSettings?.showLeadType !== false && <div className="flex items-center">Lead Type</div>}
-                      <div className="flex items-center">Quantity *</div>
-                      <div className="flex items-center">Amount ({currencySymbol}) *</div>
-                      {expenseSettings?.showTax !== false && <div className="flex items-center">Tax Rate</div>}
-                      <div className="flex items-center">Total ({currencySymbol})</div>
-                      {expenseSettings?.showPaymentStatus !== false && <div className="flex items-center">Status *</div>}
-                      {expenseSettings?.showPaymentStatus !== false && <div className="flex items-center">Paid ({currencySymbol})</div>}
-                      {expenseSettings?.showPaymentStatus !== false && <div className="flex items-center">Due ({currencySymbol})</div>}
-                      {expenseSettings?.showPaymentMethod !== false && <div className="flex items-center">Payment</div>}
-                      <div></div>
-                    </div>
+              <div className="border rounded-lg overflow-x-auto w-full">
+                <div className="min-w-[2200px]">
+                  {/* Table Header */}
+                  <div 
+                    className="top-0 z-[100] grid gap-2 border-b p-3 font-medium text-sm bg-gray-50 dark:bg-gray-800"
+                    style={{ 
+                      gridTemplateColumns: gridTemplate,
+                      backgroundColor: 'rgb(249, 250, 251)',
+                      // position: 'sticky',
+                      top: 0,
+                      zIndex: 100,
+                      minWidth: '2200px',
+                      width: '100%',
+                      willChange: 'transform'
+                    }}
+                  >
+                    <div className="text-center flex items-center justify-center">#</div>
+                    {expenseSettings?.showCategory !== false && <div className="flex items-center">Category *</div>}
+                    <div className="flex items-center">Title *</div>
+                    {expenseSettings?.showVendor !== false && <div className="flex items-center">Vendor</div>}
+                    {expenseSettings?.showLeadType !== false && <div className="flex items-center">Lead Type</div>}
+                    <div className="flex items-center">Quantity *</div>
+                    <div className="flex items-center">Amount ({currencySymbol}) *</div>
+                    {expenseSettings?.showTax !== false && <div className="flex items-center">Tax ({currencySymbol})</div>}
+                    <div className="flex items-center">Total ({currencySymbol})</div>
+                    {expenseSettings?.showPaymentStatus !== false && <div className="flex items-center">Status *</div>}
+                    {expenseSettings?.showPaymentStatus !== false && <div className="flex items-center">Paid ({currencySymbol})</div>}
+                    {expenseSettings?.showPaymentStatus !== false && <div className="flex items-center">Due ({currencySymbol})</div>}
+                    {expenseSettings?.showPaymentMethod !== false && <div className="flex items-center">Payment</div>}
+                    {expenseSettings?.showBills !== false && <div className="flex items-center">Bills</div>}
+                    <div className="flex items-center"></div>
+                  </div>
 
-                    {/* Table Body */}
-                    <div>
-                      {expenseItems.map((item, index) => (
-                        <div
-                          key={index}
-                          className="grid gap-2 p-3 border-b last:border-b-0"
-                          style={{ gridTemplateColumns: gridTemplate }}
-                        >
+                  {/* Table Body */}
+                  {expenseItems.map((item, index) => (
+                    <div
+                      key={index}
+                      className="grid gap-2 p-3 border-b last:border-b-0"
+                      style={{ gridTemplateColumns: gridTemplate }}
+                    >
                         <div className="flex items-center justify-center">
                           <span className="font-medium text-sm">{index + 1}</span>
                         </div>
@@ -1248,28 +1342,24 @@ export default function ExpenseCreate() {
                         <div className="flex items-center">
                           <Input
                             data-testid={`input-quantity-${index}`}
-                            type="text"
-                            value={item.quantity || "1"}
+                            value={item.quantity}
                             onChange={(e) =>
                               updateExpenseItem(index, "quantity", e.target.value)
                             }
                             onKeyPress={handleNumericKeyPress}
                             placeholder="1"
-                            required
                           />
                         </div>
 
                         <div className="flex items-center">
                           <Input
                             data-testid={`input-amount-${index}`}
-                            type="text"
                             value={item.amount}
                             onChange={(e) =>
                               updateExpenseItem(index, "amount", e.target.value)
                             }
                             onKeyPress={handleNumericKeyPress}
-                            placeholder="0.00"
-                            required
+                            placeholder="0"
                           />
                         </div>
 
@@ -1280,29 +1370,31 @@ export default function ExpenseCreate() {
                               onValueChange={(value) =>
                                 updateExpenseItem(index, "taxRateId", value === "none" ? "" : value)
                               }
+                              disabled={!selectedTaxSettingId || selectedTaxSettingId === "none" || gstRates.length === 0}
                             >
-                              <SelectTrigger data-testid={`select-tax-rate-${index}`} className="text-xs">
-                                <SelectValue placeholder="Select tax rate" />
+                              <SelectTrigger data-testid={`select-tax-rate-${index}`}>
+                                <SelectValue placeholder={
+                                  !selectedTaxSettingId || selectedTaxSettingId === "none" 
+                                    ? "Select tax setting first" 
+                                    : gstRates.length === 0 
+                                    ? "No rates available"
+                                    : "Select tax rate"
+                                } />
                               </SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="none">None</SelectItem>
+                                <SelectItem value="none">No Tax</SelectItem>
                                 {gstRates
-                                  .filter((rate: any) => rate.isActive !== false)
+                                  .filter((rate: any) => rate.isActive)
                                   .map((rate: any) => (
-                                    <SelectItem key={rate.id} value={rate.id?.toString()}>
-                                      {rate.rateName || `Rate ${rate.rate}%`} ({rate.rate}%)
+                                    <SelectItem key={rate.id} value={rate.id.toString()}>
+                                      {rate.rateName} ({rate.ratePercentage}%)
                                     </SelectItem>
                                   ))}
                               </SelectContent>
                             </Select>
-                            {!selectedTaxSettingId && (
-                              <p className="text-xs text-black mt-1">
-                                Select tax setting in expense settings
-                              </p>
-                            )}
-                            {selectedTaxSettingId && gstRates.length === 0 && (
-                              <p className="text-xs text-black mt-1">
-                                No tax rates available
+                            {item.taxAmount && parseFloat(item.taxAmount) > 0 && (
+                              <p className="text-xs text-muted-foreground mt-1">
+                                Tax: {currencySymbol}{parseFloat(item.taxAmount).toFixed(2)}
                               </p>
                             )}
                           </div>
@@ -1310,29 +1402,45 @@ export default function ExpenseCreate() {
 
                         <div className="flex items-center">
                           <Input
+                            data-testid={`input-total-amount-${index}`}
                             value={item.totalAmount.toFixed(2)}
                             readOnly
-                            className="font-semibold text-xs"
+                            className="bg-transparent"
                           />
                         </div>
 
                         {expenseSettings?.showPaymentStatus !== false && (
                           <div className="flex items-center">
                             <Select
-                              value={item.paymentStatus}
+                              value={item.paymentStatus || "paid"}
                               onValueChange={(value) => {
-                                updateExpenseItem(index, "paymentStatus", value);
+                                // Update all fields in a single state update to avoid stale state issues
+                                const updatedItems = [...expenseItems];
+                                const currentItem = updatedItems[index];
+                                
+                                // Update payment status
+                                updatedItems[index] = {
+                                  ...currentItem,
+                                  paymentStatus: value,
+                                };
+                                
                                 // Auto-fill paid/due amounts based on status
                                 if (value === "paid") {
-                                  updateExpenseItem(index, "amountPaid", item.totalAmount.toFixed(2));
-                                  updateExpenseItem(index, "amountDue", "0");
+                                  updatedItems[index].amountPaid = currentItem.totalAmount.toFixed(2);
+                                  updatedItems[index].amountDue = "0";
                                 } else if (value === "due") {
-                                  updateExpenseItem(index, "amountPaid", "0");
-                                  updateExpenseItem(index, "amountDue", item.totalAmount.toFixed(2));
+                                  updatedItems[index].amountPaid = "0";
+                                  updatedItems[index].amountDue = currentItem.totalAmount.toFixed(2);
+                                } else if (value === "credit") {
+                                  // For credit, typically no amount is paid or due initially
+                                  updatedItems[index].amountPaid = "0";
+                                  updatedItems[index].amountDue = "0";
                                 }
+                                
+                                setExpenseItems(updatedItems);
                               }}
                             >
-                              <SelectTrigger data-testid={`select-payment-status-${index}`} className="text-xs">
+                              <SelectTrigger data-testid={`select-payment-status-${index}`}>
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
@@ -1348,14 +1456,24 @@ export default function ExpenseCreate() {
                           <div className="flex items-center">
                             <Input
                               data-testid={`input-amount-paid-${index}`}
-                              type="text"
                               value={item.amountPaid}
-                              onChange={(e) =>
-                                updateExpenseItem(index, "amountPaid", e.target.value)
-                              }
+                              onChange={(e) => {
+                                const paidValue = e.target.value;
+                                const paidAmount = parseFloat(paidValue) || 0;
+                                const totalAmount = item.totalAmount || 0;
+                                const dueAmount = Math.max(0, totalAmount - paidAmount);
+                                
+                                // Update both paid and due amounts in a single state update
+                                const updatedItems = [...expenseItems];
+                                updatedItems[index] = {
+                                  ...updatedItems[index],
+                                  amountPaid: paidValue,
+                                  amountDue: dueAmount.toFixed(2),
+                                };
+                                setExpenseItems(updatedItems);
+                              }}
                               onKeyPress={handleNumericKeyPress}
-                              placeholder="0.00"
-                              className="text-xs"
+                              placeholder="0"
                             />
                           </div>
                         )}
@@ -1364,14 +1482,12 @@ export default function ExpenseCreate() {
                           <div className="flex items-center">
                             <Input
                               data-testid={`input-amount-due-${index}`}
-                              type="text"
                               value={item.amountDue}
                               onChange={(e) =>
                                 updateExpenseItem(index, "amountDue", e.target.value)
                               }
                               onKeyPress={handleNumericKeyPress}
-                              placeholder="0.00"
-                              className="text-xs"
+                              placeholder="0"
                             />
                           </div>
                         )}
@@ -1384,7 +1500,7 @@ export default function ExpenseCreate() {
                                 updateExpenseItem(index, "paymentMethod", value)
                               }
                             >
-                              <SelectTrigger data-testid={`select-payment-method-${index}`} className="text-xs">
+                              <SelectTrigger data-testid={`select-payment-method-${index}`}>
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
@@ -1399,39 +1515,79 @@ export default function ExpenseCreate() {
                           </div>
                         )}
 
-                        <div className="flex items-center justify-center">
+                        {expenseSettings?.showBills !== false && (
+                          <div className="flex items-center">
+                            <input
+                              type="file"
+                              accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  updateExpenseItem(index, "billFile", file);
+                                }
+                              }}
+                              className="hidden"
+                              id={`bill-upload-${index}`}
+                            />
+                            <label
+                              htmlFor={`bill-upload-${index}`}
+                              className="cursor-pointer inline-flex items-center px-3 py-1.5 border border-gray-300 rounded-md shadow-sm text-xs font-medium text-gray-700 bg-white hover:bg-gray-50"
+                            >
+                              <Receipt className="h-3 w-3 mr-1.5" />
+                              {item.billFile ? item.billFile.name.substring(0, 15) + (item.billFile.name.length > 15 ? '...' : '') : item.billUrl ? 'View Bill' : 'Upload'}
+                            </label>
+                            {item.billFile && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => updateExpenseItem(index, "billFile", null)}
+                                className="ml-1 h-6 w-6 p-0"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
+                            )}
+                            {item.billUrl && !item.billFile && (
+                              <a
+                                href={item.billUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="ml-1 text-xs text-blue-600 hover:text-blue-800"
+                              >
+                                View
+                              </a>
+                            )}
+                          </div>
+                        )}
+
+                      <div className="flex items-center justify-center">
+                        {expenseItems.length > 1 && (
                           <Button
                             type="button"
                             variant="ghost"
                             size="sm"
                             onClick={() => removeExpenseItem(index)}
-                            disabled={expenseItems.length === 1}
                             data-testid={`button-remove-expense-${index}`}
                           >
-                            <Trash2 className="h-4 w-4 text-red-500" />
+                            <Trash2 className="h-4 w-4 text-gray-900 dark:text-white" />
                           </Button>
-                        </div>
+                        )}
                       </div>
-                    ))}
                     </div>
-                  </div>
+                  ))}
                 </div>
+              </div>
 
-                {/* Add New Line Button - Hidden in edit mode */}
-                {!isEditMode && (
-                  <div className="p-3 border-t">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={addExpenseItem}
-                      className="w-full"
-                      data-testid="button-add-expense-item"
-                    >
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add Expense Item
-                    </Button>
-                  </div>
-                )}
+              <div className="flex justify-center">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={addExpenseItem}
+                  data-testid="button-add-expense-item"
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Expense Item
+                </Button>
               </div>
 
 
