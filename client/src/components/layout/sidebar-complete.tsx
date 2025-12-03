@@ -574,8 +574,26 @@ export function CompleteSidebar({
           : "bg-[#f1f4f9] border-gray-200", // Light gray-blue for expanded
         className,
       )}
-      onMouseLeave={() => {
+      onMouseEnter={() => {
         if (isCollapsed) {
+          setIsCollapsed(false);
+          // Update the main content margin for expanded state
+          const mainContent = document.querySelector(".main-content-wrapper");
+          if (mainContent) {
+            (mainContent as HTMLElement).style.marginLeft = "16rem"; // 256px
+          }
+        }
+      }}
+      onMouseLeave={() => {
+        if (!isCollapsed) {
+          setIsCollapsed(true);
+          setExpandedGroups([]); // Close all popovers when mouse leaves sidebar
+          // Update the main content margin for collapsed state
+          const mainContent = document.querySelector(".main-content-wrapper");
+          if (mainContent) {
+            (mainContent as HTMLElement).style.marginLeft = "4rem"; // 64px
+          }
+        } else {
           setExpandedGroups([]); // Close all popovers when mouse leaves sidebar
         }
       }}
@@ -812,11 +830,59 @@ export function CompleteSidebar({
                         </PopoverContent>
                       </Popover>
                     ) : (
-                      <>
-                        {groupButton}
-                        {/* Group submenu items */}
-                        {isExpanded && (
-                          <div className="ml-6 mt-1 space-y-1">
+                      <Popover open={isExpanded} onOpenChange={(open) => {
+                        if (!isCollapsed) {
+                          if (open) {
+                            setExpandedGroups((prev) =>
+                              prev.includes(groupName)
+                                ? prev
+                                : [...prev, groupName]
+                            );
+                          } else {
+                            setExpandedGroups((prev) =>
+                              prev.filter((g) => g !== groupName)
+                            );
+                          }
+                        }
+                      }}>
+                        <PopoverTrigger asChild>
+                          <div
+                            onMouseEnter={() => {
+                              if (!isCollapsed) {
+                                setExpandedGroups((prev) =>
+                                  prev.includes(groupName)
+                                    ? prev
+                                    : [...prev, groupName]
+                                );
+                              }
+                            }}
+                          >
+                            {groupButton}
+                          </div>
+                        </PopoverTrigger>
+                        <PopoverContent 
+                          side="right" 
+                          align="start"
+                          className="w-56 p-1"
+                          onOpenAutoFocus={(e) => e.preventDefault()}
+                          onMouseEnter={() => {
+                            if (!isCollapsed) {
+                              setExpandedGroups((prev) =>
+                                prev.includes(groupName)
+                                  ? prev
+                                  : [...prev, groupName]
+                              );
+                            }
+                          }}
+                          onMouseLeave={() => {
+                            if (!isCollapsed) {
+                              setExpandedGroups((prev) =>
+                                prev.filter((g) => g !== groupName)
+                              );
+                            }
+                          }}
+                        >
+                          <div className="space-y-1">
                             {groupItems.map((child: any, childIndex: number) => {
                               const ChildIcon = child.icon;
                               const childActive = isActive(child.href);
@@ -828,8 +894,8 @@ export function CompleteSidebar({
                                     className={cn(
                                       "w-full justify-start h-9 px-3 text-left transition-all duration-200",
                                       childActive
-                                        ? "bg-[#0EA5E9] text-white"
-                                        : "text-gray-600 hover:bg-gray-200",
+                                        ? "bg-[#0EA5E9] text-white hover:bg-[#0EA5E9]/90"
+                                        : "text-gray-700 hover:bg-gray-100",
                                     )}
                                   >
                                     <div className="flex items-center gap-3 w-full">
@@ -846,8 +912,8 @@ export function CompleteSidebar({
                               );
                             })}
                           </div>
-                        )}
-                      </>
+                        </PopoverContent>
+                      </Popover>
                     )}
                   </div>
                 );
