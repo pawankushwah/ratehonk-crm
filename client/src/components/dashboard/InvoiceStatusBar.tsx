@@ -19,7 +19,7 @@ export function InvoiceStatusBar() {
   const [customDateFrom, setCustomDateFrom] = useState<Date | null>(null);
   const [customDateTo, setCustomDateTo] = useState<Date | null>(null);
 
-  // 🔥 Local loading added (UI stays stable during filter changes)
+ 
   const [localLoading, setLocalLoading] = useState(false);
 
   const {
@@ -32,21 +32,13 @@ export function InvoiceStatusBar() {
     customDateTo
   );
 
-  // 🔥 Trigger local loading on date filter change
+ 
   useEffect(() => {
     setLocalLoading(true);
     const timer = setTimeout(() => setLocalLoading(false), 500);
     return () => clearTimeout(timer);
   }, [dateFilter, customDateFrom, customDateTo]);
 
-  const dummyStatusData = {
-    paid: 40,
-    partialPaid: 20,
-    pending: 25,
-    overdue: 15,
-  };
-
-  const realTotal = invoiceGraphData.length;
 
   const paid = invoiceGraphData.filter((inv) => inv.status === "paid")?.length || 0;
   const partialPaid =
@@ -56,10 +48,10 @@ export function InvoiceStatusBar() {
   const overdue =
     invoiceGraphData.filter((inv) => inv.status === "overdue")?.length || 0;
 
-  const finalPaid = realTotal > 0 ? paid : dummyStatusData.paid;
-  const finalPartial = realTotal > 0 ? partialPaid : dummyStatusData.partialPaid;
-  const finalPending = realTotal > 0 ? pending : dummyStatusData.pending;
-  const finalOverdue = realTotal > 0 ? overdue : dummyStatusData.overdue;
+  const finalPaid = paid  
+  const finalPartial =  partialPaid 
+  const finalPending =  pending 
+  const finalOverdue =  overdue 
 
   const total = finalPaid + finalPartial + finalPending + finalOverdue;
 
@@ -116,7 +108,6 @@ export function InvoiceStatusBar() {
 
         <CardDescription className="text-lg sm:text-2xl font-semibold text-[#000000] mt-4">
           {invoiceMetrics.total} Total Invoices
-          {realTotal === 0 && " (Dummy Data)"}
         </CardDescription>
       </CardHeader>
 
@@ -160,7 +151,7 @@ export function InvoiceStatusBar() {
           )}
         </div>
 
-        {/* Legends */}
+       
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-6 text-xs sm:text-sm mt-20">
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded-full bg-[#2374A9]"></div>

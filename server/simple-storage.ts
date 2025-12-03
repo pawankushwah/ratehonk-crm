@@ -4244,131 +4244,132 @@ export class SimpleStorage {
     }
   }
 
-  async getAllInvoicesByTenant(tenantId: number, startDate?: string, endDate?: string) {
-    try {
-      const parseJsonSafe = (value: any) => {
-        if (!value) return [];
-        if (typeof value === "object") return value;
-        try {
-          return JSON.parse(value);
-        } catch {
-          return [];
-        }
-      };
-
-      let dateFilter = sql`1=1`;
-
-      if (startDate && endDate) {
-        dateFilter = sql`issue_date >= ${startDate} AND issue_date <= ${endDate}`;
+ async getAllInvoicesByTenant(tenantId: number, startDate?: string, endDate?: string) {
+  try {
+    const parseJsonSafe = (value: any) => {
+      if (!value) return [];
+      if (typeof value === "object") return value;
+      try {
+        return JSON.parse(value);
+      } catch {
+        return [];
       }
+    };
 
-      const invoices = await sql`
-  SELECT * FROM invoices
-  WHERE tenant_id = ${tenantId} AND ${dateFilter}
-  ORDER BY issue_date DESC
-`;
+    let dateFilter = sql`1=1`;
 
-      if (invoices.length === 0) return [];
+    if (startDate && endDate) {
+      dateFilter = sql`issue_date >= ${startDate} AND issue_date <= ${endDate}`;
+    }
 
-      const invoiceIds = invoices.map(i => i.id);
+   
+    const invoices = await sql`
+      SELECT * FROM invoices
+      WHERE tenant_id = ${tenantId}
+        AND status NOT IN ('void', 'cancelled')
+        AND ${dateFilter}
+      ORDER BY issue_date DESC
+    `;
 
-      //  Fetch invoice_items 
-      const invoiceItems = await sql`
+    if (invoices.length === 0) return [];
+
+    const invoiceIds = invoices.map(i => i.id);
+
+    // Fetch invoice_items 
+    const invoiceItems = await sql`
       SELECT * FROM invoice_items
       WHERE invoice_id = ANY(${invoiceIds})
     `;
 
-      const itemMap: any = {};
-      invoiceItems.forEach(item => {
-        if (!itemMap[item.invoice_id]) itemMap[item.invoice_id] = [];
-        itemMap[item.invoice_id].push(item);
-      });
+    const itemMap: any = {};
+    invoiceItems.forEach(item => {
+      if (!itemMap[item.invoice_id]) itemMap[item.invoice_id] = [];
+      itemMap[item.invoice_id].push(item);
+    });
 
-      //  Extract provider/vendor IDs from JSON
-      const allJsonLineItems = invoices.flatMap(inv => parseJsonSafe(inv.line_items));
+    const allJsonLineItems = invoices.flatMap(inv => parseJsonSafe(inv.line_items));
 
-      const providerIds = [
-        ...new Set(
-          allJsonLineItems
-            .map(li => Number(li.serviceProviderId))
-            .filter(id => !isNaN(id))
-        ),
-      ];
+    const providerIds = [
+      ...new Set(
+        allJsonLineItems
+          .map(li => Number(li.serviceProviderId))
+          .filter(id => !isNaN(id))
+      ),
+    ];
 
-      const vendorIds = [
-        ...new Set(
-          allJsonLineItems
-            .map(li => Number(li.vendor))
-            .filter(id => !isNaN(id))
-        ),
-      ];
+    const vendorIds = [
+      ...new Set(
+        allJsonLineItems
+          .map(li => Number(li.vendor))
+          .filter(id => !isNaN(id))
+      ),
+    ];
 
-      //  Providers lookup 
-      const providers = providerIds.length
-        ? await sql`
+    const providers = providerIds.length
+      ? await sql`
           SELECT id, name
           FROM service_providers
           WHERE id = ANY(${providerIds})
         `
-        : [];
+      : [];
 
-      const providerMap = Object.fromEntries(
-        providers.map(p => [p.id, p])
-      );
+    const providerMap = Object.fromEntries(
+      providers.map(p => [p.id, p])
+    );
 
-      // Vendors lookup 
-      const vendors = vendorIds.length
-        ? await sql`
+    const vendors = vendorIds.length
+      ? await sql`
           SELECT id, name
           FROM vendors
           WHERE id = ANY(${vendorIds})
         `
-        : [];
+      : [];
 
-      const vendorMap = Object.fromEntries(
-        vendors.map(v => [v.id, v])
-      );
+    const vendorMap = Object.fromEntries(
+      vendors.map(v => [v.id, v])
+    );
 
-      // Build final invoice response 
-      return invoices.map(inv => {
-        const rawLineItems = parseJsonSafe(inv.line_items);
+    // Final response
+    return invoices.map(inv => {
+      const rawLineItems = parseJsonSafe(inv.line_items);
 
-        const lineItems = rawLineItems.map(li => ({
-          ...li,
-          serviceProviderName: providerMap[Number(li.serviceProviderId)]?.name || null,
-          vendorName: vendorMap[Number(li.vendor)]?.name || null,
-        }));
+      const lineItems = rawLineItems.map(li => ({
+        ...li,
+        serviceProviderName: providerMap[Number(li.serviceProviderId)]?.name || null,
+        vendorName: vendorMap[Number(li.vendor)]?.name || null,
+      }));
 
-        return {
-          id: inv.id,
-          tenantId: inv.tenant_id,
-          customerId: inv.customer_id,
-          bookingId: inv.booking_id,
-          invoiceNumber: inv.invoice_number,
+      return {
+        id: inv.id,
+        tenantId: inv.tenant_id,
+        customerId: inv.customer_id,
+        bookingId: inv.booking_id,
+        invoiceNumber: inv.invoice_number,
 
-          status: inv.status,
-          issueDate: inv.issue_date,
-          dueDate: inv.due_date,
+        status: inv.status,
+        issueDate: inv.issue_date,
+        dueDate: inv.due_date,
 
-          subtotal: parseFloat(inv.subtotal),
-          taxAmount: parseFloat(inv.tax_amount || "0"),
-          discountAmount: parseFloat(inv.discount_amount || "0"),
-          totalAmount: parseFloat(inv.total_amount),
+        subtotal: parseFloat(inv.subtotal),
+        taxAmount: parseFloat(inv.tax_amount || "0"),
+        discountAmount: parseFloat(inv.discount_amount || "0"),
+        totalAmount: parseFloat(inv.total_amount),
 
-          notes: inv.notes,
-          additionalNotes: inv.additional_notes,
-          createdAt: inv.created_at,
+        notes: inv.notes,
+        additionalNotes: inv.additional_notes,
+        createdAt: inv.created_at,
 
-          lineItems,
-          items: itemMap[inv.id] || []
-        };
-      });
+        lineItems,
+        items: itemMap[inv.id] || []
+      };
+    });
 
-    } catch (error) {
-      console.error("❌ getAllInvoicesByTenant error:", error);
-      throw error;
-    }
+  } catch (error) {
+    console.error("❌ getAllInvoicesByTenant error:", error);
+    throw error;
   }
+}
+
 
 
 
@@ -9164,139 +9165,150 @@ export class SimpleStorage {
 
 
 async getDashboardMetrics(
-    tenantId: number,
-    startDate?: string,
-    endDate?: string,
-    period?: string,
-  ) {
-    console.log(
-      `📊 STORAGE: Getting dashboard metrics for tenant ${tenantId}`,
-      { startDate, endDate, period },
-    );
+  tenantId: number,
+  startDate?: string,
+  endDate?: string,
+  period?: string,
+) {
+  console.log(
+    `📊 STORAGE: Getting dashboard metrics for tenant ${tenantId}`,
+    { startDate, endDate, period },
+  );
 
-    try {
-      // Calculate date range based on period or use provided dates
-      let dateFilter = sql`1=1`;
-      if (startDate && endDate) {
-        dateFilter = sql`created_at BETWEEN ${startDate} AND ${endDate}`;
-      } else if (period) {
-        const now = new Date();
-        let filterDate = new Date();
+  try {
+  
+    // DATE FILTER LOGIC
+  
+    let dateFilter = sql`1=1`;
+    if (startDate && endDate) {
+      dateFilter = sql`i.issue_date BETWEEN ${startDate} AND ${endDate}`;
+    } else if (period) {
+      const now = new Date();
+      let filterDate = new Date();
 
-        switch (period) {
-          case "week":
-            filterDate.setDate(now.getDate() - 7);
-            break;
-          case "month":
-            filterDate.setMonth(now.getMonth() - 1);
-            break;
-          case "year":
-            filterDate.setFullYear(now.getFullYear() - 1);
-            break;
-          default:
-            filterDate.setMonth(now.getMonth() - 1); // Default to 1 month
-        }
-
-        dateFilter = sql`created_at >= ${filterDate.toISOString()}`;
+      switch (period) {
+        case "week":
+          filterDate.setDate(now.getDate() - 7);
+          break;
+        case "month":
+          filterDate.setMonth(now.getMonth() - 1);
+          break;
+        case "year":
+          filterDate.setFullYear(now.getFullYear() - 1);
+          break;
+        default:
+          filterDate.setMonth(now.getMonth() - 1);
       }
 
-      // Get main metrics
-     const [revenueResult] = await sql`
-  SELECT COALESCE(SUM(ii.total_price), 0) AS revenue
-  FROM invoice_items ii
-  JOIN invoices i ON ii.invoice_id = i.id
-  WHERE i.tenant_id = ${tenantId} AND ${dateFilter}
-`;
+      dateFilter = sql`i.issue_date >= ${filterDate.toISOString()}`;
+    }
 
-      const [bookingsResult] = await sql`
-        SELECT COUNT(*) as active_bookings
-        FROM bookings 
-        WHERE tenant_id = ${tenantId} AND ${dateFilter}
-      `;
+    // REVENUE (SUM OF INVOICE.total_amount)
 
-      const [customersResult] = await sql`
-        SELECT COUNT(*) as customers
-        FROM customers 
-        WHERE tenant_id = ${tenantId} AND ${dateFilter}
-      `;
+    const [revenueResult] = await sql`
+      SELECT COALESCE(SUM(i.total_amount), 0) AS revenue
+      FROM invoices i
+      WHERE 
+        i.tenant_id = ${tenantId}
+        AND i.status NOT IN ('void', 'cancelled')
+        AND ${dateFilter}
+    `;
 
-      const [leadsResult] = await sql`
-        SELECT COUNT(*) as leads
-        FROM leads 
-        WHERE tenant_id = ${tenantId} AND ${dateFilter}
-      `;
+    // OTHER METRICS
+   
+    const [bookingsResult] = await sql`
+      SELECT COUNT(*) as active_bookings
+      FROM bookings 
+      WHERE tenant_id = ${tenantId} AND ${dateFilter}
+    `;
 
-      // Get monthly revenue data for charts
-      const monthlyRevenue = await sql`
-  SELECT 
-    TO_CHAR(i.created_at, 'Mon') AS month,
-    COUNT(i.id) AS bookings,
-    COALESCE(SUM(ii.total_price), 0) AS revenue
-  FROM invoices i
-  LEFT JOIN invoice_items ii ON i.id = ii.invoice_id
-  WHERE i.tenant_id = ${tenantId}
-    AND i.created_at >= NOW() - INTERVAL '6 months'
-  GROUP BY TO_CHAR(i.created_at, 'Mon'), DATE_TRUNC('month', i.created_at)
-  ORDER BY DATE_TRUNC('month', i.created_at)
-  LIMIT 6
-`;
+    const [customersResult] = await sql`
+      SELECT COUNT(*) as customers
+      FROM customers 
+      WHERE tenant_id = ${tenantId} AND ${dateFilter}
+    `;
 
-      // Get leads data for charts
-      const leadsData = await sql`
-        SELECT 
-          TO_CHAR(created_at, 'Mon') as month,
-          COUNT(*) as leads
-        FROM leads 
-        WHERE tenant_id = ${tenantId} 
-          AND created_at >= NOW() - INTERVAL '6 months'
-        GROUP BY TO_CHAR(created_at, 'Mon'), DATE_TRUNC('month', created_at)
-        ORDER BY DATE_TRUNC('month', created_at)
-        LIMIT 6
-      `;
+    const [leadsResult] = await sql`
+      SELECT COUNT(*) as leads
+      FROM leads 
+      WHERE tenant_id = ${tenantId} AND ${dateFilter}
+    `;
 
-      // Combine revenue and leads data for chart
-      const chartData = monthlyRevenue.map((revenueRow) => {
-        const leadsRow = leadsData.find(
-          (l) => l.month === revenueRow.month,
-        ) || { leads: 0 };
-        return {
-          month: revenueRow.month,
-          bookings: parseInt(revenueRow.bookings),
-          leads: parseInt(leadsRow.leads),
-          revenue: parseFloat(revenueRow.revenue),
-        };
-      });
+   
+    // MONTHLY REVENUE 
+    
+    const monthlyRevenue = await sql`
+      SELECT 
+        TO_CHAR(i.issue_date, 'Mon') AS month,
+        COUNT(i.id) AS bookings,
+        COALESCE(SUM(i.total_amount), 0) AS revenue
+      FROM invoices i
+      WHERE 
+        i.tenant_id = ${tenantId}
+        AND i.status NOT IN ('void', 'cancelled')
+        AND i.issue_date >= NOW() - INTERVAL '6 months'
+      GROUP BY TO_CHAR(i.issue_date, 'Mon'), DATE_TRUNC('month', i.issue_date)
+      ORDER BY DATE_TRUNC('month', i.issue_date)
+      LIMIT 6
+    `;
 
-      const metrics = {
-        revenue: parseFloat(revenueResult.revenue) || 0,
-        activeBookings: parseInt(bookingsResult.active_bookings) || 0,
-        customers: parseInt(customersResult.customers) || 0,
-        leads: parseInt(leadsResult.leads) || 0,
-      };
+    const leadsData = await sql`
+      SELECT 
+        TO_CHAR(created_at, 'Mon') as month,
+        COUNT(*) as leads
+      FROM leads 
+      WHERE tenant_id = ${tenantId} 
+        AND created_at >= NOW() - INTERVAL '6 months'
+      GROUP BY TO_CHAR(created_at, 'Mon'), DATE_TRUNC('month', created_at)
+      ORDER BY DATE_TRUNC('month', created_at)
+      LIMIT 6
+    `;
 
-      console.log(`📊 STORAGE: Dashboard metrics calculated:`, metrics);
+    const chartData = monthlyRevenue.map((revenueRow) => {
+      const leadsRow = leadsData.find(
+        (l) => l.month === revenueRow.month,
+      ) || { leads: 0 };
 
       return {
-        metrics,
-        monthlyRevenue: chartData,
-        stats: {
-          conversionRate:
-            metrics.leads > 0
-              ? ((metrics.customers / metrics.leads) * 100).toFixed(1)
-              : 0,
-          avgBookingValue:
-            metrics.activeBookings > 0
-              ? (metrics.revenue / metrics.activeBookings).toFixed(2)
-              : 0,
-          customerSatisfaction: 85, // Mock value - implement based on your satisfaction tracking
-          avgResponseTime: 2.5, // Mock value - implement based on your response time tracking
-        },
+        month: revenueRow.month,
+        bookings: parseInt(revenueRow.bookings),
+        leads: parseInt(leadsRow.leads),
+        revenue: parseFloat(revenueRow.revenue),
       };
-    } catch (error) {
-      console.error("❌ STORAGE: Error getting dashboard metrics:", error);
-      throw error;
-    }
+    });
+
+    const metrics = {
+      revenue: parseFloat(revenueResult.revenue) || 0,
+      activeBookings: parseInt(bookingsResult.active_bookings) || 0,
+      customers: parseInt(customersResult.customers) || 0,
+      leads: parseInt(leadsResult.leads) || 0,
+    };
+
+    console.log(`📊 STORAGE: Dashboard metrics calculated:`, metrics);
+
+    return {
+      metrics,
+      monthlyRevenue: chartData,
+      stats: {
+        conversionRate:
+          metrics.leads > 0
+            ? ((metrics.customers / metrics.leads) * 100).toFixed(1)
+            : 0,
+        avgBookingValue:
+          metrics.activeBookings > 0
+            ? (metrics.revenue / metrics.activeBookings).toFixed(2)
+            : 0,
+        customerSatisfaction: 85,
+        avgResponseTime: 2.5,
+      },
+    };
+  } catch (error) {
+    console.error("❌ STORAGE: Error getting dashboard metrics:", error);
+    throw error;
   }
+}
+
+
 
 
   async getChartData(

@@ -20,7 +20,7 @@ const latestYear = Array.isArray(profitLossData)
   ? Math.max(...profitLossData.map((m) => Number(m.month.split("-")[0])))
   : new Date().getFullYear();
 
-// 🔥 STEP 2: keep only months from latest year (no cross-year mixing)
+
 const filtered = Array.isArray(profitLossData)
   ? profitLossData.filter(
       (m) => Number(m.month.split("-")[0]) === latestYear
@@ -50,10 +50,10 @@ const sortedProfitLossData = [...filtered].sort((a, b) => {
   const formatShort = (num: number) => {
     const abs = Math.abs(num);
 
-    if (abs >= 1_000_000_000_000) return (num / 1_000_000_000_000).toFixed(2) + "T";
-    if (abs >= 1_000_000_000) return (num / 1_000_000_000).toFixed(2) + "B";
-    if (abs >= 1_000_000) return (num / 1_000_000).toFixed(2) + "M";
-    if (abs >= 1_000) return (num / 1_000).toFixed(2) + "K";
+    if (abs >= 1_000_000_000_000) return (num / 1_000_000_000_000).toFixed(1) + "T";
+    if (abs >= 1_000_000_000) return (num / 1_000_000_000).toFixed(1) + "B";
+    if (abs >= 1_000_000) return (num / 1_000_000).toFixed(1) + "M";
+    if (abs >= 1_000) return (num / 1_000).toFixed(1) + "K";
 
     return num.toFixed(2);
   };
