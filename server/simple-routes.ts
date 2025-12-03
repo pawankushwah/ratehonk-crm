@@ -19782,9 +19782,7 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
 
     const { startDate = "", endDate = "" } = req.query;
 
-    // -----------------------------------
-    // DATE FILTER FOR INVOICES (issueDate)
-    // -----------------------------------
+    
     let invoiceDateFilter = sql`1=1`;
     if (startDate && endDate) {
       invoiceDateFilter = sql`
@@ -19793,24 +19791,20 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
       `;
     }
 
-    // -----------------------------------
-    // FETCH INVOICES (issueDate + revenue only)
-    // -----------------------------------
+    
     const invoices = await sql`
-      SELECT 
-        id,
-        issue_date AS "issueDate",
-        total_amount AS "totalAmount",
-        TO_CHAR(issue_date, 'YYYY-MM') AS "month"
-      FROM invoices
-      WHERE tenant_id = ${tenantId}
-        AND ${invoiceDateFilter}
-      ORDER BY issue_date ASC
-    `;
-
-    // -----------------------------------
-    // AGGREGATE REVENUE ONLY (NO PURCHASE)
-    // -----------------------------------
+  SELECT 
+    id,
+    issue_date AS "issueDate",
+    total_amount AS "totalAmount",
+    TO_CHAR(issue_date, 'YYYY-MM') AS "month"
+  FROM invoices
+  WHERE tenant_id = ${tenantId}
+    AND status NOT IN ('void', 'cancelled')   
+    AND ${invoiceDateFilter}
+  ORDER BY issue_date ASC
+`;
+    
     const invoiceMonthData: any = {};
     const invoiceDateData: any = {};
 
@@ -19839,9 +19833,9 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
       }
     });
 
-    // -----------------------------------
+
     // FETCH EXPENSES (ONLY FROM EXPENSE TABLE)
-    // -----------------------------------
+ 
     let expenseDateFilter = sql`1=1`;
     if (startDate && endDate) {
       expenseDateFilter = sql`
@@ -19872,9 +19866,9 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
       ORDER BY 1 ASC
     `;
 
-    // -----------------------------------
+   
     // DAILY MERGE (REVENUE + EXPENSES)
-    // -----------------------------------
+  
     const dailyMap = new Map();
 
     // Seed revenue from invoices
@@ -19906,9 +19900,9 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
       profit: d.revenue - d.expenses,
     }));
 
-    // -----------------------------------
+
     // MONTH RANGE
-    // -----------------------------------
+   
     const allMonths: string[] = [];
     if (startDate && endDate) {
       const start = new Date(startDate);
@@ -19964,9 +19958,8 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
       profit: m.revenue - m.expenses,
     }));
 
-    // -----------------------------------
     // FINAL RESPONSE
-    // -----------------------------------
+   
     res.json({
       daily,
       monthly,

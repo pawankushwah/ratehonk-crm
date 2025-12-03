@@ -26,9 +26,7 @@ import { useAuth } from "@/components/auth/auth-provider";
 import { useInvoicesForGraph } from "@/hooks/useDashboardData";
 import { DateFilter } from "../ui/date-filter";
 
-/* -------------------------
-   Helpers
-   ------------------------- */
+
 
 function formatYMDLocal(d: Date) {
   const year = d.getFullYear();
@@ -48,23 +46,17 @@ function parseInvoiceDate(raw: any) {
   return null;
 }
 
-/* -------------------------
-   Your requested short formatter
-   ------------------------- */
 const formatShort = (num: number) => {
   const abs = Math.abs(num);
 
-  if (abs >= 1_000_000_000_000) return (num / 1_000_000_000_000).toFixed(2) + "T";
-  if (abs >= 1_000_000_000) return (num / 1_000_000_000).toFixed(2) + "B";
-  if (abs >= 1_000_000) return (num / 1_000_000).toFixed(2) + "M";
-  if (abs >= 1_000) return (num / 1_000).toFixed(2) + "K";
+  if (abs >= 1_000_000_000_000) return (num / 1_000_000_000_000).toFixed(1) + "T";
+  if (abs >= 1_000_000_000) return (num / 1_000_000_000).toFixed(1) + "B";
+  if (abs >= 1_000_000) return (num / 1_000_000).toFixed(1) + "M";
+  if (abs >= 1_000) return (num / 1_000).toFixed(1) + "K";
 
   return num.toFixed(2);
 };
 
-/* -------------------------
-   Group by Date → Sum of totalAmount
-   ------------------------- */
 function groupInvoicesByDate(invoices: any[]) {
   const map: Record<string, number> = {};
   invoices.forEach((inv) => {
@@ -78,9 +70,6 @@ function groupInvoicesByDate(invoices: any[]) {
   return map;
 }
 
-/* -------------------------
-   Range Logic
-   ------------------------- */
 function startOfDay(d: Date) {
   const x = new Date(d);
   x.setHours(0, 0, 0, 0);
@@ -135,9 +124,7 @@ function getRange(filter: string, customFrom: Date | null, customTo: Date | null
   }
 }
 
-/* -------------------------
-   Build Chart Data
-   ------------------------- */
+
 function buildChartDataFromInvoiceMap(
   invoiceMap: Record<string, number>,
   filter: string,
@@ -149,7 +136,6 @@ function buildChartDataFromInvoiceMap(
   const daysDiff = Math.ceil((end.getTime() - start.getTime()) / 86400000);
   const isMonthlyView = filter === "this_year" || (filter === "custom" && daysDiff > 60);
 
-  /* --- YEARLY (monthly) VIEW --- */
   if (isMonthlyView) {
     const rows: any[] = [];
     const startYear = start.getFullYear();
@@ -181,7 +167,7 @@ function buildChartDataFromInvoiceMap(
     return rows;
   }
 
-  /* --- DAILY VIEW (today, week, month, custom) --- */
+  
   const rows: any[] = [];
   const cursor = new Date(start);
 
@@ -308,12 +294,14 @@ export function RevenueChart() {
           <CardTitle className="text-lg font-semibold text-black">Revenue</CardTitle>
 
           <div className="flex gap-2">
-            <DateFilter
-              dateFilter={dateFilter}
-              setDateFilter={(v: string) => { setDateFilter(v); }}
-              customDateFrom={(d: Date | null) => setCustomDateFrom(d)}
-              customDateTo={(d: Date | null) => setCustomDateTo(d)}
-            />
+             <DateFilter
+            dateFilter={dateFilter}
+            setDateFilter={setDateFilter}
+            customDateFrom={customDateFrom}
+            setCustomDateFrom={setCustomDateFrom}
+            customDateTo={customDateTo}
+            setCustomDateTo={setCustomDateTo}
+          />
             <Button variant="outline" size="icon" onClick={handleDownloadPDF}>
               <Download size={16} />
             </Button>
@@ -321,7 +309,7 @@ export function RevenueChart() {
         </div>
 
         <p className="text-2xl sm:text-3xl font-semibold mt-3 text-black">
-          USD {formatShort(totalCurrent)}
+          C$ {formatShort(totalCurrent)}
         </p>
 
         {dateFilter === "this_month" && (

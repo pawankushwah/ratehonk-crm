@@ -124,6 +124,16 @@ export function ServiceProviderChart() {
             Service Providers
           </CardTitle>
 
+          <DateFilter
+            dateFilter={dateFilter}
+            setDateFilter={setDateFilter}
+            customDateFrom={customDateFrom}
+            setCustomDateFrom={setCustomDateFrom}
+            customDateTo={customDateTo}
+            setCustomDateTo={setCustomDateTo}
+          />
+        </div>
+
           <div className="mb-5">
             <select
               className="border px-3 py-2 rounded-md text-sm w-full sm:w-60"
@@ -137,7 +147,6 @@ export function ServiceProviderChart() {
               ))}
             </select>
           </div>
-        </div>
       </CardHeader>
 
       <CardContent>
@@ -146,16 +155,21 @@ export function ServiceProviderChart() {
         ) : (
           <>
             {providerData.length === 0 ? (
-              <p className="text-center text-gray-500 text-sm">
-                No data available for the selected category.
-              </p>
+              <div className="flex h-full flex-col items-center justify-center text-center px-6">
+                <div className="w-16 h-16 bg-gray-200 border-2 border-dashed rounded-xl mb-4" />
+                <p className="text-gray-600 font-medium">
+                  No Service Provider Data found
+                </p>
+                <p className="text-xs text-gray-400 mt-2">
+                  Try selecting a different date
+                </p>
+              </div>
             ) : (
               <div className="flex flex-col sm:flex-row items-center justify-between gap-6">
                 <div className="w-full h-72">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Tooltip content={<CustomTooltip />} />
-
                       <Pie
                         data={providerData}
                         dataKey="value"

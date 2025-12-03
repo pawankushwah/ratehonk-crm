@@ -22,12 +22,6 @@ export function ConsolidatedVendorBookingChart() {
  
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
-  const dummyVendorData = [
-    { name: "Voyzant", percentage: 45, color: "#2F80ED" },
-    { name: "Air India", percentage: 30, color: "#F2994A" },
-    { name: "Indigo", percentage: 25, color: "#EB5757" },
-  ];
-
   const vendorData = useMemo(() => {
     const countMap: Record<string, number> = {};
 
@@ -63,7 +57,7 @@ export function ConsolidatedVendorBookingChart() {
     }));
   }, [invoices]);
 
-  const finalVendorData = vendorData.length > 0 ? vendorData : dummyVendorData;
+  const finalVendorData =  vendorData ;
 
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
@@ -100,7 +94,15 @@ export function ConsolidatedVendorBookingChart() {
         {isLoading ? (
           <p className="text-center text-gray-500">Loading...</p>
         ) : finalVendorData.length === 0 ? (
-          <p className="text-center text-gray-500">No vendor data</p>
+          <div className="flex h-full flex-col items-center justify-center text-center px-6">
+                <div className="w-16 h-16 bg-gray-200 border-2 border-dashed rounded-xl mb-4" />
+                <p className="text-gray-600 font-medium">
+                  No Consolidated Booking Data found
+                </p>
+                <p className="text-xs text-gray-400 mt-2">
+                  Try selecting a different date
+                </p>
+              </div>
         ) : (
           <div className="flex flex-col sm:flex-row items-center justify-between gap-6">
             <div className="relative w-full h-72 flex items-center justify-center">
