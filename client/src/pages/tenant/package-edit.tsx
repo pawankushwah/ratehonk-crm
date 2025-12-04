@@ -244,9 +244,9 @@ export default function PackageEdit() {
     },
   });
 
-  // Populate form when package data loads
+  // Populate form when package data loads (wait for both packageData and packageTypes)
   useEffect(() => {
-    if (packageData) {
+    if (packageData && packageTypes.length > 0) {
       setUploadedPackageImage(packageData.packageStayingImage || "");
 
       let existingItineraryImages: string[] = [];
@@ -304,9 +304,14 @@ export default function PackageEdit() {
 
       setDayWiseData(dayWiseForForm);
 
+      // Preserve actual values, don't use || 0 for packageTypeId as it might be a valid ID
+      const packageTypeIdValue = packageData.packageTypeId !== null && packageData.packageTypeId !== undefined 
+        ? packageData.packageTypeId 
+        : (packageTypes.length > 0 ? packageTypes[0].id : 0);
+
       form.reset({
-        name: packageData.name,
-        packageTypeId: packageData.packageTypeId || 0,
+        name: packageData.name || "",
+        packageTypeId: packageTypeIdValue,
         noOfPax: packageData.maxCapacity || 1,
         price: packageData.price?.toString() || "",
         durationType: packageData.durationType || "without",
@@ -315,22 +320,24 @@ export default function PackageEdit() {
         country: packageData.country || "",
         city: packageData.city || "",
         packageStayingImage: packageData.packageStayingImage || "",
-        altName: packageData.altName || "",
+        altName: packageData.altName !== null && packageData.altName !== undefined ? packageData.altName : "",
         description: packageData.description || "",
         vendorName: packageData.vendorName || "",
-        rating: packageData.rating || undefined,
+        rating: packageData.rating !== null && packageData.rating !== undefined 
+          ? (typeof packageData.rating === 'string' ? parseFloat(packageData.rating) : packageData.rating) 
+          : undefined,
         status: packageData.status || "",
         itineraryImages: existingItineraryImages as (File | string)[],
         itineraryDescription: packageData.itineraryDescription || "",
         packageIncludes: existingInclusions,
         packageExcludes: existingExclusions,
         cancellationPolicy: packageData.cancellationPolicy || "",
-        cancellationBenefit: packageData.cancellationBenefit || "",
+        cancellationBenefit: packageData.cancellationBenefit !== null && packageData.cancellationBenefit !== undefined ? packageData.cancellationBenefit : "",
         dayWiseItinerary: dayWiseForForm,
         isActive: packageData.isActive !== false,
       });
     }
-  }, [packageData, form]);
+  }, [packageData, packageTypes, form]);
 
   const updatePackageMutation = useMutation({
     mutationFn: async (data: z.infer<typeof packageFormSchema>) => {
@@ -464,12 +471,21 @@ export default function PackageEdit() {
         return response.json();
       }
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       toast({
         title: "Success",
         description: "Package updated successfully!",
       });
-      queryClient.invalidateQueries({
+      // Invalidate and refetch packages list
+      await queryClient.invalidateQueries({
+        queryKey: [`/api/tenants/${tenant?.id}/packages`],
+      });
+      // Also invalidate the specific package query
+      await queryClient.invalidateQueries({
+        queryKey: [`/api/tenants/${tenant?.id}/packages/${packageId}`],
+      });
+      // Refetch to ensure data is up to date
+      await queryClient.refetchQueries({
         queryKey: [`/api/tenants/${tenant?.id}/packages`],
       });
       navigate("/packages");
@@ -540,7 +556,7 @@ export default function PackageEdit() {
                           <FormControl>
                             <Select
                               onValueChange={(value) => field.onChange(parseInt(value))}
-                              value={field.value ? field.value.toString() : ""}
+                              value={field.value !== null && field.value !== undefined ? field.value.toString() : ""}
                             >
                               <SelectTrigger>
                                 <SelectValue placeholder="Select Package Type" />
@@ -616,7 +632,7 @@ export default function PackageEdit() {
                         <FormItem>
                           <FormLabel>Duration *</FormLabel>
                           <FormControl>
-                            <Select onValueChange={field.onChange} value={field.value}>
+                            <Select onValueChange={field.onChange} value={field.value || ""}>
                               <SelectTrigger>
                                 <SelectValue placeholder="Please Select" />
                               </SelectTrigger>
@@ -670,7 +686,7 @@ export default function PackageEdit() {
                         <FormItem>
                           <FormLabel>Choose Region *</FormLabel>
                           <FormControl>
-                            <Select onValueChange={field.onChange} value={field.value}>
+                            <Select onValueChange={field.onChange} value={field.value || ""}>
                               <SelectTrigger>
                                 <SelectValue placeholder="Select Region" />
                               </SelectTrigger>
@@ -955,10 +971,11 @@ export default function PackageEdit() {
                               max="5"
                               step="0.1"
                               placeholder="4.5"
-                              value={field.value || ""}
-                              onChange={(e) =>
-                                field.onChange(parseFloat(e.target.value) || undefined)
-                              }
+                              value={field.value !== null && field.value !== undefined ? field.value.toString() : ""}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                field.onChange(val === "" ? undefined : parseFloat(val) || undefined);
+                              }}
                             />
                           </FormControl>
                           <FormMessage />
@@ -972,7 +989,7 @@ export default function PackageEdit() {
                         <FormItem>
                           <FormLabel>Status</FormLabel>
                           <FormControl>
-                            <Select onValueChange={field.onChange} value={field.value}>
+                            <Select onValueChange={field.onChange} value={field.value || ""}>
                               <SelectTrigger>
                                 <SelectValue placeholder="Select status" />
                               </SelectTrigger>

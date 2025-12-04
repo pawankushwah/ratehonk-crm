@@ -13763,24 +13763,60 @@ Please improve this email.`;
           const connectionString = process.env.DATABASE_URL;
           const expenseSql = postgres(connectionString, { ssl: "require" });
 
+          // Get expense settings for default prefix
+          const expenseSettings = await simpleStorage.getExpenseSettings(parseInt(tenantId));
+          const defaultPrefix = expenseSettings?.expenseNumberPrefix || "EXP";
+
+          // Split expense number helper
+          const splitExpenseNumber = (fullNumber: string, defaultPrefix: string = "EXP"): { prefix: string; number: string } => {
+            if (!fullNumber) {
+              return { prefix: defaultPrefix, number: "" };
+            }
+            const matchWithSeparator = fullNumber.match(/^([A-Za-z0-9]+)[\s-]+(.+)$/);
+            if (matchWithSeparator) {
+              return { prefix: matchWithSeparator[1].toUpperCase(), number: matchWithSeparator[2] };
+            }
+            const numberMatch = fullNumber.match(/^([A-Za-z]+)(\d+.*)$/);
+            if (numberMatch) {
+              return { prefix: numberMatch[1].toUpperCase(), number: numberMatch[2] };
+            }
+            if (/^\d+/.test(fullNumber)) {
+              return { prefix: defaultPrefix, number: fullNumber };
+            }
+            return { prefix: defaultPrefix, number: fullNumber };
+          };
+
           for (const expenseData of req.body.expenses) {
             try {
-              // Map camelCase to snake_case for database
+              const expenseAmount = parseFloat(expenseData.amount?.toString() || "0");
+              const expenseTaxAmount = parseFloat(expenseData.taxAmount?.toString() || "0");
+              const expenseTaxRate = parseFloat(expenseData.taxRate?.toString() || "0");
+              const expenseQuantity = parseFloat(expenseData.quantity?.toString() || "1");
+              const expenseAmountPaid = parseFloat(expenseData.amountPaid?.toString() || "0");
+              const expenseAmountDue = parseFloat(expenseData.amountDue?.toString() || expenseAmount.toString() || "0");
+              const totalAmount = expenseAmount + expenseTaxAmount;
+
+              // Split expense number
+              const fullExpenseNumber = expenseData.expenseNumber || "";
+              const { prefix: expensePrefix, number: expenseNumber } = splitExpenseNumber(fullExpenseNumber, defaultPrefix);
+
+              // Create expense header
               const expenseResult = await expenseSql`
                 INSERT INTO expenses (
-                  tenant_id, expense_number, created_by, title, description, quantity, amount, currency,
+                  tenant_id, expense_prefix, expense_number, created_by, title, description, quantity, amount, currency,
                   category, subcategory, expense_date, payment_method, payment_reference,
                   vendor_id, lead_type_id, expense_type, receipt_url,
                   tax_amount, tax_rate, is_reimbursable, is_recurring,
                   recurring_frequency, status, amount_paid, amount_due, tags, notes
                 ) VALUES (
                   ${parseInt(tenantId)},
-                  ${expenseData.expenseNumber || null},
+                  ${expensePrefix},
+                  ${expenseNumber || null},
                   ${req.user?.id || 1},
                   ${expenseData.title || ""},
                   ${expenseData.description || null},
-                  ${expenseData.quantity || 1},
-                  ${expenseData.amount || 0},
+                  1,
+                  ${totalAmount},
                   ${expenseData.currency || "USD"},
                   ${expenseData.category || "purchase"},
                   ${expenseData.subcategory || null},
@@ -13790,22 +13826,52 @@ Please improve this email.`;
                   ${expenseData.vendorId || null},
                   ${expenseData.leadTypeId || null},
                   ${expenseData.expenseType || "purchase"},
-                  ${expenseData.receiptUrl || null},
-                  ${expenseData.taxAmount || 0},
-                  ${expenseData.taxRate || 0},
+                  null,
+                  ${expenseTaxAmount},
+                  ${expenseTaxRate},
                   ${expenseData.isReimbursable || false},
                   ${expenseData.isRecurring || false},
                   ${expenseData.recurringFrequency || null},
                   ${expenseData.status || "approved"},
-                  ${expenseData.amountPaid || 0},
-                  ${expenseData.amountDue || (expenseData.amount || 0)},
+                  ${expenseAmountPaid},
+                  ${expenseAmountDue},
                   ${expenseData.tags ? JSON.stringify(expenseData.tags) : "[]"},
                   ${expenseData.notes || null}
                 )
-                RETURNING *
+                RETURNING id
               `;
 
-              console.log(`✅ Created expense: ${expenseData.title}`);
+              // Create line item for this expense
+              const paymentStatus = expenseData.status === "paid" ? "paid" : (expenseData.status === "due" ? "due" : "credit");
+              await expenseSql`
+                INSERT INTO expense_line_items (
+                  expense_id, category, title, description, quantity, amount, tax_rate_id, tax_amount, tax_rate,
+                  total_amount, vendor_id, lead_type_id, payment_method, payment_status, amount_paid, amount_due,
+                  receipt_url, notes, display_order
+                ) VALUES (
+                  ${expenseResult[0].id},
+                  ${expenseData.category || "purchase"},
+                  ${expenseData.title || ""},
+                  ${expenseData.description || null},
+                  ${expenseQuantity},
+                  ${expenseAmount},
+                  ${expenseData.taxRateId || null},
+                  ${expenseTaxAmount},
+                  ${expenseTaxRate},
+                  ${totalAmount},
+                  ${expenseData.vendorId || null},
+                  ${expenseData.leadTypeId || null},
+                  ${expenseData.paymentMethod || "other"},
+                  ${paymentStatus},
+                  ${expenseAmountPaid},
+                  ${expenseAmountDue},
+                  ${expenseData.receiptUrl || null},
+                  ${expenseData.notes || null},
+                  0
+                )
+              `;
+
+              console.log(`✅ Created expense with line item: ${expenseData.title}`);
             } catch (expenseError) {
               console.error("❌ Error creating expense:", expenseError);
             }
@@ -13916,7 +13982,64 @@ Please improve this email.`;
       `;
 
         console.log("💰 Found", expenses.length, "expenses");
-        res.json(expenses);
+
+        // Fetch line items for all expenses
+        const expenseIds = expenses.map((e: any) => parseInt(e.id)).filter((id: number) => !isNaN(id));
+        let allLineItems: any[] = [];
+        
+        if (expenseIds.length > 0) {
+          allLineItems = await sql`
+            SELECT 
+              eli.id,
+              eli.expense_id as "expenseId",
+              eli.category,
+              eli.title,
+              eli.description,
+              eli.quantity,
+              eli.amount,
+              eli.tax_rate_id as "taxRateId",
+              eli.tax_amount as "taxAmount",
+              eli.tax_rate as "taxRate",
+              eli.total_amount as "totalAmount",
+              eli.vendor_id as "vendorId",
+              eli.lead_type_id as "leadTypeId",
+              eli.payment_method as "paymentMethod",
+              eli.payment_status as "paymentStatus",
+              eli.amount_paid as "amountPaid",
+              eli.amount_due as "amountDue",
+              eli.receipt_url as "receiptUrl",
+              eli.notes,
+              eli.display_order as "displayOrder",
+              eli.created_at as "createdAt",
+              eli.updated_at as "updatedAt",
+              v.name as "vendorName",
+              lt.name as "leadTypeName",
+              lt.color as "leadTypeColor"
+            FROM expense_line_items eli
+            LEFT JOIN vendors v ON eli.vendor_id = v.id
+            LEFT JOIN lead_types lt ON eli.lead_type_id = lt.id
+            WHERE eli.expense_id = ANY(${sql.array(expenseIds)})
+            ORDER BY eli.display_order ASC, eli.id ASC
+          `;
+        }
+
+        // Group line items by expense_id
+        const lineItemsByExpenseId: { [key: number]: any[] } = {};
+        for (const item of allLineItems) {
+          const expenseId = item.expenseId;
+          if (!lineItemsByExpenseId[expenseId]) {
+            lineItemsByExpenseId[expenseId] = [];
+          }
+          lineItemsByExpenseId[expenseId].push(item);
+        }
+
+        // Attach line items to each expense
+        const expensesWithLineItems = expenses.map((expense: any) => ({
+          ...expense,
+          lineItems: lineItemsByExpenseId[expense.id] || [],
+        }));
+
+        res.json(expensesWithLineItems);
       } catch (error) {
         console.error("💰 Error fetching expenses:", error);
         res.status(500).json({ message: "Failed to fetch expenses" });
@@ -17097,8 +17220,12 @@ Please improve this email.`;
         whereClause = sql`${whereClause} AND e.status = ${status}`;
       }
 
+      // Category filter now checks line items instead of expense table
       if (category && category !== "all") {
-        whereClause = sql`${whereClause} AND e.category = ${category}`;
+        whereClause = sql`${whereClause} AND EXISTS (
+          SELECT 1 FROM expense_line_items eli 
+          WHERE eli.expense_id = e.id AND eli.category = ${category}
+        )`;
       }
 
       if (startDate) {
@@ -17136,7 +17263,7 @@ Please improve this email.`;
         expenses = orderDirection === "ASC"
           ? await sql`
             SELECT 
-              e.id, e.tenant_id, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
               e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
               e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
               e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
@@ -17155,7 +17282,7 @@ Please improve this email.`;
           `
           : await sql`
             SELECT 
-              e.id, e.tenant_id, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
               e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
               e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
               e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
@@ -17176,7 +17303,7 @@ Please improve this email.`;
         expenses = orderDirection === "ASC"
           ? await sql`
             SELECT 
-              e.id, e.tenant_id, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
               e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
               e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
               e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
@@ -17195,7 +17322,7 @@ Please improve this email.`;
           `
           : await sql`
             SELECT 
-              e.id, e.tenant_id, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
               e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
               e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
               e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
@@ -17216,7 +17343,7 @@ Please improve this email.`;
         expenses = orderDirection === "ASC"
           ? await sql`
             SELECT 
-              e.id, e.tenant_id, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
               e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
               e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
               e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
@@ -17235,7 +17362,7 @@ Please improve this email.`;
           `
           : await sql`
             SELECT 
-              e.id, e.tenant_id, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
               e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
               e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
               e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
@@ -17256,7 +17383,7 @@ Please improve this email.`;
         expenses = orderDirection === "ASC"
           ? await sql`
             SELECT 
-              e.id, e.tenant_id, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
               e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
               e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
               e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
@@ -17275,7 +17402,7 @@ Please improve this email.`;
           `
           : await sql`
             SELECT 
-              e.id, e.tenant_id, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
               e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
               e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
               e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
@@ -17296,7 +17423,7 @@ Please improve this email.`;
         expenses = orderDirection === "ASC"
           ? await sql`
             SELECT 
-              e.id, e.tenant_id, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
               e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
               e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
               e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
@@ -17315,7 +17442,7 @@ Please improve this email.`;
           `
           : await sql`
             SELECT 
-              e.id, e.tenant_id, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
               e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
               e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
               e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
@@ -17336,7 +17463,7 @@ Please improve this email.`;
         expenses = orderDirection === "ASC"
           ? await sql`
             SELECT 
-              e.id, e.tenant_id, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
               e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
               e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
               e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
@@ -17355,7 +17482,7 @@ Please improve this email.`;
           `
           : await sql`
             SELECT 
-              e.id, e.tenant_id, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
               e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
               e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
               e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
@@ -17377,7 +17504,7 @@ Please improve this email.`;
         expenses = orderDirection === "ASC"
           ? await sql`
             SELECT 
-              e.id, e.tenant_id, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
               e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
               e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
               e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
@@ -17396,7 +17523,7 @@ Please improve this email.`;
           `
           : await sql`
             SELECT 
-              e.id, e.tenant_id, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
               e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
               e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
               e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
@@ -17417,9 +17544,51 @@ Please improve this email.`;
 
       console.log("💰 GET /api/expenses - Found expenses:", expenses.length, "Total:", total);
 
+      // Fetch line items for all expenses
+      const expenseIds = expenses.map((e: any) => parseInt(e.id)).filter((id: number) => !isNaN(id));
+      let allLineItems: any[] = [];
+      
+      if (expenseIds.length > 0) {
+        // Fetch line items using individual queries to avoid array parameter issues
+        // This is less efficient but more reliable
+        const lineItemPromises = expenseIds.map(expenseId => 
+          sql`
+            SELECT 
+              eli.*,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color
+            FROM expense_line_items eli
+            LEFT JOIN vendors v ON eli.vendor_id = v.id
+            LEFT JOIN lead_types lt ON eli.lead_type_id = lt.id
+            WHERE eli.expense_id = ${expenseId}
+            ORDER BY eli.display_order ASC, eli.id ASC
+          `
+        );
+        const lineItemResults = await Promise.all(lineItemPromises);
+        allLineItems = lineItemResults.flat();
+      }
+
+      // Group line items by expense_id
+      const lineItemsByExpenseId: { [key: number]: any[] } = {};
+      for (const item of allLineItems) {
+        const expenseId = item.expense_id;
+        if (!lineItemsByExpenseId[expenseId]) {
+          lineItemsByExpenseId[expenseId] = [];
+        }
+        lineItemsByExpenseId[expenseId].push(item);
+      }
+
+      // Attach line items to each expense and combine prefix and number
+      const expensesWithLineItems = expenses.map((expense: any) => ({
+        ...expense,
+        expenseNumber: `${expense.expense_prefix || ""}${expense.expense_number || ""}`,
+        lineItems: lineItemsByExpenseId[expense.id] || [],
+      }));
+
       // Return paginated response structure
       res.json({
-        data: expenses,
+        data: expensesWithLineItems,
         pagination: {
           page,
           pageSize: limit,
@@ -17471,7 +17640,50 @@ Please improve this email.`;
     `;
 
     console.log("💰 GET /api/all-expenses - Found:", expenses.length);
-    return res.json(expenses);
+
+    // Fetch line items for all expenses
+    const expenseIds = expenses.map((e: any) => parseInt(e.id)).filter((id: number) => !isNaN(id));
+    let allLineItems: any[] = [];
+    
+    if (expenseIds.length > 0) {
+      // Fetch line items using individual queries to avoid array parameter issues
+      // This is less efficient but more reliable
+      const lineItemPromises = expenseIds.map(expenseId => 
+        sql`
+          SELECT 
+            eli.*,
+            v.name as vendor_name,
+            lt.name as lead_type_name,
+            lt.color as lead_type_color
+          FROM expense_line_items eli
+          LEFT JOIN vendors v ON eli.vendor_id = v.id
+          LEFT JOIN lead_types lt ON eli.lead_type_id = lt.id
+          WHERE eli.expense_id = ${expenseId}
+          ORDER BY eli.display_order ASC, eli.id ASC
+        `
+      );
+      const lineItemResults = await Promise.all(lineItemPromises);
+      allLineItems = lineItemResults.flat();
+    }
+
+    // Group line items by expense_id
+    const lineItemsByExpenseId: { [key: number]: any[] } = {};
+    for (const item of allLineItems) {
+      const expenseId = item.expense_id;
+      if (!lineItemsByExpenseId[expenseId]) {
+        lineItemsByExpenseId[expenseId] = [];
+      }
+      lineItemsByExpenseId[expenseId].push(item);
+    }
+
+    // Attach line items to each expense and combine prefix and number
+    const expensesWithLineItems = expenses.map((expense: any) => ({
+      ...expense,
+      expenseNumber: `${expense.expense_prefix || ""}${expense.expense_number || ""}`,
+      lineItems: lineItemsByExpenseId[expense.id] || [],
+    }));
+
+    return res.json(expensesWithLineItems);
 
   } catch (error: unknown) {
     console.error("💰 Error fetching expenses:", error);
@@ -17514,17 +17726,24 @@ Please improve this email.`;
       // Check if request has files (FormData) or is JSON
       const hasFiles = req.files && req.files.length > 0;
       
-      let expensesData = [];
+      let expenseHeader: any = {};
+      let lineItems: any[] = [];
       
       if (hasFiles) {
         // Handle FormData request with files
-        console.log("💰 Creating expenses with FormData - Files received:", req.files.length);
+        console.log("💰 Creating expense with FormData - Files received:", req.files.length);
         
-        // Parse expenses from FormData
-        if (req.body.expenses) {
-          expensesData = typeof req.body.expenses === 'string' 
-            ? JSON.parse(req.body.expenses) 
-            : req.body.expenses;
+        // Parse expense header and line items from FormData
+        if (req.body.expenseHeader) {
+          expenseHeader = typeof req.body.expenseHeader === 'string' 
+            ? JSON.parse(req.body.expenseHeader) 
+            : req.body.expenseHeader;
+        }
+        
+        if (req.body.lineItems) {
+          lineItems = typeof req.body.lineItems === 'string' 
+            ? JSON.parse(req.body.lineItems) 
+            : req.body.lineItems;
         }
         
         // Organize bill files by index
@@ -17550,12 +17769,12 @@ Please improve this email.`;
             .toLowerCase();
         };
         
-        // Upload bill files and update receiptUrl
-        for (let i = 0; i < expensesData.length; i++) {
+        // Upload bill files and update receiptUrl for line items
+        for (let i = 0; i < lineItems.length; i++) {
           if (billFilesByIndex[i]) {
             const file = billFilesByIndex[i];
             const sanitizedName = sanitizeFileName(file.originalname);
-            const fileName = `expenses/${req.user.tenantId}/${sanitizedName}`;
+            const fileName = `expenses/${req.user.tenantId}/${Date.now()}_${sanitizedName}`;
             
             try {
               const url = await objectStorage.uploadFile(
@@ -17563,18 +17782,80 @@ Please improve this email.`;
                 file.buffer,
                 file.mimetype
               );
-              expensesData[i].receiptUrl = url;
-              console.log(`✅ Bill uploaded for expense ${i}: ${url}`);
+              lineItems[i].receiptUrl = url;
+              console.log(`✅ Bill uploaded for line item ${i}: ${url}`);
             } catch (uploadError) {
-              console.error(`❌ Failed to upload bill for expense ${i}:`, uploadError);
+              console.error(`❌ Failed to upload bill for line item ${i}:`, uploadError);
               // Continue without bill URL if upload fails
             }
           }
         }
       } else {
-        // Handle JSON request (single expense)
+        // Handle JSON request
         console.log("💰 Creating expense - Request body:", req.body);
-        expensesData = [req.body];
+        
+        // Check if new format (with lineItems) or old format (array of expenses)
+        if (req.body.lineItems && Array.isArray(req.body.lineItems)) {
+          // New format: expense header with line items
+          expenseHeader = req.body.expenseHeader || {};
+          lineItems = req.body.lineItems || [];
+        } else if (Array.isArray(req.body)) {
+          // Old format: array of expenses (for backward compatibility during migration)
+          // Convert to new format: use first expense as header, all as line items
+          if (req.body.length > 0) {
+            const firstExpense = req.body[0];
+            expenseHeader = {
+              expenseNumber: firstExpense.expenseNumber || null,
+              expenseDate: firstExpense.expenseDate || new Date().toISOString().split("T")[0],
+              currency: firstExpense.currency || "USD",
+              notes: firstExpense.notes || null,
+            };
+            lineItems = req.body.map((exp: any) => ({
+              category: exp.category || "",
+              title: exp.title || "",
+              description: exp.description || null,
+              quantity: exp.quantity || 1,
+              amount: exp.amount || 0,
+              taxAmount: exp.taxAmount || 0,
+              taxRate: exp.taxRate || 0,
+              totalAmount: exp.amount || 0,
+              vendorId: exp.vendorId || null,
+              leadTypeId: exp.leadTypeId || null,
+              paymentMethod: exp.paymentMethod || "credit_card",
+              paymentStatus: exp.status === "paid" ? "paid" : (exp.status === "due" ? "due" : "credit"),
+              amountPaid: exp.amountPaid || 0,
+              amountDue: exp.amountDue || 0,
+              receiptUrl: exp.receiptUrl || null,
+              notes: exp.notes || null,
+            }));
+          }
+        } else {
+          // Single expense object (old format)
+          expenseHeader = {
+            expenseNumber: req.body.expenseNumber || null,
+            expenseDate: req.body.expenseDate || new Date().toISOString().split("T")[0],
+            currency: req.body.currency || "USD",
+            notes: req.body.notes || null,
+          };
+          lineItems = [{
+            category: req.body.category || "",
+            title: req.body.title || "",
+            description: req.body.description || null,
+            quantity: req.body.quantity || 1,
+            amount: req.body.amount || 0,
+            taxAmount: req.body.taxAmount || 0,
+            taxRate: req.body.taxRate || 0,
+            totalAmount: req.body.amount || 0,
+            vendorId: req.body.vendorId || null,
+            leadTypeId: req.body.leadTypeId || null,
+            paymentMethod: req.body.paymentMethod || "credit_card",
+            paymentStatus: req.body.status === "paid" ? "paid" : (req.body.status === "due" ? "due" : "credit"),
+            amountPaid: req.body.amountPaid || 0,
+            amountDue: req.body.amountDue || 0,
+            receiptUrl: req.body.receiptUrl || null,
+            notes: req.body.notes || null,
+          }];
+        }
       }
       
       console.log("💰 Creating expense - User info:", {
@@ -17582,78 +17863,186 @@ Please improve this email.`;
         tenantId: req.user.tenantId,
       });
 
-      // Process each expense
-      const createdExpenses = [];
-      for (const expense of expensesData) {
-        const expenseData = {
-          tenantId: req.user.tenantId,
-          createdBy: req.user.id,
-          expenseNumber: expense.expenseNumber || req.body.expenseNumber || null,
-          title: expense.title || "",
-          description: expense.description || null,
-          quantity: expense.quantity || 1,
-          amount: expense.amount,
-          currency: expense.currency || req.body.currency || "USD",
-          category: expense.category || "",
-          subcategory: expense.subcategory || null,
-          expenseDate: expense.expenseDate || req.body.expenseDate || new Date().toISOString().split("T")[0],
-          paymentMethod: expense.paymentMethod || "credit_card",
-          paymentReference: expense.paymentReference || null,
-          vendorId: expense.vendorId || null,
-          leadTypeId: expense.leadTypeId || null,
-          expenseType: expense.expenseType || "purchase",
-          receiptUrl: expense.receiptUrl || null,
-          taxAmount: expense.taxAmount || 0,
-          taxRate: expense.taxRate || 0,
-          isReimbursable: expense.isReimbursable || false,
-          isRecurring: expense.isRecurring || false,
-          recurringFrequency: expense.recurringFrequency || null,
-          status: expense.status || "pending",
-          amountPaid: expense.amountPaid || 0,
-          amountDue: expense.amountDue || 0,
-          tags: expense.tags || [],
-          notes: expense.notes || req.body.notes || null,
-          approvedBy: expense.approvedBy || null,
-          approvedAt: expense.approvedAt || null,
-          rejectionReason: expense.rejectionReason || null,
+      // Calculate totals from line items
+      const totalAmount = lineItems.reduce((sum, item) => sum + parseFloat(item.totalAmount?.toString() || item.amount?.toString() || "0"), 0);
+      const totalTaxAmount = lineItems.reduce((sum, item) => sum + parseFloat(item.taxAmount?.toString() || "0"), 0);
+      const totalPaid = lineItems.reduce((sum, item) => sum + parseFloat(item.amountPaid?.toString() || "0"), 0);
+      const totalDue = lineItems.reduce((sum, item) => sum + parseFloat(item.amountDue?.toString() || "0"), 0);
+
+      // Get expense settings for default prefix
+      const expenseSettings = await simpleStorage.getExpenseSettings(req.user.tenantId);
+      const defaultPrefix = expenseSettings?.expenseNumberPrefix || "EXP";
+
+      // Split expense number into prefix and number
+      const splitExpenseNumber = (fullNumber: string, defaultPrefix: string = "EXP"): { prefix: string; number: string } => {
+        if (!fullNumber) {
+          return { prefix: defaultPrefix, number: "" };
+        }
+        // Try to extract prefix and number (format: PREFIX-NUMBER, PREFIXNUMBER, or PREFIX NUMBER)
+        const matchWithSeparator = fullNumber.match(/^([A-Za-z0-9]+)[\s-]+(.+)$/);
+        if (matchWithSeparator) {
+          return { prefix: matchWithSeparator[1].toUpperCase(), number: matchWithSeparator[2] };
+        }
+        // If no separator, try to find where numbers start (format: PREFIXNUMBER like EXP001)
+        const numberMatch = fullNumber.match(/^([A-Za-z]+)(\d+.*)$/);
+        if (numberMatch) {
+          return { prefix: numberMatch[1].toUpperCase(), number: numberMatch[2] };
+        }
+        // If it's all numbers, use default prefix
+        if (/^\d+/.test(fullNumber)) {
+          return { prefix: defaultPrefix, number: fullNumber };
+        }
+        // Default: use as number with default prefix
+        return { prefix: defaultPrefix, number: fullNumber };
+      };
+
+      const fullExpenseNumber = expenseHeader.expenseNumber || "";
+      const { prefix: expensePrefix, number: expenseNumber } = splitExpenseNumber(fullExpenseNumber, defaultPrefix);
+
+      // Create expense header
+      const expenseHeaderData = {
+        tenantId: req.user.tenantId,
+        createdBy: req.user.id,
+        expensePrefix: expensePrefix,
+        expenseNumber: expenseNumber || null,
+        title: expenseHeader.title || "Expense", // Default title
+        description: expenseHeader.description || null,
+        quantity: 1, // Header quantity is always 1
+        amount: totalAmount,
+        currency: expenseHeader.currency || "USD",
+        category: expenseHeader.category || "other", // Default category
+        subcategory: expenseHeader.subcategory || null,
+        expenseDate: expenseHeader.expenseDate ? new Date(expenseHeader.expenseDate).toISOString() : new Date().toISOString(),
+        paymentMethod: expenseHeader.paymentMethod || "credit_card",
+        paymentReference: expenseHeader.paymentReference || null,
+        vendorId: expenseHeader.vendorId || null,
+        leadTypeId: expenseHeader.leadTypeId || null,
+        expenseType: expenseHeader.expenseType || "purchase",
+        receiptUrl: null, // Receipt URLs are stored in line items
+        taxAmount: totalTaxAmount,
+        taxRate: totalTaxAmount > 0 && totalAmount > 0 ? (totalTaxAmount / totalAmount) * 100 : 0,
+        isReimbursable: expenseHeader.isReimbursable || false,
+        isRecurring: expenseHeader.isRecurring || false,
+        recurringFrequency: expenseHeader.recurringFrequency || null,
+        status: expenseHeader.status || "pending",
+        amountPaid: totalPaid,
+        amountDue: totalDue,
+        tags: expenseHeader.tags || [],
+        notes: expenseHeader.notes || null,
+        approvedBy: expenseHeader.approvedBy || null,
+        approvedAt: expenseHeader.approvedAt || null,
+        rejectionReason: expenseHeader.rejectionReason || null,
+      };
+
+      console.log("💰 Creating expense header:", expenseHeaderData);
+
+      const [createdExpense] = await sql`
+        INSERT INTO expenses (
+          tenant_id, expense_prefix, expense_number, title, description, quantity, amount, currency, category, subcategory,
+          expense_date, payment_method, payment_reference, vendor_id, lead_type_id,
+          expense_type, receipt_url, tax_amount, tax_rate, is_reimbursable, is_recurring,
+          recurring_frequency, status, amount_paid, amount_due, approved_by, approved_at, rejection_reason,
+          tags, notes, created_by
+        ) VALUES (
+          ${expenseHeaderData.tenantId}, ${expenseHeaderData.expensePrefix}, ${expenseHeaderData.expenseNumber}, ${expenseHeaderData.title}, ${expenseHeaderData.description},
+          ${expenseHeaderData.quantity}, ${expenseHeaderData.amount}, ${expenseHeaderData.currency}, ${expenseHeaderData.category},
+          ${expenseHeaderData.subcategory}, ${expenseHeaderData.expenseDate}, ${expenseHeaderData.paymentMethod},
+          ${expenseHeaderData.paymentReference}, ${expenseHeaderData.vendorId}, ${expenseHeaderData.leadTypeId},
+          ${expenseHeaderData.expenseType}, ${expenseHeaderData.receiptUrl}, ${expenseHeaderData.taxAmount}, ${expenseHeaderData.taxRate},
+          ${expenseHeaderData.isReimbursable}, ${expenseHeaderData.isRecurring},
+          ${expenseHeaderData.recurringFrequency}, ${expenseHeaderData.status},
+          ${expenseHeaderData.amountPaid}, ${expenseHeaderData.amountDue},
+          ${expenseHeaderData.approvedBy}, ${expenseHeaderData.approvedAt}, ${expenseHeaderData.rejectionReason},
+          ${JSON.stringify(expenseHeaderData.tags || [])}, ${expenseHeaderData.notes}, ${expenseHeaderData.createdBy}
+        )
+        RETURNING *
+      `;
+
+      console.log("💰 Expense header created successfully:", createdExpense);
+
+      // Create line items
+      const createdLineItems = [];
+      for (let i = 0; i < lineItems.length; i++) {
+        const item = lineItems[i];
+        const lineItemData = {
+          expenseId: createdExpense.id,
+          category: item.category || "",
+          title: item.title || "",
+          description: item.description || null,
+          quantity: item.quantity || 1,
+          amount: parseFloat(item.amount?.toString() || "0"),
+          taxRateId: item.taxRateId || null,
+          taxAmount: parseFloat(item.taxAmount?.toString() || "0"),
+          taxRate: parseFloat(item.taxRate?.toString() || "0"),
+          totalAmount: parseFloat(item.totalAmount?.toString() || item.amount?.toString() || "0"),
+          vendorId: item.vendorId || null,
+          leadTypeId: item.leadTypeId || null,
+          paymentMethod: item.paymentMethod || "credit_card",
+          paymentStatus: item.paymentStatus || "paid",
+          amountPaid: parseFloat(item.amountPaid?.toString() || "0"),
+          amountDue: parseFloat(item.amountDue?.toString() || "0"),
+          receiptUrl: item.receiptUrl || null,
+          notes: item.notes || null,
+          displayOrder: i,
         };
 
-        console.log("💰 Creating expense - Expense data:", expenseData);
-
-        const [createdExpense] = await sql`
-          INSERT INTO expenses (
-            tenant_id, expense_number, title, description, quantity, amount, currency, category, subcategory,
-            expense_date, payment_method, payment_reference, vendor_id, lead_type_id,
-            expense_type, receipt_url, tax_amount, tax_rate, is_reimbursable, is_recurring,
-            recurring_frequency, status, amount_paid, amount_due, approved_by, approved_at, rejection_reason,
-            tags, notes, created_by
+        const [createdLineItem] = await sql`
+          INSERT INTO expense_line_items (
+            expense_id, category, title, description, quantity, amount, tax_rate_id, tax_amount, tax_rate,
+            total_amount, vendor_id, lead_type_id, payment_method, payment_status, amount_paid, amount_due,
+            receipt_url, notes, display_order
           ) VALUES (
-            ${expenseData.tenantId}, ${expenseData.expenseNumber}, ${expenseData.title}, ${expenseData.description},
-            ${expenseData.quantity || 1}, ${expenseData.amount}, ${expenseData.currency}, ${expenseData.category},
-            ${expenseData.subcategory}, ${expenseData.expenseDate}, ${expenseData.paymentMethod},
-            ${expenseData.paymentReference}, ${expenseData.vendorId}, ${expenseData.leadTypeId},
-            ${expenseData.expenseType || "purchase"}, ${expenseData.receiptUrl}, ${expenseData.taxAmount || 0}, ${expenseData.taxRate || 0},
-            ${expenseData.isReimbursable || false}, ${expenseData.isRecurring || false},
-            ${expenseData.recurringFrequency}, ${expenseData.status || "pending"},
-            ${expenseData.amountPaid || 0}, ${expenseData.amountDue || 0},
-            ${expenseData.approvedBy}, ${expenseData.approvedAt}, ${expenseData.rejectionReason},
-            ${JSON.stringify(expenseData.tags || [])}, ${expenseData.notes}, ${expenseData.createdBy}
+            ${lineItemData.expenseId}, ${lineItemData.category}, ${lineItemData.title}, ${lineItemData.description},
+            ${lineItemData.quantity}, ${lineItemData.amount}, ${lineItemData.taxRateId}, ${lineItemData.taxAmount}, ${lineItemData.taxRate},
+            ${lineItemData.totalAmount}, ${lineItemData.vendorId}, ${lineItemData.leadTypeId}, ${lineItemData.paymentMethod},
+            ${lineItemData.paymentStatus}, ${lineItemData.amountPaid}, ${lineItemData.amountDue},
+            ${lineItemData.receiptUrl}, ${lineItemData.notes}, ${lineItemData.displayOrder}
           )
           RETURNING *
         `;
 
-        createdExpenses.push(createdExpense);
-        console.log("💰 Expense created successfully:", createdExpense);
+        createdLineItems.push(createdLineItem);
+        console.log(`✅ Line item ${i} created successfully`);
       }
 
-      // Return array if multiple expenses, single object if one
-      if (createdExpenses.length === 1) {
-        res.status(201).json(createdExpenses[0]);
-      } else {
-        res.status(201).json(createdExpenses);
+      // Update expense settings starting number to the next number
+      try {
+        const newExpNumber = createdExpense.expense_number || "";
+        // Extract the numeric part from the expense number
+        const expenseNumberValue = parseInt(newExpNumber, 10);
+        if (!isNaN(expenseNumberValue)) {
+          // Increment the starting number to be one more than the current expense number
+          const nextStartNumber = expenseNumberValue + 1;
+          
+          // Get current settings to preserve other values
+          const currentSettings = await simpleStorage.getExpenseSettings(req.user.tenantId);
+          
+          // Update only the expenseNumberStart
+          await simpleStorage.upsertExpenseSettings(req.user.tenantId, {
+            ...currentSettings,
+            expenseNumberStart: nextStartNumber,
+          });
+          
+          console.log(`✅ Updated expense settings: expenseNumberStart set to ${nextStartNumber} (was ${currentSettings.expenseNumberStart || 1})`);
+        }
+      } catch (settingsError) {
+        console.error("⚠️ Failed to update expense settings starting number:", settingsError);
+        // Don't fail the expense creation if settings update fails
       }
+
+      // Return expense with line items (combine prefix and number for client compatibility)
+      res.status(201).json({
+        ...createdExpense,
+        expenseNumber: `${createdExpense.expense_prefix || ""}${createdExpense.expense_number || ""}`,
+        lineItems: createdLineItems,
+      });
     } catch (error: unknown) {
       console.error("💰 Error creating expense:", error);
+      console.error("💰 Error details:", {
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        name: error instanceof Error ? error.name : undefined,
+      });
       res.status(500).json({
         message: "Failed to create expense",
         error: error instanceof Error ? error.message : String(error),
@@ -17662,10 +18051,13 @@ Please improve this email.`;
   });
 
   // Update expense
-  app.put("/api/expenses/:id", authenticateVendor, async (req: any, res) => {
+  app.put("/api/expenses/:id", expenseBillUpload.any(), authenticateVendor, async (req: any, res) => {
     try {
+      const { ObjectStorageService } = await import("./objectStorage.js");
+      const objectStorage = new ObjectStorageService();
+      
       const expenseId = parseInt(req.params.id);
-      const expenseData = req.body;
+      const hasFiles = req.files && req.files.length > 0;
 
       // First, get the existing expense to use as defaults for partial updates
       const [existingExpense] = await sql`
@@ -17677,52 +18069,209 @@ Please improve this email.`;
         return res.status(404).json({ message: "Expense not found" });
       }
 
+      let expenseHeader: any = {};
+      let lineItems: any[] = [];
+
+      if (hasFiles) {
+        // Handle FormData request with files
+        if (req.body.expenseHeader) {
+          expenseHeader = typeof req.body.expenseHeader === 'string' 
+            ? JSON.parse(req.body.expenseHeader) 
+            : req.body.expenseHeader;
+        }
+        
+        if (req.body.lineItems) {
+          lineItems = typeof req.body.lineItems === 'string' 
+            ? JSON.parse(req.body.lineItems) 
+            : req.body.lineItems;
+        }
+        
+        // Organize bill files by index
+        const billFilesByIndex: { [key: number]: any } = {};
+        if (req.files && Array.isArray(req.files)) {
+          req.files.forEach((file: any) => {
+            const fieldName = file.fieldname || "";
+            const match = fieldName.match(/billFiles\[(\d+)\]/);
+            if (match) {
+              const index = parseInt(match[1]);
+              billFilesByIndex[index] = file;
+            }
+          });
+        }
+        
+        // Upload bill files
+        const sanitizeFileName = (filename: string) => {
+          return filename
+            .replace(/\s+/g, '')
+            .replace(/-/g, '')
+            .replace(/[^a-zA-Z0-9.]/g, '')
+            .toLowerCase();
+        };
+        
+        for (let i = 0; i < lineItems.length; i++) {
+          if (billFilesByIndex[i]) {
+            const file = billFilesByIndex[i];
+            const sanitizedName = sanitizeFileName(file.originalname);
+            const fileName = `expenses/${req.user.tenantId}/${Date.now()}_${sanitizedName}`;
+            
+            try {
+              const url = await objectStorage.uploadFile(
+                fileName,
+                file.buffer,
+                file.mimetype
+              );
+              lineItems[i].receiptUrl = url;
+            } catch (uploadError) {
+              console.error(`❌ Failed to upload bill for line item ${i}:`, uploadError);
+            }
+          }
+        }
+      } else {
+        // Handle JSON request
+        if (req.body.lineItems && Array.isArray(req.body.lineItems)) {
+          expenseHeader = req.body.expenseHeader || {};
+          lineItems = req.body.lineItems || [];
+        } else {
+          // Old format - convert to new format
+          expenseHeader = req.body;
+          lineItems = [];
+        }
+      }
+
+      // Calculate totals from line items if provided
+      let totalAmount = existingExpense.amount;
+      let totalTaxAmount = existingExpense.tax_amount || 0;
+      let totalPaid = existingExpense.amount_paid || 0;
+      let totalDue = existingExpense.amount_due || 0;
+
+      if (lineItems.length > 0) {
+        totalAmount = lineItems.reduce((sum, item) => sum + parseFloat(item.totalAmount?.toString() || item.amount?.toString() || "0"), 0);
+        totalTaxAmount = lineItems.reduce((sum, item) => sum + parseFloat(item.taxAmount?.toString() || "0"), 0);
+        totalPaid = lineItems.reduce((sum, item) => sum + parseFloat(item.amountPaid?.toString() || "0"), 0);
+        totalDue = lineItems.reduce((sum, item) => sum + parseFloat(item.amountDue?.toString() || "0"), 0);
+      }
+
       // Handle tags - ensure it's always a JSON string
       let existingTagsString = existingExpense.tags;
       if (existingTagsString && typeof existingTagsString !== 'string') {
-        // If tags is already parsed as an array/object, stringify it
         existingTagsString = JSON.stringify(existingTagsString);
       } else if (!existingTagsString) {
         existingTagsString = '[]';
       }
 
-      // Build update query - only update fields that are provided, otherwise keep existing values
+      // Get expense settings for default prefix
+      const expenseSettings = await simpleStorage.getExpenseSettings(req.user.tenantId);
+      const defaultPrefix = expenseSettings?.expenseNumberPrefix || "EXP";
+
+      // Split expense number if provided
+      let expensePrefix = existingExpense.expense_prefix || defaultPrefix;
+      let expenseNumber = existingExpense.expense_number || null;
+      
+      if (expenseHeader.expenseNumber !== undefined && expenseHeader.expenseNumber !== null) {
+        const splitExpenseNumber = (fullNumber: string, defaultPrefix: string = "EXP"): { prefix: string; number: string } => {
+          if (!fullNumber) {
+            return { prefix: defaultPrefix, number: "" };
+          }
+          const matchWithSeparator = fullNumber.match(/^([A-Za-z0-9]+)[\s-]+(.+)$/);
+          if (matchWithSeparator) {
+            return { prefix: matchWithSeparator[1].toUpperCase(), number: matchWithSeparator[2] };
+          }
+          const numberMatch = fullNumber.match(/^([A-Za-z]+)(\d+.*)$/);
+          if (numberMatch) {
+            return { prefix: numberMatch[1].toUpperCase(), number: numberMatch[2] };
+          }
+          if (/^\d+/.test(fullNumber)) {
+            return { prefix: defaultPrefix, number: fullNumber };
+          }
+          return { prefix: defaultPrefix, number: fullNumber };
+        };
+        const split = splitExpenseNumber(expenseHeader.expenseNumber, defaultPrefix);
+        expensePrefix = split.prefix;
+        expenseNumber = split.number || null;
+      }
+
+      // Update expense header
       const [expense] = await sql`
         UPDATE expenses SET
-          expense_number = ${expenseData.expenseNumber !== undefined ? (expenseData.expenseNumber || null) : existingExpense.expense_number},
-          title = ${expenseData.title !== undefined ? expenseData.title : existingExpense.title},
-          description = ${expenseData.description !== undefined ? expenseData.description : existingExpense.description},
-          quantity = ${expenseData.quantity !== undefined ? (expenseData.quantity || 1) : (existingExpense.quantity || 1)},
-          amount = ${expenseData.amount !== undefined ? expenseData.amount : existingExpense.amount},
-          currency = ${expenseData.currency !== undefined ? expenseData.currency : existingExpense.currency},
-          category = ${expenseData.category !== undefined ? expenseData.category : existingExpense.category},
-          subcategory = ${expenseData.subcategory !== undefined ? expenseData.subcategory : existingExpense.subcategory},
-          expense_date = ${expenseData.expenseDate !== undefined ? expenseData.expenseDate : existingExpense.expense_date},
-          payment_method = ${expenseData.paymentMethod !== undefined ? expenseData.paymentMethod : existingExpense.payment_method},
-          payment_reference = ${expenseData.paymentReference !== undefined ? expenseData.paymentReference : existingExpense.payment_reference},
-          vendor_id = ${expenseData.vendorId !== undefined ? (expenseData.vendorId || null) : existingExpense.vendor_id},
-          lead_type_id = ${expenseData.leadTypeId !== undefined ? (expenseData.leadTypeId || null) : existingExpense.lead_type_id},
-          expense_type = ${expenseData.expenseType !== undefined ? (expenseData.expenseType || "purchase") : existingExpense.expense_type},
-          receipt_url = ${expenseData.receiptUrl !== undefined ? expenseData.receiptUrl : existingExpense.receipt_url},
-          tax_amount = ${expenseData.taxAmount !== undefined ? (expenseData.taxAmount || 0) : existingExpense.tax_amount},
-          tax_rate = ${expenseData.taxRate !== undefined ? (expenseData.taxRate || 0) : existingExpense.tax_rate},
-          is_reimbursable = ${expenseData.isReimbursable !== undefined ? (expenseData.isReimbursable || false) : existingExpense.is_reimbursable},
-          is_recurring = ${expenseData.isRecurring !== undefined ? (expenseData.isRecurring || false) : existingExpense.is_recurring},
-          recurring_frequency = ${expenseData.recurringFrequency !== undefined ? (expenseData.recurringFrequency || null) : existingExpense.recurring_frequency},
-          status = ${expenseData.status !== undefined ? expenseData.status : existingExpense.status},
-          amount_paid = ${expenseData.amountPaid !== undefined ? (expenseData.amountPaid || 0) : (existingExpense.amount_paid || 0)},
-          amount_due = ${expenseData.amountDue !== undefined ? (expenseData.amountDue || 0) : (existingExpense.amount_due || 0)},
-          approved_by = ${expenseData.approvedBy !== undefined ? (expenseData.approvedBy || null) : existingExpense.approved_by},
-          approved_at = ${expenseData.approvedAt !== undefined ? (expenseData.approvedAt || null) : existingExpense.approved_at},
-          rejection_reason = ${expenseData.rejectionReason !== undefined ? (expenseData.rejectionReason || null) : existingExpense.rejection_reason},
-          tags = ${expenseData.tags !== undefined ? JSON.stringify(expenseData.tags || []) : existingTagsString},
-          notes = ${expenseData.notes !== undefined ? (expenseData.notes || null) : existingExpense.notes},
+          expense_prefix = ${expensePrefix},
+          expense_number = ${expenseNumber},
+          title = ${expenseHeader.title !== undefined ? expenseHeader.title : existingExpense.title},
+          description = ${expenseHeader.description !== undefined ? expenseHeader.description : existingExpense.description},
+          quantity = 1,
+          amount = ${lineItems.length > 0 ? totalAmount : (expenseHeader.amount !== undefined ? expenseHeader.amount : existingExpense.amount)},
+          currency = ${expenseHeader.currency !== undefined ? expenseHeader.currency : existingExpense.currency},
+          category = ${expenseHeader.category !== undefined ? expenseHeader.category : existingExpense.category},
+          subcategory = ${expenseHeader.subcategory !== undefined ? expenseHeader.subcategory : existingExpense.subcategory},
+          expense_date = ${expenseHeader.expenseDate !== undefined ? expenseHeader.expenseDate : existingExpense.expense_date},
+          payment_method = ${expenseHeader.paymentMethod !== undefined ? expenseHeader.paymentMethod : existingExpense.payment_method},
+          payment_reference = ${expenseHeader.paymentReference !== undefined ? expenseHeader.paymentReference : existingExpense.payment_reference},
+          vendor_id = ${expenseHeader.vendorId !== undefined ? (expenseHeader.vendorId || null) : existingExpense.vendor_id},
+          lead_type_id = ${expenseHeader.leadTypeId !== undefined ? (expenseHeader.leadTypeId || null) : existingExpense.lead_type_id},
+          expense_type = ${expenseHeader.expenseType !== undefined ? (expenseHeader.expenseType || "purchase") : existingExpense.expense_type},
+          receipt_url = null,
+          tax_amount = ${lineItems.length > 0 ? totalTaxAmount : (expenseHeader.taxAmount !== undefined ? expenseHeader.taxAmount : existingExpense.tax_amount)},
+          tax_rate = ${lineItems.length > 0 && totalAmount > 0 ? (totalTaxAmount / totalAmount) * 100 : (expenseHeader.taxRate !== undefined ? expenseHeader.taxRate : existingExpense.tax_rate)},
+          is_reimbursable = ${expenseHeader.isReimbursable !== undefined ? (expenseHeader.isReimbursable || false) : existingExpense.is_reimbursable},
+          is_recurring = ${expenseHeader.isRecurring !== undefined ? (expenseHeader.isRecurring || false) : existingExpense.is_recurring},
+          recurring_frequency = ${expenseHeader.recurringFrequency !== undefined ? (expenseHeader.recurringFrequency || null) : existingExpense.recurring_frequency},
+          status = ${expenseHeader.status !== undefined ? expenseHeader.status : existingExpense.status},
+          amount_paid = ${lineItems.length > 0 ? totalPaid : (expenseHeader.amountPaid !== undefined ? expenseHeader.amountPaid : existingExpense.amount_paid)},
+          amount_due = ${lineItems.length > 0 ? totalDue : (expenseHeader.amountDue !== undefined ? expenseHeader.amountDue : existingExpense.amount_due)},
+          approved_by = ${expenseHeader.approvedBy !== undefined ? (expenseHeader.approvedBy || null) : existingExpense.approved_by},
+          approved_at = ${expenseHeader.approvedAt !== undefined ? (expenseHeader.approvedAt || null) : existingExpense.approved_at},
+          rejection_reason = ${expenseHeader.rejectionReason !== undefined ? (expenseHeader.rejectionReason || null) : existingExpense.rejection_reason},
+          tags = ${expenseHeader.tags !== undefined ? JSON.stringify(expenseHeader.tags || []) : existingTagsString},
+          notes = ${expenseHeader.notes !== undefined ? (expenseHeader.notes || null) : existingExpense.notes},
           updated_at = NOW()
         WHERE id = ${expenseId} AND tenant_id = ${req.user.tenantId}
         RETURNING *
       `;
 
-      res.json(expense);
+      // Update line items if provided
+      if (lineItems.length > 0) {
+        // Delete existing line items
+        await sql`DELETE FROM expense_line_items WHERE expense_id = ${expenseId}`;
+
+        // Insert new line items
+        for (let i = 0; i < lineItems.length; i++) {
+          const item = lineItems[i];
+          await sql`
+            INSERT INTO expense_line_items (
+              expense_id, category, title, description, quantity, amount, tax_rate_id, tax_amount, tax_rate,
+              total_amount, vendor_id, lead_type_id, payment_method, payment_status, amount_paid, amount_due,
+              receipt_url, notes, display_order
+            ) VALUES (
+              ${expenseId}, ${item.category || ""}, ${item.title || ""}, ${item.description || null},
+              ${item.quantity || 1}, ${parseFloat(item.amount?.toString() || "0")}, ${item.taxRateId || null},
+              ${parseFloat(item.taxAmount?.toString() || "0")}, ${parseFloat(item.taxRate?.toString() || "0")},
+              ${parseFloat(item.totalAmount?.toString() || item.amount?.toString() || "0")}, ${item.vendorId || null},
+              ${item.leadTypeId || null}, ${item.paymentMethod || "credit_card"}, ${item.paymentStatus || "paid"},
+              ${parseFloat(item.amountPaid?.toString() || "0")}, ${parseFloat(item.amountDue?.toString() || "0")},
+              ${item.receiptUrl || null}, ${item.notes || null}, ${i}
+            )
+          `;
+        }
+      }
+
+      // Fetch updated expense with line items
+      const updatedLineItems = await sql`
+        SELECT 
+          eli.*,
+          v.name as vendor_name,
+          lt.name as lead_type_name,
+          lt.color as lead_type_color
+        FROM expense_line_items eli
+        LEFT JOIN vendors v ON eli.vendor_id = v.id
+        LEFT JOIN lead_types lt ON eli.lead_type_id = lt.id
+        WHERE eli.expense_id = ${expenseId}
+        ORDER BY eli.display_order ASC, eli.id ASC
+      `;
+
+      res.json({
+        ...expense,
+        expenseNumber: `${expense.expense_prefix || ""}${expense.expense_number || ""}`,
+        lineItems: updatedLineItems,
+      });
     } catch (error: unknown) {
       console.error("💰 Error updating expense:", error);
       res.status(500).json({ message: "Failed to update expense" });
@@ -17739,6 +18288,7 @@ Please improve this email.`;
         SELECT 
           e.id,
           e.tenant_id,
+          e.expense_prefix,
           e.expense_number,
           e.title,
           e.description,
@@ -17783,7 +18333,60 @@ Please improve this email.`;
         return res.status(404).json({ message: "Expense not found" });
       }
 
-      res.json(expense);
+      // Fetch line items for this expense
+      const lineItems = await sql`
+        SELECT 
+          eli.*,
+          v.name as vendor_name,
+          lt.name as lead_type_name,
+          lt.color as lead_type_color
+        FROM expense_line_items eli
+        LEFT JOIN vendors v ON eli.vendor_id = v.id
+        LEFT JOIN lead_types lt ON eli.lead_type_id = lt.id
+        WHERE eli.expense_id = ${expenseId}
+        ORDER BY eli.display_order ASC, eli.id ASC
+      `;
+
+      // If no line items exist, check if this is an old expense (before migration)
+      // In that case, return the expense as a single line item for backward compatibility
+      if (lineItems.length === 0) {
+        // This is an old expense without line items - return it as a single line item
+        res.json({
+          ...expense,
+          expenseNumber: `${expense.expense_prefix || ""}${expense.expense_number || ""}`,
+          lineItems: [{
+            id: null,
+            expense_id: expense.id,
+            category: expense.category,
+            title: expense.title,
+            description: expense.description,
+            quantity: expense.quantity || 1,
+            amount: expense.amount,
+            tax_rate_id: null,
+            tax_amount: expense.tax_amount,
+            tax_rate: expense.tax_rate,
+            total_amount: expense.amount,
+            vendor_id: expense.vendor_id,
+            lead_type_id: expense.lead_type_id,
+            payment_method: expense.payment_method,
+            payment_status: expense.status === "paid" ? "paid" : (expense.status === "due" ? "due" : "credit"),
+            amount_paid: expense.amount_paid,
+            amount_due: expense.amount_due,
+            receipt_url: expense.receipt_url,
+            notes: expense.notes,
+            display_order: 0,
+            vendor_name: expense.vendor_name,
+            lead_type_name: expense.lead_type_name,
+            lead_type_color: expense.lead_type_color,
+          }],
+        });
+      } else {
+        res.json({
+          ...expense,
+          expenseNumber: `${expense.expense_prefix || ""}${expense.expense_number || ""}`,
+          lineItems: lineItems,
+        });
+      }
     } catch (error: unknown) {
       console.error("💰 Error fetching expense:", error);
       res.status(500).json({ message: "Failed to fetch expense" });
@@ -17804,6 +18407,69 @@ Please improve this email.`;
     } catch (error: unknown) {
       console.error("💰 Error deleting expense:", error);
       res.status(500).json({ message: "Failed to delete expense" });
+    }
+  });
+
+  // Migration endpoint for expense line items
+  // Migration endpoint for expense prefixes
+  app.post("/api/migrate/expense-prefixes", authenticateToken, async (req: any, res) => {
+    try {
+      console.log("🔄 Starting expense prefix migration...");
+      const result = await simpleStorage.migrateExpensePrefixes();
+      res.json(result);
+    } catch (error: unknown) {
+      console.error("❌ Migration error:", error);
+      res.status(500).json({
+        message: "Migration failed",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.post("/api/migrate/expense-line-items", authenticateToken, async (req: any, res) => {
+    try {
+      console.log("🔄 Starting expense line items migration...");
+      
+      // Read and execute the migration SQL
+      const fs = await import("fs");
+      const path = await import("path");
+      const migrationSQL = fs.readFileSync(
+        path.join(process.cwd(), "migrations", "migrate_expense_line_items.sql"),
+        "utf-8"
+      );
+      
+      // Split by semicolons and execute each statement
+      const statements = migrationSQL
+        .split(";")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0 && !s.startsWith("--"));
+      
+      for (const statement of statements) {
+        if (statement.trim()) {
+          try {
+            await sql.unsafe(statement);
+            console.log("✅ Executed migration statement");
+          } catch (error: any) {
+            // Ignore errors for statements that might already be executed (e.g., CREATE TABLE IF NOT EXISTS)
+            if (!error.message?.includes("already exists") && !error.message?.includes("duplicate")) {
+              console.error("⚠️ Migration statement error (may be expected):", error.message);
+            }
+          }
+        }
+      }
+      
+      console.log("✅ Expense line items migration completed");
+      res.json({ 
+        success: true, 
+        message: "Expense line items migration completed successfully" 
+      });
+    } catch (error: unknown) {
+      console.error("❌ Error during expense line items migration:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to migrate expense line items",
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   });
 

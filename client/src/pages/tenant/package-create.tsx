@@ -324,7 +324,12 @@ export default function PackageCreate() {
         title: "Success",
         description: "Package created successfully!",
       });
-      queryClient.invalidateQueries({
+      // Invalidate and refetch packages list
+      await queryClient.invalidateQueries({
+        queryKey: [`/api/tenants/${tenant?.id}/packages`],
+      });
+      // Refetch to ensure data is up to date
+      await queryClient.refetchQueries({
         queryKey: [`/api/tenants/${tenant?.id}/packages`],
       });
       navigate("/packages");

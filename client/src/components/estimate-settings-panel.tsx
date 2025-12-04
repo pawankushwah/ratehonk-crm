@@ -26,6 +26,7 @@ import type { GstSetting } from "@shared/schema";
 
 interface EstimateSettings {
   estimateNumberStart: number;
+  estimateNumberPrefix: string;
   defaultCurrency: string;
   defaultGstSettingId?: number | null;
   showTax: boolean;
@@ -47,6 +48,7 @@ export function EstimateSettingsPanel({ tenantId }: EstimateSettingsPanelProps) 
   const [open, setOpen] = useState(false);
   const [settings, setSettings] = useState<EstimateSettings>({
     estimateNumberStart: 1,
+    estimateNumberPrefix: "EST",
     defaultCurrency: "USD",
     defaultGstSettingId: null,
     showTax: true,
@@ -86,7 +88,10 @@ export function EstimateSettingsPanel({ tenantId }: EstimateSettingsPanelProps) 
 
   useEffect(() => {
     if (fetchedSettings) {
-      setSettings(fetchedSettings);
+      setSettings({
+        ...fetchedSettings,
+        estimateNumberPrefix: fetchedSettings.estimateNumberPrefix || "EST",
+      });
     }
   }, [fetchedSettings]);
 
@@ -139,6 +144,29 @@ export function EstimateSettingsPanel({ tenantId }: EstimateSettingsPanelProps) 
         </SheetHeader>
 
         <div className="space-y-6 py-6">
+          {/* Estimate Number Prefix */}
+          <div className="space-y-2">
+            <Label htmlFor="estimateNumberPrefix">
+              Estimate Number Prefix
+            </Label>
+            <Input
+              id="estimateNumberPrefix"
+              type="text"
+              value={settings.estimateNumberPrefix}
+              onChange={(e) =>
+                setSettings({
+                  ...settings,
+                  estimateNumberPrefix: e.target.value.toUpperCase() ?? "EST",
+                })
+              }
+              data-testid="input-estimate-prefix"
+              placeholder="EST"
+            />
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Prefix for estimate numbers (e.g., EST, QUOTE)
+            </p>
+          </div>
+
           {/* Estimate Number Starting Point */}
           <div className="space-y-2">
             <Label htmlFor="estimateNumberStart">

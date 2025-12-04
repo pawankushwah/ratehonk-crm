@@ -27,9 +27,9 @@ export function DateFilter({
   className = ""
 }: DateFilterProps) {
   return (
-    <div className={cn("flex flex-wrap items-center gap-2", className)}>
+    <div className={cn("flex flex-wrap items-center gap-2 w-full", className)}>
       <Select value={dateFilter} onValueChange={setDateFilter}>
-        <SelectTrigger className="w-[140px] h-9 text-sm" data-testid="select-date-range">
+        <SelectTrigger className="w-full md:w-[140px] h-9 text-sm" data-testid="select-date-range">
           <SelectValue placeholder="Date range" />
         </SelectTrigger>
         <SelectContent>
@@ -43,14 +43,14 @@ export function DateFilter({
       </Select>
 
       {dateFilter === "custom" && (
-        <>
+        <div className="flex flex-wrap items-center gap-2 flex-1">
           <Popover>
             <PopoverTrigger asChild>
               <Button 
                 variant="outline" 
                 size="sm"
                 className={cn(
-                  "w-[130px] h-9 justify-start text-left font-normal text-xs", 
+                  "w-full md:w-[130px] h-9 justify-start text-left font-normal text-xs", 
                   !customDateFrom && "text-muted-foreground"
                 )} 
                 data-testid="button-date-from"
@@ -74,7 +74,7 @@ export function DateFilter({
                 variant="outline" 
                 size="sm"
                 className={cn(
-                  "w-[130px] h-9 justify-start text-left font-normal text-xs", 
+                  "w-full md:w-[130px] h-9 justify-start text-left font-normal text-xs", 
                   !customDateTo && "text-muted-foreground"
                 )} 
                 data-testid="button-date-to"
@@ -92,7 +92,7 @@ export function DateFilter({
               />
             </PopoverContent>
           </Popover>
-        </>
+        </div>
       )}
     </div>
   );

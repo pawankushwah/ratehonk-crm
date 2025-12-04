@@ -102,6 +102,7 @@ export default function InvoiceCreate() {
     new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
   );
   const [invoiceNumber, setInvoiceNumber] = useState("");
+  const [invoiceNumberOnly, setInvoiceNumberOnly] = useState(""); // Just the number part without prefix
 
   // Payment reminder states
   const [enableReminder, setEnableReminder] = useState(false);
@@ -140,6 +141,7 @@ export default function InvoiceCreate() {
   // Fetch invoice settings
   const { data: invoiceSettings = {
     invoiceNumberStart: 1,
+    invoiceNumberPrefix: "INV",
     showTax: true,
     showDiscount: true,
     showNotes: true,
@@ -150,18 +152,37 @@ export default function InvoiceCreate() {
     showAdditionalCommission: false,
     defaultCurrency: "USD",
     defaultGstSettingId: null,
-  }, refetch: refetchInvoiceSettings } = useQuery({
+  }, refetch: refetchInvoiceSettings, isLoading: isLoadingSettings } = useQuery({
     queryKey: ["/api/invoice-settings", tenant?.id],
     enabled: !!tenant?.id,
     queryFn: async () => {
-      const response = await fetch(`/api/invoice-settings/${tenant?.id}`);
-      if (!response.ok) throw new Error("Failed to fetch settings");
-      const result = await response.json();
-      return result.data;
+      console.log("📥 Fetching invoice settings for tenant:", tenant?.id);
+      try {
+        const response = await fetch(`/api/invoice-settings/${tenant?.id}`, {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+        if (!response.ok) {
+          console.error("❌ Failed to fetch invoice settings:", response.status, response.statusText);
+          const errorText = await response.text();
+          console.error("❌ Error response:", errorText);
+          throw new Error(`Failed to fetch settings: ${response.status} ${response.statusText}`);
+        }
+        const result = await response.json();
+        console.log("✅ Invoice settings fetched:", result.data);
+        return result.data || result;
+      } catch (error) {
+        console.error("❌ Error fetching invoice settings:", error);
+        throw error;
+      }
     },
-    refetchOnMount: true,
-    refetchOnWindowFocus: true,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: false,
     staleTime: 0,
+    cacheTime: 0,
+    retry: 2,
   });
 
   // Fetch existing invoices for number generation
@@ -182,6 +203,7 @@ export default function InvoiceCreate() {
   // Refetch invoice settings when page loads
   useEffect(() => {
     if (tenant?.id) {
+      console.log("🔄 Refetching invoice settings on page load for tenant:", tenant?.id);
       refetchInvoiceSettings();
     }
   }, [tenant?.id, refetchInvoiceSettings]);
@@ -196,44 +218,115 @@ export default function InvoiceCreate() {
   // Function to generate next invoice number
   const generateNextInvoiceNumber = useMemo(() => {
     const startNumber = invoiceSettings?.invoiceNumberStart || 1;
+    const prefix = invoiceSettings?.invoiceNumberPrefix || "INV";
+    
+    console.log("🔢 Generating invoice number - invoices count:", invoices?.length, "startNumber:", startNumber, "prefix:", prefix);
+    console.log("🔢 Invoice settings:", invoiceSettings);
+    console.log("🔢 Invoices data:", invoices);
     
     if (!invoices || invoices.length === 0) {
       // No existing invoices, use starting number from settings
-      return `INV-${String(startNumber).padStart(3, '0')}`;
+      const generated = `${prefix}${String(startNumber).padStart(3, '0')}`;
+      console.log("🔢 No existing invoices, using start number from settings:", generated);
+      return generated;
     }
 
     // Extract numbers from existing invoice numbers
+    // Handle formats like: INV-001, INV001, INV-1, INV1, BILL-123, BILL123, etc.
     const invoiceNumbers = invoices
-      .map((inv: any) => {
+      .map((inv: any, index: number) => {
         const invNum = inv.invoiceNumber || "";
-        // Extract number from formats like INV-001, INV-1, INV001, etc.
-        const match = invNum.match(/(\d+)/);
-        return match ? parseInt(match[1], 10) : 0;
+        if (!invNum) {
+          console.log(`🔢 Invoice ${index} has no invoice number`);
+          return 0;
+        }
+        
+        console.log(`🔢 Processing invoice ${index}: "${invNum}"`);
+        
+        // Try to extract number - handle multiple formats
+        // Pattern 1: PREFIX-NUMBER (e.g., INV-001, BILL-123)
+        const matchWithDash = invNum.match(/^[A-Za-z0-9]+[\s-]+(\d+)/);
+        if (matchWithDash) {
+          const num = parseInt(matchWithDash[1], 10);
+          console.log(`🔢 Matched with dash pattern: ${num}`);
+          return num;
+        }
+        
+        // Pattern 2: PREFIXNUMBER (e.g., INV001, BILL123)
+        const matchNoDash = invNum.match(/^[A-Za-z]+(\d+)/);
+        if (matchNoDash) {
+          const num = parseInt(matchNoDash[1], 10);
+          console.log(`🔢 Matched no dash pattern: ${num}`);
+          return num;
+        }
+        
+        // Pattern 3: Just numbers (extract first number sequence)
+        const matchNumbers = invNum.match(/(\d+)/);
+        if (matchNumbers) {
+          const num = parseInt(matchNumbers[1], 10);
+          console.log(`🔢 Matched numbers pattern: ${num}`);
+          return num;
+        }
+        
+        console.log(`🔢 No pattern matched for: "${invNum}"`);
+        return 0;
       })
       .filter((num: number) => num > 0);
 
-    // Find the highest number
+    console.log("🔢 Extracted invoice numbers:", invoiceNumbers);
+
+    // Find the highest number from existing invoices
     const maxNumber = invoiceNumbers.length > 0 
       ? Math.max(...invoiceNumbers) 
-      : startNumber - 1;
+      : 0;
 
-    // Use the higher of: max existing number + 1, or starting number
-    const nextNumber = Math.max(maxNumber + 1, startNumber);
+    console.log("🔢 Max number from existing invoices:", maxNumber, "Start number from settings:", startNumber);
+
+    // If we have existing invoices, increment from the highest
+    // If no valid numbers found, use start number
+    // Otherwise, use the higher of: (maxNumber + 1) or startNumber
+    let nextNumber: number;
+    if (invoiceNumbers.length === 0) {
+      // No valid invoice numbers found, use start number
+      nextNumber = startNumber;
+      console.log("🔢 No valid invoice numbers found, using start number:", nextNumber);
+    } else {
+      // We have valid invoice numbers, increment from the highest
+      // But ensure we don't go below the start number
+      nextNumber = Math.max(maxNumber + 1, startNumber);
+      console.log("🔢 Incrementing from max number:", maxNumber, "-> next:", nextNumber);
+    }
     
-    return `INV-${String(nextNumber).padStart(3, '0')}`;
-  }, [invoices, invoiceSettings?.invoiceNumberStart]);
+    // Return without dash: INV001 instead of INV-001
+    const generated = `${prefix}${String(nextNumber).padStart(3, '0')}`;
+    console.log("🔢 Final generated invoice number:", generated);
+    return generated;
+  }, [invoices, invoiceSettings?.invoiceNumberStart, invoiceSettings?.invoiceNumberPrefix]);
 
   // Track the last starting number used for auto-generation
   const lastStartingNumber = useRef<number | null>(null);
   const hasInitialized = useRef(false);
+
+  // Helper function to extract number part from full invoice number
+  const extractNumberPart = (fullNumber: string, prefix: string): string => {
+    if (!fullNumber) return "";
+    // Remove prefix and any separators (like "-")
+    const prefixPattern = new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s-]*`, 'i');
+    const cleaned = fullNumber.replace(prefixPattern, '').trim();
+    // Extract just the numeric part
+    const match = cleaned.match(/(\d+)/);
+    return match ? match[1] : cleaned;
+  };
 
   // Auto-generate invoice number when invoices/settings are loaded
   useEffect(() => {
     if (isEditMode) return; // Don't auto-generate in edit mode
     
     const currentStartNumber = invoiceSettings?.invoiceNumberStart || 1;
+    const prefix = invoiceSettings?.invoiceNumberPrefix || "INV";
     
-    if (generateNextInvoiceNumber) {
+    // Wait for both invoices and settings to be loaded
+    if (generateNextInvoiceNumber && invoiceSettings && (invoices !== undefined)) {
       // Check if starting number changed
       const startingNumberChanged = lastStartingNumber.current !== null && 
                                     lastStartingNumber.current !== currentStartNumber;
@@ -247,13 +340,32 @@ export default function InvoiceCreate() {
       if (shouldUpdate) {
         lastStartingNumber.current = currentStartNumber;
         hasInitialized.current = true;
-        setInvoiceNumber(generateNextInvoiceNumber);
+        const fullNumber = generateNextInvoiceNumber;
+        setInvoiceNumber(fullNumber);
+        // Extract and set just the number part
+        const numberPart = extractNumberPart(fullNumber, prefix);
+        setInvoiceNumberOnly(numberPart);
+        console.log("🔢 Set invoice number:", fullNumber, "Number part:", numberPart);
       }
     } else if (invoiceSettings?.invoiceNumberStart && !hasInitialized.current) {
       // Initialize lastStartingNumber even if generateNextInvoiceNumber isn't ready yet
       lastStartingNumber.current = invoiceSettings.invoiceNumberStart;
     }
-  }, [generateNextInvoiceNumber, invoiceSettings?.invoiceNumberStart, isEditMode]);
+  }, [generateNextInvoiceNumber, invoiceSettings, invoices, isEditMode]);
+
+  // Sync invoiceNumberOnly when invoiceNumber changes (for edit mode)
+  useEffect(() => {
+    if (invoiceNumber) {
+      const prefix = invoiceSettings?.invoiceNumberPrefix || "INV";
+      const numberPart = extractNumberPart(invoiceNumber, prefix);
+      if (numberPart !== invoiceNumberOnly) {
+        setInvoiceNumberOnly(numberPart);
+      }
+    } else if (!invoiceNumber && invoiceNumberOnly) {
+      // Clear number part if invoice number is cleared
+      setInvoiceNumberOnly("");
+    }
+  }, [invoiceNumber, invoiceSettings?.invoiceNumberPrefix]); // Note: intentionally not including invoiceNumberOnly to avoid loops
 
   // Fetch customers
   const { data: customers = [] } = useQuery({
@@ -490,6 +602,13 @@ export default function InvoiceCreate() {
         setPaymentMethod(["credit_card"]);
       }
       setPaymentTerms(invoice.paymentTerms?.toString() || "30");
+      // Set invoice number and extract number part
+      if (invoice.invoiceNumber) {
+        setInvoiceNumber(invoice.invoiceNumber);
+        const prefix = invoiceSettings?.invoiceNumberPrefix || "INV";
+        const numberPart = extractNumberPart(invoice.invoiceNumber, prefix);
+        setInvoiceNumberOnly(numberPart);
+      }
       setIsTaxInclusive(invoice.isTaxInclusive || false);
       setNotesContent(invoice.notes || "");
       setAdditionalNotesContent(invoice.additionalNotes || "");
@@ -1343,7 +1462,11 @@ export default function InvoiceCreate() {
     const companyPhone = tenant?.contactPhone || "";
 
     const invoiceData: InvoiceData = {
-      invoiceNumber: invoiceNumber || formData.get("invoiceNumber") as string || "INV-001",
+      invoiceNumber: invoiceNumber || (() => {
+        const prefix = invoiceSettings?.invoiceNumberPrefix || "INV";
+        const numberPart = invoiceNumberOnly || formData.get("invoiceNumber") as string || "001";
+        return numberPart ? `${prefix}${numberPart}` : `${prefix}001`;
+      })(),
       issueDate: invoiceDate,
       dueDate: dueDate,
       customerName: selectedCustomer.name || selectedCustomer.customerName || "Customer",
@@ -1701,15 +1824,26 @@ export default function InvoiceCreate() {
                 <div></div>
                 <div>
                   <Label htmlFor="invoiceNumber">Invoice Number *</Label>
-                  <Input
-                    data-testid="input-invoice-number"
-                    id="invoiceNumber"
-                    name="invoiceNumber"
-                    value={invoiceNumber}
-                    onChange={(e) => setInvoiceNumber(e.target.value)}
-                    placeholder="INV-001"
-                    required
-                  />
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center px-3 py-2 rounded-md border border-gray-300 bg-gray-50 dark:bg-gray-800 dark:border-gray-700 text-sm font-medium text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                      {invoiceSettings?.invoiceNumberPrefix || "INV"}
+                    </span>
+                    <Input
+                      data-testid="input-invoice-number"
+                      id="invoiceNumber"
+                      name="invoiceNumber"
+                      value={invoiceNumberOnly}
+                      onChange={(e) => {
+                        const numberPart = e.target.value;
+                        setInvoiceNumberOnly(numberPart);
+                        const prefix = invoiceSettings?.invoiceNumberPrefix || "INV";
+                        setInvoiceNumber(numberPart ? `${prefix}${numberPart}` : "");
+                      }}
+                      placeholder="001"
+                      required
+                      className="flex-1"
+                    />
+                  </div>
                 </div>
               </div>
               {/* Customer and Invoice Date Row */}

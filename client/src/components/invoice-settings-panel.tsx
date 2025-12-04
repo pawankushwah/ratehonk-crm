@@ -26,6 +26,7 @@ import type { GstSetting } from "@shared/schema";
 
 interface InvoiceSettings {
   invoiceNumberStart: number;
+  invoiceNumberPrefix?: string;
   defaultCurrency: string;
   defaultGstSettingId?: number | null;
   showTax: boolean;
@@ -50,6 +51,7 @@ export function InvoiceSettingsPanel({ tenantId }: InvoiceSettingsPanelProps) {
   const [open, setOpen] = useState(false);
   const [settings, setSettings] = useState<InvoiceSettings>({
     invoiceNumberStart: 1,
+    invoiceNumberPrefix: "INV",
     defaultCurrency: "USD",
     defaultGstSettingId: null,
     showTax: true,
@@ -91,10 +93,12 @@ export function InvoiceSettingsPanel({ tenantId }: InvoiceSettingsPanelProps) {
   });
 
   useEffect(() => {
-    if (fetchedSettings) {
+    if (fetchedSettings && open) {
+      // Only update settings when panel opens and we have fetched settings
+      // This prevents overwriting user input while typing
       setSettings(fetchedSettings);
     }
-  }, [fetchedSettings]);
+  }, [fetchedSettings, open]);
 
   const saveMutation = useMutation({
     mutationFn: async (data: InvoiceSettings) => {
@@ -144,6 +148,30 @@ export function InvoiceSettingsPanel({ tenantId }: InvoiceSettingsPanelProps) {
         </SheetHeader>
 
         <div className="space-y-6 py-6">
+          {/* Invoice Number Prefix */}
+          <div className="space-y-2">
+            <Label htmlFor="invoiceNumberPrefix">
+              Invoice Number Prefix
+            </Label>
+            <Input
+              id="invoiceNumberPrefix"
+              type="text"
+              value={settings.invoiceNumberPrefix ?? "INV"}
+              onChange={(e) => {
+                const newValue = e.target.value.toUpperCase().trim();
+                setSettings({
+                  ...settings,
+                  invoiceNumberPrefix: newValue || "INV",
+                });
+              }}
+              placeholder="INV"
+              maxLength={10}
+            />
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Prefix for invoice numbers (e.g., INV, BILL, INV-2024)
+            </p>
+          </div>
+
           {/* Invoice Number Starting Point */}
           <div className="space-y-2">
             <Label htmlFor="invoiceNumberStart">

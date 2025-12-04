@@ -48,6 +48,7 @@ export function ExpenseSettingsPanel({ tenantId }: ExpenseSettingsPanelProps) {
   const [open, setOpen] = useState(false);
   const [settings, setSettings] = useState<ExpenseSettings>({
     expenseNumberStart: 1,
+    expenseNumberPrefix: "EXP",
     defaultCurrency: "USD",
     defaultGstSettingId: null,
     showTax: true,
@@ -141,6 +142,30 @@ export function ExpenseSettingsPanel({ tenantId }: ExpenseSettingsPanelProps) {
         </SheetHeader>
 
         <div className="space-y-6 py-6">
+          {/* Expense Number Prefix */}
+          <div className="space-y-2">
+            <Label htmlFor="expenseNumberPrefix">
+              Expense Number Prefix
+            </Label>
+            <Input
+              id="expenseNumberPrefix"
+              type="text"
+              value={settings.expenseNumberPrefix ?? "EXP"}
+              onChange={(e) => {
+                const newValue = e.target.value.toUpperCase().trim();
+                setSettings({
+                  ...settings,
+                  expenseNumberPrefix: newValue || "EXP",
+                });
+              }}
+              placeholder="EXP"
+              maxLength={10}
+            />
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Prefix for expense numbers (e.g., EXP, BILL, EXP-2024)
+            </p>
+          </div>
+
           {/* Expense Number Starting Point */}
           <div className="space-y-2">
             <Label htmlFor="expenseNumberStart">

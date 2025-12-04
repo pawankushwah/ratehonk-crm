@@ -122,10 +122,13 @@ export default function ExpenseCreate() {
   const [notesContent, setNotesContent] = useState("");
   const [isTaxInclusive, setIsTaxInclusive] = useState(false);
   const [expenseNumber, setExpenseNumber] = useState("");
+  const [expenseNumberOnly, setExpenseNumberOnly] = useState("");
+  const [expenseTitle, setExpenseTitle] = useState("");
 
   // Fetch expense settings
   const { data: expenseSettings = {
     expenseNumberStart: 1,
+    expenseNumberPrefix: "EXP",
     defaultCurrency: "USD",
     defaultGstSettingId: null,
     showTax: true,
@@ -189,49 +192,102 @@ export default function ExpenseCreate() {
     }
   }, [expenseSettings?.defaultCurrency, expenseSettings?.defaultGstSettingId]);
 
-  // Function to generate next expense number
+  // Helper function to extract number part from full expense number
+  const extractNumberPart = (fullNumber: string, prefix: string): string => {
+    if (!fullNumber) return "";
+    // Remove prefix and any separators (like "-")
+    const prefixPattern = new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s-]*`, 'i');
+    const cleaned = fullNumber.replace(prefixPattern, '').trim();
+    // Extract just the numeric part
+    const match = cleaned.match(/(\d+)/);
+    return match ? match[1] : cleaned;
+  };
+
+  // Function to generate next expense number (returns just the number part)
   const generateNextExpenseNumber = useMemo(() => {
     const startNumber = expenseSettings?.expenseNumberStart || 1;
+    const prefix = expenseSettings?.expenseNumberPrefix || "EXP";
+    
+    console.log("🔢 Generating expense number - expenses count:", expenses?.length, "startNumber:", startNumber, "prefix:", prefix);
     
     if (!expenses || expenses.length === 0) {
       // No existing expenses, use starting number from settings
-      return `EXP-${String(startNumber).padStart(3, '0')}`;
+      const generated = String(startNumber).padStart(3, '0');
+      console.log("🔢 No existing expenses, using start number from settings:", generated);
+      return generated;
     }
 
     // Extract numbers from existing expense numbers
-    // Handle both snake_case (expense_number) and camelCase (expenseNumber) field names
+    // Handle formats like: EXP-001, EXP001, EXP-1, EXP1, etc.
     const expenseNumbers = expenses
-      .map((exp: any) => {
-        // Try multiple field name variations
+      .map((exp: any, index: number) => {
         const expNum = exp.expenseNumber || exp.expense_number || exp.referenceNumber || exp.reference_number || "";
-        if (!expNum || expNum === "") {
+        if (!expNum) {
+          console.log(`🔢 Expense ${index} has no expense number`);
           return 0;
         }
-        // Extract number from formats like EXP-001, EXP-1, EXP001, etc.
-        const match = expNum.toString().match(/(\d+)/);
-        return match ? parseInt(match[1], 10) : 0;
+        
+        console.log(`🔢 Processing expense ${index}: "${expNum}"`);
+        
+        // Try to extract number - handle multiple formats
+        // Pattern 1: PREFIX-NUMBER (e.g., EXP-001, BILL-123)
+        const matchWithDash = expNum.match(/^[A-Za-z0-9]+[\s-]+(\d+)/);
+        if (matchWithDash) {
+          const num = parseInt(matchWithDash[1], 10);
+          console.log(`🔢 Matched with dash pattern: ${num}`);
+          return num;
+        }
+        
+        // Pattern 2: PREFIXNUMBER (e.g., EXP001, BILL123)
+        const matchNoDash = expNum.match(/^[A-Za-z]+(\d+)/);
+        if (matchNoDash) {
+          const num = parseInt(matchNoDash[1], 10);
+          console.log(`🔢 Matched no dash pattern: ${num}`);
+          return num;
+        }
+        
+        // Pattern 3: Just numbers (extract first number sequence)
+        const matchNumbers = expNum.match(/(\d+)/);
+        if (matchNumbers) {
+          const num = parseInt(matchNumbers[1], 10);
+          console.log(`🔢 Matched numbers pattern: ${num}`);
+          return num;
+        }
+        
+        console.log(`🔢 No pattern matched for: "${expNum}"`);
+        return 0;
       })
       .filter((num: number) => num > 0);
 
-    // Find the highest number
+    console.log("🔢 Extracted expense numbers:", expenseNumbers);
+
+    // Find the highest number from existing expenses
     const maxNumber = expenseNumbers.length > 0 
       ? Math.max(...expenseNumbers) 
-      : startNumber - 1;
+      : 0;
 
-    // Use the higher of: max existing number + 1, or starting number
-    const nextNumber = Math.max(maxNumber + 1, startNumber);
+    console.log("🔢 Max number from existing expenses:", maxNumber, "Start number from settings:", startNumber);
+
+    // If we have existing expenses, increment from the highest
+    // If no valid numbers found, use start number
+    // Otherwise, use the higher of: (maxNumber + 1) or startNumber
+    let nextNumber: number;
+    if (expenseNumbers.length === 0) {
+      // No valid expense numbers found, use start number
+      nextNumber = startNumber;
+      console.log("🔢 No valid expense numbers found, using start number:", nextNumber);
+    } else {
+      // We have valid expense numbers, increment from the highest
+      // But ensure we don't go below the start number
+      nextNumber = Math.max(maxNumber + 1, startNumber);
+      console.log("🔢 Incrementing from max number:", maxNumber, "-> next:", nextNumber);
+    }
     
-    console.log("Expense number generation:", {
-      expensesCount: expenses.length,
-      expenseNumbers,
-      maxNumber,
-      startNumber,
-      nextNumber,
-      generated: `EXP-${String(nextNumber).padStart(3, '0')}`
-    });
-    
-    return `EXP-${String(nextNumber).padStart(3, '0')}`;
-  }, [expenses, expenseSettings?.expenseNumberStart]);
+    // Return just the number part (without prefix)
+    const generated = String(nextNumber).padStart(3, '0');
+    console.log("🔢 Final generated expense number:", generated);
+    return generated;
+  }, [expenses, expenseSettings?.expenseNumberStart, expenseSettings?.expenseNumberPrefix]);
 
   // Track the last starting number used for auto-generation
   const lastStartingNumber = useRef<number | null>(null);
@@ -242,8 +298,10 @@ export default function ExpenseCreate() {
     if (isEditMode) return; // Don't auto-generate in edit mode
     
     const currentStartNumber = expenseSettings?.expenseNumberStart || 1;
+    const prefix = expenseSettings?.expenseNumberPrefix || "EXP";
     
-    if (generateNextExpenseNumber) {
+    // Wait for both expenses and settings to be loaded
+    if (generateNextExpenseNumber && expenseSettings && (expenses !== undefined)) {
       // Check if starting number changed
       const startingNumberChanged = lastStartingNumber.current !== null && 
                                     lastStartingNumber.current !== currentStartNumber;
@@ -251,19 +309,36 @@ export default function ExpenseCreate() {
       // On first initialization, always update (even if field has a value)
       // After that, update if field is empty OR starting number changed
       const shouldUpdate = !hasInitialized.current || 
-                          !expenseNumber || 
+                          !expenseNumberOnly || 
                           startingNumberChanged;
       
       if (shouldUpdate) {
         lastStartingNumber.current = currentStartNumber;
         hasInitialized.current = true;
-        setExpenseNumber(generateNextExpenseNumber);
+        const numberPart = generateNextExpenseNumber;
+        setExpenseNumberOnly(numberPart);
+        setExpenseNumber(`${prefix}${numberPart}`);
+        console.log("🔢 Set expense number:", `${prefix}${numberPart}`, "Number part:", numberPart);
       }
     } else if (expenseSettings?.expenseNumberStart && !hasInitialized.current) {
       // Initialize lastStartingNumber even if generateNextExpenseNumber isn't ready yet
       lastStartingNumber.current = expenseSettings.expenseNumberStart;
     }
-  }, [generateNextExpenseNumber, expenseSettings?.expenseNumberStart, isEditMode, expenses.length, expenseNumber]);
+  }, [generateNextExpenseNumber, expenseSettings, expenses, isEditMode]);
+
+  // Sync expenseNumberOnly when expenseNumber changes (for edit mode)
+  useEffect(() => {
+    if (expenseNumber) {
+      const prefix = expenseSettings?.expenseNumberPrefix || "EXP";
+      const numberPart = extractNumberPart(expenseNumber, prefix);
+      if (numberPart !== expenseNumberOnly) {
+        setExpenseNumberOnly(numberPart);
+      }
+    } else if (!expenseNumber && expenseNumberOnly) {
+      // Clear number part if expense number is cleared
+      setExpenseNumberOnly("");
+    }
+  }, [expenseNumber, expenseSettings?.expenseNumberPrefix]); // Note: intentionally not including expenseNumberOnly to avoid loops
 
   // Fetch GST rates based on selected tax setting
   const { data: gstRates = [] } = useQuery<any[]>({
@@ -458,6 +533,7 @@ export default function ExpenseCreate() {
       // Set basic expense fields
       setExpenseDate(expense.expense_date || expense.expenseDate || new Date().toISOString().split("T")[0]);
       setCurrency(expense.currency || "USD");
+      setExpenseTitle(expense.title || "");
       
       // Clean notes - remove HTML tags if present
       let notesText = expense.notes || expense.description || "";
@@ -470,7 +546,11 @@ export default function ExpenseCreate() {
       if (expense.expense_number || expense.expenseNumber || expense.reference_number || expense.referenceNumber) {
         const expNum = expense.expense_number || expense.expenseNumber || expense.reference_number || expense.referenceNumber;
         setExpenseNumber(expNum);
-        console.log("Setting expense number:", expNum);
+        // Extract number part for the input field
+        const prefix = expenseSettings?.expenseNumberPrefix || "EXP";
+        const numberPart = extractNumberPart(expNum, prefix);
+        setExpenseNumberOnly(numberPart);
+        console.log("Setting expense number:", expNum, "Number part:", numberPart);
       } else {
         console.log("No expense number found in expense data");
       }
@@ -543,49 +623,107 @@ export default function ExpenseCreate() {
       // Format tax amount to ensure it shows properly
       const taxAmount = parseFloat(expense.tax_amount?.toString() || expense.taxAmount?.toString() || "0");
       
-      // Set expense items from the expense data
-      // Note: If expense has quantity, use it; otherwise default to 1
-      // If amount is total (quantity * unit price), we need to calculate unit price
-      const expenseQuantity = expense.quantity ? parseFloat(expense.quantity.toString()) : 1;
-      const expenseTotalAmount = parseFloat(expense.amount || "0");
-      const unitAmount = expenseQuantity > 0 ? expenseTotalAmount / expenseQuantity : expenseTotalAmount;
+      // Set expense items from line items or fallback to expense data (for backward compatibility)
+      let itemsToLoad: any[] = [];
       
-      // Clean notes - remove HTML tags if present
-      let cleanNotes = expense.notes || expense.description || "";
-      if (cleanNotes && typeof cleanNotes === "string") {
-        // Remove HTML tags but keep the text content
-        cleanNotes = cleanNotes.replace(/<[^>]*>/g, "").trim();
+      if (expense.lineItems && Array.isArray(expense.lineItems) && expense.lineItems.length > 0) {
+        // New format: use line items
+        itemsToLoad = expense.lineItems.map((item: any) => {
+          const itemQuantity = item.quantity ? parseFloat(item.quantity.toString()) : 1;
+          const itemTotalAmount = parseFloat(item.total_amount?.toString() || item.totalAmount?.toString() || item.amount?.toString() || "0");
+          const itemUnitAmount = itemQuantity > 0 ? itemTotalAmount / itemQuantity : itemTotalAmount;
+          const itemTaxAmount = parseFloat(item.tax_amount?.toString() || item.taxAmount?.toString() || "0");
+          
+          // Find tax rate ID from tax rate value
+          let itemTaxRateId = "";
+          if (item.tax_rate_id || item.taxRateId) {
+            itemTaxRateId = (item.tax_rate_id || item.taxRateId).toString();
+          } else if (item.tax_rate && gstRates && gstRates.length > 0) {
+            const taxRateValue = parseFloat(item.tax_rate?.toString() || "0");
+            const matchingRate = gstRates.find((rate: any) => {
+              const rateValue = parseFloat(rate.rate?.toString() || rate.ratePercentage?.toString() || "0");
+              return Math.abs(rateValue - taxRateValue) < 0.01;
+            });
+            if (matchingRate) {
+              itemTaxRateId = matchingRate.id?.toString() || "";
+            }
+          }
+          
+          // Map payment status
+          let itemPaymentStatus = "paid";
+          if (item.payment_status) {
+            itemPaymentStatus = item.payment_status;
+          } else if (item.paymentStatus) {
+            itemPaymentStatus = item.paymentStatus;
+          }
+          
+          // Get paid and due amounts
+          const itemAmountPaid = parseFloat(item.amount_paid?.toString() || item.amountPaid?.toString() || "0");
+          const itemAmountDue = parseFloat(item.amount_due?.toString() || item.amountDue?.toString() || "0");
+          
+          // Clean notes
+          let itemNotes = item.notes || item.description || "";
+          if (itemNotes && typeof itemNotes === "string") {
+            itemNotes = itemNotes.replace(/<[^>]*>/g, "").trim();
+          }
+          
+          return {
+            category: item.category || "",
+            title: item.title || "",
+            vendorId: item.vendor_id?.toString() || item.vendorId?.toString() || "",
+            leadTypeId: item.lead_type_id?.toString() || item.leadTypeId?.toString() || "",
+            quantity: itemQuantity.toString(),
+            amount: itemUnitAmount.toString(),
+            taxRateId: itemTaxRateId,
+            taxAmount: itemTaxAmount.toFixed(2),
+            totalAmount: itemTotalAmount,
+            paymentMethod: item.payment_method || item.paymentMethod || "credit_card",
+            paymentStatus: itemPaymentStatus,
+            amountPaid: itemAmountPaid.toFixed(2),
+            amountDue: itemAmountDue.toFixed(2),
+            notes: itemNotes,
+            billFile: null as File | null,
+            billUrl: item.receipt_url || item.receiptUrl || "",
+          };
+        });
+      } else {
+        // Old format: convert expense to single line item (backward compatibility)
+        const expenseQuantity = expense.quantity ? parseFloat(expense.quantity.toString()) : 1;
+        const expenseTotalAmount = parseFloat(expense.amount || "0");
+        const unitAmount = expenseQuantity > 0 ? expenseTotalAmount / expenseQuantity : expenseTotalAmount;
+        
+        let cleanNotes = expense.notes || expense.description || "";
+        if (cleanNotes && typeof cleanNotes === "string") {
+          cleanNotes = cleanNotes.replace(/<[^>]*>/g, "").trim();
+        }
+        
+        itemsToLoad = [{
+          category: expense.category || "",
+          title: expense.title || "",
+          vendorId: expense.vendor_id?.toString() || expense.vendorId?.toString() || "",
+          leadTypeId: expense.lead_type_id?.toString() || expense.leadTypeId?.toString() || "",
+          quantity: expenseQuantity.toString(),
+          amount: unitAmount.toString(),
+          taxRateId: taxRateId,
+          taxAmount: taxAmount.toFixed(2),
+          totalAmount: totalAmount,
+          paymentMethod: expense.payment_method || expense.paymentMethod || "credit_card",
+          paymentStatus: paymentStatus,
+          amountPaid: amountPaid,
+          amountDue: amountDue,
+          notes: cleanNotes,
+          billFile: null as File | null,
+          billUrl: expense.receipt_url || expense.receiptUrl || "",
+        }];
       }
       
-      const expenseItem = {
-        category: expense.category || "",
-        title: expense.title || "",
-        vendorId: expense.vendor_id?.toString() || expense.vendorId?.toString() || "",
-        leadTypeId: expense.lead_type_id?.toString() || expense.leadTypeId?.toString() || "",
-        quantity: expenseQuantity.toString(),
-        amount: unitAmount.toString(), // Store unit price
-        taxRateId: taxRateId,
-        taxAmount: taxAmount.toFixed(2),
-        totalAmount: totalAmount,
-        paymentMethod: expense.payment_method || expense.paymentMethod || "credit_card",
-        paymentStatus: paymentStatus,
-        amountPaid: amountPaid,
-        amountDue: amountDue,
-        notes: cleanNotes,
-        billFile: null as File | null,
-        billUrl: expense.receipt_url || expense.receiptUrl || "",
-      };
-      
-      console.log("Processed expense item:", expenseItem);
+      console.log("Processed expense items:", itemsToLoad);
       console.log("Original expense data:", expense);
-      console.log("Setting expense item:", expenseItem);
-      console.log("Original expense status:", expense.status);
-      console.log("Mapped payment status:", paymentStatus);
       
-      setExpenseItems([expenseItem]);
+      setExpenseItems(itemsToLoad);
       expenseDataLoadedRef.current = expenseId; // Mark as loaded AFTER setting all data
       console.log("✅ Expense items state updated successfully");
-      console.log("✅ Expense items:", expenseItem);
+      console.log("✅ Expense items count:", itemsToLoad.length);
     } else {
       const skipReason = {
         isEditMode,
@@ -678,20 +816,36 @@ export default function ExpenseCreate() {
     mutationFn: async (data: any) => {
       const token = auth.getToken();
       if (isEditMode && expenseId) {
-        // Update existing expense (keep JSON for now, can be updated later)
-        const expense = Array.isArray(data) ? data[0] : data.formData ? JSON.parse(data.formData.get("expenses"))[0] : data;
-        const response = await fetch(`/api/expenses/${expenseId}`, {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify(expense),
-        });
-        if (!response.ok) throw new Error("Failed to update expense");
-        return [await response.json()];
+        // Update existing expense
+        if (data.isFormData && data.formData) {
+          // Use FormData approach for file uploads
+          const response = await fetch(`/api/expenses/${expenseId}`, {
+            method: "PUT",
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+            body: data.formData,
+          });
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ message: "Failed to update expense" }));
+            throw new Error(errorData.message || "Failed to update expense");
+          }
+          return await response.json();
+        } else {
+          // Use JSON approach
+          const response = await fetch(`/api/expenses/${expenseId}`, {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify(data),
+          });
+          if (!response.ok) throw new Error("Failed to update expense");
+          return await response.json();
+        }
       } else {
-        // Create new expenses
+        // Create new expense
         if (data.isFormData && data.formData) {
           // Use FormData approach for file uploads
           const response = await fetch("/api/expenses", {
@@ -702,29 +856,26 @@ export default function ExpenseCreate() {
             body: data.formData,
           });
           if (!response.ok) {
-            const errorData = await response.json().catch(() => ({ message: "Failed to create expenses" }));
-            throw new Error(errorData.message || "Failed to create expenses");
+            const errorData = await response.json().catch(() => ({ message: "Failed to create expense" }));
+            throw new Error(errorData.message || "Failed to create expense");
           }
           const result = await response.json();
-          // Server returns array if multiple, single object if one
-          return Array.isArray(result) ? result : [result];
+          return result;
         } else {
-          // Use JSON approach for expenses without files
-          const expenses = Array.isArray(data) ? data : [];
-          const promises = expenses.map((expense) =>
-            fetch("/api/expenses", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${token}`,
-              },
-              body: JSON.stringify(expense),
-            }).then((res) => {
-              if (!res.ok) throw new Error("Failed to create expense");
-              return res.json();
-            })
-          );
-          return Promise.all(promises);
+          // Use JSON approach
+          const response = await fetch("/api/expenses", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify(data),
+          });
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ message: "Failed to create expense" }));
+            throw new Error(errorData.message || "Failed to create expense");
+          }
+          return await response.json();
         }
       }
     },
@@ -1009,68 +1160,73 @@ export default function ExpenseCreate() {
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
+    // Combine prefix and number for expense header
+    const prefix = expenseSettings?.expenseNumberPrefix || "EXP";
+    const fullExpenseNumber = expenseNumberOnly ? `${prefix}${expenseNumberOnly}` : expenseNumber;
+
+    // Prepare expense header
+    const expenseHeader = {
+      expenseNumber: fullExpenseNumber || null,
+      expenseDate: expenseDate,
+      currency: expenseSettings?.defaultCurrency || currency,
+      notes: notesContent || null,
+      title: expenseTitle || "Expense", // Use expense title or default
+      category: "other", // Default category
+    };
+
+    // Prepare line items
+    const lineItems = expenseItems.map((item) => {
+      const quantity = parseFloat(item.quantity || "1");
+      const unitAmount = parseFloat(item.amount || "0");
+      const totalAmount = unitAmount * quantity;
+      const taxAmount = parseFloat(item.taxAmount || "0");
+      const taxRate = item.taxRateId
+        ? (() => {
+            const selectedRate = gstRates.find(
+              (rate: any) => rate.id?.toString() === item.taxRateId
+            );
+            if (selectedRate) {
+              return parseFloat(
+                selectedRate.ratePercentage?.toString() || 
+                selectedRate.rate_percentage?.toString() || 
+                selectedRate.rate?.toString() || 
+                "0"
+              );
+            }
+            return 0;
+          })()
+        : 0;
+
+      return {
+        category: item.category || "",
+        title: item.title || "",
+        description: item.notes || null,
+        quantity: quantity,
+        amount: unitAmount,
+        taxRateId: item.taxRateId && item.taxRateId !== "none" ? parseInt(item.taxRateId) : null,
+        taxAmount: taxAmount,
+        taxRate: taxRate,
+        totalAmount: totalAmount,
+        vendorId: item.vendorId && item.vendorId !== "none" ? parseInt(item.vendorId) : null,
+        leadTypeId: item.leadTypeId && item.leadTypeId !== "none" ? parseInt(item.leadTypeId) : null,
+        paymentMethod: item.paymentMethod || "credit_card",
+        paymentStatus: item.paymentStatus || "paid",
+        amountPaid: parseFloat(item.amountPaid || "0"),
+        amountDue: parseFloat(item.amountDue || "0"),
+        receiptUrl: item.billUrl || null,
+        notes: item.notes || null,
+      };
+    });
+
     // Check if there are any bill files to upload
     const hasBillFiles = expenseItems.some(item => item.billFile);
 
     if (hasBillFiles) {
-      // Use FormData approach like packages - send all expenses with files in one request
+      // Use FormData approach for file uploads
       const formData = new FormData();
       
-      // Add expense items data as JSON
-      const expensesData = expenseItems.map((item, index) => {
-        const quantity = parseFloat(item.quantity || "1");
-        const unitAmount = parseFloat(item.amount || "0");
-        const totalAmount = unitAmount * quantity;
-        
-        return {
-          title: item.title,
-          description: item.notes,
-          quantity: quantity,
-          amount: totalAmount,
-          currency: expenseSettings?.defaultCurrency || currency,
-          category: item.category,
-          subcategory: "",
-          expenseDate: expenseDate,
-          expenseNumber: expenseNumber || undefined,
-          paymentMethod: item.paymentMethod,
-          paymentReference: "",
-          vendorId: item.vendorId && item.vendorId !== "none" ? parseInt(item.vendorId) : null,
-          leadTypeId: item.leadTypeId && item.leadTypeId !== "none" ? parseInt(item.leadTypeId) : null,
-          expenseType: "purchase",
-          receiptUrl: item.billUrl || "", // Will be updated by server after upload
-          taxAmount: parseFloat(item.taxAmount || "0"),
-          taxRate: item.taxRateId
-            ? (() => {
-                const selectedRate = gstRates.find(
-                  (rate: any) => rate.id?.toString() === item.taxRateId
-                );
-                if (selectedRate) {
-                  return parseFloat(
-                    selectedRate.ratePercentage?.toString() || 
-                    selectedRate.rate_percentage?.toString() || 
-                    selectedRate.rate?.toString() || 
-                    "0"
-                  );
-                }
-                return 0;
-              })()
-            : 0,
-          isReimbursable: false,
-          isRecurring: false,
-          recurringFrequency: "",
-          status: "pending",
-          amountPaid: parseFloat(item.amountPaid || "0"),
-          amountDue: parseFloat(item.amountDue || "0"),
-          tags: [],
-          notes: notesContent || item.notes,
-        };
-      });
-      
-      formData.append("expenses", JSON.stringify(expensesData));
-      formData.append("expenseDate", expenseDate);
-      formData.append("expenseNumber", expenseNumber || "");
-      formData.append("currency", expenseSettings?.defaultCurrency || currency);
-      formData.append("notes", notesContent || "");
+      formData.append("expenseHeader", JSON.stringify(expenseHeader));
+      formData.append("lineItems", JSON.stringify(lineItems));
       
       // Add bill files with index-based field names
       expenseItems.forEach((item, index) => {
@@ -1082,56 +1238,10 @@ export default function ExpenseCreate() {
       createExpensesMutation.mutate({ formData, isFormData: true });
     } else {
       // No files, use JSON approach
-      const expenses = expenseItems.map((item) => {
-        const quantity = parseFloat(item.quantity || "1");
-        const unitAmount = parseFloat(item.amount || "0");
-        const totalAmount = unitAmount * quantity;
-        
-        return {
-          title: item.title,
-          description: item.notes,
-          quantity: quantity,
-          amount: totalAmount,
-          currency: expenseSettings?.defaultCurrency || currency,
-          category: item.category,
-          subcategory: "",
-          expenseDate: expenseDate,
-          expenseNumber: expenseNumber || undefined,
-          paymentMethod: item.paymentMethod,
-          paymentReference: "",
-          vendorId: item.vendorId && item.vendorId !== "none" ? parseInt(item.vendorId) : null,
-          leadTypeId: item.leadTypeId && item.leadTypeId !== "none" ? parseInt(item.leadTypeId) : null,
-          expenseType: "purchase",
-          receiptUrl: item.billUrl || "",
-          taxAmount: parseFloat(item.taxAmount || "0"),
-          taxRate: item.taxRateId
-            ? (() => {
-                const selectedRate = gstRates.find(
-                  (rate: any) => rate.id?.toString() === item.taxRateId
-                );
-                if (selectedRate) {
-                  return parseFloat(
-                    selectedRate.ratePercentage?.toString() || 
-                    selectedRate.rate_percentage?.toString() || 
-                    selectedRate.rate?.toString() || 
-                    "0"
-                  );
-                }
-                return 0;
-              })()
-            : 0,
-          isReimbursable: false,
-          isRecurring: false,
-          recurringFrequency: "",
-          status: "pending",
-          amountPaid: parseFloat(item.amountPaid || "0"),
-          amountDue: parseFloat(item.amountDue || "0"),
-          tags: [],
-          notes: notesContent || item.notes,
-        };
+      createExpensesMutation.mutate({
+        expenseHeader,
+        lineItems,
       });
-      
-      createExpensesMutation.mutate(expenses);
     }
   };
 
@@ -1195,17 +1305,38 @@ export default function ExpenseCreate() {
                 <div></div>
                 <div>
                   <Label htmlFor="expenseNumber">Expense Number</Label>
-                  <Input
-                    id="expenseNumber"
-                    value={expenseNumber}
-                    onChange={(e) => setExpenseNumber(e.target.value)}
-                    placeholder="EXP-001"
-                  />
+                  <div className="flex items-center gap-2">
+                    <span className="px-3 py-2 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md text-sm font-medium">
+                      {expenseSettings?.expenseNumberPrefix || "EXP"}
+                    </span>
+                    <Input
+                      id="expenseNumber"
+                      value={expenseNumberOnly}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setExpenseNumberOnly(val);
+                        const prefix = expenseSettings?.expenseNumberPrefix || "EXP";
+                        setExpenseNumber(val ? `${prefix}${val}` : "");
+                      }}
+                      placeholder="001"
+                      className="flex-1"
+                    />
+                  </div>
                 </div>
               </div>
 
-              {/* Expense Date Row */}
+              {/* Expense Title and Date Row */}
               <div className="flex items-end gap-4">
+                <div className="w-auto md:w-48">
+                  <Label htmlFor="expenseTitle">Expense Title</Label>
+                  <Input
+                    id="expenseTitle"
+                    value={expenseTitle}
+                    onChange={(e) => setExpenseTitle(e.target.value)}
+                    placeholder="Enter expense title"
+                    className="w-full"
+                  />
+                </div>
                 <div className="w-auto md:w-64">
                   <Label htmlFor="expenseDate">Expense Date *</Label>
                   <DatePicker

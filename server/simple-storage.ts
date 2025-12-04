@@ -3880,6 +3880,13 @@ export class SimpleStorage {
 
       const invoice = invoices[0];
 
+      // Combine prefix and number for backward compatibility (without dash: INV001)
+      const invoicePrefix = invoice.invoice_prefix || "INV";
+      const invoiceNumberOnly = invoice.invoice_number || "";
+      invoice.invoice_number = invoicePrefix && invoiceNumberOnly 
+        ? `${invoicePrefix}${invoiceNumberOnly}` 
+        : invoiceNumberOnly || invoice.invoice_number;
+
       // Fetch customer details
       let customerName = null;
       let customerEmail = null;
@@ -4035,6 +4042,8 @@ export class SimpleStorage {
       leadTypeId?: number;
       status?: string;
       search?: string;
+      startDate?: string;
+      endDate?: string;
       page?: number;
       pageSize?: number;
       sortBy?: string;
@@ -4092,15 +4101,37 @@ export class SimpleStorage {
       const hasSearch = filterParams?.search && filterParams.search.trim() !== "";
       const shouldFilterAfterFetch = filterParams?.vendorId || filterParams?.providerId || filterParams?.leadTypeId || hasSearch;
 
+      // Handle date filters
+      if (filterParams?.startDate) {
+        console.log("🔍 Applying start date filter:", filterParams.startDate);
+        whereClause = sql`${whereClause} AND invoices.issue_date >= ${filterParams.startDate}::date`;
+      }
+      if (filterParams?.endDate) {
+        console.log("🔍 Applying end date filter:", filterParams.endDate);
+        whereClause = sql`${whereClause} AND invoices.issue_date <= ${filterParams.endDate}::date`;
+      }
+
       // Only apply search in SQL WHERE clause if we're NOT filtering after fetch
       // (i.e., when we don't need to check line items)
       // If we need to check line items, we'll filter in JavaScript after fetching
       if (hasSearch && !shouldFilterAfterFetch) {
-        const searchPattern = `%${filterParams.search!.trim()}%`;
-        console.log("🔍 Applying search filter in SQL:", filterParams.search);
+        const searchTerm = filterParams.search!.trim();
+        const searchPattern = `%${searchTerm}%`;
+        const searchPatternNoDash = `%${searchTerm.replace(/-/g, '')}%`;
+        console.log("🔍 Applying search filter in SQL:", searchTerm);
         needsJoin = true;
         joinClause = sql`LEFT JOIN customers c ON invoices.customer_id = c.id`;
-        whereClause = sql`${whereClause} AND (invoices.invoice_number ILIKE ${searchPattern} OR c.name ILIKE ${searchPattern})`;
+        
+        // Handle invoice number search - check both formats (INV-117 and INV117)
+        // Also check the combined format (invoice_prefix + invoice_number)
+        whereClause = sql`${whereClause} AND (
+          invoices.invoice_number ILIKE ${searchPattern} 
+          OR CONCAT(invoices.invoice_prefix, COALESCE(invoices.invoice_number, '')) ILIKE ${searchPattern}
+          OR CONCAT(invoices.invoice_prefix, '-', COALESCE(invoices.invoice_number, '')) ILIKE ${searchPattern}
+          OR CONCAT(invoices.invoice_prefix, COALESCE(invoices.invoice_number, '')) ILIKE ${searchPatternNoDash}
+          OR invoices.invoice_number ILIKE ${searchPatternNoDash}
+          OR c.name ILIKE ${searchPattern}
+        )`;
       } else if (hasSearch) {
         // When filtering after fetch, we still need the JOIN for customer name search
         console.log("🔍 Search will be applied after fetch (to check line items):", filterParams.search);
@@ -4305,10 +4336,22 @@ export class SimpleStorage {
           // to allow searching in line items' invoice/voucher numbers
           if (filterParams?.search && filterParams.search.trim() !== "") {
             const searchTerm = filterParams.search.trim().toLowerCase();
+            const searchTermNoDash = searchTerm.replace(/-/g, '');
             console.log("🔍 Checking search for invoice ID:", invoice.id, "Search term:", searchTerm);
 
-            // Check main invoice number
-            const invoiceNumberMatch = invoice.invoice_number?.toLowerCase().includes(searchTerm);
+            // Check main invoice number (just the number part)
+            const invoiceNumberMatch = invoice.invoice_number?.toLowerCase().includes(searchTerm) || 
+                                      invoice.invoice_number?.toLowerCase().includes(searchTermNoDash);
+
+            // Check combined invoice number (prefix + number) - handle both with and without dash
+            const invPrefix = (invoice.invoice_prefix || "INV").toLowerCase();
+            const invNumber = (invoice.invoice_number || "").toLowerCase();
+            const combinedWithDash = `${invPrefix}-${invNumber}`;
+            const combinedWithoutDash = `${invPrefix}${invNumber}`;
+            const combinedMatch = combinedWithDash.includes(searchTerm) || 
+                                 combinedWithoutDash.includes(searchTerm) ||
+                                 combinedWithDash.includes(searchTermNoDash) ||
+                                 combinedWithoutDash.includes(searchTermNoDash);
 
             // Check customer name
             const customerNameMatch = customerName?.toLowerCase().includes(searchTerm);
@@ -4317,7 +4360,10 @@ export class SimpleStorage {
             const lineItemMatch = lineItems.some((item: any) => {
               const itemInvoiceNumber = (item.invoiceNumber?.toString() || "").toLowerCase();
               const itemVoucherNumber = (item.voucherNumber?.toString() || "").toLowerCase();
-              const matches = itemInvoiceNumber.includes(searchTerm) || itemVoucherNumber.includes(searchTerm);
+              const matches = itemInvoiceNumber.includes(searchTerm) || 
+                            itemInvoiceNumber.includes(searchTermNoDash) ||
+                            itemVoucherNumber.includes(searchTerm) || 
+                            itemVoucherNumber.includes(searchTermNoDash);
               if (matches) {
                 console.log("🔍 Line item match found - invoiceNumber:", itemInvoiceNumber, "voucherNumber:", itemVoucherNumber);
               }
@@ -4325,8 +4371,8 @@ export class SimpleStorage {
             });
 
             // Include invoice if it matches in invoice number, customer name, or line items
-            const hasMatch = invoiceNumberMatch || customerNameMatch || lineItemMatch;
-            console.log("🔍 Invoice ID:", invoice.id, "invoiceNumberMatch:", invoiceNumberMatch, "customerNameMatch:", customerNameMatch, "lineItemMatch:", lineItemMatch);
+            const hasMatch = invoiceNumberMatch || combinedMatch || customerNameMatch || lineItemMatch;
+            console.log("🔍 Invoice ID:", invoice.id, "invoiceNumberMatch:", invoiceNumberMatch, "combinedMatch:", combinedMatch, "customerNameMatch:", customerNameMatch, "lineItemMatch:", lineItemMatch);
             if (!hasMatch) {
               console.log("🔍 Excluding invoice ID:", invoice.id, "- no match found");
               return null;
@@ -4334,47 +4380,52 @@ export class SimpleStorage {
             console.log("🔍 Including invoice ID:", invoice.id, "- match found");
           }
 
-          // Filter by vendor or provider if specified (check line items)
-          if (filterParams?.vendorId || filterParams?.providerId) {
-            const hasMatchingItem = lineItems.some((item: any) => {
-              // Check vendor filter - handle both string and number comparisons
-              if (filterParams?.vendorId) {
-                const itemVendor = item.vendor?.toString() || item.vendorId?.toString();
-                const filterVendor = filterParams.vendorId.toString();
-                if (itemVendor !== filterVendor) {
-                  return false;
-                }
-              }
-              // Check provider filter - handle both string and number comparisons
-              if (filterParams?.providerId) {
-                const itemProvider = item.serviceProviderId?.toString() || item.providerId?.toString();
-                const filterProvider = filterParams.providerId.toString();
-                if (itemProvider !== filterProvider) {
-                  return false;
-                }
-              }
-              return true;
+          // Filter by vendor if specified (check line items)
+          if (filterParams?.vendorId) {
+            const hasMatchingVendor = lineItems.some((item: any) => {
+              const itemVendor = item.vendor?.toString() || item.vendorId?.toString();
+              const filterVendor = filterParams.vendorId.toString();
+              return itemVendor === filterVendor;
             });
 
-            console.log("🔍 Invoice ID:", invoice.id, "hasMatchingItem:", hasMatchingItem, "lineItems count:", lineItems.length);
-            if (!hasMatchingItem && lineItems.length > 0) {
-              console.log("🔍 Excluding invoice ID:", invoice.id, "- no matching vendor/provider in line items");
-              return null; // Skip this invoice if it has line items but none match
+            console.log("🔍 Invoice ID:", invoice.id, "hasMatchingVendor:", hasMatchingVendor, "lineItems count:", lineItems.length);
+            if (!hasMatchingVendor) {
+              console.log("🔍 Excluding invoice ID:", invoice.id, "- no matching vendor in line items");
+              return null; // Skip this invoice if no line item matches the vendor filter
             }
-            // If no line items and filter is specified, exclude the invoice
-            if (!hasMatchingItem && lineItems.length === 0) {
-              console.log("🔍 Excluding invoice ID:", invoice.id, "- no line items and filter specified");
-              return null;
-            }
-            console.log("🔍 Including invoice ID:", invoice.id, "- vendor/provider match found");
+            console.log("🔍 Including invoice ID:", invoice.id, "- vendor match found");
           }
+
+          // Filter by provider if specified (check line items)
+          if (filterParams?.providerId) {
+            const hasMatchingProvider = lineItems.some((item: any) => {
+              const itemProvider = item.serviceProviderId?.toString() || item.providerId?.toString();
+              const filterProvider = filterParams.providerId.toString();
+              return itemProvider === filterProvider;
+            });
+
+            console.log("🔍 Invoice ID:", invoice.id, "hasMatchingProvider:", hasMatchingProvider, "lineItems count:", lineItems.length);
+            if (!hasMatchingProvider) {
+              console.log("🔍 Excluding invoice ID:", invoice.id, "- no matching provider in line items");
+              return null; // Skip this invoice if no line item matches the provider filter
+            }
+            console.log("🔍 Including invoice ID:", invoice.id, "- provider match found");
+          }
+
+          // Combine prefix and number for backward compatibility (without dash: INV001)
+          const invPrefix = invoice.invoice_prefix || "INV";
+          const invNumber = invoice.invoice_number || "";
+          const fullInvoiceNumber = invPrefix && invNumber 
+            ? `${invPrefix}${invNumber}` 
+            : invNumber || invoice.invoice_number;
 
           return {
             id: invoice.id,
             tenantId: invoice.tenant_id,
             customerId: invoice.customer_id,
             bookingId: invoice.booking_id,
-            invoiceNumber: invoice.invoice_number,
+            invoiceNumber: fullInvoiceNumber,
+            invoicePrefix: invPrefix,
             status: invoice.status,
             issueDate: invoice.issue_date,
             dueDate: invoice.due_date,
@@ -4560,12 +4611,20 @@ export class SimpleStorage {
         vendorName: vendorMap[Number(li.vendor)]?.name || null,
       }));
 
+      // Combine prefix and number for backward compatibility (without dash: INV001)
+      const invPrefix = inv.invoice_prefix || "INV";
+      const invNumber = inv.invoice_number || "";
+      const fullInvoiceNumber = invPrefix && invNumber 
+        ? `${invPrefix}${invNumber}` 
+        : invNumber || inv.invoice_number;
+
       return {
         id: inv.id,
         tenantId: inv.tenant_id,
         customerId: inv.customer_id,
         bookingId: inv.booking_id,
-        invoiceNumber: inv.invoice_number,
+        invoiceNumber: fullInvoiceNumber,
+        invoicePrefix: invPrefix,
 
         status: inv.status,
         issueDate: inv.issue_date,
@@ -4623,10 +4682,95 @@ export class SimpleStorage {
         throw new Error("totalAmount is required");
       }
 
+      // Helper function to split invoice number into prefix and number
+      const splitInvoiceNumber = (fullNumber: string, defaultPrefix: string = "INV"): { prefix: string; number: string } => {
+        if (!fullNumber) {
+          return { prefix: defaultPrefix, number: "" };
+        }
+        // Try to extract prefix and number (format: PREFIX-NUMBER, PREFIXNUMBER, or PREFIX NUMBER)
+        // First try with separator (dash or space)
+        const matchWithSeparator = fullNumber.match(/^([A-Za-z0-9]+)[\s-]+(.+)$/);
+        if (matchWithSeparator) {
+          return { prefix: matchWithSeparator[1].toUpperCase(), number: matchWithSeparator[2] };
+        }
+        // If no separator, try to find where numbers start (format: PREFIXNUMBER like INV001)
+        const numberMatch = fullNumber.match(/^([A-Za-z]+)(\d+.*)$/);
+        if (numberMatch) {
+          return { prefix: numberMatch[1].toUpperCase(), number: numberMatch[2] };
+        }
+        // If it's all numbers, use default prefix
+        if (/^\d+/.test(fullNumber)) {
+          return { prefix: defaultPrefix, number: fullNumber };
+        }
+        // Default: use as number with default prefix
+        return { prefix: defaultPrefix, number: fullNumber };
+      };
+
+      // Get default prefix from tenant settings or use "INV"
+      const tenantSettings = await this.getInvoiceSettings(invoiceData.tenantId);
+      const defaultPrefix = tenantSettings?.invoiceNumberPrefix || "INV";
+      const startNumber = tenantSettings?.invoiceNumberStart || 1;
+
       // Generate invoice number if not provided
-      const invoiceNumber =
-        invoiceData.invoiceNumber ||
-        `INV-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
+      let fullInvoiceNumber = invoiceData.invoiceNumber;
+      
+      if (!fullInvoiceNumber) {
+        // Get existing invoices for this tenant to find the highest number
+        const existingInvoices = await sql`
+          SELECT invoice_prefix, invoice_number 
+          FROM invoices 
+          WHERE tenant_id = ${invoiceData.tenantId}
+          ORDER BY created_at DESC
+        `;
+
+        let nextNumber = startNumber;
+
+        if (existingInvoices.length > 0) {
+          // Extract numbers from existing invoices
+          const invoiceNumbers = existingInvoices
+            .map((inv: any) => {
+              const invPrefix = inv.invoice_prefix || defaultPrefix;
+              const invNum = inv.invoice_number || "";
+              
+              if (!invNum) return 0;
+              
+              // Try to extract number - handle multiple formats
+              // Pattern 1: PREFIX-NUMBER (e.g., INV-001)
+              const matchWithDash = invNum.match(/^(\d+)$/);
+              if (matchWithDash) {
+                return parseInt(matchWithDash[1], 10);
+              }
+              
+              // Pattern 2: Just numbers
+              const matchNumbers = invNum.match(/(\d+)/);
+              if (matchNumbers) {
+                return parseInt(matchNumbers[1], 10);
+              }
+              
+              return 0;
+            })
+            .filter((num: number) => num > 0);
+
+          if (invoiceNumbers.length > 0) {
+            const maxNumber = Math.max(...invoiceNumbers);
+            nextNumber = Math.max(maxNumber + 1, startNumber);
+            console.log(`🔢 Server: Found ${invoiceNumbers.length} existing invoices, max number: ${maxNumber}, next: ${nextNumber}`);
+          } else {
+            console.log(`🔢 Server: No valid invoice numbers found, using start number: ${startNumber}`);
+          }
+        } else {
+          console.log(`🔢 Server: No existing invoices, using start number: ${startNumber}`);
+        }
+
+        // Generate invoice number without dash: INV001
+        fullInvoiceNumber = `${defaultPrefix}${String(nextNumber).padStart(3, '0')}`;
+        console.log(`🔢 Server: Generated invoice number: ${fullInvoiceNumber}`);
+      }
+
+      // Split invoice number into prefix and number
+      const { prefix, number } = splitInvoiceNumber(fullInvoiceNumber, defaultPrefix);
+      const invoiceNumber = number; // Store only the number part
+      const invoicePrefix = prefix; // Store prefix separately
 
       // First, fix the sequence to ensure it's correct
       await sql`SELECT setval('invoices_id_seq', (SELECT COALESCE(MAX(id), 0) + 1 FROM invoices), false)`;
@@ -4655,7 +4799,7 @@ export class SimpleStorage {
       // Note: Some columns may not exist in the database yet - they should be added via migration
       const invoice = await sql`
         INSERT INTO invoices (
-          tenant_id, customer_id, booking_id, invoice_number, status,
+          tenant_id, customer_id, booking_id, invoice_prefix, invoice_number, status,
           invoice_date, issue_date, due_date, subtotal, tax_amount, discount_amount, total_amount, 
           paid_amount, currency, payment_method, payment_terms, is_tax_inclusive,
           notes, additional_notes, enable_reminder, reminder_frequency, reminder_specific_date, line_items
@@ -4663,6 +4807,7 @@ export class SimpleStorage {
           ${invoiceData.tenantId},
           ${invoiceData.customerId},
           ${invoiceData.bookingId || null},
+          ${invoicePrefix},
           ${invoiceNumber},
           ${invoiceData.status || "draft"},
           ${issueDate},
@@ -4721,23 +4866,59 @@ export class SimpleStorage {
         }
       }
 
-      // Create expenses if provided
+      // Create expenses if provided (using new line items structure)
       if (invoiceData.expenses && Array.isArray(invoiceData.expenses) && invoiceData.expenses.length > 0) {
         for (const expense of invoiceData.expenses) {
           try {
-            await sql`
+            const expenseAmount = parseFloat(expense.amount?.toString() || "0");
+            const expenseTaxAmount = parseFloat(expense.taxAmount?.toString() || "0");
+            const expenseTaxRate = parseFloat(expense.taxRate?.toString() || "0");
+            const expenseQuantity = parseFloat(expense.quantity?.toString() || "1");
+            const expenseAmountPaid = parseFloat(expense.amountPaid?.toString() || "0");
+            const expenseAmountDue = parseFloat(expense.amountDue?.toString() || expenseAmount.toString() || "0");
+            const totalAmount = expenseAmount + expenseTaxAmount;
+
+            // Get expense settings for default prefix
+            const expenseSettings = await this.getExpenseSettings(invoiceData.tenantId);
+            const defaultPrefix = expenseSettings?.expenseNumberPrefix || "EXP";
+
+            // Split expense number into prefix and number
+            const splitExpenseNumber = (fullNumber: string, defaultPrefix: string = "EXP"): { prefix: string; number: string } => {
+              if (!fullNumber) {
+                return { prefix: defaultPrefix, number: "" };
+              }
+              const matchWithSeparator = fullNumber.match(/^([A-Za-z0-9]+)[\s-]+(.+)$/);
+              if (matchWithSeparator) {
+                return { prefix: matchWithSeparator[1].toUpperCase(), number: matchWithSeparator[2] };
+              }
+              const numberMatch = fullNumber.match(/^([A-Za-z]+)(\d+.*)$/);
+              if (numberMatch) {
+                return { prefix: numberMatch[1].toUpperCase(), number: numberMatch[2] };
+              }
+              if (/^\d+/.test(fullNumber)) {
+                return { prefix: defaultPrefix, number: fullNumber };
+              }
+              return { prefix: defaultPrefix, number: fullNumber };
+            };
+
+            const fullExpenseNumber = expense.expenseNumber || "";
+            const { prefix: expensePrefix, number: expenseNumber } = splitExpenseNumber(fullExpenseNumber, defaultPrefix);
+
+            // Create expense header
+            const [createdExpense] = await sql`
               INSERT INTO expenses (
-                tenant_id, expense_number, title, description, quantity, amount, currency, category, subcategory,
+                tenant_id, expense_prefix, expense_number, title, description, quantity, amount, currency, category, subcategory,
                 expense_date, payment_method, payment_reference, vendor_id, lead_type_id, expense_type,
                 receipt_url, tax_amount, tax_rate, is_reimbursable, is_recurring, recurring_frequency,
                 status, amount_paid, amount_due, tags, notes, created_by
               ) VALUES (
                 ${invoiceData.tenantId},
-                ${expense.expenseNumber || null},
+                ${expensePrefix},
+                ${expenseNumber || null},
                 ${expense.title || "Expense"},
                 ${expense.notes || expense.description || null},
-                ${expense.quantity || 1},
-                ${parseFloat(expense.amount?.toString() || "0")},
+                1,
+                ${totalAmount},
                 ${expense.currency || invoiceData.currency || "USD"},
                 ${expense.category || "General"},
                 ${expense.subcategory || expense.category || "General"},
@@ -4747,20 +4928,53 @@ export class SimpleStorage {
                 ${expense.vendorId || null},
                 ${expense.leadTypeId || null},
                 ${expense.expenseType || "purchase"},
-                ${expense.receiptUrl || null},
-                ${expense.taxAmount || 0},
-                ${expense.taxRate || 0},
+                null,
+                ${expenseTaxAmount},
+                ${expenseTaxRate},
                 ${expense.isReimbursable || false},
                 ${expense.isRecurring || false},
                 ${expense.recurringFrequency || null},
                 ${expense.status || "pending"},
-                ${expense.amountPaid || 0},
-                ${expense.amountDue || parseFloat(expense.amount?.toString() || "0")},
+                ${expenseAmountPaid},
+                ${expenseAmountDue},
                 ${JSON.stringify(expense.tags || [])},
                 ${expense.notes || null},
                 ${invoiceData.userId || null}
               )
+              RETURNING id
             `;
+
+            // Create line item for this expense
+            const paymentStatus = expense.status === "paid" ? "paid" : (expense.status === "due" ? "due" : "credit");
+            await sql`
+              INSERT INTO expense_line_items (
+                expense_id, category, title, description, quantity, amount, tax_rate_id, tax_amount, tax_rate,
+                total_amount, vendor_id, lead_type_id, payment_method, payment_status, amount_paid, amount_due,
+                receipt_url, notes, display_order
+              ) VALUES (
+                ${createdExpense.id},
+                ${expense.category || "General"},
+                ${expense.title || "Expense"},
+                ${expense.description || expense.notes || null},
+                ${expenseQuantity},
+                ${expenseAmount},
+                ${expense.taxRateId || null},
+                ${expenseTaxAmount},
+                ${expenseTaxRate},
+                ${totalAmount},
+                ${expense.vendorId || null},
+                ${expense.leadTypeId || null},
+                ${expense.paymentMethod || "bank_transfer"},
+                ${paymentStatus},
+                ${expenseAmountPaid},
+                ${expenseAmountDue},
+                ${expense.receiptUrl || null},
+                ${expense.notes || null},
+                0
+              )
+            `;
+
+            console.log(`✅ Created expense with line item: ${expense.title || "Expense"}`);
           } catch (expenseError) {
             console.error("⚠️ Failed to create expense:", expenseError);
             // Continue with other expenses even if one fails
@@ -4817,12 +5031,45 @@ export class SimpleStorage {
           console.error("⚠️ Failed to log invoice activity:", activityError);
         }
       }
+
+      // Combine prefix and number for backward compatibility (without dash: INV001)
+      const newInvPrefix = newInvoice.invoice_prefix || "INV";
+      const newInvNumber = newInvoice.invoice_number || "";
+
+      // Update invoice settings starting number to the next number
+      try {
+        // Extract the numeric part from the invoice number
+        const invoiceNumberValue = parseInt(newInvNumber, 10);
+        if (!isNaN(invoiceNumberValue)) {
+          // Increment the starting number to be one more than the current invoice number
+          const nextStartNumber = invoiceNumberValue + 1;
+          
+          // Get current settings to preserve other values
+          const currentSettings = await this.getInvoiceSettings(invoiceData.tenantId);
+          
+          // Update only the invoiceNumberStart
+          await this.upsertInvoiceSettings(invoiceData.tenantId, {
+            ...currentSettings,
+            invoiceNumberStart: nextStartNumber,
+          });
+          
+          console.log(`✅ Updated invoice settings: invoiceNumberStart set to ${nextStartNumber} (was ${currentSettings.invoiceNumberStart || startNumber})`);
+        }
+      } catch (settingsError) {
+        console.error("⚠️ Failed to update invoice settings starting number:", settingsError);
+        // Don't fail the invoice creation if settings update fails
+      }
+      const fullNewInvoiceNumber = newInvPrefix && newInvNumber 
+        ? `${newInvPrefix}${newInvNumber}` 
+        : newInvNumber || newInvoice.invoice_number;
+
       return {
         id: newInvoice.id,
         tenantId: newInvoice.tenant_id,
         customerId: newInvoice.customer_id,
         bookingId: newInvoice.booking_id,
-        invoiceNumber: newInvoice.invoice_number,
+        invoiceNumber: fullNewInvoiceNumber,
+        invoicePrefix: newInvPrefix,
         status: newInvoice.status,
         issueDate: newInvoice.issue_date || newInvoice.invoice_date,
         dueDate: newInvoice.due_date,
@@ -4862,10 +5109,40 @@ export class SimpleStorage {
       // Store full line items as JSON for complete data preservation
       const lineItemsJson = invoiceData.lineItems || invoiceData.items ? JSON.stringify(invoiceData.lineItems || invoiceData.items || []) : null;
 
+      // Handle invoice number update - split prefix and number if provided
+      let invoicePrefixUpdate = null;
+      let invoiceNumberUpdate = null;
+      if (invoiceData.invoiceNumber !== undefined) {
+        const tenantSettings = await this.getInvoiceSettings(invoiceData.tenantId || (await sql`SELECT tenant_id FROM invoices WHERE id = ${invoiceId}`)[0]?.tenant_id);
+        const defaultPrefix = tenantSettings?.invoiceNumberPrefix || "INV";
+        const splitResult = (() => {
+          const fullNumber = invoiceData.invoiceNumber || "";
+          if (!fullNumber) {
+            return { prefix: defaultPrefix, number: "" };
+          }
+          const match = fullNumber.match(/^([A-Za-z0-9]+)[\s-]+(.+)$/);
+          if (match) {
+            return { prefix: match[1].toUpperCase(), number: match[2] };
+          }
+          const numberMatch = fullNumber.match(/^([A-Za-z]+)(\d+.*)$/);
+          if (numberMatch) {
+            return { prefix: numberMatch[1].toUpperCase(), number: numberMatch[2] };
+          }
+          if (/^\d+/.test(fullNumber)) {
+            return { prefix: defaultPrefix, number: fullNumber };
+          }
+          return { prefix: defaultPrefix, number: fullNumber };
+        })();
+        invoicePrefixUpdate = splitResult.prefix;
+        invoiceNumberUpdate = splitResult.number;
+      }
+
       // Sanitize and validate data before update
       const cleanData = {
         customerId: invoiceData.customerId !== undefined ? invoiceData.customerId : null,
         bookingId: invoiceData.bookingId !== undefined ? invoiceData.bookingId : null,
+        invoicePrefix: invoicePrefixUpdate,
+        invoiceNumber: invoiceNumberUpdate,
         status: invoiceData.status || null,
         issueDate: invoiceData.issueDate || invoiceData.invoiceDate || null,
         dueDate: invoiceData.dueDate || null,
@@ -4893,6 +5170,8 @@ export class SimpleStorage {
         SET 
           customer_id = COALESCE(${cleanData.customerId}, customer_id),
           booking_id = COALESCE(${cleanData.bookingId}, booking_id),
+          invoice_prefix = COALESCE(${cleanData.invoicePrefix}, invoice_prefix),
+          invoice_number = COALESCE(${cleanData.invoiceNumber}, invoice_number),
           status = COALESCE(${cleanData.status}, status),
           issue_date = COALESCE(${cleanData.issueDate}, issue_date),
           invoice_date = COALESCE(${cleanData.issueDate}, invoice_date),
@@ -4922,6 +5201,13 @@ export class SimpleStorage {
       }
 
       const updatedInvoice = invoice[0];
+
+      // Combine prefix and number for backward compatibility (without dash: INV001)
+      const updatedInvPrefix = updatedInvoice.invoice_prefix || "INV";
+      const updatedInvNumber = updatedInvoice.invoice_number || "";
+      const fullUpdatedInvoiceNumber = updatedInvPrefix && updatedInvNumber 
+        ? `${updatedInvPrefix}${updatedInvNumber}` 
+        : updatedInvNumber || updatedInvoice.invoice_number;
 
       // Also update invoice_items table if line items are provided
       if (invoiceData.lineItems && Array.isArray(invoiceData.lineItems)) {
@@ -4995,7 +5281,8 @@ export class SimpleStorage {
         tenantId: updatedInvoice.tenant_id,
         customerId: updatedInvoice.customer_id,
         bookingId: updatedInvoice.booking_id,
-        invoiceNumber: updatedInvoice.invoice_number,
+        invoiceNumber: fullUpdatedInvoiceNumber,
+        invoicePrefix: updatedInvPrefix,
         status: updatedInvoice.status,
         issueDate: updatedInvoice.issue_date || updatedInvoice.invoice_date,
         dueDate: updatedInvoice.due_date,
@@ -8188,9 +8475,23 @@ export class SimpleStorage {
 
     console.log("Fetched records:", estimates.length, "Total count:", totalCount);
 
+    // Combine prefix and number for backward compatibility (without dash: EST001)
+    const estimatesWithCombinedNumber = estimates.map((estimate: any) => {
+      const estPrefix = estimate.estimate_prefix || "EST";
+      const estNumber = estimate.estimate_number || "";
+      const fullEstimateNumber = estPrefix && estNumber 
+        ? `${estPrefix}${estNumber}` 
+        : estNumber || estimate.estimate_number;
+      return {
+        ...estimate,
+        estimateNumber: fullEstimateNumber,
+        estimatePrefix: estPrefix,
+      };
+    });
+
     // Return pagination format similar to invoices
     return {
-      data: estimates,
+      data: estimatesWithCombinedNumber,
       pagination: {
         page: page || Math.floor(offset / finalLimit) + 1,
         pageSize: finalLimit,
@@ -8208,7 +8509,23 @@ export class SimpleStorage {
         WHERE id = ${estimateId} AND tenant_id = ${tenantId}
       `;
       console.log("Retrieved estimate:", estimate);
-      return estimate || undefined;
+      
+      if (!estimate) {
+        return undefined;
+      }
+
+      // Combine prefix and number for backward compatibility (without dash: EST001)
+      const estPrefix = estimate.estimate_prefix || "EST";
+      const estNumber = estimate.estimate_number || "";
+      const fullEstimateNumber = estPrefix && estNumber 
+        ? `${estPrefix}${estNumber}` 
+        : estNumber || estimate.estimate_number;
+
+      return {
+        ...estimate,
+        estimateNumber: fullEstimateNumber,
+        estimatePrefix: estPrefix,
+      };
     } catch (error) {
       console.error("Error getting estimate:", error);
       throw error;
@@ -8226,16 +8543,50 @@ export class SimpleStorage {
       const validUntilValue = estimateData.validUntil || null;
       console.log("🔧 DEBUG: validUntil value:", validUntilValue);
 
+      // Get estimate settings to get default prefix
+      const estimateSettings = await this.getEstimateSettings(estimateData.tenantId);
+      const defaultPrefix = estimateSettings?.estimateNumberPrefix || "EST";
+
+      // Helper function to split estimate number into prefix and number
+      const splitEstimateNumber = (fullNumber: string, defaultPrefix: string = "EST"): { prefix: string; number: string } => {
+        if (!fullNumber) {
+          return { prefix: defaultPrefix, number: "" };
+        }
+        // Try to extract prefix and number (format: PREFIX-NUMBER, PREFIXNUMBER, or PREFIX NUMBER)
+        // First try with separator (dash or space)
+        const matchWithSeparator = fullNumber.match(/^([A-Za-z0-9]+)[\s-]+(.+)$/);
+        if (matchWithSeparator) {
+          return { prefix: matchWithSeparator[1].toUpperCase(), number: matchWithSeparator[2] };
+        }
+        // If no separator, try to find where numbers start (format: PREFIXNUMBER like EST001)
+        const numberMatch = fullNumber.match(/^([A-Za-z]+)(\d+.*)$/);
+        if (numberMatch) {
+          return { prefix: numberMatch[1].toUpperCase(), number: numberMatch[2] };
+        }
+        // If it's all numbers, use default prefix
+        if (/^\d+/.test(fullNumber)) {
+          return { prefix: defaultPrefix, number: fullNumber };
+        }
+        // Default: use default prefix and the whole string as number
+        return { prefix: defaultPrefix, number: fullNumber };
+      };
+
+      // Split estimate number into prefix and number
+      const fullEstimateNumber = estimateData.estimateNumber || "";
+      const { prefix, number } = splitEstimateNumber(fullEstimateNumber, defaultPrefix);
+      const estimateNumber = number; // Store only the number part
+      const estimatePrefix = prefix; // Store prefix separately
+
       const [estimate] = await sql`
         INSERT INTO estimates (
-          tenant_id, customer_id, lead_id, estimate_number, invoice_number, title, description, 
+          tenant_id, customer_id, lead_id, estimate_number, estimate_prefix, invoice_number, title, description, 
           currency, customer_name, customer_email, customer_phone, customer_address,
           subtotal, discount_type, discount_value, discount_amount, tax_rate, tax_amount,
           total_amount, deposit_required, deposit_amount, deposit_percentage,
           payment_terms, logo_url, brand_color, notes, status, valid_until, attachments
         ) VALUES (
-          ${estimateData.tenantId}, ${estimateData.customerId}, ${estimateData.leadId || null}, ${estimateData.estimateNumber},
-          ${estimateData.invoiceNumber}, ${estimateData.title}, ${estimateData.description},
+          ${estimateData.tenantId}, ${estimateData.customerId}, ${estimateData.leadId || null}, ${estimateNumber},
+          ${estimatePrefix}, ${estimateData.invoiceNumber}, ${estimateData.title}, ${estimateData.description},
           ${estimateData.currency || "USD"}, ${estimateData.customerName}, 
           ${estimateData.customerEmail}, ${estimateData.customerPhone}, 
           ${estimateData.customerAddress}, ${estimateData.subtotal}, 
@@ -8249,7 +8600,43 @@ export class SimpleStorage {
           ${estimateData.attachments || JSON.stringify([])}
         ) RETURNING *
       `;
-      return estimate;
+
+      // Update estimate settings starting number to the next number
+      try {
+        // Extract the numeric part from the estimate number
+        const estimateNumberValue = parseInt(estimateNumber, 10);
+        if (!isNaN(estimateNumberValue)) {
+          // Increment the starting number to be one more than the current estimate number
+          const nextStartNumber = estimateNumberValue + 1;
+          
+          // Get current settings to preserve other values
+          const currentSettings = await this.getEstimateSettings(estimateData.tenantId);
+          
+          // Update only the estimateNumberStart
+          await this.upsertEstimateSettings(estimateData.tenantId, {
+            ...currentSettings,
+            estimateNumberStart: nextStartNumber,
+          });
+          
+          console.log(`✅ Updated estimate settings: estimateNumberStart set to ${nextStartNumber} (was ${currentSettings.estimateNumberStart || estimateSettings.estimateNumberStart || 1})`);
+        }
+      } catch (settingsError) {
+        console.error("⚠️ Failed to update estimate settings starting number:", settingsError);
+        // Don't fail the estimate creation if settings update fails
+      }
+
+      // Combine prefix and number for backward compatibility (without dash: EST001)
+      const newEstPrefix = estimate.estimate_prefix || "EST";
+      const newEstNumber = estimate.estimate_number || "";
+      const fullNewEstimateNumber = newEstPrefix && newEstNumber 
+        ? `${newEstPrefix}${newEstNumber}` 
+        : newEstNumber || estimate.estimate_number;
+
+      return {
+        ...estimate,
+        estimateNumber: fullNewEstimateNumber,
+        estimatePrefix: newEstPrefix,
+      };
     } catch (error) {
       console.error("Error creating estimate:", error);
       throw error;
@@ -10292,6 +10679,7 @@ async getDashboardMetrics(
       if (!settings) {
         return {
           invoiceNumberStart: 1,
+          invoiceNumberPrefix: "INV",
           defaultCurrency: "USD",
           defaultGstSettingId: null,
           showTax: true,
@@ -10310,6 +10698,7 @@ async getDashboardMetrics(
         id: settings.id,
         tenantId: settings.tenant_id,
         invoiceNumberStart: settings.invoice_number_start,
+        invoiceNumberPrefix: settings.invoice_number_prefix || "INV",
         defaultCurrency: settings.default_currency,
         defaultGstSettingId: settings.default_gst_setting_id || null,
         showTax: settings.show_tax,
@@ -10327,6 +10716,7 @@ async getDashboardMetrics(
       console.error("Error getting invoice settings:", error);
       return {
         invoiceNumberStart: 1,
+        invoiceNumberPrefix: "INV",
         defaultCurrency: "USD",
         defaultGstSettingId: null,
         showTax: true,
@@ -10346,11 +10736,12 @@ async getDashboardMetrics(
   async upsertInvoiceSettings(tenantId: number, settings: any) {
     try {
       const [result] =
-        await sql`INSERT INTO tenant_settings (tenant_id, invoice_number_start, default_currency, default_gst_setting_id, show_tax, show_discount, show_notes, show_voucher_invoice, show_provider, show_vendor, show_unit_price, show_additional_commission, send_invoice_via_email, send_invoice_via_whatsapp, updated_at) VALUES (${tenantId}, ${settings.invoiceNumberStart !== undefined ? settings.invoiceNumberStart : 1}, ${settings.defaultCurrency || "USD"}, ${settings.defaultGstSettingId || null}, ${settings.showTax !== undefined ? settings.showTax : true}, ${settings.showDiscount !== undefined ? settings.showDiscount : true}, ${settings.showNotes !== undefined ? settings.showNotes : true}, ${settings.showVoucherInvoice !== undefined ? settings.showVoucherInvoice : true}, ${settings.showProvider !== undefined ? settings.showProvider : true}, ${settings.showVendor !== undefined ? settings.showVendor : true}, ${settings.showUnitPrice !== undefined ? settings.showUnitPrice : true}, ${settings.showAdditionalCommission !== undefined ? settings.showAdditionalCommission : false}, ${settings.sendInvoiceViaEmail !== undefined ? settings.sendInvoiceViaEmail : true}, ${settings.sendInvoiceViaWhatsapp !== undefined ? settings.sendInvoiceViaWhatsapp : false}, NOW()) ON CONFLICT (tenant_id) DO UPDATE SET invoice_number_start = COALESCE(${settings.invoiceNumberStart}, tenant_settings.invoice_number_start), default_currency = COALESCE(${settings.defaultCurrency}, tenant_settings.default_currency), default_gst_setting_id = COALESCE(${settings.defaultGstSettingId}, tenant_settings.default_gst_setting_id), show_tax = COALESCE(${settings.showTax}, tenant_settings.show_tax), show_discount = COALESCE(${settings.showDiscount}, tenant_settings.show_discount), show_notes = COALESCE(${settings.showNotes}, tenant_settings.show_notes), show_voucher_invoice = COALESCE(${settings.showVoucherInvoice}, tenant_settings.show_voucher_invoice), show_provider = COALESCE(${settings.showProvider}, tenant_settings.show_provider), show_vendor = COALESCE(${settings.showVendor}, tenant_settings.show_vendor), show_unit_price = COALESCE(${settings.showUnitPrice}, tenant_settings.show_unit_price), show_additional_commission = COALESCE(${settings.showAdditionalCommission}, tenant_settings.show_additional_commission), send_invoice_via_email = COALESCE(${settings.sendInvoiceViaEmail}, tenant_settings.send_invoice_via_email), send_invoice_via_whatsapp = COALESCE(${settings.sendInvoiceViaWhatsapp}, tenant_settings.send_invoice_via_whatsapp), updated_at = NOW() RETURNING *`;
+        await sql`INSERT INTO tenant_settings (tenant_id, invoice_number_start, invoice_number_prefix, default_currency, default_gst_setting_id, show_tax, show_discount, show_notes, show_voucher_invoice, show_provider, show_vendor, show_unit_price, show_additional_commission, send_invoice_via_email, send_invoice_via_whatsapp, updated_at) VALUES (${tenantId}, ${settings.invoiceNumberStart !== undefined ? settings.invoiceNumberStart : 1}, ${settings.invoiceNumberPrefix || "INV"}, ${settings.defaultCurrency || "USD"}, ${settings.defaultGstSettingId || null}, ${settings.showTax !== undefined ? settings.showTax : true}, ${settings.showDiscount !== undefined ? settings.showDiscount : true}, ${settings.showNotes !== undefined ? settings.showNotes : true}, ${settings.showVoucherInvoice !== undefined ? settings.showVoucherInvoice : true}, ${settings.showProvider !== undefined ? settings.showProvider : true}, ${settings.showVendor !== undefined ? settings.showVendor : true}, ${settings.showUnitPrice !== undefined ? settings.showUnitPrice : true}, ${settings.showAdditionalCommission !== undefined ? settings.showAdditionalCommission : false}, ${settings.sendInvoiceViaEmail !== undefined ? settings.sendInvoiceViaEmail : true}, ${settings.sendInvoiceViaWhatsapp !== undefined ? settings.sendInvoiceViaWhatsapp : false}, NOW()) ON CONFLICT (tenant_id) DO UPDATE SET invoice_number_start = COALESCE(${settings.invoiceNumberStart}, tenant_settings.invoice_number_start), invoice_number_prefix = COALESCE(${settings.invoiceNumberPrefix}, tenant_settings.invoice_number_prefix), default_currency = COALESCE(${settings.defaultCurrency}, tenant_settings.default_currency), default_gst_setting_id = COALESCE(${settings.defaultGstSettingId}, tenant_settings.default_gst_setting_id), show_tax = COALESCE(${settings.showTax}, tenant_settings.show_tax), show_discount = COALESCE(${settings.showDiscount}, tenant_settings.show_discount), show_notes = COALESCE(${settings.showNotes}, tenant_settings.show_notes), show_voucher_invoice = COALESCE(${settings.showVoucherInvoice}, tenant_settings.show_voucher_invoice), show_provider = COALESCE(${settings.showProvider}, tenant_settings.show_provider), show_vendor = COALESCE(${settings.showVendor}, tenant_settings.show_vendor), show_unit_price = COALESCE(${settings.showUnitPrice}, tenant_settings.show_unit_price), show_additional_commission = COALESCE(${settings.showAdditionalCommission}, tenant_settings.show_additional_commission), send_invoice_via_email = COALESCE(${settings.sendInvoiceViaEmail}, tenant_settings.send_invoice_via_email), send_invoice_via_whatsapp = COALESCE(${settings.sendInvoiceViaWhatsapp}, tenant_settings.send_invoice_via_whatsapp), updated_at = NOW() RETURNING *`;
       return {
         id: result.id,
         tenantId: result.tenant_id,
         invoiceNumberStart: result.invoice_number_start,
+        invoiceNumberPrefix: result.invoice_number_prefix || "INV",
         defaultCurrency: result.default_currency,
         defaultGstSettingId: result.default_gst_setting_id || null,
         showTax: result.show_tax,
@@ -10378,6 +10769,7 @@ async getDashboardMetrics(
       if (!settings) {
         return {
           expenseNumberStart: 1,
+          expenseNumberPrefix: "EXP",
           defaultCurrency: "USD",
           defaultGstSettingId: null,
           showTax: true,
@@ -10394,6 +10786,7 @@ async getDashboardMetrics(
         id: settings.id,
         tenantId: settings.tenant_id,
         expenseNumberStart: settings.expense_number_start ?? 1,
+        expenseNumberPrefix: settings.expense_number_prefix ?? "EXP",
         defaultCurrency: settings.default_currency ?? "USD",
         defaultGstSettingId: settings.default_gst_setting_id || null,
         showTax: settings.show_expense_tax ?? true,
@@ -10409,6 +10802,7 @@ async getDashboardMetrics(
       console.error("Error getting expense settings:", error);
       return {
         expenseNumberStart: 1,
+        expenseNumberPrefix: "EXP",
         defaultCurrency: "USD",
         defaultGstSettingId: null,
         showTax: true,
@@ -10426,11 +10820,12 @@ async getDashboardMetrics(
   async upsertExpenseSettings(tenantId: number, settings: any) {
     try {
       const [result] =
-        await sql`INSERT INTO tenant_settings (tenant_id, expense_number_start, default_currency, default_gst_setting_id, show_expense_tax, show_expense_vendor, show_expense_lead_type, show_expense_category, show_expense_subcategory, show_expense_payment_method, show_expense_payment_status, show_expense_notes, updated_at) VALUES (${tenantId}, ${settings.expenseNumberStart !== undefined ? settings.expenseNumberStart : 1}, ${settings.defaultCurrency || "USD"}, ${settings.defaultGstSettingId || null}, ${settings.showTax !== undefined ? settings.showTax : true}, ${settings.showVendor !== undefined ? settings.showVendor : true}, ${settings.showLeadType !== undefined ? settings.showLeadType : true}, ${settings.showCategory !== undefined ? settings.showCategory : true}, ${settings.showSubcategory !== undefined ? settings.showSubcategory : true}, ${settings.showPaymentMethod !== undefined ? settings.showPaymentMethod : true}, ${settings.showPaymentStatus !== undefined ? settings.showPaymentStatus : true}, ${settings.showNotes !== undefined ? settings.showNotes : true}, NOW()) ON CONFLICT (tenant_id) DO UPDATE SET expense_number_start = COALESCE(${settings.expenseNumberStart}, tenant_settings.expense_number_start), default_currency = COALESCE(${settings.defaultCurrency}, tenant_settings.default_currency), default_gst_setting_id = COALESCE(${settings.defaultGstSettingId}, tenant_settings.default_gst_setting_id), show_expense_tax = COALESCE(${settings.showTax}, tenant_settings.show_expense_tax), show_expense_vendor = COALESCE(${settings.showVendor}, tenant_settings.show_expense_vendor), show_expense_lead_type = COALESCE(${settings.showLeadType}, tenant_settings.show_expense_lead_type), show_expense_category = COALESCE(${settings.showCategory}, tenant_settings.show_expense_category), show_expense_subcategory = COALESCE(${settings.showSubcategory}, tenant_settings.show_expense_subcategory), show_expense_payment_method = COALESCE(${settings.showPaymentMethod}, tenant_settings.show_expense_payment_method), show_expense_payment_status = COALESCE(${settings.showPaymentStatus}, tenant_settings.show_expense_payment_status), show_expense_notes = COALESCE(${settings.showNotes}, tenant_settings.show_expense_notes), updated_at = NOW() RETURNING *`;
+        await sql`INSERT INTO tenant_settings (tenant_id, expense_number_start, expense_number_prefix, default_currency, default_gst_setting_id, show_expense_tax, show_expense_vendor, show_expense_lead_type, show_expense_category, show_expense_subcategory, show_expense_payment_method, show_expense_payment_status, show_expense_notes, updated_at) VALUES (${tenantId}, ${settings.expenseNumberStart !== undefined ? settings.expenseNumberStart : 1}, ${settings.expenseNumberPrefix || "EXP"}, ${settings.defaultCurrency || "USD"}, ${settings.defaultGstSettingId || null}, ${settings.showTax !== undefined ? settings.showTax : true}, ${settings.showVendor !== undefined ? settings.showVendor : true}, ${settings.showLeadType !== undefined ? settings.showLeadType : true}, ${settings.showCategory !== undefined ? settings.showCategory : true}, ${settings.showSubcategory !== undefined ? settings.showSubcategory : true}, ${settings.showPaymentMethod !== undefined ? settings.showPaymentMethod : true}, ${settings.showPaymentStatus !== undefined ? settings.showPaymentStatus : true}, ${settings.showNotes !== undefined ? settings.showNotes : true}, NOW()) ON CONFLICT (tenant_id) DO UPDATE SET expense_number_start = COALESCE(${settings.expenseNumberStart}, tenant_settings.expense_number_start), expense_number_prefix = COALESCE(${settings.expenseNumberPrefix}, tenant_settings.expense_number_prefix), default_currency = COALESCE(${settings.defaultCurrency}, tenant_settings.default_currency), default_gst_setting_id = COALESCE(${settings.defaultGstSettingId}, tenant_settings.default_gst_setting_id), show_expense_tax = COALESCE(${settings.showTax}, tenant_settings.show_expense_tax), show_expense_vendor = COALESCE(${settings.showVendor}, tenant_settings.show_expense_vendor), show_expense_lead_type = COALESCE(${settings.showLeadType}, tenant_settings.show_expense_lead_type), show_expense_category = COALESCE(${settings.showCategory}, tenant_settings.show_expense_category), show_expense_subcategory = COALESCE(${settings.showSubcategory}, tenant_settings.show_expense_subcategory), show_expense_payment_method = COALESCE(${settings.showPaymentMethod}, tenant_settings.show_expense_payment_method), show_expense_payment_status = COALESCE(${settings.showPaymentStatus}, tenant_settings.show_expense_payment_status), show_expense_notes = COALESCE(${settings.showNotes}, tenant_settings.show_expense_notes), updated_at = NOW() RETURNING *`;
       return {
         id: result.id,
         tenantId: result.tenant_id,
         expenseNumberStart: result.expense_number_start ?? 1,
+        expenseNumberPrefix: result.expense_number_prefix ?? "EXP",
         defaultCurrency: result.default_currency ?? "USD",
         defaultGstSettingId: result.default_gst_setting_id || null,
         showTax: result.show_expense_tax ?? true,
@@ -10457,6 +10852,7 @@ async getDashboardMetrics(
       if (!settings) {
         return {
           estimateNumberStart: 1,
+          estimateNumberPrefix: "EST",
           defaultCurrency: "USD",
           defaultGstSettingId: null,
           showTax: true,
@@ -10472,6 +10868,7 @@ async getDashboardMetrics(
         id: settings.id,
         tenantId: settings.tenant_id,
         estimateNumberStart: settings.estimate_number_start ?? 1,
+        estimateNumberPrefix: settings.estimate_number_prefix ?? "EST",
         defaultCurrency: settings.default_currency ?? "USD",
         defaultGstSettingId: settings.default_gst_setting_id || null,
         showTax: settings.show_estimate_tax ?? true,
@@ -10486,6 +10883,7 @@ async getDashboardMetrics(
       console.error("Error getting estimate settings:", error);
       return {
         estimateNumberStart: 1,
+        estimateNumberPrefix: "EST",
         defaultCurrency: "USD",
         defaultGstSettingId: null,
         showTax: true,
@@ -10500,11 +10898,12 @@ async getDashboardMetrics(
   async upsertEstimateSettings(tenantId: number, settings: any) {
     try {
       const [result] =
-        await sql`INSERT INTO tenant_settings (tenant_id, estimate_number_start, default_currency, default_gst_setting_id, show_estimate_tax, show_estimate_discount, show_estimate_notes, show_estimate_deposit, show_estimate_payment_terms, send_estimate_via_email, send_estimate_via_whatsapp, updated_at) VALUES (${tenantId}, ${settings.estimateNumberStart !== undefined ? settings.estimateNumberStart : 1}, ${settings.defaultCurrency || "USD"}, ${settings.defaultGstSettingId || null}, ${settings.showTax !== undefined ? settings.showTax : true}, ${settings.showDiscount !== undefined ? settings.showDiscount : true}, ${settings.showNotes !== undefined ? settings.showNotes : true}, ${settings.showDeposit !== undefined ? settings.showDeposit : true}, ${settings.showPaymentTerms !== undefined ? settings.showPaymentTerms : true}, ${settings.sendEstimateViaEmail !== undefined ? settings.sendEstimateViaEmail : true}, ${settings.sendEstimateViaWhatsapp !== undefined ? settings.sendEstimateViaWhatsapp : false}, NOW()) ON CONFLICT (tenant_id) DO UPDATE SET estimate_number_start = COALESCE(${settings.estimateNumberStart}, tenant_settings.estimate_number_start), default_currency = COALESCE(${settings.defaultCurrency}, tenant_settings.default_currency), default_gst_setting_id = COALESCE(${settings.defaultGstSettingId}, tenant_settings.default_gst_setting_id), show_estimate_tax = COALESCE(${settings.showTax}, tenant_settings.show_estimate_tax), show_estimate_discount = COALESCE(${settings.showDiscount}, tenant_settings.show_estimate_discount), show_estimate_notes = COALESCE(${settings.showNotes}, tenant_settings.show_estimate_notes), show_estimate_deposit = COALESCE(${settings.showDeposit}, tenant_settings.show_estimate_deposit), show_estimate_payment_terms = COALESCE(${settings.showPaymentTerms}, tenant_settings.show_estimate_payment_terms), send_estimate_via_email = COALESCE(${settings.sendEstimateViaEmail}, tenant_settings.send_estimate_via_email), send_estimate_via_whatsapp = COALESCE(${settings.sendEstimateViaWhatsapp}, tenant_settings.send_estimate_via_whatsapp), updated_at = NOW() RETURNING *`;
+        await sql`INSERT INTO tenant_settings (tenant_id, estimate_number_start, estimate_number_prefix, default_currency, default_gst_setting_id, show_estimate_tax, show_estimate_discount, show_estimate_notes, show_estimate_deposit, show_estimate_payment_terms, send_estimate_via_email, send_estimate_via_whatsapp, updated_at) VALUES (${tenantId}, ${settings.estimateNumberStart !== undefined ? settings.estimateNumberStart : 1}, ${settings.estimateNumberPrefix || "EST"}, ${settings.defaultCurrency || "USD"}, ${settings.defaultGstSettingId || null}, ${settings.showTax !== undefined ? settings.showTax : true}, ${settings.showDiscount !== undefined ? settings.showDiscount : true}, ${settings.showNotes !== undefined ? settings.showNotes : true}, ${settings.showDeposit !== undefined ? settings.showDeposit : true}, ${settings.showPaymentTerms !== undefined ? settings.showPaymentTerms : true}, ${settings.sendEstimateViaEmail !== undefined ? settings.sendEstimateViaEmail : true}, ${settings.sendEstimateViaWhatsapp !== undefined ? settings.sendEstimateViaWhatsapp : false}, NOW()) ON CONFLICT (tenant_id) DO UPDATE SET estimate_number_start = COALESCE(${settings.estimateNumberStart}, tenant_settings.estimate_number_start), estimate_number_prefix = COALESCE(${settings.estimateNumberPrefix}, tenant_settings.estimate_number_prefix), default_currency = COALESCE(${settings.defaultCurrency}, tenant_settings.default_currency), default_gst_setting_id = COALESCE(${settings.defaultGstSettingId}, tenant_settings.default_gst_setting_id), show_estimate_tax = COALESCE(${settings.showTax}, tenant_settings.show_estimate_tax), show_estimate_discount = COALESCE(${settings.showDiscount}, tenant_settings.show_estimate_discount), show_estimate_notes = COALESCE(${settings.showNotes}, tenant_settings.show_estimate_notes), show_estimate_deposit = COALESCE(${settings.showDeposit}, tenant_settings.show_estimate_deposit), show_estimate_payment_terms = COALESCE(${settings.showPaymentTerms}, tenant_settings.show_estimate_payment_terms), send_estimate_via_email = COALESCE(${settings.sendEstimateViaEmail}, tenant_settings.send_estimate_via_email), send_estimate_via_whatsapp = COALESCE(${settings.sendEstimateViaWhatsapp}, tenant_settings.send_estimate_via_whatsapp), updated_at = NOW() RETURNING *`;
       return {
         id: result.id,
         tenantId: result.tenant_id,
         estimateNumberStart: result.estimate_number_start ?? 1,
+        estimateNumberPrefix: result.estimate_number_prefix ?? "EST",
         defaultCurrency: result.default_currency ?? "USD",
         defaultGstSettingId: result.default_gst_setting_id || null,
         showTax: result.show_estimate_tax ?? true,
@@ -11034,6 +11433,287 @@ async getDashboardMetrics(
       }));
     } catch (error) {
       console.error("Error fetching WhatsApp messages by lead:", error);
+      throw error;
+    }
+  }
+
+  // Migration function to add invoice_prefix column and split existing invoice numbers
+  async migrateInvoicePrefixes() {
+    try {
+      console.log("🔄 Starting invoice prefix migration...");
+
+      // First, add the column if it doesn't exist
+      try {
+        await sql`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS invoice_prefix TEXT DEFAULT 'INV'`;
+        console.log("✅ Added invoice_prefix column");
+      } catch (error: any) {
+        if (error.code !== '42701') { // Column already exists
+          throw error;
+        }
+        console.log("ℹ️ invoice_prefix column already exists");
+      }
+
+      // Get all invoices that need migration (where prefix is null or invoice_number contains prefix)
+      const invoices = await sql`
+        SELECT id, invoice_number, invoice_prefix, tenant_id
+        FROM invoices
+        WHERE invoice_prefix IS NULL OR invoice_prefix = 'INV'
+      `;
+
+      console.log(`📊 Found ${invoices.length} invoices to migrate`);
+
+      let migrated = 0;
+      for (const invoice of invoices) {
+        const fullNumber = invoice.invoice_number || "";
+        
+        // Helper function to split invoice number
+        const splitInvoiceNumber = (fullNumber: string, defaultPrefix: string = "INV"): { prefix: string; number: string } => {
+          if (!fullNumber) {
+            return { prefix: defaultPrefix, number: "" };
+          }
+          // Try to extract prefix and number (format: PREFIX-NUMBER, PREFIXNUMBER, or PREFIX NUMBER)
+          // First try with separator (dash or space)
+          const matchWithSeparator = fullNumber.match(/^([A-Za-z0-9]+)[\s-]+(.+)$/);
+          if (matchWithSeparator) {
+            return { prefix: matchWithSeparator[1].toUpperCase(), number: matchWithSeparator[2] };
+          }
+          // If no separator, try to find where numbers start (format: PREFIXNUMBER like INV001)
+          const numberMatch = fullNumber.match(/^([A-Za-z]+)(\d+.*)$/);
+          if (numberMatch) {
+            return { prefix: numberMatch[1].toUpperCase(), number: numberMatch[2] };
+          }
+          // If it's all numbers, use default prefix
+          if (/^\d+/.test(fullNumber)) {
+            return { prefix: defaultPrefix, number: fullNumber };
+          }
+          // Default: use as number with default prefix
+          return { prefix: defaultPrefix, number: fullNumber };
+        };
+
+        // Get tenant settings for default prefix
+        let defaultPrefix = "INV";
+        try {
+          const settings = await this.getInvoiceSettings(invoice.tenant_id);
+          defaultPrefix = settings?.invoiceNumberPrefix || "INV";
+        } catch (error) {
+          console.warn(`⚠️ Could not get settings for tenant ${invoice.tenant_id}, using default`);
+        }
+
+        const { prefix, number } = splitInvoiceNumber(fullNumber, defaultPrefix);
+
+        // Update the invoice
+        await sql`
+          UPDATE invoices
+          SET invoice_prefix = ${prefix},
+              invoice_number = ${number}
+          WHERE id = ${invoice.id}
+        `;
+
+        migrated++;
+        if (migrated % 100 === 0) {
+          console.log(`📊 Migrated ${migrated}/${invoices.length} invoices...`);
+        }
+      }
+
+      console.log(`✅ Migration complete! Migrated ${migrated} invoices`);
+      return { success: true, migrated };
+    } catch (error) {
+      console.error("❌ Migration error:", error);
+      throw error;
+    }
+  }
+
+  // Migration function to add estimate_prefix column and split existing estimate numbers
+  async migrateEstimatePrefixes() {
+    try {
+      console.log("🔄 Starting estimate prefix migration...");
+
+      // First, add the column if it doesn't exist
+      try {
+        await sql`ALTER TABLE estimates ADD COLUMN IF NOT EXISTS estimate_prefix TEXT DEFAULT 'EST'`;
+        console.log("✅ Added estimate_prefix column");
+      } catch (error: any) {
+        if (error.code !== '42701') { // Column already exists
+          throw error;
+        }
+        console.log("ℹ️ estimate_prefix column already exists");
+      }
+
+      // Get all estimates that need migration (where prefix is null or estimate_number contains prefix)
+      const estimates = await sql`
+        SELECT id, estimate_number, estimate_prefix, tenant_id
+        FROM estimates
+        WHERE estimate_prefix IS NULL OR estimate_prefix = 'EST'
+      `;
+
+      console.log(`📊 Found ${estimates.length} estimates to migrate`);
+
+      let migrated = 0;
+      for (const estimate of estimates) {
+        const fullNumber = estimate.estimate_number || "";
+        
+        // Helper function to split estimate number
+        const splitEstimateNumber = (fullNumber: string, defaultPrefix: string = "EST"): { prefix: string; number: string } => {
+          if (!fullNumber) {
+            return { prefix: defaultPrefix, number: "" };
+          }
+          // Try to extract prefix and number (format: PREFIX-NUMBER, PREFIXNUMBER, or PREFIX NUMBER)
+          // First try with separator (dash or space)
+          const matchWithSeparator = fullNumber.match(/^([A-Za-z0-9]+)[\s-]+(.+)$/);
+          if (matchWithSeparator) {
+            return { prefix: matchWithSeparator[1].toUpperCase(), number: matchWithSeparator[2] };
+          }
+          // If no separator, try to find where numbers start (format: PREFIXNUMBER like EST001)
+          const numberMatch = fullNumber.match(/^([A-Za-z]+)(\d+.*)$/);
+          if (numberMatch) {
+            return { prefix: numberMatch[1].toUpperCase(), number: numberMatch[2] };
+          }
+          // If it's all numbers, use default prefix
+          if (/^\d+/.test(fullNumber)) {
+            return { prefix: defaultPrefix, number: fullNumber };
+          }
+          // Default: use as number with default prefix
+          return { prefix: defaultPrefix, number: fullNumber };
+        };
+
+        // Get tenant settings for default prefix
+        let defaultPrefix = "EST";
+        try {
+          const settings = await this.getEstimateSettings(estimate.tenant_id);
+          defaultPrefix = settings?.estimateNumberPrefix || "EST";
+        } catch (error) {
+          console.warn(`⚠️ Could not get settings for tenant ${estimate.tenant_id}, using default`);
+        }
+
+        const { prefix, number } = splitEstimateNumber(fullNumber, defaultPrefix);
+
+        // Update the estimate
+        await sql`
+          UPDATE estimates
+          SET estimate_prefix = ${prefix},
+              estimate_number = ${number}
+          WHERE id = ${estimate.id}
+        `;
+
+        migrated++;
+        if (migrated % 100 === 0) {
+          console.log(`📊 Migrated ${migrated}/${estimates.length} estimates...`);
+        }
+      }
+
+      console.log(`✅ Migration complete! Migrated ${migrated} estimates`);
+      return { success: true, migrated };
+    } catch (error) {
+      console.error("❌ Migration error:", error);
+      throw error;
+    }
+  }
+
+  async migrateExpensePrefixes() {
+    try {
+      console.log("🔄 Starting expense prefix migration...");
+
+      // Add expense_prefix column to expenses table if it doesn't exist
+      try {
+        await sql`
+          ALTER TABLE expenses
+          ADD COLUMN IF NOT EXISTS expense_prefix TEXT DEFAULT 'EXP'
+        `;
+        console.log("✅ Added expense_prefix column to expenses table");
+      } catch (error: any) {
+        if (error.code !== '42701') { // Column already exists
+          throw error;
+        }
+        console.log("ℹ️ expense_prefix column already exists in expenses table");
+      }
+
+      // Add expense_number_prefix column to tenant_settings table if it doesn't exist
+      try {
+        await sql`
+          ALTER TABLE tenant_settings
+          ADD COLUMN IF NOT EXISTS expense_number_prefix TEXT DEFAULT 'EXP'
+        `;
+        console.log("✅ Added expense_number_prefix column to tenant_settings table");
+        
+        // Set default value for existing tenant_settings records
+        await sql`
+          UPDATE tenant_settings
+          SET expense_number_prefix = 'EXP'
+          WHERE expense_number_prefix IS NULL
+        `;
+        console.log("✅ Updated existing tenant_settings with default expense_number_prefix");
+      } catch (error: any) {
+        if (error.code !== '42701') { // Column already exists
+          throw error;
+        }
+        console.log("ℹ️ expense_number_prefix column already exists in tenant_settings table");
+      }
+
+      // Fetch all expenses
+      const expenses = await sql`
+        SELECT id, expense_number, tenant_id
+        FROM expenses
+        WHERE expense_number IS NOT NULL
+        ORDER BY id
+      `;
+
+      console.log(`📊 Found ${expenses.length} expenses to migrate`);
+
+      let migrated = 0;
+
+      for (const expense of expenses) {
+        // Get tenant-specific prefix from settings
+        const [settings] = await sql`
+          SELECT expense_number_prefix
+          FROM tenant_settings
+          WHERE tenant_id = ${expense.tenant_id}
+        `;
+        const defaultPrefix = settings?.expense_number_prefix || "EXP";
+
+        const splitExpenseNumber = (fullNumber: string, defaultPrefix: string = "EXP"): { prefix: string; number: string } => {
+          if (!fullNumber) {
+            return { prefix: defaultPrefix, number: "" };
+          }
+          // Try to extract prefix and number (format: PREFIX-NUMBER, PREFIXNUMBER, or PREFIX NUMBER)
+          // First try with separator (dash or space)
+          const matchWithSeparator = fullNumber.match(/^([A-Za-z0-9]+)[\s-]+(.+)$/);
+          if (matchWithSeparator) {
+            return { prefix: matchWithSeparator[1].toUpperCase(), number: matchWithSeparator[2] };
+          }
+          // If no separator, try to find where numbers start (format: PREFIXNUMBER like EXP001)
+          const numberMatch = fullNumber.match(/^([A-Za-z]+)(\d+.*)$/);
+          if (numberMatch) {
+            return { prefix: numberMatch[1].toUpperCase(), number: numberMatch[2] };
+          }
+          // If it's all numbers, use default prefix
+          if (/^\d+/.test(fullNumber)) {
+            return { prefix: defaultPrefix, number: fullNumber };
+          }
+          // Default: use as number with default prefix
+          return { prefix: defaultPrefix, number: fullNumber };
+        };
+
+        const fullNumber = expense.expense_number;
+        const { prefix, number } = splitExpenseNumber(fullNumber, defaultPrefix);
+
+        // Update the expense
+        await sql`
+          UPDATE expenses
+          SET expense_prefix = ${prefix},
+              expense_number = ${number}
+          WHERE id = ${expense.id}
+        `;
+
+        migrated++;
+        if (migrated % 100 === 0) {
+          console.log(`📊 Migrated ${migrated}/${expenses.length} expenses...`);
+        }
+      }
+
+      console.log(`✅ Migration complete! Migrated ${migrated} expenses`);
+      return { success: true, migrated };
+    } catch (error) {
+      console.error("❌ Migration error:", error);
       throw error;
     }
   }

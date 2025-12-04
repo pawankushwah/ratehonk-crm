@@ -107,6 +107,9 @@ export default function EstimateCreate() {
   // Existing attachments from database (for edit mode)
   const [existingAttachments, setExistingAttachments] = useState<Array<{filename: string; path: string; size: number; mimetype: string}>>([]);
 
+  // Estimate number state - separate prefix and number
+  const [estimateNumberOnly, setEstimateNumberOnly] = useState(""); // Just the number part without prefix
+
   // Form data state
   const [formData, setFormData] = useState<EstimateFormData>({
     title: "",
@@ -190,7 +193,7 @@ export default function EstimateCreate() {
 
   // Fetch existing estimates for title suggestions
   const { data: estimatesResponse } = useQuery<any>({
-    queryKey: ["/api/estimates"],
+    queryKey: ["/api/estimates", tenant?.id],
     enabled: !!tenant?.id,
     queryFn: async () => {
       const token = auth.getToken();
@@ -202,10 +205,26 @@ export default function EstimateCreate() {
       }
       const result = await response.json();
       // Handle both old format (array) and new format (object with data and pagination)
-      if (Array.isArray(result)) {
-        return result;
-      }
-      return result.data || [];
+      const estimatesList = Array.isArray(result) ? result : (result.data || []);
+      
+      // Filter by tenant to ensure we only get estimates for current tenant
+      // This is a safety check in case the API returns estimates from other tenants
+      const tenantEstimates = estimatesList.filter((est: any) => {
+        return est.tenantId === tenant?.id || est.tenant_id === tenant?.id;
+      });
+      
+      console.log("🔢 Fetched estimates for number generation:", {
+        total: estimatesList.length,
+        tenantFiltered: tenantEstimates.length,
+        tenantId: tenant?.id,
+        sampleEstimate: tenantEstimates[0] ? {
+          id: tenantEstimates[0].id,
+          estimateNumber: tenantEstimates[0].estimateNumber,
+          tenantId: tenantEstimates[0].tenantId || tenantEstimates[0].tenant_id
+        } : null
+      });
+      
+      return tenantEstimates;
     },
   });
 
@@ -300,34 +319,120 @@ export default function EstimateCreate() {
 
   const [selectedTaxSettingId, setSelectedTaxSettingId] = useState<string>("");
 
+  // Helper function to extract number part from full estimate number
+  const extractNumberPart = (fullNumber: string, prefix: string): string => {
+    if (!fullNumber) return "";
+    
+    // Normalize prefix for comparison (uppercase, no special chars)
+    const normalizedPrefix = prefix.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    
+    // Try multiple patterns to extract the number
+    // Pattern 1: PREFIX-NUMBER or PREFIX NUMBER (e.g., EST-001, EST 001)
+    const matchWithSeparator = fullNumber.match(new RegExp(`^${normalizedPrefix}[\\s-]+(\\d+)`, 'i'));
+    if (matchWithSeparator) {
+      return matchWithSeparator[1];
+    }
+    
+    // Pattern 2: PREFIXNUMBER (e.g., EST001)
+    const matchNoSeparator = fullNumber.match(new RegExp(`^${normalizedPrefix}(\\d+)`, 'i'));
+    if (matchNoSeparator) {
+      return matchNoSeparator[1];
+    }
+    
+    // Pattern 3: Try to find where prefix ends and numbers start (generic)
+    const genericMatch = fullNumber.match(/^[A-Za-z]+(\d+)/);
+    if (genericMatch) {
+      return genericMatch[1];
+    }
+    
+    // Pattern 4: Just numbers
+    const numbersOnly = fullNumber.match(/(\d+)/);
+    if (numbersOnly) {
+      return numbersOnly[1];
+    }
+    
+    // If no pattern matches, return the original (might be just a number)
+    return fullNumber.replace(/[^0-9]/g, '') || fullNumber;
+  };
+
   // Function to generate next estimate number
   const generateNextEstimateNumber = useMemo(() => {
     const startNumber = estimateSettings?.estimateNumberStart || 1;
+    const prefix = estimateSettings?.estimateNumberPrefix || "EST";
+    
+    console.log("🔢 Generating estimate number - estimates count:", estimates?.length, "startNumber:", startNumber, "prefix:", prefix);
     
     if (!estimates || estimates.length === 0) {
       // No existing estimates, use starting number from settings
-      return `EST-${String(startNumber).padStart(3, '0')}`;
+      const generated = `${prefix}${String(startNumber).padStart(3, '0')}`;
+      console.log("🔢 No existing estimates, using start number from settings:", generated);
+      return generated;
     }
 
     // Extract numbers from existing estimate numbers
+    // Handle formats like: EST-001, EST001, EST-1, EST1, etc.
+    // Also handle cases where estimate_number and estimate_prefix are separate fields
     const estimateNumbers = estimates
-      .map((est: any) => {
-        const estNum = est.estimateNumber || est.invoiceNumber || "";
-        // Extract number from formats like EST-001, EST-1, EST001, etc.
-        const match = estNum.match(/(\d+)/);
-        return match ? parseInt(match[1], 10) : 0;
+      .map((est: any, index: number) => {
+        // Try to get estimate number from various field names
+        let estNum = est.estimateNumber || est.invoiceNumber || est.estimate_number || "";
+        
+        // If we have separate prefix and number fields, combine them
+        if (!estNum && est.estimate_prefix && est.estimate_number) {
+          estNum = `${est.estimate_prefix}${est.estimate_number}`;
+        }
+        
+        if (!estNum) {
+          console.log(`🔢 Estimate ${index} (ID: ${est.id}) has no estimate number`);
+          return 0;
+        }
+        
+        console.log(`🔢 Processing estimate ${index} (ID: ${est.id}): "${estNum}"`);
+        
+        // Use the extractNumberPart helper to get the number
+        const numberPart = extractNumberPart(estNum, prefix);
+        if (numberPart) {
+          const num = parseInt(numberPart, 10);
+          if (!isNaN(num) && num > 0) {
+            console.log(`🔢 Extracted number: ${num} from "${estNum}"`);
+            return num;
+          }
+        }
+        
+        console.log(`🔢 Could not extract valid number from: "${estNum}"`);
+        return 0;
       })
       .filter((num: number) => num > 0);
-    // Find the highest number
+
+    console.log("🔢 Extracted estimate numbers:", estimateNumbers);
+
+    // Find the highest number from existing estimates
     const maxNumber = estimateNumbers.length > 0 
       ? Math.max(...estimateNumbers) 
-      : startNumber - 1;
+      : 0;
 
-    // Use the higher of: max existing number + 1, or starting number
-    const nextNumber = Math.max(maxNumber + 1, startNumber);
+    console.log("🔢 Max number from existing estimates:", maxNumber, "Start number from settings:", startNumber);
+
+    // If we have existing estimates, increment from the highest
+    // If no valid numbers found, use start number
+    // Otherwise, use the higher of: (maxNumber + 1) or startNumber
+    let nextNumber: number;
+    if (estimateNumbers.length === 0) {
+      // No valid estimate numbers found, use start number
+      nextNumber = startNumber;
+      console.log("🔢 No valid estimate numbers found, using start number:", nextNumber);
+    } else {
+      // We have valid estimate numbers, increment from the highest
+      // But ensure we don't go below the start number
+      nextNumber = Math.max(maxNumber + 1, startNumber);
+      console.log("🔢 Incrementing from max number:", maxNumber, "-> next:", nextNumber);
+    }
     
-    return `EST-${String(nextNumber).padStart(3, '0')}`;
-  }, [estimates, estimateSettings?.estimateNumberStart]);
+    // Return without dash: EST001 instead of EST-001
+    const generated = `${prefix}${String(nextNumber).padStart(3, '0')}`;
+    console.log("🔢 Final generated estimate number:", generated);
+    return generated;
+  }, [estimates, estimateSettings?.estimateNumberStart, estimateSettings?.estimateNumberPrefix]);
 
   // Update currency and tax setting when settings load
   useEffect(() => {
@@ -465,8 +570,30 @@ export default function EstimateCreate() {
       if (estimate.lineItems && estimate.lineItems.length > 0) {
         setShowLineItems(true);
       }
+      
+      // Extract and set estimate number part for display
+      if (estimate.estimateNumber || estimate.invoiceNumber || estimate.estimate_number) {
+        const prefix = estimateSettings?.estimateNumberPrefix || "EST";
+        // Try multiple field names for estimate number
+        const fullNumber = estimate.estimateNumber || estimate.invoiceNumber || estimate.estimate_number || "";
+        if (fullNumber) {
+          const numberPart = extractNumberPart(fullNumber, prefix);
+          console.log("🔢 Extracting estimate number for edit mode:", {
+            fullNumber,
+            prefix,
+            extractedNumber: numberPart,
+            estimateId: estimate.id
+          });
+          setEstimateNumberOnly(numberPart);
+          // Also update formData.invoiceNumber to keep it in sync
+          setFormData((prev) => ({
+            ...prev,
+            invoiceNumber: fullNumber,
+          }));
+        }
+      }
     }
-  }, [estimateData, isEditMode, isLoadingEstimate, estimateId, tenant?.id, refetchEstimate, formData.lineItems.length]);
+  }, [estimateData, isEditMode, isLoadingEstimate, estimateId, tenant?.id, refetchEstimate, formData.lineItems.length, estimateSettings?.estimateNumberPrefix]);
   
   // Track if we've already triggered the selection handlers to avoid infinite loops
   const hasTriggeredSelection = useRef(false);
@@ -534,31 +661,61 @@ export default function EstimateCreate() {
   // Auto-generate ref no when estimates/settings are loaded
   useEffect(() => {
     const currentStartNumber = estimateSettings?.estimateNumberStart || 1;
+    const prefix = estimateSettings?.estimateNumberPrefix || "EST";
     
-    if (generateNextEstimateNumber) {
-      setFormData((prev) => {
-        // Check if starting number changed
-        const startingNumberChanged = lastStartingNumber.current !== null && 
-                                      lastStartingNumber.current !== currentStartNumber;
-        
-        // On first initialization, always update (even if field has a value)
-        // After that, update if field is empty OR starting number changed
-        const shouldUpdate = !hasInitialized.current || 
-                            !prev.invoiceNumber || 
-                            startingNumberChanged;
-        
-        if (shouldUpdate) {
-          lastStartingNumber.current = currentStartNumber;
-          hasInitialized.current = true;
-          return { ...prev, invoiceNumber: generateNextEstimateNumber };
-        }
-        return prev;
-      });
+    // Wait for both estimates and settings to be loaded
+    if (generateNextEstimateNumber && estimateSettings && (estimates !== undefined)) {
+      // Check if starting number changed
+      const startingNumberChanged = lastStartingNumber.current !== null && 
+                                   lastStartingNumber.current !== currentStartNumber;
+      
+      // On first initialization, always update (even if field has a value)
+      // After that, update if field is empty OR starting number changed
+      const shouldUpdate = !hasInitialized.current || 
+                          !formData.invoiceNumber || 
+                          startingNumberChanged;
+      
+      if (shouldUpdate) {
+        lastStartingNumber.current = currentStartNumber;
+        hasInitialized.current = true;
+        const fullNumber = generateNextEstimateNumber;
+        setFormData((prev) => ({ ...prev, invoiceNumber: fullNumber }));
+        // Extract and set just the number part
+        const numberPart = extractNumberPart(fullNumber, prefix);
+        console.log("🔢 Setting estimate number:", {
+          fullNumber,
+          prefix,
+          extractedNumberPart: numberPart,
+          shouldUpdate,
+          hasInitialized: hasInitialized.current
+        });
+        setEstimateNumberOnly(numberPart);
+      }
     } else if (estimateSettings?.estimateNumberStart && !hasInitialized.current) {
       // Initialize lastStartingNumber even if generateNextEstimateNumber isn't ready yet
       lastStartingNumber.current = estimateSettings.estimateNumberStart;
     }
-  }, [generateNextEstimateNumber, estimateSettings?.estimateNumberStart]);
+  }, [generateNextEstimateNumber, estimateSettings?.estimateNumberStart, estimateSettings?.estimateNumberPrefix, estimates, formData.invoiceNumber]);
+
+  // Sync estimateNumberOnly when invoiceNumber changes (for edit mode or manual changes)
+  useEffect(() => {
+    if (formData.invoiceNumber) {
+      const prefix = estimateSettings?.estimateNumberPrefix || "EST";
+      const numberPart = extractNumberPart(formData.invoiceNumber, prefix);
+      if (numberPart !== estimateNumberOnly) {
+        console.log("🔢 Syncing estimateNumberOnly:", {
+          invoiceNumber: formData.invoiceNumber,
+          prefix,
+          extractedNumber: numberPart,
+          currentEstimateNumberOnly: estimateNumberOnly
+        });
+        setEstimateNumberOnly(numberPart);
+      }
+    } else if (!formData.invoiceNumber && estimateNumberOnly) {
+      // Clear number part if estimate number is cleared
+      setEstimateNumberOnly("");
+    }
+  }, [formData.invoiceNumber, estimateSettings?.estimateNumberPrefix]); // Note: intentionally not including estimateNumberOnly to avoid loops
 
   // Fetch GST rates based on selected tax setting
   const { data: gstRates = [] } = useQuery<any[]>({
@@ -1083,7 +1240,11 @@ export default function EstimateCreate() {
     }];
 
     const estimateData: EstimateData = {
-      estimateNumber: formData.invoiceNumber || "EST-001",
+      estimateNumber: (() => {
+        const prefix = estimateSettings?.estimateNumberPrefix || "EST";
+        const numberPart = estimateNumberOnly || extractNumberPart(formData.invoiceNumber || "", prefix) || "001";
+        return numberPart ? `${prefix}${numberPart}` : `${prefix}001`;
+      })(),
       validUntil: formData.validUntil || "",
       customerName: customer 
         ? (customer.name || customer.customerName || customer.firstName + " " + customer.lastName || customer.leadName || "Customer")
@@ -1336,17 +1497,27 @@ export default function EstimateCreate() {
                   <div></div>
                   <div>
                     <Label htmlFor="invoiceNumber">Ref No.</Label>
-                    <Input
-                      id="invoiceNumber"
-                      value={formData.invoiceNumber}
-                      onChange={(e) =>
-                        setFormData((prev) => ({
-                          ...prev,
-                          invoiceNumber: e.target.value,
-                        }))
-                      }
-                      placeholder="EST-001"
-                    />
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex items-center px-3 py-2 rounded-md border border-gray-300 bg-gray-50 text-sm font-medium text-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-600">
+                        {estimateSettings?.estimateNumberPrefix || "EST"}
+                      </span>
+                      <Input
+                        id="invoiceNumber"
+                        data-testid="input-estimate-number"
+                        value={estimateNumberOnly}
+                        onChange={(e) => {
+                          const numberPart = e.target.value;
+                          setEstimateNumberOnly(numberPart);
+                          const prefix = estimateSettings?.estimateNumberPrefix || "EST";
+                          setFormData((prev) => ({
+                            ...prev,
+                            invoiceNumber: numberPart ? `${prefix}${numberPart}` : "",
+                          }));
+                        }}
+                        placeholder="001"
+                        className="flex-1"
+                      />
+                    </div>
                   </div>
                 </div>
 

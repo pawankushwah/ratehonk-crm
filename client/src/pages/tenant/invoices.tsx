@@ -84,6 +84,8 @@ import {
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Check, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DateFilter } from "@/components/ui/date-filter";
+import { buildDateFilters } from "@/lib/date-filter-helpers";
 
 const invoiceStatuses = [
   { value: "draft", label: "Draft", color: "bg-gray-100 text-gray-800" },
@@ -119,6 +121,9 @@ export default function Invoices() {
   const [localVendorFilter, setLocalVendorFilter] = useState<string>("all");
   const [localProviderFilter, setLocalProviderFilter] = useState<string>("all");
   const [localLeadTypeFilter, setLocalLeadTypeFilter] = useState<string>("all");
+  const [localDateFilter, setLocalDateFilter] = useState("all");
+  const [localCustomDateFrom, setLocalCustomDateFrom] = useState<Date | null>(null);
+  const [localCustomDateTo, setLocalCustomDateTo] = useState<Date | null>(null);
   
   // Applied filter states (used for API calls)
   const [searchTerm, setSearchTerm] = useState("");
@@ -127,6 +132,9 @@ export default function Invoices() {
   const [vendorFilter, setVendorFilter] = useState<string>("all");
   const [providerFilter, setProviderFilter] = useState<string>("all");
   const [leadTypeFilter, setLeadTypeFilter] = useState<string>("all");
+  const [dateFilter, setDateFilter] = useState("all");
+  const [customDateFrom, setCustomDateFrom] = useState<Date | null>(null);
+  const [customDateTo, setCustomDateTo] = useState<Date | null>(null);
   
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -961,7 +969,7 @@ export default function Invoices() {
     isLoading,
     error,
   } = useQuery<{ data: Invoice[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }>({
-    queryKey: [`/api/tenants/${tenant?.id}/invoices`, currentPage, pageSize, statusFilter, customerFilter, vendorFilter, providerFilter, leadTypeFilter, searchTerm, sortBy, sortOrder],
+    queryKey: [`/api/tenants/${tenant?.id}/invoices`, currentPage, pageSize, statusFilter, customerFilter, vendorFilter, providerFilter, leadTypeFilter, searchTerm, dateFilter, customDateFrom, customDateTo, sortBy, sortOrder],
     enabled: !!tenant?.id,
     refetchOnWindowFocus: true,
     refetchInterval: 30000,
@@ -993,6 +1001,14 @@ export default function Invoices() {
       if (searchTerm) {
         params.append("search", searchTerm);
       }
+      
+      // Build date filters from date filter state
+      const dateFilters = buildDateFilters(dateFilter, customDateFrom, customDateTo);
+      if (dateFilters) {
+        params.append("startDate", dateFilters.startDate);
+        params.append("endDate", dateFilters.endDate);
+      }
+      
       if (sortBy) {
         params.append("sortBy", sortBy);
         params.append("sortOrder", sortOrder);
@@ -1448,6 +1464,24 @@ export default function Invoices() {
     setCurrentPage(1); // Reset to first page when sorting changes
   };
 
+  // Auto-update date filters when dateFilter changes (for predefined ranges)
+  useEffect(() => {
+    if (dateFilter && dateFilter !== "all" && dateFilter !== "custom") {
+      const dateFilters = buildDateFilters(dateFilter, null, null);
+      if (dateFilters) {
+        setCustomDateFrom(new Date(dateFilters.startDate));
+        setCustomDateTo(new Date(dateFilters.endDate));
+        setLocalCustomDateFrom(new Date(dateFilters.startDate));
+        setLocalCustomDateTo(new Date(dateFilters.endDate));
+      }
+    } else if (dateFilter === "all") {
+      setCustomDateFrom(null);
+      setCustomDateTo(null);
+      setLocalCustomDateFrom(null);
+      setLocalCustomDateTo(null);
+    }
+  }, [dateFilter]);
+
   // Apply filters function
   const handleApplyFilters = () => {
     setSearchTerm(localSearchTerm);
@@ -1456,6 +1490,9 @@ export default function Invoices() {
     setVendorFilter(localVendorFilter);
     setProviderFilter(localProviderFilter);
     setLeadTypeFilter(localLeadTypeFilter);
+    setDateFilter(localDateFilter);
+    setCustomDateFrom(localCustomDateFrom);
+    setCustomDateTo(localCustomDateTo);
     setCurrentPage(1);
   };
 
@@ -1467,12 +1504,18 @@ export default function Invoices() {
     setLocalVendorFilter("all");
     setLocalProviderFilter("all");
     setLocalLeadTypeFilter("all");
+    setLocalDateFilter("all");
+    setLocalCustomDateFrom(null);
+    setLocalCustomDateTo(null);
     setSearchTerm("");
     setStatusFilter("all");
     setCustomerFilter([]);
     setVendorFilter("all");
     setProviderFilter("all");
     setLeadTypeFilter("all");
+    setDateFilter("all");
+    setCustomDateFrom(null);
+    setCustomDateTo(null);
     setCurrentPage(1);
   };
 
@@ -1992,109 +2035,139 @@ export default function Invoices() {
                 handleApplyFilters();
               }}
             >
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 mb-3">
-                <div className="relative">
-                  <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400 h-3 w-3" />
-                  <Input
-                    placeholder="Search invoice number and voucher number"
-                    value={localSearchTerm}
-                    onChange={(e) => setLocalSearchTerm(e.target.value)}
-                    className="pl-7 h-9 text-sm"
+              <div className="space-y-3">
+                {/* First Row: Search and Date Filter */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="relative">
+                    <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400 h-3 w-3" />
+                    <Input
+                      placeholder="Search invoice number and voucher number"
+                      value={localSearchTerm}
+                      onChange={(e) => setLocalSearchTerm(e.target.value)}
+                      className="pl-7 h-9 text-sm"
+                    />
+                  </div>
+                  <DateFilter
+                    dateFilter={localDateFilter}
+                    setDateFilter={(value) => {
+                      setLocalDateFilter(value);
+                      setDateFilter(value);
+                      setCurrentPage(1);
+                    }}
+                    customDateFrom={localCustomDateFrom}
+                    setCustomDateFrom={(date) => {
+                      setLocalCustomDateFrom(date);
+                      setCustomDateFrom(date);
+                      setDateFilter("custom");
+                      setLocalDateFilter("custom");
+                      setCurrentPage(1);
+                    }}
+                    customDateTo={localCustomDateTo}
+                    setCustomDateTo={(date) => {
+                      setLocalCustomDateTo(date);
+                      setCustomDateTo(date);
+                      setDateFilter("custom");
+                      setLocalDateFilter("custom");
+                      setCurrentPage(1);
+                    }}
                   />
                 </div>
-              <Select
-                value={localStatusFilter}
-                onValueChange={(value) => {
-                  setLocalStatusFilter(value);
-                  setStatusFilter(value);
-                  setCurrentPage(1);
-                }}
-              >
-                <SelectTrigger className="h-9 text-sm">
-                  <SelectValue placeholder="Status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Status</SelectItem>
-                  {invoiceStatuses.map((status) => (
-                    <SelectItem key={status.value} value={status.value}>
-                      {status.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <div className="min-w-[150px]">
-                <MultiSelectCustomer
-                  customers={customers}
-                  selectedCustomers={localCustomerFilter}
-                  onSelectionChange={(selected) => {
-                    setLocalCustomerFilter(selected);
-                    setCustomerFilter([...selected]);
-                    setCurrentPage(1);
-                  }}
-                />
+                
+                {/* Second Row: Status, Customer, Services, Vendor, Provider */}
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+                  <Select
+                    value={localStatusFilter}
+                    onValueChange={(value) => {
+                      setLocalStatusFilter(value);
+                      setStatusFilter(value);
+                      setCurrentPage(1);
+                    }}
+                  >
+                    <SelectTrigger className="h-9 text-sm">
+                      <SelectValue placeholder="Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Status</SelectItem>
+                      {invoiceStatuses.map((status) => (
+                        <SelectItem key={status.value} value={status.value}>
+                          {status.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <div className="min-w-0">
+                    <MultiSelectCustomer
+                      customers={customers}
+                      selectedCustomers={localCustomerFilter}
+                      onSelectionChange={(selected) => {
+                        setLocalCustomerFilter(selected);
+                        setCustomerFilter([...selected]);
+                        setCurrentPage(1);
+                      }}
+                    />
+                  </div>
+                  <Select
+                    value={localLeadTypeFilter}
+                    onValueChange={(value) => {
+                      setLocalLeadTypeFilter(value);
+                      setLeadTypeFilter(value);
+                      setCurrentPage(1);
+                    }}
+                  >
+                    <SelectTrigger className="h-9 text-sm">
+                      <SelectValue placeholder="Services" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Services</SelectItem>
+                      {leadTypes.map((leadType) => (
+                        <SelectItem key={leadType.id} value={leadType.id.toString()}>
+                          {leadType.name || leadType.leadTypeName || "Unknown"}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    value={localVendorFilter}
+                    onValueChange={(value) => {
+                      setLocalVendorFilter(value);
+                      setVendorFilter(value);
+                      setCurrentPage(1);
+                    }}
+                  >
+                    <SelectTrigger className="h-9 text-sm">
+                      <SelectValue placeholder="Vendor" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Vendors</SelectItem>
+                      {vendors.map((vendor) => (
+                        <SelectItem key={vendor.id} value={vendor.id.toString()}>
+                          {vendor.name || vendor.vendorName || "Unknown"}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    value={localProviderFilter}
+                    onValueChange={(value) => {
+                      setLocalProviderFilter(value);
+                      setProviderFilter(value);
+                      setCurrentPage(1);
+                    }}
+                  >
+                    <SelectTrigger className="h-9 text-sm">
+                      <SelectValue placeholder="Provider" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Providers</SelectItem>
+                      {serviceProviders.map((provider) => (
+                        <SelectItem key={provider.id} value={provider.id.toString()}>
+                          {provider.name || provider.providerName || "Unknown"}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
-              <Select
-                value={localLeadTypeFilter}
-                onValueChange={(value) => {
-                  setLocalLeadTypeFilter(value);
-                  setLeadTypeFilter(value);
-                  setCurrentPage(1);
-                }}
-              >
-                <SelectTrigger className="h-9 text-sm">
-                  <SelectValue placeholder="Lead Type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Services</SelectItem>
-                  {leadTypes.map((leadType) => (
-                    <SelectItem key={leadType.id} value={leadType.id.toString()}>
-                      {leadType.name || leadType.leadTypeName || "Unknown"}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select
-                value={localVendorFilter}
-                onValueChange={(value) => {
-                  setLocalVendorFilter(value);
-                  setVendorFilter(value);
-                  setCurrentPage(1);
-                }}
-              >
-                <SelectTrigger className="h-9 text-sm">
-                  <SelectValue placeholder="Vendor" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Vendors</SelectItem>
-                  {vendors.map((vendor) => (
-                    <SelectItem key={vendor.id} value={vendor.id.toString()}>
-                      {vendor.name || vendor.vendorName || "Unknown"}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select
-                value={localProviderFilter}
-                onValueChange={(value) => {
-                  setLocalProviderFilter(value);
-                  setProviderFilter(value);
-                  setCurrentPage(1);
-                }}
-              >
-                <SelectTrigger className="h-9 text-sm">
-                  <SelectValue placeholder="Provider" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Providers</SelectItem>
-                  {serviceProviders.map((provider) => (
-                    <SelectItem key={provider.id} value={provider.id.toString()}>
-                      {provider.name || provider.providerName || "Unknown"}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-             
-            </div>
             <div className="flex items-center justify-between mt-3 pt-3 border-t">
               <div className="text-xs text-gray-500">
                 Showing {invoices.length} of {pagination.total} invoices

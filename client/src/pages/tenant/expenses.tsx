@@ -38,6 +38,29 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 
+interface ExpenseLineItem {
+  id?: number;
+  category: string;
+  title: string;
+  description?: string;
+  quantity: number;
+  amount: string | number;
+  taxAmount?: string | number;
+  taxRate?: string | number;
+  totalAmount: string | number;
+  vendorId?: number;
+  vendorName?: string;
+  leadTypeId?: number;
+  leadTypeName?: string;
+  leadTypeColor?: string;
+  paymentMethod?: string;
+  paymentStatus?: string;
+  amountPaid?: string | number;
+  amountDue?: string | number;
+  receiptUrl?: string;
+  notes?: string;
+}
+
 interface Expense {
   id: number;
   expense_number?: string | null;
@@ -75,6 +98,7 @@ interface Expense {
   updatedAt?: Date;
   createdBy?: number;
   createdByName?: string;
+  lineItems?: ExpenseLineItem[];
 }
 
 interface Vendor {
@@ -365,6 +389,28 @@ export default function Expenses() {
       updatedAt: expense.updated_at ? new Date(expense.updated_at) : undefined,
       createdBy: expense.created_by,
       createdByName: expense.created_by_name,
+      lineItems: expense.lineItems ? expense.lineItems.map((item: any) => ({
+        id: item.id,
+        category: item.category,
+        title: item.title,
+        description: item.description,
+        quantity: item.quantity || 1,
+        amount: item.amount,
+        taxAmount: item.tax_amount || item.taxAmount,
+        taxRate: item.tax_rate || item.taxRate,
+        totalAmount: item.total_amount || item.totalAmount,
+        vendorId: item.vendor_id || item.vendorId,
+        vendorName: item.vendor_name || item.vendorName,
+        leadTypeId: item.lead_type_id || item.leadTypeId,
+        leadTypeName: item.lead_type_name || item.leadTypeName,
+        leadTypeColor: item.lead_type_color || item.leadTypeColor,
+        paymentMethod: item.payment_method || item.paymentMethod,
+        paymentStatus: item.payment_status || item.paymentStatus,
+        amountPaid: item.amount_paid || item.amountPaid,
+        amountDue: item.amount_due || item.amountDue,
+        receiptUrl: item.receipt_url || item.receiptUrl,
+        notes: item.notes,
+      })) : [],
     }));
 
   // Pagination calculations now use totalItems from API metadata
@@ -605,20 +651,6 @@ export default function Expenses() {
       ),
     },
     {
-      key: "category",
-      label: "Category",
-      sortable: true,
-      render: (category) => {
-        const categoryConfig = getCategoryConfig(category);
-        return (
-          <Badge className={categoryConfig.color}>
-            <span className="mr-1">{categoryConfig.icon}</span>
-            {categoryConfig.label}
-          </Badge>
-        );
-      },
-    },
-    {
       key: "amount",
       label: "Amount",
       sortable: true,
@@ -679,19 +711,37 @@ export default function Expenses() {
       ),
     },
     {
-      key: "vendorName",
-      label: "Vendor",
-      sortable: true,
-      render: (vendorName) => (
-        vendorName ? (
-          <div className="flex items-center gap-2">
-            <Building2 className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm">{vendorName}</span>
+      key: "lineItems",
+      label: "Line Items",
+      sortable: false,
+      render: (_, expense) => {
+        const lineItems = expense.lineItems || [];
+        if (lineItems.length === 0) {
+          return <span className="text-sm text-muted-foreground">No items</span>;
+        }
+        return (
+          <div className="space-y-1 max-w-md">
+            <div className="text-sm font-medium">{lineItems.length} item{lineItems.length !== 1 ? 's' : ''}</div>
+            <div className="text-xs text-muted-foreground space-y-1">
+              {lineItems.map((item: any, idx: number) => (
+                <div key={item.id || idx} className="flex items-center gap-2">
+                  <span className="font-medium">{item.title || 'Untitled'}</span>
+                  <span className="text-muted-foreground">-</span>
+                  <span>{formatCurrency(item.totalAmount || item.amount || 0, expense.currency)}</span>
+                  {item.category && (
+                    <>
+                      <span className="text-muted-foreground">•</span>
+                      <Badge variant="outline" className="text-xs">
+                        {getCategoryConfig(item.category).icon} {getCategoryConfig(item.category).label}
+                      </Badge>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
-        ) : (
-          <span className="text-sm text-muted-foreground">No vendor</span>
-        )
-      ),
+        );
+      },
     },
     {
       key: "actions",
@@ -1786,6 +1836,109 @@ export default function Expenses() {
                   </CardContent>
                 </Card>
                 
+                {/* Line Items */}
+                {selectedExpense.lineItems && Array.isArray(selectedExpense.lineItems) && selectedExpense.lineItems.length > 0 && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg">Line Items</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-4">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>#</TableHead>
+                              <TableHead>Category</TableHead>
+                              <TableHead>Title</TableHead>
+                              <TableHead>Quantity</TableHead>
+                              <TableHead>Amount</TableHead>
+                              <TableHead>Tax</TableHead>
+                              <TableHead>Total</TableHead>
+                              <TableHead>Status</TableHead>
+                              <TableHead>Paid</TableHead>
+                              <TableHead>Due</TableHead>
+                              {selectedExpense.lineItems.some((item: any) => item.receiptUrl) && (
+                                <TableHead>Receipt</TableHead>
+                              )}
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {selectedExpense.lineItems.map((item: any, index: number) => (
+                              <TableRow key={item.id || index}>
+                                <TableCell>{index + 1}</TableCell>
+                                <TableCell>
+                                  <Badge className={getCategoryConfig(item.category || selectedExpense.category).color}>
+                                    {getCategoryConfig(item.category || selectedExpense.category).icon} {getCategoryConfig(item.category || selectedExpense.category).label}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="font-medium">{item.title}</TableCell>
+                                <TableCell>{item.quantity || 1}</TableCell>
+                                <TableCell>{formatCurrency(item.amount || 0, selectedExpense.currency)}</TableCell>
+                                <TableCell>
+                                  {item.taxAmount ? formatCurrency(item.taxAmount, selectedExpense.currency) : '-'}
+                                  {item.taxRate && ` (${item.taxRate}%)`}
+                                </TableCell>
+                                <TableCell className="font-medium">
+                                  {formatCurrency(item.totalAmount || item.amount || 0, selectedExpense.currency)}
+                                </TableCell>
+                                <TableCell>
+                                  <Badge className={getStatusConfig(item.paymentStatus || 'paid').color}>
+                                    {getStatusConfig(item.paymentStatus || 'paid').label}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell>{formatCurrency(item.amountPaid || 0, selectedExpense.currency)}</TableCell>
+                                <TableCell>{formatCurrency(item.amountDue || 0, selectedExpense.currency)}</TableCell>
+                                {selectedExpense.lineItems.some((i: any) => i.receiptUrl) && (
+                                  <TableCell>
+                                    {item.receiptUrl ? (
+                                      <a 
+                                        href={item.receiptUrl} 
+                                        target="_blank" 
+                                        rel="noopener noreferrer"
+                                        className="text-blue-600 hover:underline"
+                                      >
+                                        View
+                                      </a>
+                                    ) : (
+                                      <span className="text-muted-foreground">-</span>
+                                    )}
+                                  </TableCell>
+                                )}
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                        <div className="flex justify-end pt-2 border-t">
+                          <div className="text-sm space-y-1">
+                            <div className="flex justify-between gap-4">
+                              <span className="font-medium">Subtotal:</span>
+                              <span>{formatCurrency(
+                                selectedExpense.lineItems.reduce((sum: number, item: any) => 
+                                  sum + parseFloat(item.amount?.toString() || "0") * (item.quantity || 1), 0
+                                ), 
+                                selectedExpense.currency
+                              )}</span>
+                            </div>
+                            <div className="flex justify-between gap-4">
+                              <span className="font-medium">Tax:</span>
+                              <span>{formatCurrency(
+                                selectedExpense.lineItems.reduce((sum: number, item: any) => 
+                                  sum + parseFloat(item.taxAmount?.toString() || "0"), 0
+                                ), 
+                                selectedExpense.currency
+                              )}</span>
+                            </div>
+                            <div className="flex justify-between gap-4 font-bold text-lg">
+                              <span>Total:</span>
+                              <span>{formatCurrency(selectedExpense.amount, selectedExpense.currency)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
                 {/* Tax Information */}
                 {(parseFloat(selectedExpense.taxAmount?.toString() || "0") > 0 || parseFloat(selectedExpense.taxRate?.toString() || "0") > 0) && (
                   <Card>
