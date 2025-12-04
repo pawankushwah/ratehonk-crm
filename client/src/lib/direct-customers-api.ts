@@ -227,7 +227,7 @@ export const directCustomersApi = {
       const response = await fetch(
         `/api/customers/update?tenantId=${tenantId}&customerId=${customerId}`,
         {
-          method: "PATCH",
+          method: "PUT",
           headers: {
             Authorization: `Bearer ${localStorage.getItem("token")}`,
             "Content-Type": "application/json",

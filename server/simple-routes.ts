@@ -9506,13 +9506,13 @@ David,Brown,david.brown@example.com,555-0127,email_campaign,contacted,Prefers lu
           region: req.body.region || null,
           country: req.body.country || null,
           city: req.body.city || null,
-          altName: req.body.altName || null,
-          vendorName: req.body.vendorName || null,
+          altName: req.body.altName !== undefined ? req.body.altName : null, // Preserve empty strings
+          vendorName: req.body.vendorName !== undefined ? req.body.vendorName : null,
           rating: req.body.rating ? parseFloat(req.body.rating) : null,
           status: req.body.status || "draft",
-          itineraryDescription: req.body.itineraryDescription || null,
-          cancellationPolicy: req.body.cancellationPolicy || null,
-          cancellationBenefit: req.body.cancellationBenefit || null,
+          itineraryDescription: req.body.itineraryDescription !== undefined ? req.body.itineraryDescription : null,
+          cancellationPolicy: req.body.cancellationPolicy !== undefined ? req.body.cancellationPolicy : null,
+          cancellationBenefit: req.body.cancellationBenefit !== undefined ? req.body.cancellationBenefit : null, // Preserve empty strings
           itinerary: req.body.itinerary || null,
           // Add processed image URLs
           packageStayingImage: imageUrls.packageStayingImage,
@@ -9535,19 +9535,175 @@ David,Brown,david.brown@example.com,555-0127,email_campaign,contacted,Prefers lu
     }
   );
 
-  app.put("/api/tenants/:tenantId/packages/:packageId", async (req, res) => {
-    try {
-      const { packageId } = req.params;
-      const travelPackage = await simpleStorage.updatePackage(
-        parseInt(packageId),
-        req.body,
-      );
-      res.json(travelPackage);
-    } catch (error) {
-      console.error("Update package error:", error);
-      res.status(500).json({ message: "Internal server error" });
+  app.put(
+    "/api/tenants/:tenantId/packages/:packageId",
+    packageImageUpload.any(), // Accept any field names for flexibility with day-wise images
+    async (req: any, res) => {
+      try {
+        const { packageId, tenantId } = req.params;
+        const { ObjectStorageService } = await import("./objectStorage.js");
+        const objectStorage = new ObjectStorageService();
+
+        // Process uploaded images (similar to POST)
+        const imageUrls: any = {
+          packageStayingImage: "",
+          itineraryImages: "",
+          dayWiseItinerary: [],
+        };
+
+        // Organize files by field name
+        const filesByField: { [key: string]: any[] } = {};
+        if (req.files && Array.isArray(req.files)) {
+          req.files.forEach((file: any) => {
+            const fieldName = file.fieldname || "";
+            if (!filesByField[fieldName]) {
+              filesByField[fieldName] = [];
+            }
+            filesByField[fieldName].push(file);
+          });
+        }
+
+        // Helper function to sanitize filename
+        const sanitizeFileName = (filename: string) => {
+          return filename
+            .replace(/\s+/g, '')
+            .replace(/-/g, '')
+            .replace(/[^a-zA-Z0-9.]/g, '')
+            .toLowerCase();
+        };
+
+        // Upload package staying image
+        if (filesByField["packageStayingImage"]?.[0]) {
+          const file = filesByField["packageStayingImage"][0];
+          const sanitizedName = sanitizeFileName(file.originalname);
+          const fileName = `packages/${tenantId}/${sanitizedName}`;
+          const url = await objectStorage.uploadFile(
+            fileName,
+            file.buffer,
+            file.mimetype
+          );
+          imageUrls.packageStayingImage = url;
+        }
+
+        // Upload general itinerary images
+        if (filesByField["itineraryImages"] && filesByField["itineraryImages"].length > 0) {
+          const uploadedUrls = await Promise.all(
+            filesByField["itineraryImages"].map(async (file: any) => {
+              const sanitizedName = sanitizeFileName(file.originalname);
+              const fileName = `packages/${tenantId}/itinerary/${sanitizedName}`;
+              return await objectStorage.uploadFile(
+                fileName,
+                file.buffer,
+                file.mimetype
+              );
+            })
+          );
+          imageUrls.itineraryImages = uploadedUrls.join(", ");
+        }
+
+        // Process day-wise itinerary images
+        let dayWiseItinerary = [];
+        if (req.body.dayWiseItinerary) {
+          try {
+            dayWiseItinerary = typeof req.body.dayWiseItinerary === 'string' 
+              ? JSON.parse(req.body.dayWiseItinerary) 
+              : req.body.dayWiseItinerary;
+          } catch (e) {
+            console.error("Error parsing dayWiseItinerary:", e);
+          }
+        }
+
+        // Upload day-wise images if provided
+        if (dayWiseItinerary.length > 0) {
+          const dayWiseFiles: any[] = [];
+          Object.keys(filesByField).forEach((fieldName) => {
+            if (fieldName.startsWith('dayWiseItineraryImages') && fieldName !== 'itineraryImages') {
+              filesByField[fieldName].forEach((file: any) => {
+                const match = fieldName.match(/\[(\d+)\]/);
+                const dayIndex = match ? parseInt(match[1]) : null;
+                if (dayIndex !== null) {
+                  dayWiseFiles.push({ ...file, dayIndex });
+                }
+              });
+            }
+          });
+
+          const processedDayWise = await Promise.all(
+            dayWiseItinerary.map(async (day: any, index: number) => {
+              const dayImages = dayWiseFiles.filter(
+                (file: any) => file.dayIndex === index
+              );
+
+              let itineraryImageNames = "";
+              if (dayImages.length > 0) {
+                const uploadedDayUrls = await Promise.all(
+                  dayImages.map(async (file: any) => {
+                    const sanitizedName = sanitizeFileName(file.originalname);
+                    const fileName = `packages/${tenantId}/day-${day.day}/${sanitizedName}`;
+                    return await objectStorage.uploadFile(
+                      fileName,
+                      file.buffer,
+                      file.mimetype
+                    );
+                  })
+                );
+                itineraryImageNames = uploadedDayUrls.join(", ");
+              }
+
+              return {
+                day: day.day,
+                place: day.place,
+                itineraryDescription: day.itineraryDescription || "",
+                itineraryImageNames,
+              };
+            })
+          );
+          imageUrls.dayWiseItinerary = processedDayWise;
+        }
+
+        // Parse form fields - preserve empty strings for text fields
+        const packageData = {
+          name: req.body.name,
+          description: req.body.description !== undefined ? req.body.description : null,
+          destination: req.body.destination,
+          duration: req.body.duration !== undefined ? parseInt(req.body.duration) : undefined,
+          price: req.body.price !== undefined ? parseFloat(req.body.price) : undefined,
+          maxCapacity: req.body.maxCapacity !== undefined ? parseInt(req.body.maxCapacity) : undefined,
+          inclusions: req.body.inclusions !== undefined ? req.body.inclusions : undefined,
+          exclusions: req.body.exclusions !== undefined ? req.body.exclusions : undefined,
+          isActive: req.body.isActive !== undefined ? (req.body.isActive !== "false") : undefined,
+          durationType: req.body.durationType !== undefined ? req.body.durationType : undefined,
+          region: req.body.region !== undefined ? req.body.region : undefined,
+          country: req.body.country !== undefined ? req.body.country : undefined,
+          city: req.body.city !== undefined ? req.body.city : undefined,
+          altName: req.body.altName !== undefined ? req.body.altName : undefined, // Preserve empty strings
+          vendorName: req.body.vendorName !== undefined ? req.body.vendorName : undefined,
+          rating: req.body.rating !== undefined ? (req.body.rating ? parseFloat(req.body.rating) : null) : undefined,
+          status: req.body.status !== undefined ? req.body.status : undefined,
+          itineraryDescription: req.body.itineraryDescription !== undefined ? req.body.itineraryDescription : undefined,
+          cancellationPolicy: req.body.cancellationPolicy !== undefined ? req.body.cancellationPolicy : undefined,
+          cancellationBenefit: req.body.cancellationBenefit !== undefined ? req.body.cancellationBenefit : undefined, // Preserve empty strings
+          itinerary: req.body.itinerary !== undefined ? req.body.itinerary : undefined,
+          // Add processed image URLs if provided
+          packageStayingImage: imageUrls.packageStayingImage || undefined,
+          itineraryImages: imageUrls.itineraryImages || undefined,
+          dayWiseItinerary: imageUrls.dayWiseItinerary.length > 0 
+            ? imageUrls.dayWiseItinerary 
+            : (dayWiseItinerary.length > 0 ? dayWiseItinerary : undefined),
+          image: imageUrls.packageStayingImage || undefined,
+        };
+
+        const travelPackage = await simpleStorage.updatePackage(
+          parseInt(packageId),
+          packageData,
+        );
+        res.json(travelPackage);
+      } catch (error) {
+        console.error("Update package error:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
     }
-  });
+  );
 
   app.delete("/api/tenants/:tenantId/packages/:packageId", async (req, res) => {
     try {

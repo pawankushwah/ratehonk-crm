@@ -3362,11 +3362,15 @@ export class SimpleStorage {
     }
 
     let exclusionsParam = null;
-    if (exclusions) {
+    if (exclusions !== undefined && exclusions !== null) {
       if (typeof exclusions === 'string') {
-        // If it's a string, wrap it in an array to make it valid JSON
-        // This ensures the database receives valid JSON format
-        exclusionsParam = JSON.stringify([exclusions]);
+        // If it's an empty string, store as empty array
+        if (exclusions.trim() === '') {
+          exclusionsParam = JSON.stringify([]);
+        } else {
+          // If it's a string, wrap it in an array to make it valid JSON
+          exclusionsParam = JSON.stringify([exclusions]);
+        }
       } else if (Array.isArray(exclusions)) {
         exclusionsParam = JSON.stringify(exclusions);
       } else {
@@ -3425,6 +3429,12 @@ export class SimpleStorage {
   }
 
   async updatePackage(packageId: number, packageData: any) {
+    // First, fetch the existing package to preserve required fields
+    const existingPackage = await this.getPackage(packageId);
+    if (!existingPackage) {
+      throw new Error(`Package with id ${packageId} not found`);
+    }
+
     const {
       name,
       description,
@@ -3435,12 +3445,63 @@ export class SimpleStorage {
       inclusions,
       exclusions,
       isActive,
+      durationType,
+      region,
+      country,
+      city,
+      packageStayingImage,
+      altName,
+      vendorName,
+      rating,
+      status,
+      itineraryImages,
+      itineraryDescription,
+      cancellationPolicy,
+      cancellationBenefit,
+      dayWiseItinerary,
+      itinerary,
+      image,
     } = packageData;
+
+    // Handle itineraryImages - check if column is JSON or TEXT
+    let itineraryImagesParam = null;
+    if (itineraryImages !== undefined && itineraryImages !== null) {
+      if (typeof itineraryImages === 'string') {
+        const imageArray = itineraryImages.split(',').map(img => img.trim()).filter(img => img);
+        itineraryImagesParam = imageArray.length > 0 ? JSON.stringify(imageArray) : null;
+      } else if (Array.isArray(itineraryImages)) {
+        itineraryImagesParam = JSON.stringify(itineraryImages);
+      }
+    } else {
+      // Preserve existing itineraryImages if not provided
+      itineraryImagesParam = existingPackage.itineraryImages ? JSON.stringify(existingPackage.itineraryImages) : null;
+    }
+
+    // Sanitize JSON fields to prevent invalid JSON errors (for dayWiseItinerary)
+    const sanitizeJsonArray = (arr) => {
+      if (!arr || !Array.isArray(arr)) return null;
+      const cleaned = arr.filter(
+        (item) =>
+          item && typeof item === "object" && Object.keys(item).length > 0,
+      );
+      return cleaned.length > 0 ? cleaned : null;
+    };
+
+    let dayWiseItineraryParam = null;
+    if (dayWiseItinerary !== undefined && dayWiseItinerary !== null) {
+      const cleanDayWiseItinerary = sanitizeJsonArray(dayWiseItinerary);
+      dayWiseItineraryParam = cleanDayWiseItinerary
+        ? JSON.stringify(cleanDayWiseItinerary)
+        : null;
+    } else {
+      // Preserve existing dayWiseItinerary if not provided
+      dayWiseItineraryParam = existingPackage.dayWiseItinerary ? JSON.stringify(existingPackage.dayWiseItinerary) : null;
+    }
 
     // Handle inclusions and exclusions - they can be strings or arrays
     // Always JSON.stringify to ensure valid JSON format for PostgreSQL JSON columns
     let inclusionsParam = null;
-    if (inclusions) {
+    if (inclusions !== undefined && inclusions !== null) {
       if (typeof inclusions === 'string') {
         // If it's a string, wrap it in an array to make it valid JSON
         inclusionsParam = JSON.stringify([inclusions]);
@@ -3449,36 +3510,113 @@ export class SimpleStorage {
       } else {
         inclusionsParam = JSON.stringify(inclusions);
       }
+    } else {
+      // Preserve existing inclusions if not provided
+      inclusionsParam = existingPackage.inclusions ? JSON.stringify(existingPackage.inclusions) : null;
     }
 
     let exclusionsParam = null;
-    if (exclusions) {
+    if (exclusions !== undefined && exclusions !== null) {
       if (typeof exclusions === 'string') {
-        // If it's a string, wrap it in an array to make it valid JSON
-        exclusionsParam = JSON.stringify([exclusions]);
+        // If it's an empty string, store as empty array
+        if (exclusions.trim() === '') {
+          exclusionsParam = JSON.stringify([]);
+        } else {
+          // If it's a string, wrap it in an array to make it valid JSON
+          exclusionsParam = JSON.stringify([exclusions]);
+        }
       } else if (Array.isArray(exclusions)) {
         exclusionsParam = JSON.stringify(exclusions);
       } else {
         exclusionsParam = JSON.stringify(exclusions);
       }
+    } else {
+      // Preserve existing exclusions if not provided
+      exclusionsParam = existingPackage.exclusions ? JSON.stringify(existingPackage.exclusions) : null;
     }
+
+    // For required NOT NULL fields, use existing value if new value is missing
+    // For optional fields, use new value if provided, otherwise keep existing
+    const nameParam = name !== undefined && name !== null ? name : existingPackage.name;
+    const descriptionParam = description !== undefined ? description : existingPackage.description;
+    const destinationParam = destination !== undefined && destination !== null ? destination : existingPackage.destination;
+    const durationParam = duration !== undefined && duration !== null ? Number(duration) : Number(existingPackage.duration);
+    const priceParam = price !== undefined && price !== null && !isNaN(Number(price)) ? Number(price) : Number(existingPackage.price);
+    const maxCapacityParam = maxCapacity !== undefined && maxCapacity !== null ? Number(maxCapacity) : Number(existingPackage.maxCapacity);
+    const isActiveParam = isActive !== undefined ? (isActive !== false) : existingPackage.isActive;
+    const durationTypeParam = durationType !== undefined ? durationType : existingPackage.durationType;
+    const regionParam = region !== undefined ? region : existingPackage.region;
+    const countryParam = country !== undefined ? country : existingPackage.country;
+    const cityParam = city !== undefined ? city : existingPackage.city;
+    const packageStayingImageParam = packageStayingImage !== undefined ? packageStayingImage : existingPackage.packageStayingImage;
+    // For text fields, preserve empty strings (don't convert to null)
+    const altNameParam = altName !== undefined ? altName : existingPackage.altName;
+    const vendorNameParam = vendorName !== undefined ? vendorName : existingPackage.vendorName;
+    const ratingParam = rating !== undefined ? rating : existingPackage.rating;
+    const statusParam = status !== undefined ? status : existingPackage.status;
+    const itineraryDescriptionParam = itineraryDescription !== undefined ? itineraryDescription : existingPackage.itineraryDescription;
+    const cancellationPolicyParam = cancellationPolicy !== undefined ? cancellationPolicy : existingPackage.cancellationPolicy;
+    // For text fields, preserve empty strings (don't convert to null)
+    const cancellationBenefitParam = cancellationBenefit !== undefined ? cancellationBenefit : existingPackage.cancellationBenefit;
+    const itineraryParam = itinerary !== undefined ? itinerary : existingPackage.itinerary;
+    const imageParam = image !== undefined ? image : existingPackage.image;
+
     const [travelPackage] = await sql`
       UPDATE travel_packages 
-      SET name = ${name}, description = ${description || null}, destination = ${destination}, 
-          duration = ${duration}, price = ${price}, max_capacity = ${maxCapacity},
-          inclusions = ${inclusionsParam || null}, exclusions = ${exclusionsParam || null}, is_active = ${isActive !== false}
+      SET name = ${nameParam}, 
+          description = ${descriptionParam}, 
+          destination = ${destinationParam}, 
+          duration = ${durationParam}, 
+          price = ${priceParam}, 
+          max_capacity = ${maxCapacityParam},
+          inclusions = ${inclusionsParam}, 
+          exclusions = ${exclusionsParam}, 
+          is_active = ${isActiveParam},
+          duration_type = ${durationTypeParam},
+          region = ${regionParam},
+          country = ${countryParam},
+          city = ${cityParam},
+          package_staying_image = ${packageStayingImageParam},
+          alt_name = ${altNameParam},
+          vendor_name = ${vendorNameParam},
+          rating = ${ratingParam},
+          status = ${statusParam},
+          itinerary_images = ${itineraryImagesParam},
+          itinerary_description = ${itineraryDescriptionParam},
+          cancellation_policy = ${cancellationPolicyParam},
+          cancellation_benefit = ${cancellationBenefitParam},
+          day_wise_itinerary = ${dayWiseItineraryParam},
+          itinerary = ${itineraryParam},
+          image = ${imageParam}
       WHERE id = ${packageId}
       RETURNING 
         id,
         tenant_id as "tenantId",
+        package_type_id as "packageTypeId",
         name,
         description,
         destination,
         duration,
+        duration_type as "durationType",
+        region,
+        country,
+        city,
         price,
         max_capacity as "maxCapacity",
+        package_staying_image as "packageStayingImage",
+        alt_name as "altName",
+        vendor_name as "vendorName",
+        rating,
+        status,
         inclusions,
         exclusions,
+        itinerary_images as "itineraryImages",
+        itinerary_description as "itineraryDescription",
+        cancellation_policy as "cancellationPolicy",
+        cancellation_benefit as "cancellationBenefit",
+        day_wise_itinerary as "dayWiseItinerary",
+        itinerary,
+        image,
         is_active as "isActive",
         created_at as "createdAt"
     `;
