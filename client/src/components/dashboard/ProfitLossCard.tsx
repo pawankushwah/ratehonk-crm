@@ -4,7 +4,6 @@ import { DateFilter } from "@/components/ui/date-filter";
 import { ProfitLossList } from "./ProfitLossList";
 import { useProfitLossData } from "@/hooks/useDashboardData";
 
-
 const dummyProfitLoss = [
   { month: "2024-12", expenses: 0, revenue: 0, profit: 0 },
   { month: "2025-01", expenses: 0, revenue: 0, profit: 0 },
@@ -24,17 +23,15 @@ const dummyProfitLoss = [
 export function ProfitLossCard() {
   const [profitPage, setProfitPage] = useState(0);
 
-  const [dateFilter, setDateFilter] = useState("this_year");
+  const [dateFilter, setDateFilter] = useState("this_quarter");
   const [customDateFrom, setCustomDateFrom] = useState<Date | null>(null);
   const [customDateTo, setCustomDateTo] = useState<Date | null>(null);
 
- 
   const { data: profitLossData, isLoading } = useProfitLossData(
     dateFilter,
     customDateFrom,
     customDateTo
   );
-
 
   const monthlyData = profitLossData?.monthly || [];
 
@@ -51,19 +48,20 @@ export function ProfitLossCard() {
 
   return (
     <Card className="lg:col-span-5">
-      <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <CardHeader className="flex flex-col  sm:flex-row sm:items-center sm:justify-between gap-4">
         <CardTitle className="text-[#000000] text-base sm:text-lg font-semibold">
           Profit & Loss
         </CardTitle>
-
-        <DateFilter
-          dateFilter={dateFilter}
-          setDateFilter={setDateFilter}
-          customDateFrom={customDateFrom}
-          setCustomDateFrom={setCustomDateFrom}
-          customDateTo={customDateTo}
-          setCustomDateTo={setCustomDateTo}
-        />
+        <div className="flex gap-2">
+          <DateFilter
+            dateFilter={dateFilter}
+            setDateFilter={setDateFilter}
+            customDateFrom={customDateFrom}
+            setCustomDateFrom={setCustomDateFrom}
+            customDateTo={customDateTo}
+            setCustomDateTo={setCustomDateTo}
+          />
+        </div>
       </CardHeader>
 
       <CardContent className="min-h-[320px]">

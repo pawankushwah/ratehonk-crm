@@ -8,7 +8,7 @@ import { useAuth } from "../auth/auth-provider";
 export function ConsolidatedVendorBookingChart() {
   const { tenant } = useAuth();
 
-  const [dateFilter, setDateFilter] = useState("this_week");
+  const [dateFilter, setDateFilter] = useState("this_quarter");
   const [customDateFrom, setCustomDateFrom] = useState<Date | null>(null);
   const [customDateTo, setCustomDateTo] = useState<Date | null>(null);
 
@@ -79,6 +79,7 @@ export function ConsolidatedVendorBookingChart() {
             Consolidated Booking
           </CardTitle>
 
+         <div className="flex gap-2">
           <DateFilter
             dateFilter={dateFilter}
             setDateFilter={setDateFilter}
@@ -87,6 +88,7 @@ export function ConsolidatedVendorBookingChart() {
             customDateTo={customDateTo}
             setCustomDateTo={setCustomDateTo}
           />
+        </div>
         </div>
       </CardHeader>
 

@@ -11,7 +11,7 @@ import { useExpenses } from "@/hooks/useDashboardData";
 const COLORS = ["#0A64A0", "#3E85C5", "#6DA9DB", "#8EC1E7", "#A7D5F0"];
 
 export function ExpensePieChart() {
-  const [dateFilter, setDateFilter] = useState("this_month");
+  const [dateFilter, setDateFilter] = useState("this_quarter");
   const [customDateFrom, setCustomDateFrom] = useState<Date | null>(null);
   const [customDateTo, setCustomDateTo] = useState<Date | null>(null);
 
@@ -79,7 +79,7 @@ export function ExpensePieChart() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap justify-end">
+        <div className="flex gap-2">
           <DateFilter
             dateFilter={dateFilter}
             setDateFilter={setDateFilter}

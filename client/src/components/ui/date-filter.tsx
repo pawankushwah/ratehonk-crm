@@ -33,10 +33,10 @@ export function DateFilter({
           <SelectValue placeholder="Date range" />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="all">All dates</SelectItem>
           <SelectItem value="today">Today</SelectItem>
           <SelectItem value="this_week">This week</SelectItem>
           <SelectItem value="this_month">This month</SelectItem>
+           <SelectItem value="this_quarter">this quarter</SelectItem>
           <SelectItem value="this_year">This year</SelectItem>
           <SelectItem value="custom">Custom</SelectItem>
         </SelectContent>
