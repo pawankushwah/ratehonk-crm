@@ -15,7 +15,7 @@ const COLORS = ["#3B82F6"];
 export function ServiceBookingScatter() {
   const { tenant } = useAuth();
 
-  const [dateFilter, setDateFilter] = useState("this_month");
+  const [dateFilter, setDateFilter] = useState("this_quarter");
   const [customDateFrom, setCustomDateFrom] = useState<Date | null>(null);
   const [customDateTo, setCustomDateTo] = useState<Date | null>(null);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
@@ -68,12 +68,12 @@ export function ServiceBookingScatter() {
       const x = 50 + Math.cos(angle) * distance;
       const y = 50 + Math.sin(angle) * distance * 0.7;
 
-      const size = 60 + item.percentage * 2.2;
+      const size = 80 + item.percentage * 0.6;
 
       return {
         ...item,
         x: Math.max(15, Math.min(85, x)),
-        y: Math.max(20, Math.min(80, y)),
+        y: Math.max(20, Math.min(50, y)),
         size,
         color: COLORS[index % COLORS.length],
       };
@@ -93,6 +93,7 @@ export function ServiceBookingScatter() {
             </CardDescription>
           </div>
 
+          <div className="flex gap-2">
           <DateFilter
             dateFilter={dateFilter}
             setDateFilter={setDateFilter}
@@ -101,6 +102,7 @@ export function ServiceBookingScatter() {
             customDateTo={customDateTo}
             setCustomDateTo={setCustomDateTo}
           />
+        </div>
         </div>
       </CardHeader>
 

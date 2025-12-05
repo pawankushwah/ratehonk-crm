@@ -48,12 +48,10 @@ function parseInvoiceDate(raw: any) {
 
 const formatShort = (num: number) => {
   const abs = Math.abs(num);
-
   if (abs >= 1_000_000_000_000) return (num / 1_000_000_000_000).toFixed(1) + "T";
   if (abs >= 1_000_000_000) return (num / 1_000_000_000).toFixed(1) + "B";
   if (abs >= 1_000_000) return (num / 1_000_000).toFixed(1) + "M";
   if (abs >= 1_000) return (num / 1_000).toFixed(1) + "K";
-
   return num.toFixed(2);
 };
 
@@ -81,11 +79,15 @@ function endOfDay(d: Date) {
   return x;
 }
 
+
+
+
 function getRange(filter: string, customFrom: Date | null, customTo: Date | null) {
   const today = startOfDay(new Date());
   const year = today.getFullYear();
   const month = today.getMonth();
 
+  
   if (filter === "custom" && customFrom && customTo) {
     return { start: startOfDay(customFrom), end: endOfDay(customTo) };
   }
@@ -116,6 +118,18 @@ function getRange(filter: string, customFrom: Date | null, customTo: Date | null
         end: new Date(year, 11, 31),
       };
 
+ 
+    case "this_quarter": {
+      const q = Math.floor(month / 3); // 0,1,2,3
+      const qStartMonth = q * 3;
+      const qEndMonth = qStartMonth + 2;
+
+      return {
+        start: new Date(year, qStartMonth, 1),
+        end: new Date(year, qEndMonth + 1, 0),
+      };
+    }
+
     default:
       return {
         start: new Date(year, month, 1),
@@ -123,6 +137,9 @@ function getRange(filter: string, customFrom: Date | null, customTo: Date | null
       };
   }
 }
+
+
+
 
 
 function buildChartDataFromInvoiceMap(
@@ -134,14 +151,20 @@ function buildChartDataFromInvoiceMap(
   const { start, end } = getRange(filter, customFrom, customTo);
 
   const daysDiff = Math.ceil((end.getTime() - start.getTime()) / 86400000);
-  const isMonthlyView = filter === "this_year" || (filter === "custom" && daysDiff > 60);
+
+
+  const isMonthlyView =
+    filter === "this_year" ||
+    filter === "this_quarter" ||
+    (filter === "custom" && daysDiff > 60);
 
   if (isMonthlyView) {
     const rows: any[] = [];
+
     const startYear = start.getFullYear();
-    const startMonth = filter === "this_year" ? 0 : start.getMonth();
+    const startMonth = start.getMonth();
     const endYear = end.getFullYear();
-    const endMonth = filter === "this_year" ? 11 : end.getMonth();
+    const endMonth = end.getMonth();
 
     const totalMonths = (endYear - startYear) * 12 + (endMonth - startMonth) + 1;
 
@@ -167,7 +190,7 @@ function buildChartDataFromInvoiceMap(
     return rows;
   }
 
-  
+
   const rows: any[] = [];
   const cursor = new Date(start);
 
@@ -183,15 +206,17 @@ function buildChartDataFromInvoiceMap(
       fullDate: key,
       current: invoiceMap[key] || 0,
       previous: 0,
-      date: key,
     });
+
     cursor.setDate(cursor.getDate() + 1);
   }
 
+  // Add Previous Month comparison (month only)
   if (filter === "this_month") {
     const today = customTo ? new Date(customTo) : new Date();
     const y = today.getFullYear();
     const m = today.getMonth();
+
     const prev = new Date(y, m - 1, 1);
     const py = prev.getFullYear();
     const pm = prev.getMonth();
@@ -207,12 +232,13 @@ function buildChartDataFromInvoiceMap(
 }
 
 
+
+
 const CustomTooltip = ({ active, payload }: any) => {
   if (!active || !payload || !payload.length) return null;
 
   const row = payload[0].payload;
   const value = Number(payload[0].value ?? 0);
-
 
   const formattedDate = new Date(row.fullDate).toLocaleDateString("en-US", {
     weekday: "short",
@@ -222,24 +248,27 @@ const CustomTooltip = ({ active, payload }: any) => {
   });
 
   return (
-    <div style={{
-      background: "white",
-      padding: "8px 12px",
-      borderRadius: "6px",
-      boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
-    }}>
+    <div
+      style={{
+        background: "white",
+        padding: "8px 12px",
+        borderRadius: "6px",
+        boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+      }}
+    >
       <div style={{ marginBottom: 4 }}>
         <strong>{formattedDate}</strong>
       </div>
-      <div>USD ${value.toLocaleString()}</div>
+      <div>C$ {value.toLocaleString()}</div>
       <div style={{ color: "#6B7280", fontSize: 12 }}>{formatShort(value)}</div>
     </div>
   );
 };
 
 
+
 export function RevenueChart() {
-  const [dateFilter, setDateFilter] = useState("this_month");
+  const [dateFilter, setDateFilter] = useState("this_quarter");
   const [customDateFrom, setCustomDateFrom] = useState<Date | null>(null);
   const [customDateTo, setCustomDateTo] = useState<Date | null>(null);
 
@@ -256,7 +285,13 @@ export function RevenueChart() {
   const invoiceMap = useMemo(() => groupInvoicesByDate(invoices), [invoices]);
 
   const chartData = useMemo(
-    () => buildChartDataFromInvoiceMap(invoiceMap, dateFilter, customDateFrom, customDateTo),
+    () =>
+      buildChartDataFromInvoiceMap(
+        invoiceMap,
+        dateFilter,
+        customDateFrom,
+        customDateTo
+      ),
     [invoiceMap, dateFilter, customDateFrom, customDateTo]
   );
 
@@ -288,20 +323,22 @@ export function RevenueChart() {
 
   return (
     <Card className="lg:col-span-7 bg-white rounded-xl shadow-sm">
- 
       <CardHeader className="pb-0">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-lg font-semibold text-black">Revenue</CardTitle>
+          <CardTitle className="text-lg font-semibold text-black">
+            Revenue
+          </CardTitle>
 
           <div className="flex gap-2">
-             <DateFilter
-            dateFilter={dateFilter}
-            setDateFilter={setDateFilter}
-            customDateFrom={customDateFrom}
-            setCustomDateFrom={setCustomDateFrom}
-            customDateTo={customDateTo}
-            setCustomDateTo={setCustomDateTo}
-          />
+            <DateFilter
+              dateFilter={dateFilter}
+              setDateFilter={setDateFilter}
+              customDateFrom={customDateFrom}
+              setCustomDateFrom={setCustomDateFrom}
+              customDateTo={customDateTo}
+              setCustomDateTo={setCustomDateTo}
+            />
+
             <Button variant="outline" size="icon" onClick={handleDownloadPDF}>
               <Download size={16} />
             </Button>
@@ -313,26 +350,43 @@ export function RevenueChart() {
         </p>
 
         {dateFilter === "this_month" && (
-          <p className={`text-xs font-medium mt-1 ${growth >= 0 ? "text-green-600" : "text-red-500"}`}>
-            {growth >= 0 ? "↑" : "↓"} {Math.abs(growth).toFixed(1)}% vs last month
+          <p
+            className={`text-xs font-medium mt-1 ${
+              growth >= 0 ? "text-green-600" : "text-red-500"
+            }`}
+          >
+            {growth >= 0 ? "↑" : "↓"} {Math.abs(growth).toFixed(1)}% vs last
+            month
           </p>
         )}
 
         <CardDescription className="mt-3 text-xs text-gray-500">
-          {dateFilter === "today" ? "Today's Revenue" :
-           dateFilter === "this_week" ? "This Week" :
-           dateFilter === "this_month" ? "This Month vs Previous Month" :
-           dateFilter === "this_year" ? "This Year (Monthly)" :
-           dateFilter === "custom" ? "Custom Period" : "Revenue"}
+          {dateFilter === "today"
+            ? "Today's Revenue"
+            : dateFilter === "this_week"
+            ? "This Week"
+            : dateFilter === "this_month"
+            ? "This Month vs Previous Month"
+            : dateFilter === "this_year"
+            ? "This Year (Monthly)"
+            : dateFilter === "this_quarter"
+            ? "This Quarter (Monthly)"
+            : dateFilter === "custom"
+            ? "Custom Period"
+            : "Revenue"}
         </CardDescription>
       </CardHeader>
 
       <CardContent ref={pdfRef} className="p-4">
         <div className="mt-2 h-60">
           {isLoading ? (
-            <div className="h-full flex items-center justify-center text-gray-500">Loading...</div>
+            <div className="h-full flex items-center justify-center text-gray-500">
+              Loading...
+            </div>
           ) : chartData.length === 0 ? (
-            <div className="h-full flex items-center justify-center text-gray-500">No data available for selected period</div>
+            <div className="h-full flex items-center justify-center text-gray-500">
+              No data available for selected period
+            </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData}>
@@ -342,6 +396,7 @@ export function RevenueChart() {
                   axisLine={false}
                   tickLine={false}
                 />
+
                 <YAxis hide />
                 <Tooltip content={<CustomTooltip />} />
 
@@ -349,13 +404,12 @@ export function RevenueChart() {
                   align="center"
                   verticalAlign="bottom"
                   formatter={(value) => {
-                    if (value === "current") return "Current Month";
-                    if (value === "previous") return "Previous Month";
+                    if (value === "current") return "Current";
+                    if (value === "previous") return "Previous";
                     if (value === "value") return "Revenue";
                     return value;
                   }}
                 />
-
                 {chartData[0]?.value !== undefined ? (
                   <Bar dataKey="value" fill="#0A64A0" barSize={7} />
                 ) : (

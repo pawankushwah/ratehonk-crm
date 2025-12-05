@@ -8,7 +8,7 @@ import { useAuth } from "../auth/auth-provider";
 export function ServiceProviderChart() {
   const { tenant } = useAuth();
 
-  const [dateFilter, setDateFilter] = useState("this_week");
+  const [dateFilter, setDateFilter] = useState("this_quarter");
   const [customDateFrom, setCustomDateFrom] = useState<Date | null>(null);
   const [customDateTo, setCustomDateTo] = useState<Date | null>(null);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
@@ -90,7 +90,7 @@ export function ServiceProviderChart() {
 
     const mapped = sorted.map((item, index) => ({
       name: item.name,
-      value: Number(((item.count / total) * 100).toFixed(2)), // % value
+      value: Number(((item.count / total) * 100).toFixed(2)), 
       color: colors[index % colors.length],
     }));
 
@@ -112,7 +112,7 @@ export function ServiceProviderChart() {
 
   useEffect(() => {
     if (categories.length > 0) {
-      setSelectedCategory(categories[2]);
+      setSelectedCategory(categories[0]);
     }
   }, [categories]);
 
@@ -124,6 +124,7 @@ export function ServiceProviderChart() {
             Service Providers
           </CardTitle>
 
+         <div className="flex gap-2">
           <DateFilter
             dateFilter={dateFilter}
             setDateFilter={setDateFilter}
@@ -132,6 +133,7 @@ export function ServiceProviderChart() {
             customDateTo={customDateTo}
             setCustomDateTo={setCustomDateTo}
           />
+        </div>
         </div>
 
           <div className="mb-5">

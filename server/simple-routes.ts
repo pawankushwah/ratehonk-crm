@@ -20894,7 +20894,7 @@ Please improve this email.`;
     }
   });
 
-  // GET profit and loss data with date filtering
+ 
 app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
   try {
     const tenantId = req.user.tenantId;
@@ -20902,9 +20902,25 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
       return res.status(400).json({ error: "Tenant ID not found" });
     }
 
-    const { startDate = "", endDate = "" } = req.query;
+    let { startDate = "", endDate = "" } = req.query;
 
-    
+
+    const normalize = (v) =>
+      typeof v === "string" ? v.slice(0, 10) : v;
+
+    startDate = normalize(startDate);
+    endDate = normalize(endDate);
+
+    const getYearMonthFromString = (dateStr) => {
+      if (!dateStr) return null;
+      const [year, month] = dateStr.split('-').map(Number);
+      return { year, month: month - 1 }; 
+    };
+
+    const startInfo = getYearMonthFromString(startDate);
+    const endInfo = getYearMonthFromString(endDate);
+
+
     let invoiceDateFilter = sql`1=1`;
     if (startDate && endDate) {
       invoiceDateFilter = sql`
@@ -20913,51 +20929,33 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
       `;
     }
 
-    
     const invoices = await sql`
-  SELECT 
-    id,
-    issue_date AS "issueDate",
-    total_amount AS "totalAmount",
-    TO_CHAR(issue_date, 'YYYY-MM') AS "month"
-  FROM invoices
-  WHERE tenant_id = ${tenantId}
-    AND status NOT IN ('void', 'cancelled')   
-    AND ${invoiceDateFilter}
-  ORDER BY issue_date ASC
-`;
-    
-    const invoiceMonthData: any = {};
-    const invoiceDateData: any = {};
+      SELECT 
+        id,
+        issue_date AS "issueDate",
+        total_amount AS "totalAmount",
+        TO_CHAR(issue_date, 'YYYY-MM') AS "month"
+      FROM invoices
+      WHERE tenant_id = ${tenantId}
+        AND status NOT IN ('void', 'cancelled')
+        AND ${invoiceDateFilter}
+      ORDER BY issue_date ASC
+    `;
+
+    const invoiceMonthData = {};
 
     invoices.forEach((inv) => {
       const month = inv.month;
-
-      // Fix: avoid timezone issue
-      const date = inv.issueDate
-        ? inv.issueDate.toString().slice(0, 10)
-        : null;
-
       const revenue = Number(inv.totalAmount || 0);
 
-      // MONTH WISE
       if (!invoiceMonthData[month]) {
         invoiceMonthData[month] = { revenue: 0 };
       }
-      invoiceMonthData[month].revenue += revenue;
 
-      // DATE WISE
-      if (date) {
-        if (!invoiceDateData[date]) {
-          invoiceDateData[date] = { revenue: 0 };
-        }
-        invoiceDateData[date].revenue += revenue;
-      }
+      invoiceMonthData[month].revenue += revenue;
     });
 
 
-    // FETCH EXPENSES (ONLY FROM EXPENSE TABLE)
- 
     let expenseDateFilter = sql`1=1`;
     if (startDate && endDate) {
       expenseDateFilter = sql`
@@ -20977,78 +20975,39 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
       ORDER BY 1 ASC
     `;
 
-    const expensesDaily = await sql`
-      SELECT 
-        TO_CHAR(expense_date, 'YYYY-MM-DD') AS date,
-        SUM(amount)::numeric AS total
-      FROM expenses
-      WHERE tenant_id = ${tenantId}
-        AND ${expenseDateFilter}
-      GROUP BY 1
-      ORDER BY 1 ASC
-    `;
 
-   
-    // DAILY MERGE (REVENUE + EXPENSES)
-  
-    const dailyMap = new Map();
+    const allMonths = [];
 
-    // Seed revenue from invoices
-    Object.entries(invoiceDateData).forEach(([date, data]: any) => {
-      dailyMap.set(date, {
-        date,
-        revenue: data.revenue,
-        expenses: 0,
-        profit: 0,
-      });
-    });
-
-    // Add expenses ONLY from expense table
-    expensesDaily.forEach((row: any) => {
-      if (!dailyMap.has(row.date)) {
-        dailyMap.set(row.date, {
-          date: row.date,
-          revenue: 0,
-          expenses: Number(row.total),
-          profit: 0,
-        });
-      } else {
-        dailyMap.get(row.date).expenses += Number(row.total);
-      }
-    });
-
-    const daily = Array.from(dailyMap.values()).map((d) => ({
-      ...d,
-      profit: d.revenue - d.expenses,
-    }));
-
-
-    // MONTH RANGE
-   
-    const allMonths: string[] = [];
-    if (startDate && endDate) {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-
-      let current = new Date(start.getFullYear(), start.getMonth(), 1);
-      const endMonth = new Date(end.getFullYear(), end.getMonth(), 1);
-
-      while (current <= endMonth) {
-        allMonths.push(current.toISOString().slice(0, 7));
-        current.setMonth(current.getMonth() + 1);
+    if (startInfo && endInfo) {
+      let currentYear = startInfo.year;
+      let currentMonth = startInfo.month;
+      
+      const targetYear = endInfo.year;
+      const targetMonth = endInfo.month;
+      
+      while (
+        currentYear < targetYear || 
+        (currentYear === targetYear && currentMonth <= targetMonth)
+      ) {
+        const monthStr = `${currentYear}-${(currentMonth + 1).toString().padStart(2, '0')}`;
+        allMonths.push(monthStr);
+        
+      
+        currentMonth++;
+        if (currentMonth > 11) {
+          currentMonth = 0;
+          currentYear++;
+        }
       }
     }
 
-    
     const monthsMap = new Map();
 
- 
     allMonths.forEach((m) => {
       monthsMap.set(m, { month: m, revenue: 0, expenses: 0, profit: 0 });
     });
 
- 
-    expensesByMonth.forEach((row: any) => {
+    expensesByMonth.forEach((row) => {
       if (!monthsMap.has(row.month)) {
         monthsMap.set(row.month, {
           month: row.month,
@@ -21061,8 +21020,8 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
       }
     });
 
-    // Add invoice revenue
-    Object.entries(invoiceMonthData).forEach(([month, data]: any) => {
+  
+    Object.entries(invoiceMonthData).forEach(([month, data]) => {
       if (!monthsMap.has(month)) {
         monthsMap.set(month, {
           month,
@@ -21075,24 +21034,22 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
       }
     });
 
+
     const monthly = Array.from(monthsMap.values()).map((m) => ({
       ...m,
       profit: m.revenue - m.expenses,
     }));
 
-    // FINAL RESPONSE
-   
+
     res.json({
-      daily,
       monthly,
     });
+
   } catch (error) {
     console.error("❌ Profit & Loss Error:", error);
     res.status(500).json({ error: error.message });
   }
 });
-
-
 
 
   app.get("/api/gst-settings", authenticateVendor, async (req, res) => {

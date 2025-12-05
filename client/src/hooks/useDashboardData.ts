@@ -56,7 +56,7 @@ export function buildFilterParamsFromDateFilter(
   else if (filter === "this_week") {
     const start = new Date(today);
     const day = today.getDay();
-    const diff = day === 0 ? 6 : day - 1; // Monday
+    const diff = day === 0 ? 6 : day - 1; 
     start.setDate(today.getDate() - diff);
 
     const end = new Date(start);
@@ -70,10 +70,23 @@ export function buildFilterParamsFromDateFilter(
     startDate = formatLocalYMDWithTime(new Date(y, m, 1), false);
     endDate = formatLocalYMDWithTime(new Date(y, m + 1, 0), true);
   }
+    
+      else if (filter === "this_quarter") {
+    const quarter = Math.floor(m / 3); 
+
+    const qStartMonth = quarter * 3;     
+    const qEndMonth = qStartMonth + 2;   
+
+    const start = new Date(y, qStartMonth, 1);
+    const end = new Date(y, qEndMonth + 1, 0);
+
+    startDate = formatLocalYMDWithTime(start, false);
+    endDate = formatLocalYMDWithTime(end, true);
+  }
 
   else if (filter === "this_year") {
-    startDate = formatLocalYMDWithTime(new Date(y, 0, 1), false); // Jan 1
-    endDate = formatLocalYMDWithTime(new Date(y, 11, 31), true); // Dec 31
+    startDate = formatLocalYMDWithTime(new Date(y, 0, 1), false); 
+    endDate = formatLocalYMDWithTime(new Date(y, 11, 31), true); 
   }
 
   return { startDate, endDate };

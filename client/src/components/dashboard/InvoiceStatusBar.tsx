@@ -15,7 +15,7 @@ import { useInvoicesForGraph } from "@/hooks/useDashboardData";
 export function InvoiceStatusBar() {
   const { tenant } = useAuth();
 
-  const [dateFilter, setDateFilter] = useState("this_year");
+  const [dateFilter, setDateFilter] = useState("this_quarter");
   const [customDateFrom, setCustomDateFrom] = useState<Date | null>(null);
   const [customDateTo, setCustomDateTo] = useState<Date | null>(null);
 
