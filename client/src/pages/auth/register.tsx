@@ -102,15 +102,15 @@ export default function Register() {
       const result = await auth.register(formData);
       console.log('✅ Registration successful:', result);
       
-      // Success notification with activation information
+      // Success notification with trial information
       toast({
-        title: "Registration Successful!",
-        description: "Please check your email and click the activation link to activate your account.",
+        title: "Welcome to RateHonk CRM!",
+        description: "Account created successfully! Your 14-day free trial has started. You can now access all premium features.",
       });
       
-      // Redirect to login page with success message
+      // Slight delay for user to see success message
       setTimeout(() => {
-        setLocation("/login?success=registered");
+        setLocation("/dashboard");
       }, 1000);
       
     } catch (error: any) {
@@ -215,7 +215,7 @@ export default function Register() {
                     name="firstName"
                     value={formData.firstName}
                     onChange={handleChange}
-                    placeholder="First Name"
+                    placeholder="Harsh"
                     className="h-12 border-2 border-orange-200 focus:border-orange-400 focus:ring-orange-400 rounded-lg bg-gray-50"
                     required
                   />
@@ -228,7 +228,7 @@ export default function Register() {
                     name="lastName"
                     value={formData.lastName}
                     onChange={handleChange}
-                    placeholder="Last Name"
+                    placeholder="Smith"
                     className="h-12 border-gray-300 focus:border-cyan-500 focus:ring-cyan-500 rounded-lg"
                     required
                   />
@@ -244,7 +244,7 @@ export default function Register() {
                   value={formData.email}
                   onChange={handleChange}
                   onBlur={(e) => checkEmailAvailability(e.target.value)}
-                  placeholder="Enter Email Address"
+                  placeholder="Harshvani09@gmail.com"
                   className="h-12 border-gray-300 focus:border-cyan-500 focus:ring-cyan-500 rounded-lg"
                   required
                 />

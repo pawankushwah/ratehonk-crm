@@ -37,33 +37,6 @@ export default function ResetPassword() {
     userName?: string;
   }>({});
   console.log(location, "location");
-
-  // Redirect to correct domain if accessed from wrong domain
-  useEffect(() => {
-    const currentHost = window.location.hostname;
-    const correctDomain = "crm.ratehonk.com";
-    
-    // Check if we're on the wrong domain (your-app-url.com or any other wrong domain)
-    if (currentHost !== correctDomain && (currentHost.includes("your-app-url.com") || currentHost !== "localhost" && currentHost !== "127.0.0.1")) {
-      // Extract token from current URL (handle both token and subid1 parameters)
-      const urlParams = new URLSearchParams(window.location.search);
-      const tokenParam = urlParams.get("token");
-      
-      if (tokenParam) {
-        // Redirect to correct domain with token only (remove subid1 and other tracking params)
-        const correctUrl = `https://${correctDomain}/reset-password?token=${tokenParam}`;
-        console.log("🔄 Redirecting from wrong domain:", currentHost);
-        console.log("🔄 Redirecting to correct domain:", correctUrl);
-        window.location.replace(correctUrl); // Use replace instead of href to avoid back button issues
-        return;
-      } else {
-        // If no token, just redirect to login
-        console.log("🔄 No token found, redirecting to login");
-        window.location.replace(`https://${correctDomain}/login`);
-        return;
-      }
-    }
-  }, []);
   // useEffect(() => {
   //   // Extract token from URL parameters
   //   console.log("🔍 Current location:", location);

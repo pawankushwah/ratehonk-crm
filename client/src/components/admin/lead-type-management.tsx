@@ -109,9 +109,15 @@ const AVAILABLE_CATEGORIES = [
   { value: 1, label: "Flight" },
   { value: 2, label: "Hotels" },
   { value: 3, label: "Package" },
-  { value: 4, label: "Event" },
+  { value: 4, label: "Event Booking" },
   { value: 5, label: "Car Rental" },
-  { value: 6, label: "Attraction" }
+  { value: 6, label: "Attraction" },
+  { value: 7, label: "holiday" },
+  { value: 8, label: "Activities" },
+  { value: 9, label: "Insurance" },
+  { value: 10, label: "Cruise" },
+
+   
 ];
 
 const leadTypeSchema = z.object({

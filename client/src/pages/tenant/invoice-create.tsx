@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Layout } from "@/components/layout/layout";
 import { Button } from "@/components/ui/button";
@@ -33,6 +33,9 @@ import {
   Bell,
   HelpCircle,
   Settings,
+  Check,
+  X,
+  ChevronDown,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -45,19 +48,25 @@ import {
 import { useAuth } from "@/components/auth/auth-provider";
 import { auth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
-import { useLocation } from "wouter";
+import { useLocation, useRoute } from "wouter";
 import { CustomerCreateForm } from "@/components/forms/customer-create-form";
 import { VendorCreateForm } from "@/components/forms/vendor-create-form";
 import { LeadTypeCreateForm } from "@/components/forms/lead-type-create-form";
 import { ServiceProviderCreateForm } from "@/components/forms/service-provider-create-form";
 import { InvoiceSettingsPanel } from "@/components/invoice-settings-panel";
 import { DatePicker } from "@/components/ui/date-picker";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { ModernTemplate, InvoiceData } from "@/components/invoices/invoice-templates";
 
 export default function InvoiceCreate() {
   const { tenant } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
+  const [match, params] = useRoute("/invoice-create/:id?");
+  const invoiceId = params?.id ? parseInt(params.id) : null;
+  const isEditMode = !!invoiceId;
 
   const [lineItems, setLineItems] = useState([
     {
@@ -72,6 +81,9 @@ export default function InvoiceCreate() {
       sellingPrice: "",
       purchasePrice: "",
       tax: "",
+      taxRateId: "",
+      additionalCommissionPercentage: "",
+      additionalCommission: "",
       totalAmount: 0,
     },
   ]);
@@ -80,15 +92,18 @@ export default function InvoiceCreate() {
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
   const [discountAmount, setDiscountAmount] = useState("");
   const [amountPaid, setAmountPaid] = useState("");
+  const [existingPaidAmount, setExistingPaidAmount] = useState(0); // Store original paid amount for edit mode
   const [paymentStatus, setPaymentStatus] = useState("pending");
-  const [paymentMethod, setPaymentMethod] = useState("credit_card");
+  const [paymentMethod, setPaymentMethod] = useState<string[]>([]);
   const [paymentTerms, setPaymentTerms] = useState("30");
   const [customDays, setCustomDays] = useState("");
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split("T")[0]);
   const [dueDate, setDueDate] = useState(
     new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
   );
-  
+  const [invoiceNumber, setInvoiceNumber] = useState("");
+  const [invoiceNumberOnly, setInvoiceNumberOnly] = useState(""); // Just the number part without prefix
+
   // Payment reminder states
   const [enableReminder, setEnableReminder] = useState(false);
   const [reminderFrequency, setReminderFrequency] = useState("weekly");
@@ -117,9 +132,16 @@ export default function InvoiceCreate() {
 
   // Notes state for rich text editor
   const [notesContent, setNotesContent] = useState("");
+  const [additionalNotesContent, setAdditionalNotesContent] = useState("");
+
+  // Preview state
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewInvoiceData, setPreviewInvoiceData] = useState<InvoiceData | null>(null);
 
   // Fetch invoice settings
   const { data: invoiceSettings = {
+    invoiceNumberStart: 1,
+    invoiceNumberPrefix: "INV",
     showTax: true,
     showDiscount: true,
     showNotes: true,
@@ -127,17 +149,223 @@ export default function InvoiceCreate() {
     showProvider: true,
     showVendor: true,
     showUnitPrice: true,
+    showAdditionalCommission: false,
     defaultCurrency: "USD",
-  } } = useQuery({
+    defaultGstSettingId: null,
+  }, refetch: refetchInvoiceSettings, isLoading: isLoadingSettings } = useQuery({
     queryKey: ["/api/invoice-settings", tenant?.id],
     enabled: !!tenant?.id,
     queryFn: async () => {
-      const response = await fetch(`/api/invoice-settings/${tenant?.id}`);
-      if (!response.ok) throw new Error("Failed to fetch settings");
+      console.log("📥 Fetching invoice settings for tenant:", tenant?.id);
+      try {
+        const response = await fetch(`/api/invoice-settings/${tenant?.id}`, {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+        if (!response.ok) {
+          console.error("❌ Failed to fetch invoice settings:", response.status, response.statusText);
+          const errorText = await response.text();
+          console.error("❌ Error response:", errorText);
+          throw new Error(`Failed to fetch settings: ${response.status} ${response.statusText}`);
+        }
+        const result = await response.json();
+        console.log("✅ Invoice settings fetched:", result.data);
+        return result.data || result;
+      } catch (error) {
+        console.error("❌ Error fetching invoice settings:", error);
+        throw error;
+      }
+    },
+    refetchOnMount: "always",
+    refetchOnWindowFocus: false,
+    staleTime: 0,
+    cacheTime: 0,
+    retry: 2,
+  });
+
+  // Fetch existing invoices for number generation
+  const { data: invoices = [] } = useQuery<any[]>({
+    queryKey: ["/api/invoices", tenant?.id],
+    enabled: !!tenant?.id && !isEditMode,
+    queryFn: async () => {
+      const token = auth.getToken();
+      const response = await fetch(`/api/tenants/${tenant?.id}/invoices`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) return [];
       const result = await response.json();
-      return result.data;
+      return Array.isArray(result) ? result : [];
     },
   });
+
+  // Refetch invoice settings when page loads
+  useEffect(() => {
+    if (tenant?.id) {
+      console.log("🔄 Refetching invoice settings on page load for tenant:", tenant?.id);
+      refetchInvoiceSettings();
+    }
+  }, [tenant?.id, refetchInvoiceSettings]);
+
+  // Auto-select tax setting from invoice settings
+  useEffect(() => {
+    if (invoiceSettings?.defaultGstSettingId) {
+      setSelectedTaxSettingId(invoiceSettings.defaultGstSettingId.toString());
+    }
+  }, [invoiceSettings?.defaultGstSettingId]);
+
+  // Function to generate next invoice number
+  const generateNextInvoiceNumber = useMemo(() => {
+    const startNumber = invoiceSettings?.invoiceNumberStart || 1;
+    const prefix = invoiceSettings?.invoiceNumberPrefix || "INV";
+    
+    console.log("🔢 Generating invoice number - invoices count:", invoices?.length, "startNumber:", startNumber, "prefix:", prefix);
+    console.log("🔢 Invoice settings:", invoiceSettings);
+    console.log("🔢 Invoices data:", invoices);
+    
+    if (!invoices || invoices.length === 0) {
+      // No existing invoices, use starting number from settings
+      const generated = `${prefix}${String(startNumber).padStart(3, '0')}`;
+      console.log("🔢 No existing invoices, using start number from settings:", generated);
+      return generated;
+    }
+
+    // Extract numbers from existing invoice numbers
+    // Handle formats like: INV-001, INV001, INV-1, INV1, BILL-123, BILL123, etc.
+    const invoiceNumbers = invoices
+      .map((inv: any, index: number) => {
+        const invNum = inv.invoiceNumber || "";
+        if (!invNum) {
+          console.log(`🔢 Invoice ${index} has no invoice number`);
+          return 0;
+        }
+        
+        console.log(`🔢 Processing invoice ${index}: "${invNum}"`);
+        
+        // Try to extract number - handle multiple formats
+        // Pattern 1: PREFIX-NUMBER (e.g., INV-001, BILL-123)
+        const matchWithDash = invNum.match(/^[A-Za-z0-9]+[\s-]+(\d+)/);
+        if (matchWithDash) {
+          const num = parseInt(matchWithDash[1], 10);
+          console.log(`🔢 Matched with dash pattern: ${num}`);
+          return num;
+        }
+        
+        // Pattern 2: PREFIXNUMBER (e.g., INV001, BILL123)
+        const matchNoDash = invNum.match(/^[A-Za-z]+(\d+)/);
+        if (matchNoDash) {
+          const num = parseInt(matchNoDash[1], 10);
+          console.log(`🔢 Matched no dash pattern: ${num}`);
+          return num;
+        }
+        
+        // Pattern 3: Just numbers (extract first number sequence)
+        const matchNumbers = invNum.match(/(\d+)/);
+        if (matchNumbers) {
+          const num = parseInt(matchNumbers[1], 10);
+          console.log(`🔢 Matched numbers pattern: ${num}`);
+          return num;
+        }
+        
+        console.log(`🔢 No pattern matched for: "${invNum}"`);
+        return 0;
+      })
+      .filter((num: number) => num > 0);
+
+    console.log("🔢 Extracted invoice numbers:", invoiceNumbers);
+
+    // Find the highest number from existing invoices
+    const maxNumber = invoiceNumbers.length > 0 
+      ? Math.max(...invoiceNumbers) 
+      : 0;
+
+    console.log("🔢 Max number from existing invoices:", maxNumber, "Start number from settings:", startNumber);
+
+    // If we have existing invoices, increment from the highest
+    // If no valid numbers found, use start number
+    // Otherwise, use the higher of: (maxNumber + 1) or startNumber
+    let nextNumber: number;
+    if (invoiceNumbers.length === 0) {
+      // No valid invoice numbers found, use start number
+      nextNumber = startNumber;
+      console.log("🔢 No valid invoice numbers found, using start number:", nextNumber);
+    } else {
+      // We have valid invoice numbers, increment from the highest
+      // But ensure we don't go below the start number
+      nextNumber = Math.max(maxNumber + 1, startNumber);
+      console.log("🔢 Incrementing from max number:", maxNumber, "-> next:", nextNumber);
+    }
+    
+    // Return without dash: INV001 instead of INV-001
+    const generated = `${prefix}${String(nextNumber).padStart(3, '0')}`;
+    console.log("🔢 Final generated invoice number:", generated);
+    return generated;
+  }, [invoices, invoiceSettings?.invoiceNumberStart, invoiceSettings?.invoiceNumberPrefix]);
+
+  // Track the last starting number used for auto-generation
+  const lastStartingNumber = useRef<number | null>(null);
+  const hasInitialized = useRef(false);
+
+  // Helper function to extract number part from full invoice number
+  const extractNumberPart = (fullNumber: string, prefix: string): string => {
+    if (!fullNumber) return "";
+    // Remove prefix and any separators (like "-")
+    const prefixPattern = new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s-]*`, 'i');
+    const cleaned = fullNumber.replace(prefixPattern, '').trim();
+    // Extract just the numeric part
+    const match = cleaned.match(/(\d+)/);
+    return match ? match[1] : cleaned;
+  };
+
+  // Auto-generate invoice number when invoices/settings are loaded
+  useEffect(() => {
+    if (isEditMode) return; // Don't auto-generate in edit mode
+    
+    const currentStartNumber = invoiceSettings?.invoiceNumberStart || 1;
+    const prefix = invoiceSettings?.invoiceNumberPrefix || "INV";
+    
+    // Wait for both invoices and settings to be loaded
+    if (generateNextInvoiceNumber && invoiceSettings && (invoices !== undefined)) {
+      // Check if starting number changed
+      const startingNumberChanged = lastStartingNumber.current !== null && 
+                                    lastStartingNumber.current !== currentStartNumber;
+      
+      // On first initialization, always update (even if field has a value)
+      // After that, update if field is empty OR starting number changed
+      const shouldUpdate = !hasInitialized.current || 
+                          !invoiceNumber || 
+                          startingNumberChanged;
+      
+      if (shouldUpdate) {
+        lastStartingNumber.current = currentStartNumber;
+        hasInitialized.current = true;
+        const fullNumber = generateNextInvoiceNumber;
+        setInvoiceNumber(fullNumber);
+        // Extract and set just the number part
+        const numberPart = extractNumberPart(fullNumber, prefix);
+        setInvoiceNumberOnly(numberPart);
+        console.log("🔢 Set invoice number:", fullNumber, "Number part:", numberPart);
+      }
+    } else if (invoiceSettings?.invoiceNumberStart && !hasInitialized.current) {
+      // Initialize lastStartingNumber even if generateNextInvoiceNumber isn't ready yet
+      lastStartingNumber.current = invoiceSettings.invoiceNumberStart;
+    }
+  }, [generateNextInvoiceNumber, invoiceSettings, invoices, isEditMode]);
+
+  // Sync invoiceNumberOnly when invoiceNumber changes (for edit mode)
+  useEffect(() => {
+    if (invoiceNumber) {
+      const prefix = invoiceSettings?.invoiceNumberPrefix || "INV";
+      const numberPart = extractNumberPart(invoiceNumber, prefix);
+      if (numberPart !== invoiceNumberOnly) {
+        setInvoiceNumberOnly(numberPart);
+      }
+    } else if (!invoiceNumber && invoiceNumberOnly) {
+      // Clear number part if invoice number is cleared
+      setInvoiceNumberOnly("");
+    }
+  }, [invoiceNumber, invoiceSettings?.invoiceNumberPrefix]); // Note: intentionally not including invoiceNumberOnly to avoid loops
 
   // Fetch customers
   const { data: customers = [] } = useQuery({
@@ -237,6 +465,250 @@ export default function InvoiceCreate() {
       !!tenant?.id && !!selectedTaxSettingId && selectedTaxSettingId !== "none",
   });
 
+  // Track if invoice data has been loaded to prevent re-loading
+  const invoiceDataLoadedRef = useRef<number | null>(null);
+
+  // Fetch invoice data when in edit mode
+  const { data: existingInvoice, isLoading: isLoadingInvoice, refetch: refetchInvoice } = useQuery({
+    queryKey: [`/api/tenants/${tenant?.id}/invoices/${invoiceId}`],
+    enabled: isEditMode && !!invoiceId && !!tenant?.id,
+    queryFn: async () => {
+      const token = auth.getToken();
+      // Add timestamp to URL to prevent 304 cached responses
+      const url = `/api/tenants/${tenant?.id}/invoices/${invoiceId}?t=${Date.now()}`;
+      const response = await fetch(url, {
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache',
+        },
+        cache: 'no-store', // Bypass browser cache completely
+      });
+      
+      // Handle 304 Not Modified - force a fresh request (fallback)
+      if (response.status === 304) {
+        console.warn("Received 304, forcing fresh fetch with new timestamp...");
+        const freshUrl = `/api/tenants/${tenant?.id}/invoices/${invoiceId}?t=${Date.now()}`;
+        const freshResponse = await fetch(freshUrl, {
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache',
+          },
+          cache: 'no-store',
+        });
+        if (!freshResponse.ok) {
+          console.error("Failed to fetch invoice after 304 retry:", freshResponse.status, freshResponse.statusText);
+          throw new Error("Failed to fetch invoice");
+        }
+        const result = await freshResponse.json();
+        console.log("Invoice data fetched (raw, after 304 retry):", result);
+        return result.invoice || result.data || result;
+      }
+      
+      if (!response.ok) throw new Error("Failed to fetch invoice");
+      const result = await response.json();
+      console.log("Invoice data fetched (raw):", result);
+      return result.invoice || result.data || result;
+    },
+    // Force refetch every time to ensure fresh data when editing
+    refetchOnMount: true,
+    refetchOnWindowFocus: false,
+    staleTime: 0, // Always consider data stale, so it refetches
+    gcTime: 0, // Don't cache, always fetch fresh data
+    retry: 2, // Retry failed requests
+    retryDelay: 1000, // Wait 1 second between retries
+  });
+
+  // Reset the loaded flag and force refetch when invoiceId changes
+  useEffect(() => {
+    if (invoiceId) {
+      const previousInvoiceId = invoiceDataLoadedRef.current;
+      if (previousInvoiceId !== invoiceId) {
+        console.log("🔄 Invoice ID changed from", previousInvoiceId, "to", invoiceId);
+        invoiceDataLoadedRef.current = null; // Reset before refetch
+        // Force refetch when invoiceId changes
+        if (isEditMode && refetchInvoice) {
+          console.log("🔄 Forcing refetch for new invoice ID:", invoiceId);
+          setTimeout(() => {
+            refetchInvoice();
+          }, 100);
+        }
+      }
+    } else {
+      // Reset when not in edit mode
+      invoiceDataLoadedRef.current = null;
+    }
+  }, [invoiceId, isEditMode, refetchInvoice]);
+
+  // Populate form fields when invoice data loads
+  useEffect(() => {
+    // Validate that we have valid invoice data
+    const invoice = existingInvoice as any;
+    const hasValidData = invoice && 
+                        typeof invoice === 'object' && 
+                        Object.keys(invoice).length > 0 &&
+                        (invoice.id || invoice.invoiceNumber || invoice.totalAmount !== undefined);
+    
+    // Check if lineItems are empty or don't have the expected data
+    const lineItemsEmpty = !invoice?.lineItems || 
+                          (Array.isArray(invoice.lineItems) && invoice.lineItems.length === 0) ||
+                          (lineItems.length === 0 && invoice?.lineItems?.length > 0);
+    
+    // Only load if we have valid data, not loading, and either:
+    // 1. Haven't loaded this invoice yet (ref doesn't match), OR
+    // 2. Line items are empty even though we have data (fallback case)
+    const shouldLoad = isEditMode && 
+                      hasValidData && 
+                      !isLoadingInvoice && 
+                      (invoiceDataLoadedRef.current !== invoiceId || lineItemsEmpty);
+    
+    console.log("🔍 Invoice data loading check:", {
+      isEditMode,
+      hasValidData,
+      isLoadingInvoice,
+      currentRef: invoiceDataLoadedRef.current,
+      invoiceId,
+      lineItemsEmpty,
+      shouldLoad,
+      invoiceDataKeys: invoice ? Object.keys(invoice).length : 0,
+      invoiceNumber: invoice?.invoiceNumber,
+      formLineItemsLength: lineItems.length,
+      dataLineItemsLength: invoice?.lineItems?.length || 0,
+    });
+    
+    if (shouldLoad) {
+      invoiceDataLoadedRef.current = invoiceId; // Mark as loaded BEFORE setting data
+      console.log("🔄 Loading invoice data into form:", invoice);
+      
+      // Set basic fields
+      setSelectedCustomerId(invoice.customerId?.toString() || "");
+      setSelectedBookingId(invoice.bookingId?.toString() || "none");
+      setInvoiceDate(invoice.issueDate || invoice.invoiceDate || new Date().toISOString().split("T")[0]);
+      setDueDate(invoice.dueDate || new Date().toISOString().split("T")[0]);
+      setDiscountAmount(invoice.discountAmount?.toString() || "0");
+      // In edit mode, store existing paid amount separately and set amount paid field to 0
+      const existingPaid = parseFloat(invoice.paidAmount?.toString() || "0");
+      setExistingPaidAmount(existingPaid);
+      setAmountPaid("0"); // Start with 0 for new payment
+      setPaymentStatus(invoice.status || "pending");
+      // Handle both array and string for backward compatibility
+      const paymentMethodValue = invoice.paymentMethod;
+      if (Array.isArray(paymentMethodValue)) {
+        setPaymentMethod(paymentMethodValue);
+      } else if (typeof paymentMethodValue === 'string') {
+        setPaymentMethod([paymentMethodValue]);
+      } else {
+        setPaymentMethod(["credit_card"]);
+      }
+      setPaymentTerms(invoice.paymentTerms?.toString() || "30");
+      // Set invoice number and extract number part
+      if (invoice.invoiceNumber) {
+        setInvoiceNumber(invoice.invoiceNumber);
+        const prefix = invoiceSettings?.invoiceNumberPrefix || "INV";
+        const numberPart = extractNumberPart(invoice.invoiceNumber, prefix);
+        setInvoiceNumberOnly(numberPart);
+      }
+      setIsTaxInclusive(invoice.isTaxInclusive || false);
+      setNotesContent(invoice.notes || "");
+      setAdditionalNotesContent(invoice.additionalNotes || "");
+      setEnableReminder(invoice.enableReminder || false);
+      setReminderFrequency(invoice.reminderFrequency || "weekly");
+      setReminderSpecificDate(invoice.reminderSpecificDate || "");
+
+      // Set payment installments if they exist
+      if (invoice.installments && Array.isArray(invoice.installments) && invoice.installments.length > 0) {
+        setEnableInstallments(true);
+        setNumberOfInstallments(invoice.installments.length.toString());
+        // Calculate installment frequency based on dates if available
+        if (invoice.installments.length > 1) {
+          const firstDate = new Date(invoice.installments[0].dueDate);
+          const secondDate = new Date(invoice.installments[1].dueDate);
+          const daysDiff = Math.round((secondDate.getTime() - firstDate.getTime()) / (1000 * 60 * 60 * 24));
+          if (daysDiff >= 28 && daysDiff <= 31) {
+            setInstallmentFrequency("monthly");
+          } else if (daysDiff >= 7 && daysDiff <= 14) {
+            setInstallmentFrequency("weekly");
+          } else if (daysDiff >= 85 && daysDiff <= 95) {
+            setInstallmentFrequency("quarterly");
+          }
+        }
+      }
+
+      // Parse and set line items
+      let parsedLineItems = [];
+      if (invoice.lineItems) {
+        if (typeof invoice.lineItems === "string") {
+          try {
+            parsedLineItems = JSON.parse(invoice.lineItems);
+          } catch (e) {
+            console.warn("Failed to parse line items:", e);
+          }
+        } else if (Array.isArray(invoice.lineItems)) {
+          parsedLineItems = invoice.lineItems;
+        }
+      } else if (invoice.items && Array.isArray(invoice.items)) {
+        parsedLineItems = invoice.items;
+      }
+
+      if (parsedLineItems.length > 0) {
+        setLineItems(parsedLineItems.map((item: any) => ({
+          travelCategory: item.travelCategory || "",
+          vendor: item.vendor?.toString() || item.vendorId?.toString() || "",
+          serviceProviderId: item.serviceProviderId?.toString() || "",
+          itemTitle: item.itemTitle || item.description || "",
+          invoiceNumber: item.invoiceNumber || "",
+          voucherNumber: item.voucherNumber || "",
+          quantity: item.quantity?.toString() || "1",
+          unitPrice: item.unitPrice?.toString() || "",
+          sellingPrice: item.sellingPrice?.toString() || item.unitPrice?.toString() || "",
+          purchasePrice: item.purchasePrice?.toString() || "0",
+          tax: item.tax?.toString() || "0",
+          taxRateId: item.taxRateId?.toString() || "",
+          additionalCommissionPercentage: item.additionalCommissionPercentage?.toString() || "",
+          additionalCommission: item.additionalCommission?.toString() || "",
+          totalAmount: parseFloat(item.totalAmount?.toString() || item.totalPrice?.toString() || "0"),
+        })));
+      }
+      
+      console.log("✅ Invoice data loaded successfully");
+      console.log("✅ Line items count:", lineItems.length);
+    } else {
+      const skipReason = {
+        isEditMode,
+        hasInvoiceData: !!existingInvoice,
+        isLoadingInvoice,
+        invoiceId,
+        tenantId: tenant?.id,
+        alreadyLoaded: invoiceDataLoadedRef.current === invoiceId,
+        invoiceDataType: typeof existingInvoice,
+        invoiceDataKeys: existingInvoice ? Object.keys(existingInvoice).length : 0,
+      };
+      console.log("⏭️ Skipping invoice data load:", skipReason);
+      
+      // If we're in edit mode but data isn't loading and we don't have data, try to refetch
+      if (isEditMode && !isLoadingInvoice && !existingInvoice && invoiceId && invoiceDataLoadedRef.current !== invoiceId) {
+        console.log("🔄 No data available, attempting to refetch...");
+        setTimeout(() => {
+          if (refetchInvoice) {
+            refetchInvoice();
+          }
+        }, 500);
+      }
+      
+      // If we have data but lineItems are empty, force reload
+      if (isEditMode && existingInvoice && !isLoadingInvoice && lineItems.length === 0 && (existingInvoice as any).lineItems?.length > 0) {
+        console.log("⚠️ Line items are empty but data exists, forcing reload...");
+        invoiceDataLoadedRef.current = null; // Reset to allow reload
+        setTimeout(() => {
+          if (refetchInvoice) {
+            refetchInvoice();
+          }
+        }, 100);
+      }
+    }
+  }, [existingInvoice, isEditMode, isLoadingInvoice, invoiceId, tenant?.id, refetchInvoice, lineItems.length]);
+
   // Create invoice mutation
   const createInvoiceMutation = useMutation({
     mutationFn: async (invoiceData: any) => {
@@ -253,64 +725,113 @@ export default function InvoiceCreate() {
       return response.json();
     },
     onSuccess: async (data) => {
-      // Create payment installments if enabled
-      if (enableInstallments && data.invoice?.id) {
-        try {
-          const installments = calculateInstallments().map(inst => ({
-            invoiceId: data.invoice.id,
-            tenantId: tenant?.id,
-            installmentNumber: inst.installmentNumber,
-            amount: parseFloat(inst.amount),
-            dueDate: inst.dueDate,
-            status: 'pending',
-            paidAmount: 0,
-          }));
-
-          const token = auth.getToken();
-          const installmentResponse = await fetch('/api/payment-installments', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({ 
-              invoiceId: data.invoice.id,
-              tenantId: tenant?.id,
-              installments 
-            }),
-          });
-
-          if (!installmentResponse.ok) {
-            throw new Error('Failed to create payment installments');
-          }
-
-          toast({
-            title: "Invoice Created",
-            description: "Invoice and payment installments created successfully.",
-          });
-        } catch (error) {
-          toast({
-            title: "Partial Success",
-            description: "Invoice created but failed to create installments. Please add them manually.",
-            variant: "destructive",
-          });
-        }
-      } else {
-        toast({
-          title: "Invoice Created",
-          description: "Invoice has been created successfully.",
-        });
-      }
+      // Installments are now created in the server during invoice creation
+      // No need to create them separately here
+      toast({
+        title: "Invoice Created",
+        description: enableInstallments 
+          ? "Invoice and payment installments created successfully."
+          : "Invoice has been created successfully.",
+      });
 
       queryClient.invalidateQueries({
         queryKey: [`/api/tenants/${tenant?.id}/invoices`],
       });
+
+      // Send invoice via email/WhatsApp if enabled
+      const selectedCustomer = customers.find((c: any) => c.id.toString() === selectedCustomerId);
+      if (data.invoice?.id && selectedCustomer) {
+        try {
+          const token = auth.getToken();
+          
+          // Send via email if enabled
+          if (invoiceSettings?.sendInvoiceViaEmail && selectedCustomer.email) {
+            try {
+              await fetch(`/api/invoices/${data.invoice.id}/send-email`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify({
+                  email: selectedCustomer.email,
+                }),
+              });
+            } catch (error) {
+              console.error("Failed to send invoice via email:", error);
+            }
+          }
+
+          // Send via WhatsApp if enabled
+          if (invoiceSettings?.sendInvoiceViaWhatsapp && selectedCustomer.phone) {
+            try {
+              await fetch(`/api/invoices/${data.invoice.id}/send-whatsapp`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify({
+                  phone: selectedCustomer.phone,
+                }),
+              });
+            } catch (error) {
+              console.error("Failed to send invoice via WhatsApp:", error);
+            }
+          }
+        } catch (error) {
+          console.error("Error sending invoice:", error);
+        }
+      }
+
       navigate("/invoices");
     },
     onError: () => {
       toast({
         title: "Creation Failed",
         description: "Failed to create invoice. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Update invoice mutation
+  const updateInvoiceMutation = useMutation({
+    mutationFn: async (invoiceData: any) => {
+      const token = auth.getToken();
+      const response = await fetch(`/api/tenants/${tenant?.id}/invoices/${invoiceId}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(invoiceData),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to update invoice: ${response.status} - ${errorText}`);
+      }
+
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Invoice Updated",
+        description: "Invoice has been updated successfully.",
+      });
+      queryClient.invalidateQueries({
+        queryKey: [`/api/tenants/${tenant?.id}/invoices`],
+      });
+      queryClient.invalidateQueries({
+        queryKey: [`/api/tenants/${tenant?.id}/invoices/${invoiceId}`],
+      });
+      navigate("/invoices");
+    },
+    onError: () => {
+      toast({
+        title: "Update Failed",
+        description: "Failed to update invoice. Please try again.",
         variant: "destructive",
       });
     },
@@ -351,20 +872,20 @@ export default function InvoiceCreate() {
     const defaultCategories =
       leadTypeCategories.length === 0
         ? [
-            { value: "Flight", label: "Flight" },
-            { value: "Hotel", label: "Hotel" },
-            { value: "Transport", label: "Transport" },
-            { value: "Tour Package", label: "Tour Package" },
-            { value: "Visa Services", label: "Visa Services" },
-            { value: "Insurance", label: "Insurance" },
-            { value: "Meals", label: "Meals" },
-            { value: "Activities", label: "Activities" },
-            { value: "Other Services", label: "Other Services" },
-          ]
+          { value: "Flight", label: "Flight" },
+          { value: "Hotel", label: "Hotel" },
+          { value: "Transport", label: "Transport" },
+          { value: "Tour Package", label: "Tour Package" },
+          { value: "Visa Services", label: "Visa Services" },
+          { value: "Insurance", label: "Insurance" },
+          { value: "Meals", label: "Meals" },
+          { value: "Activities", label: "Activities" },
+          { value: "Other Services", label: "Other Services" },
+        ]
         : leadTypeCategories;
 
     return [
-      { value: "create_new", label: "➕ Create New Travel Category" },
+      { value: "create_new", label: "➕ New" },
       ...defaultCategories,
     ];
   };
@@ -404,8 +925,8 @@ export default function InvoiceCreate() {
   // Get vendor options
   const getVendorOptions = (): AutocompleteOption[] => {
     return [
-      { value: "create_new", label: "➕ Create New Vendor" },
-      { value: "none", label: "No vendor selected" },
+      { value: "create_new", label: "➕ New" },
+      // { value: "none", label: "No vendor selected" },
       ...vendors.map((vendor: any) => ({
         value: vendor.id.toString(),
         label: vendor.companyName || vendor.name || "Unnamed Vendor",
@@ -424,8 +945,8 @@ export default function InvoiceCreate() {
 
     if (!leadType) {
       return [
-        { value: "create_new", label: "➕ Create New Service Provider" },
-        { value: "none", label: "Select lead type first" },
+        { value: "create_new", label: "➕ New" },
+        // { value: "none", label: "Select lead type first" },
       ];
     }
 
@@ -435,8 +956,8 @@ export default function InvoiceCreate() {
     );
 
     return [
-      { value: "create_new", label: "➕ Create New Service Provider" },
-      { value: "none", label: "No service provider" },
+      { value: "create_new", label: "➕ New" },
+      // { value: "none", label: "No service provider" },
       ...filteredProviders.map((sp: any) => ({
         value: sp.id.toString(),
         label: sp.name,
@@ -454,6 +975,28 @@ export default function InvoiceCreate() {
     ];
   };
 
+  // Get currency symbol
+  const getCurrencySymbol = (currencyCode: string): string => {
+    const symbols: Record<string, string> = {
+      USD: "$",
+      EUR: "€",
+      GBP: "£",
+      INR: "₹",
+      AUD: "A$",
+      CAD: "C$",
+      JPY: "¥",
+      CNY: "¥",
+      SGD: "S$",
+      HKD: "HK$",
+      NZD: "NZ$",
+    };
+    return symbols[currencyCode] || currencyCode;
+  };
+
+  // Get current currency from invoice settings
+  const currentCurrency = invoiceSettings?.defaultCurrency || "USD";
+  const currencySymbol = getCurrencySymbol(currentCurrency);
+
   // Get currency options
   const getCurrencyOptions = (): AutocompleteOption[] => {
     return [
@@ -463,20 +1006,73 @@ export default function InvoiceCreate() {
     ];
   };
 
+  const calculateLineItemTotals = (item: typeof lineItems[number]) => {
+    const sellingPrice = parseFloat(item.sellingPrice || "0");
+    const quantity = parseInt(item.quantity || "1");
+    const subtotal = sellingPrice * quantity;
+    let taxAmount = 0;
+    let totalAmount = subtotal;
+
+    const activeRate = item.taxRateId
+      ? gstRates.find((rate: any) => rate.id?.toString() === item.taxRateId)
+      : null;
+
+    if (activeRate) {
+      const ratePercentage = parseFloat(activeRate.ratePercentage) || 0;
+      if (isTaxInclusive) {
+        // When tax is inclusive, tax is already in the price, so show 0
+        taxAmount = 0;
+        totalAmount = subtotal; // Total is the selling price (tax already included)
+      } else {
+        // When tax is exclusive, calculate tax and add it
+        taxAmount = subtotal * (ratePercentage / 100);
+        totalAmount = subtotal + taxAmount;
+      }
+    } else {
+      // No tax rate selected
+      taxAmount = 0;
+      totalAmount = subtotal;
+    }
+
+    // Additional commission is now a direct value (not percentage-based)
+    const additionalCommission = parseFloat(item.additionalCommission || "0") || 0;
+
+    return {
+      ...item,
+      tax: taxAmount ? taxAmount.toFixed(2) : "",
+      totalAmount,
+      additionalCommission: additionalCommission > 0 ? additionalCommission.toFixed(2) : "" as any,
+    } as typeof item;
+  };
+
   // Update line item
   const updateLineItem = (index: number, field: string, value: any) => {
     const updatedItems = [...lineItems];
-    updatedItems[index] = { ...updatedItems[index], [field]: value };
-
-    // Calculate total amount
-    const item = updatedItems[index];
-    const sellingPrice = parseFloat(item.sellingPrice || "0");
-    const quantity = parseInt(item.quantity || "1");
-    const tax = parseFloat(item.tax || "0");
-    updatedItems[index].totalAmount = sellingPrice * quantity + tax;
+    updatedItems[index] = calculateLineItemTotals({
+      ...updatedItems[index],
+      [field]: value,
+    });
 
     setLineItems(updatedItems);
   };
+
+  useEffect(() => {
+    setLineItems((prev) => prev.map((item) => calculateLineItemTotals(item)));
+  }, [isTaxInclusive, gstRates]);
+
+  // Auto-set amount paid to full total when payment status is "paid"
+  useEffect(() => {
+    if (paymentStatus === "paid") {
+      const grandTotal = calculateGrandTotal();
+      // In edit mode, set to the difference needed to make it fully paid
+      if (isEditMode) {
+        const totalNeeded = grandTotal - existingPaidAmount;
+        setAmountPaid(totalNeeded > 0 ? totalNeeded.toFixed(2) : "0");
+      } else {
+        setAmountPaid(grandTotal.toFixed(2));
+      }
+    }
+  }, [paymentStatus, lineItems, discountAmount, isTaxInclusive, gstRates, isEditMode, existingPaidAmount]);
 
   // Add line item
   const addLineItem = () => {
@@ -494,6 +1090,9 @@ export default function InvoiceCreate() {
         sellingPrice: "",
         purchasePrice: "",
         tax: "",
+        taxRateId: "",
+        additionalCommissionPercentage: "",
+        additionalCommission: "",
         totalAmount: 0,
       },
     ]);
@@ -506,39 +1105,72 @@ export default function InvoiceCreate() {
     }
   };
 
-  // Calculate grand total
-  const calculateGrandTotal = () => {
+  // Calculate subtotal (without tax)
+  const calculateSubtotal = () => {
     return lineItems.reduce(
-      (total, item) => total + (item.totalAmount || 0),
+      (total, item) => {
+        const sellingPrice = parseFloat(item.sellingPrice || "0");
+        const quantity = parseInt(item.quantity || "1");
+        return total + (sellingPrice * quantity);
+      },
       0,
     );
+  };
+
+  // Calculate total tax
+  const calculateTotalTax = () => {
+    return lineItems.reduce(
+      (total, item) => total + parseFloat(item.tax || "0"),
+      0,
+    );
+  };
+
+  // Calculate total additional commission
+  const calculateTotalAdditionalCommission = () => {
+    return lineItems.reduce(
+      (total, item) => total + parseFloat(item.additionalCommission || "0"),
+      0,
+    );
+  };
+
+  // Calculate grand total (subtotal + tax - discount + additional commission)
+  const calculateGrandTotal = () => {
+    const subtotal = calculateSubtotal();
+    const tax = calculateTotalTax();
+    const discount = parseFloat(discountAmount || "0");
+    const additionalCommission = calculateTotalAdditionalCommission();
+    return subtotal + tax - discount + additionalCommission;
   };
 
   // Calculate payment installments
   const calculateInstallments = () => {
     if (!enableInstallments) return [];
-    
-    const totalAmount = calculateGrandTotal() - parseFloat(discountAmount || "0");
-    const paidAmount = parseFloat(amountPaid || "0");
+
+    const totalAmount = calculateGrandTotal();
+    const paidAmount = paymentStatus === "paid"
+      ? totalAmount // Full payment when status is "paid"
+      : isEditMode 
+        ? existingPaidAmount + parseFloat(amountPaid || "0") // Add new payment to existing
+        : parseFloat(amountPaid || "0");
     const pendingAmount = totalAmount - paidAmount;
-    
+
     if (pendingAmount <= 0) return [];
-    
+
     const numInstallments = parseInt(numberOfInstallments);
     if (numInstallments <= 0) return [];
-    
+
     const amountPerInstallment = pendingAmount / numInstallments;
     const installments = [];
-    
+
     let currentDate = new Date(dueDate);
-    
+
     for (let i = 0; i < numInstallments; i++) {
       installments.push({
         installmentNumber: i + 1,
         amount: amountPerInstallment.toFixed(2),
         dueDate: currentDate.toISOString().split("T")[0],
       });
-      
+
       // Calculate next date based on frequency
       switch (installmentFrequency) {
         case "daily":
@@ -555,7 +1187,7 @@ export default function InvoiceCreate() {
           break;
       }
     }
-    
+
     return installments;
   };
 
@@ -575,10 +1207,14 @@ export default function InvoiceCreate() {
           (v: any) => v.id.toString() === item.vendor,
         );
 
+        const purchasePrice = parseFloat(item.purchasePrice || "0");
+        const quantity = parseInt(item.quantity || "1");
+        
         return {
           itemIndex: index,
           title: item.itemTitle || `Expense for ${item.travelCategory}`,
-          amount: parseFloat(item.purchasePrice || "0"),
+          purchasePrice: purchasePrice, // Purchase price per unit
+          amount: purchasePrice * quantity, // Multiply purchase price by quantity
           category: item.travelCategory || "General",
           vendorId: item.vendor !== "none" ? parseInt(item.vendor) : null,
           vendorName: vendor
@@ -587,7 +1223,7 @@ export default function InvoiceCreate() {
           leadTypeId: leadType?.id || null,
           leadTypeName: item.travelCategory || "Not specified",
           expenseType: "purchase",
-          quantity: parseInt(item.quantity || "1"),
+          quantity: quantity,
           invoiceNumber: item.invoiceNumber,
           voucherNumber: item.voucherNumber,
         };
@@ -600,6 +1236,7 @@ export default function InvoiceCreate() {
       ...manualExpenses,
       {
         title: "",
+        purchasePrice: "",
         amount: "",
         category: "",
         vendorId: "",
@@ -613,6 +1250,14 @@ export default function InvoiceCreate() {
   const updateManualExpense = (index: number, field: string, value: any) => {
     const updated = [...manualExpenses];
     updated[index] = { ...updated[index], [field]: value };
+    
+    // Calculate amount when purchasePrice or quantity changes
+    if (field === "purchasePrice" || field === "quantity") {
+      const purchasePrice = parseFloat(updated[index].purchasePrice || "0");
+      const quantity = parseInt(updated[index].quantity || "1");
+      updated[index].amount = (purchasePrice * quantity).toFixed(2);
+    }
+    
     setManualExpenses(updated);
   };
 
@@ -624,16 +1269,23 @@ export default function InvoiceCreate() {
   // Combine all expenses
   const getAllExpenses = () => {
     const autoExpenses = generateExpenses();
-    const manualExpensesFormatted = manualExpenses.map((exp, idx) => ({
-      ...exp,
-      itemIndex: `M-${idx + 1}`,
-      amount: parseFloat(exp.amount || "0"),
-      quantity: parseInt(exp.quantity || "1"),
-      vendorName: exp.vendorId
-        ? vendors.find((v: any) => v.id.toString() === exp.vendorId)
+    const manualExpensesFormatted = manualExpenses.map((exp, idx) => {
+      const purchasePrice = parseFloat(exp.purchasePrice || "0");
+      const quantity = parseInt(exp.quantity || "1");
+      const amount = purchasePrice * quantity; // Calculate amount from purchasePrice * quantity
+      
+      return {
+        ...exp,
+        itemIndex: `M-${idx + 1}`,
+        purchasePrice: purchasePrice,
+        amount: amount,
+        quantity: quantity,
+        vendorName: exp.vendorId
+          ? vendors.find((v: any) => v.id.toString() === exp.vendorId)
             ?.companyName || "Unknown"
-        : "Not specified",
-    }));
+          : "Not specified",
+      };
+    });
     return [...autoExpenses, ...manualExpensesFormatted];
   };
 
@@ -781,29 +1433,186 @@ export default function InvoiceCreate() {
     }
   };
 
-  // Handle form submit
-  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const formData = new FormData(e.currentTarget);
+  // Prepare invoice data for preview
+  const prepareInvoiceData = (): InvoiceData | null => {
+    const form = document.querySelector('form') as HTMLFormElement;
+    if (!form) return null;
+    
+    const formData = new FormData(form);
+    const selectedCustomer = customers.find((c: any) => c.id.toString() === selectedCustomerId);
+    
+    if (!selectedCustomer) {
+      toast({
+        title: "Error",
+        description: "Please select a customer",
+        variant: "destructive",
+      });
+      return null;
+    }
 
     const grandTotal = calculateGrandTotal();
     const discount = parseFloat(discountAmount || "0");
-    const finalAmount = grandTotal - discount;
+    const subtotal = calculateSubtotal();
+    const tax = calculateTotalTax();
+    const finalAmount = grandTotal;
 
-    const expenses = generateExpenses().map((expense) => ({
-      title: expense.title,
-      amount: expense.amount,
-      category: expense.category,
-      subcategory: expense.category,
-      vendorId: expense.vendorId,
-      leadTypeId: expense.leadTypeId,
-      expenseType: expense.expenseType,
-      expenseDate: formData.get("issueDate") as string,
-      paymentMethod: "bank_transfer",
-      currency: formData.get("currency") as string,
-      status: "pending",
-      notes: `Auto-generated from invoice ${formData.get("invoiceNumber")} - ${expense.invoiceNumber || expense.voucherNumber || ""}`,
-    }));
+    // Get company info from tenant or use defaults
+    const companyName = tenant?.companyName || "Company Name";
+    const companyEmail = tenant?.contactEmail || "company@example.com";
+    const companyPhone = tenant?.contactPhone || "";
+
+    const invoiceData: InvoiceData = {
+      invoiceNumber: invoiceNumber || (() => {
+        const prefix = invoiceSettings?.invoiceNumberPrefix || "INV";
+        const numberPart = invoiceNumberOnly || formData.get("invoiceNumber") as string || "001";
+        return numberPart ? `${prefix}${numberPart}` : `${prefix}001`;
+      })(),
+      issueDate: invoiceDate,
+      dueDate: dueDate,
+      customerName: selectedCustomer.name || selectedCustomer.customerName || "Customer",
+      customerEmail: selectedCustomer.email || selectedCustomer.customerEmail || "",
+      customerPhone: selectedCustomer.phone || selectedCustomer.customerPhone || "",
+      customerAddress: selectedCustomer.address || selectedCustomer.customerAddress || "",
+      companyName: companyName,
+      companyEmail: companyEmail,
+      companyPhone: companyPhone,
+      companyAddress: tenant?.address || "",
+      items: lineItems
+        .map((item, originalIndex) => {
+          const sellingPrice = parseFloat(item.sellingPrice || "0");
+          const quantity = parseInt(item.quantity || "1");
+          const totalAmount = parseFloat(item.totalAmount?.toString() || "0");
+          const hasTitle = item.itemTitle && item.itemTitle.trim() !== "";
+          const hasPrice = sellingPrice > 0;
+          const hasTotal = totalAmount > 0;
+          const hasCategory = item.travelCategory && item.travelCategory.trim() !== "";
+          
+          // Include items that have any meaningful data (title, price, total, or category)
+          if (!hasTitle && !hasPrice && !hasTotal && !hasCategory) {
+            return null;
+          }
+          
+          // Build description from available data
+          let description = item.itemTitle?.trim();
+          if (!description && hasCategory) {
+            description = item.travelCategory;
+          }
+          if (!description) {
+            description = `Item ${originalIndex + 1}`;
+          }
+          
+          return {
+            description: description,
+            quantity: quantity || 1,
+            unitPrice: sellingPrice,
+            totalPrice: totalAmount > 0 ? totalAmount : (sellingPrice * quantity),
+          };
+        })
+        .filter((item) => item !== null) as { description: string; quantity: number; unitPrice: number; totalPrice: number; }[],
+      subtotal: subtotal,
+      taxAmount: tax,
+      discountAmount: discount,
+      totalAmount: finalAmount,
+      currency: currencySymbol,
+      notes: notesContent || undefined,
+      paymentTerms: paymentTerms || undefined,
+      paymentStatus: paymentStatus,
+      paidAmount: paymentStatus === "paid"
+        ? calculateGrandTotal() // Full payment when status is "paid"
+        : isEditMode 
+          ? existingPaidAmount + parseFloat(amountPaid || "0") // Add new payment to existing
+          : parseFloat(amountPaid || "0"),
+      installments: enableInstallments ? calculateInstallments().map(inst => ({
+        installmentNumber: inst.installmentNumber,
+        dueDate: inst.dueDate,
+        amount: inst.amount,
+      })) : undefined,
+    };
+
+    return invoiceData;
+  };
+
+  // Handle preview button click
+  const handlePreview = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const invoiceData = prepareInvoiceData();
+    if (invoiceData) {
+      setPreviewInvoiceData(invoiceData);
+      setShowPreview(true);
+    }
+  };
+
+  // Handle actual save from preview
+  const handleSaveFromPreview = async () => {
+    if (!previewInvoiceData) return;
+
+    const form = document.querySelector('form') as HTMLFormElement;
+    if (!form) return;
+    
+    const formData = new FormData(form);
+
+    const grandTotal = calculateGrandTotal();
+    const discount = parseFloat(discountAmount || "0");
+    const finalAmount = grandTotal;
+
+    // Combine auto-generated and manual expenses
+    const invoiceNumber = formData.get("invoiceNumber") as string;
+    const autoExpenses = generateExpenses().map((expense, index) => {
+      const totalAmount = expense.amount || 0;
+      // Generate expense number based on invoice number
+      const expenseNumber = expense.invoiceNumber || expense.voucherNumber || `${invoiceNumber}-EXP-${index + 1}`;
+      
+      return {
+        title: expense.title,
+        amount: totalAmount,
+        quantity: expense.quantity || 1,
+        category: expense.category,
+        subcategory: expense.category,
+        vendorId: expense.vendorId,
+        leadTypeId: expense.leadTypeId,
+        expenseType: expense.expenseType,
+        expenseDate: formData.get("issueDate") as string,
+        expenseNumber: expenseNumber,
+        paymentMethod: "bank_transfer",
+        currency: invoiceSettings?.defaultCurrency || "USD",
+        taxAmount: 0, // Can be calculated if tax info is available
+        taxRate: 0,
+        amountPaid: 0,
+        amountDue: totalAmount,
+        status: "pending",
+        notes: `Auto-generated from invoice ${invoiceNumber} - ${expense.invoiceNumber || expense.voucherNumber || ""}`,
+      };
+    });
+
+    const manualExpensesData = manualExpenses.map((expense, index) => {
+      const purchasePrice = parseFloat(expense.purchasePrice || "0");
+      const quantity = parseInt(expense.quantity || "1");
+      const amount = purchasePrice * quantity;
+      const expenseNumber = `${invoiceNumber}-MAN-${index + 1}`;
+      
+      return {
+        title: expense.title || "Manual Expense",
+        amount: amount,
+        quantity: quantity,
+        category: expense.category || "General",
+        subcategory: expense.category || "General",
+        vendorId: expense.vendorId && expense.vendorId !== "none" ? parseInt(expense.vendorId) : null,
+        leadTypeId: null,
+        expenseType: "manual",
+        expenseDate: formData.get("issueDate") as string,
+        expenseNumber: expenseNumber,
+        paymentMethod: "bank_transfer",
+        currency: invoiceSettings?.defaultCurrency || "USD",
+        taxAmount: 0,
+        taxRate: 0,
+        amountPaid: 0,
+        amountDue: amount,
+        status: "pending",
+        notes: `Manual expense from invoice ${invoiceNumber}`,
+      };
+    });
+
+    const expenses = [...autoExpenses, ...manualExpensesData];
 
     const invoiceData = {
       invoiceNumber: formData.get("invoiceNumber") as string,
@@ -815,7 +1624,11 @@ export default function InvoiceCreate() {
       issueDate: formData.get("issueDate") as string,
       dueDate: formData.get("dueDate") as string,
       totalAmount: finalAmount,
-      paidAmount: parseFloat(amountPaid || "0"),
+      paidAmount: paymentStatus === "paid"
+        ? calculateGrandTotal() // Full payment when status is "paid"
+        : isEditMode 
+          ? existingPaidAmount + parseFloat(amountPaid || "0") // Add new payment to existing
+          : parseFloat(amountPaid || "0"),
       subtotal: grandTotal,
       taxAmount: lineItems.reduce(
         (total, item) => total + parseFloat(item.tax || "0"),
@@ -823,10 +1636,12 @@ export default function InvoiceCreate() {
       ),
       discountAmount: discount,
       status: paymentStatus,
-      currency: formData.get("currency") as string,
-      notes: formData.get("notes") as string,
-      paymentTerms: formData.get("paymentTerms") as string,
-      paymentMethod: formData.get("paymentMethod") as string,
+      currency: invoiceSettings?.defaultCurrency || "USD",
+      notes: notesContent || undefined,
+      additionalNotes: additionalNotesContent || undefined,
+      paymentTerms: paymentTerms || undefined,
+      paymentMethod: paymentMethod.length > 0 ? paymentMethod : ["credit_card"],
+      isTaxInclusive: isTaxInclusive,
       enableReminder,
       reminderFrequency: enableReminder ? reminderFrequency : null,
       reminderSpecificDate: enableReminder && reminderFrequency === "specific_date" ? reminderSpecificDate : null,
@@ -837,68 +1652,166 @@ export default function InvoiceCreate() {
         sellingPrice: parseFloat(item.sellingPrice || "0"),
         purchasePrice: parseFloat(item.purchasePrice || "0"),
         tax: parseFloat(item.tax || "0"),
+        additionalCommission: parseFloat(item.additionalCommission || "0"),
       })),
       expenses, // Include auto-generated expenses
+      installments: enableInstallments ? calculateInstallments().map(inst => ({
+        installmentNumber: inst.installmentNumber,
+        dueDate: inst.dueDate,
+        amount: inst.amount,
+        status: "pending",
+        paidAmount: 0,
+      })) : undefined,
     };
 
-    createInvoiceMutation.mutate(invoiceData);
+    if (isEditMode && invoiceId) {
+      updateInvoiceMutation.mutate(invoiceData);
+    } else {
+      createInvoiceMutation.mutate(invoiceData);
+    }
   };
 
-  const [currency, setCurrency] = useState("INR");
+  const [currency, setCurrency] = useState(invoiceSettings?.defaultCurrency || "USD");
+
+  // Update currency when invoice settings change
+  useEffect(() => {
+    if (invoiceSettings?.defaultCurrency) {
+      setCurrency(invoiceSettings.defaultCurrency);
+    }
+  }, [invoiceSettings?.defaultCurrency]);
+
+  // Payment method options
+  const paymentMethodOptions = [
+    { value: "credit_card", label: "Credit Card" },
+    { value: "debit_card", label: "Debit Card" },
+    { value: "bank_transfer", label: "Bank Transfer" },
+    { value: "wire_transfer", label: "Wire Transfer" },
+    { value: "ach_transfer", label: "ACH Transfer" },
+    { value: "cash", label: "Cash" },
+    { value: "check", label: "Check" },
+    { value: "petty_cash", label: "Petty Cash" },
+    { value: "paypal", label: "PayPal" },
+    { value: "stripe", label: "Stripe" },
+    { value: "venmo", label: "Venmo" },
+    { value: "zelle", label: "Zelle" },
+    { value: "apple_pay", label: "Apple Pay" },
+    { value: "google_pay", label: "Google Pay" },
+    { value: "cryptocurrency", label: "Cryptocurrency" },
+    { value: "mobile_payment", label: "Mobile Payment" },
+    { value: "online_gateway", label: "Online Payment Gateway" },
+    { value: "money_order", label: "Money Order" },
+    { value: "other", label: "Other" },
+  ];
+
+  // Calculate grid template columns dynamically (must be before any conditional returns)
+  const gridTemplate = useMemo(() => {
+    const columns = [
+      '30px', // # column - smaller (fixed)
+      'minmax(180px, 1.5fr)', // Category - reduced width (flexible, min 180px)
+      ...(invoiceSettings?.showVendor ? ['minmax(180px, 1.5fr)'] : []), // Vendor - reduced width (flexible, min 180px)
+      ...(invoiceSettings?.showProvider ? ['minmax(180px, 1.5fr)'] : []), // Provider - reduced width (flexible, min 180px)
+      'minmax(60px, 1fr)', // Pax - small (flexible, min 60px)
+      ...(invoiceSettings?.showUnitPrice ? ['minmax(130px, 1fr)'] : []), // Unit Price - small (flexible, min 100px)
+      'minmax(130px, 1fr)', // Selling Price - small (flexible, min 100px)
+      'minmax(130px, 1fr)', // Purchase Price - small (flexible, min 100px)
+      ...(invoiceSettings?.showTax ? ['minmax(100px, 1fr)'] : []), // Tax - small (flexible, min 100px)
+      'minmax(100px, 1fr)', // Amount - small (flexible, min 100px)
+      ...(invoiceSettings?.showAdditionalCommission ? ['minmax(100px, 1fr)'] : []), // Additional Commission - small (flexible, min 100px)
+      ...(invoiceSettings?.showVoucherInvoice ? ['minmax(100px, 1fr)'] : []), // Invoice/Voucher - small (flexible, min 100px)
+      '50px', // Delete button - small (fixed)
+    ];
+    return columns.join(' ');
+  }, [invoiceSettings?.showVendor, invoiceSettings?.showProvider, invoiceSettings?.showUnitPrice, invoiceSettings?.showTax, invoiceSettings?.showAdditionalCommission, invoiceSettings?.showVoucherInvoice]);
+
+  // Grid template for expense table
+  const expenseGridTemplate = useMemo(() => {
+    const columns = [
+      '30px', // # column
+      'minmax(180px, 2fr)', // Title
+      'minmax(150px, 1.5fr)', // Category
+      'minmax(150px, 1.5fr)', // Vendor
+      'minmax(60px, 1fr)', // Qty
+      'minmax(130px, 1fr)', // Purchase Price
+      'minmax(130px, 1fr)', // Amount
+      '50px', // Delete button
+    ];
+    return columns.join(' ');
+  }, []);
+
+  // Show loading state when fetching invoice data
+  if (isEditMode && isLoadingInvoice) {
+    return (
+      <Layout initialSidebarCollapsed={true}>
+        <div className="p-6 max-w-[1600px] mx-auto">
+          <div className="bg-white rounded-2xl shadow-sm p-8">
+            <div className="text-center">Loading invoice data...</div>
+          </div>
+        </div>
+      </Layout>
+    );
+  }
 
   return (
     <Layout initialSidebarCollapsed={true}>
-      <div className="p-6 max-w-[1600px] mx-auto">
+      <div className="p-3 sm:p-4 md:p-6 mx-auto">
         <div className="bg-white rounded-2xl shadow-sm">
           <div className="">
-            <div className=" w-full h-[72px] flex items-center bg-white px-[18px] py-4 rounded-t-xl border-b border-[#E3E8EF] shadow-[0px_1px_6px_0px_rgba(0,0,0,0.05)]">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => navigate("/invoices")}
-                data-testid="button-back"
-              >
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Back
-              </Button>
+            <div className="w-full min-h-[72px] flex flex-col sm:flex-row items-start sm:items-center bg-white px-3 sm:px-4 md:px-[18px] py-3 sm:py-4 rounded-t-xl border-b border-[#E3E8EF] shadow-[0px_1px_6px_0px_rgba(0,0,0,0.05)] gap-3 sm:gap-0">
+              <div className="flex items-center gap-2 sm:gap-0">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigate("/invoices")}
+                  data-testid="button-back"
+                  className="flex-shrink-0"
+                >
+                  <ArrowLeft className="h-4 w-4 sm:mr-2" />
+                  <span className="hidden sm:inline">Back</span>
+                </Button>
+                {isEditMode && (
+                  <h1 className="ml-2 sm:ml-4 font-inter font-medium text-base sm:text-[20px] leading-[24px] text-[#121926] truncate">
+                    Edit Invoice
+                  </h1>
+                )}
+              </div>
               {/* <h1 className="font-inter font-medium text-[20px] leading-[24px] text-[#121926]">
                   Leads
                 </h1> */}
 
-              <div className="flex gap-3 ml-auto">
+              <div className="flex gap-2 sm:gap-3 ml-auto">
                 {" "}
                 {tenant?.id && <InvoiceSettingsPanel tenantId={tenant.id} />}
                 <div className="w-10 h-10 flex items-center justify-center rounded-lg border border-gray-200 bg-white shadow-sm">
                   <HelpCircle className="h-5 w-5 text-gray-600" />
                 </div>
-                <div
+                {/* <div
                   style={{ width: "8rem" }}
                   className="h-10 flex items-center justify-center rounded-lg border border-gray-200 bg-white shadow-sm"
-                >
+                > */}
                   {/* <Bell className="h-5 w-5 text-gray-600" /> */}
 
                   {/* <Label htmlFor="currency">Currency *</Label> */}
-                  <AutocompleteInput
+                  {/* <AutocompleteInput
                     data-testid="autocomplete-currency"
                     suggestions={getCurrencyOptions()}
                     value={currency}
                     onValueChange={setCurrency}
                     placeholder="Select currency..."
                     emptyText="No currency found"
-                  />
+                  /> */}
                   <input type="hidden" name="currency" value={currency} />
-                </div>
+                {/* </div> */}
               </div>
             </div>
           </div>
         </div>
 
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handlePreview}>
           <Card>
-            <CardContent className="p-6 space-y-6">
+            <CardContent className="p-3 sm:p-4 md:p-6 space-y-4 sm:space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
                 <div>
-                  <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
+                  <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">
                     Invoice
                   </h1>
                   {/* <p className="text-gray-600 dark:text-gray-400">
@@ -911,13 +1824,26 @@ export default function InvoiceCreate() {
                 <div></div>
                 <div>
                   <Label htmlFor="invoiceNumber">Invoice Number *</Label>
-                  <Input
-                    data-testid="input-invoice-number"
-                    name="invoiceNumber"
-                    placeholder={`INV-${Date.now()}`}
-                    defaultValue={`INV-${Date.now()}`}
-                    required
-                  />
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center px-3 py-2 rounded-md border border-gray-300 bg-gray-50 dark:bg-gray-800 dark:border-gray-700 text-sm font-medium text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                      {invoiceSettings?.invoiceNumberPrefix || "INV"}
+                    </span>
+                    <Input
+                      data-testid="input-invoice-number"
+                      id="invoiceNumber"
+                      name="invoiceNumber"
+                      value={invoiceNumberOnly}
+                      onChange={(e) => {
+                        const numberPart = e.target.value;
+                        setInvoiceNumberOnly(numberPart);
+                        const prefix = invoiceSettings?.invoiceNumberPrefix || "INV";
+                        setInvoiceNumber(numberPart ? `${prefix}${numberPart}` : "");
+                      }}
+                      placeholder="001"
+                      required
+                      className="flex-1"
+                    />
+                  </div>
                 </div>
               </div>
               {/* Customer and Invoice Date Row */}
@@ -955,13 +1881,13 @@ export default function InvoiceCreate() {
                       <div className="flex items-center gap-1 mb-1.5">
                         <Label htmlFor="paymentTerms">Terms *</Label>
                         <TooltipTrigger asChild>
-                          <HelpCircle className="h-4 w-4 text-blue-500 cursor-help" />
+                          <HelpCircle className="h-4 w-4 text-gray-900 dark:text-white cursor-help" />
                         </TooltipTrigger>
                       </div>
                       <TooltipContent>
                         <p className="max-w-xs">
-                          Payment terms specify when payment is due. For example, "30 Days" means 
-                          payment is due 30 days after the invoice date. "Due on Receipt" means 
+                          Payment terms specify when payment is due. For example, "30 Days" means
+                          payment is due 30 days after the invoice date. "Due on Receipt" means
                           immediate payment is expected.
                         </p>
                       </TooltipContent>
@@ -1016,24 +1942,72 @@ export default function InvoiceCreate() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div>
                   <Label htmlFor="paymentMethod">Payment Method *</Label>
-                  <Select
-                    value={paymentMethod}
-                    onValueChange={setPaymentMethod}
-                  >
-                    <SelectTrigger data-testid="select-payment-method">
-                      <SelectValue placeholder="Select method..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="credit_card">Credit Card</SelectItem>
-                      <SelectItem value="debit_card">Debit Card</SelectItem>
-                      <SelectItem value="bank_transfer">
-                        Bank Transfer
-                      </SelectItem>
-                      <SelectItem value="cash">Cash</SelectItem>
-                      <SelectItem value="check">Check</SelectItem>
-                      <SelectItem value="petty_cash">Petty Cash</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        className="w-full justify-between h-10"
+                        data-testid="select-payment-method"
+                      >
+                        <span className="truncate">
+                          {paymentMethod.length === 0
+                            ? "Select methods..."
+                            : paymentMethod.length === 1
+                            ? paymentMethodOptions.find((opt) => opt.value === paymentMethod[0])?.label || paymentMethod[0]
+                            : `${paymentMethod.length} methods selected`}
+                        </span>
+                        <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[300px] p-0" align="start">
+                      <div className="max-h-[300px] overflow-y-auto p-2">
+                        {paymentMethodOptions.map((option) => {
+                          const isSelected = paymentMethod.includes(option.value);
+                          return (
+                            <div
+                              key={option.value}
+                              className="flex items-center space-x-2 p-2 rounded-md hover:bg-gray-100 cursor-pointer"
+                              onClick={() => {
+                                if (isSelected) {
+                                  setPaymentMethod(paymentMethod.filter((v) => v !== option.value));
+                                } else {
+                                  setPaymentMethod([...paymentMethod, option.value]);
+                                }
+                              }}
+                            >
+                              <div
+                                className={`flex h-4 w-4 items-center justify-center rounded border ${
+                                  isSelected
+                                    ? "bg-blue-600 border-blue-600"
+                                    : "border-gray-300"
+                                }`}
+                              >
+                                {isSelected && <Check className="h-3 w-3 text-white" />}
+                              </div>
+                              <span className="text-sm">{option.label}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {paymentMethod.length > 0 && (
+                        <div className="border-t p-2 flex items-center justify-between">
+                          <span className="text-xs text-gray-500">
+                            {paymentMethod.length} selected
+                          </span>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={() => setPaymentMethod([])}
+                          >
+                            Clear all
+                          </Button>
+                        </div>
+                      )}
+                    </PopoverContent>
+                  </Popover>
                 </div>
 
                 <div>
@@ -1055,146 +2029,50 @@ export default function InvoiceCreate() {
                 </div>
               </div>
 
-              {/* Payment Reminder Section */}
-              <div className="border rounded-lg p-4 bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-950/20 dark:to-cyan-950/20">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2">
-                    <Bell className="h-5 w-5 text-blue-600" />
-                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                      Payment Reminder
-                    </h3>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Label htmlFor="enableReminder" className="text-sm">
-                      Enable Reminder
-                    </Label>
-                    <Switch
-                      id="enableReminder"
-                      checked={enableReminder}
-                      onCheckedChange={setEnableReminder}
-                      data-testid="switch-enable-reminder"
-                    />
-                  </div>
-                </div>
-
-                {enableReminder && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <Label htmlFor="reminderFrequency">Reminder Frequency *</Label>
-                      <Select
-                        value={reminderFrequency}
-                        onValueChange={setReminderFrequency}
-                      >
-                        <SelectTrigger data-testid="select-reminder-frequency">
-                          <SelectValue placeholder="Select frequency..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="daily">Daily</SelectItem>
-                          <SelectItem value="weekly">Weekly</SelectItem>
-                          <SelectItem value="monthly">Monthly</SelectItem>
-                          <SelectItem value="specific_date">Specific Date</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <input type="hidden" name="reminderFrequency" value={reminderFrequency} />
-                    </div>
-
-                    {reminderFrequency === "specific_date" && (
-                      <div>
-                        <Label htmlFor="reminderSpecificDate">Reminder Date *</Label>
-                        <DatePicker
-                          value={reminderSpecificDate}
-                          onChange={setReminderSpecificDate}
-                          placeholder="Select reminder date"
-                          className="w-full"
-                        />
-                        <input type="hidden" name="reminderSpecificDate" value={reminderSpecificDate} />
-                      </div>
-                    )}
-
-                    <div className="col-span-full">
-                      <p className="text-sm text-gray-600 dark:text-gray-400">
-                        {reminderFrequency === "daily" && "Customer will receive payment reminders every day until the invoice is paid."}
-                        {reminderFrequency === "weekly" && "Customer will receive payment reminders every week until the invoice is paid."}
-                        {reminderFrequency === "monthly" && "Customer will receive payment reminders every month until the invoice is paid."}
-                        {reminderFrequency === "specific_date" && "Customer will receive a payment reminder on the selected date."}
-                      </p>
-                    </div>
-                  </div>
-                )}
-                <input type="hidden" name="enableReminder" value={enableReminder.toString()} />
-              </div>
-
-              {/* Notes Section with Rich Text Editor */}
-              {invoiceSettings?.showNotes && (
-                <div className="border rounded-lg p-4">
-                  <Label htmlFor="notes" className="text-lg font-semibold mb-3 block">
-                    Notes
-                  </Label>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
-                    Add any additional notes, attachments, or information. Supports text, images, videos, and paste functionality.
-                  </p>
-                  <div className="bg-white dark:bg-gray-900 rounded-lg" data-testid="rich-text-editor-notes">
-                    <ReactQuill
-                      theme="snow"
-                      value={notesContent}
-                      onChange={setNotesContent}
-                      className="h-64"
-                      modules={{
-                        toolbar: [
-                          [{ 'header': [1, 2, 3, false] }],
-                          ['bold', 'italic', 'underline', 'strike'],
-                          [{ 'list': 'ordered'}, { 'list': 'bullet' }],
-                          [{ 'color': [] }, { 'background': [] }],
-                          [{ 'align': [] }],
-                          ['link', 'image', 'video'],
-                          ['clean']
-                        ],
-                      }}
-                      formats={[
-                        'header',
-                        'bold', 'italic', 'underline', 'strike',
-                        'list', 'bullet',
-                        'color', 'background',
-                        'align',
-                        'link', 'image', 'video'
-                      ]}
-                      placeholder="Type your notes here... You can paste images directly or use the toolbar to add images, videos, and more."
-                    />
-                  </div>
-                  <input type="hidden" name="notes" value={notesContent} />
-                </div>
-              )}
-
               {/* Line Items */}
-              <div className="border rounded-lg overflow-hidden">
-                {/* Table Header - Show labels only once */}
-                <div className="grid grid-cols-12 gap-2 bg-gray-100 dark:bg-gray-800 p-3 font-medium text-sm">
-                  <div className="col-span-1 text-center">#</div>
-                  <div className="col-span-2">Category *</div>
-                  {invoiceSettings?.showVendor && <div className="col-span-1">Vendor</div>}
-                  {invoiceSettings?.showProvider && <div className="col-span-1">Provider</div>}
-                  <div className="col-span-1">Pax *</div>
-                  {invoiceSettings?.showUnitPrice && <div className="col-span-1">Unit Price *</div>}
-                  <div className="col-span-1">Selling Pri *</div>
-                  <div className="col-span-1">Purchase Pri *</div>
-                  {invoiceSettings?.showTax && <div className="col-span-1">Tax</div>}
-                  <div className="col-span-1">Amount</div>
-                  {invoiceSettings?.showVoucherInvoice && <div className="col-span-1">Inv/Vou #</div>}
-                  <div className="col-span-1"></div>
-                </div>
+              <div className="border rounded-lg overflow-x-auto">
+                <div className="min-w-[2200px]">
+                  {/* Table Header */}
+                  <div 
+                    className="top-0 z-[100] grid gap-2 border-b p-3 font-medium text-sm bg-gray-50 dark:bg-gray-800"
+                    style={{ 
+                      gridTemplateColumns: gridTemplate,
+                      backgroundColor: 'rgb(249, 250, 251)',
+                      // position: 'sticky',
+                      top: 0,
+                      zIndex: 100,
+                      minWidth: '2200px',
+                      width: '100%',
+                      willChange: 'transform'
+                    }}
+                  >
+                    <div className="text-center flex items-center justify-center">#</div>
+                    <div className="flex items-center">Category *</div>
+                    {invoiceSettings?.showVendor && <div className="flex items-center">Vendor</div>}
+                    {invoiceSettings?.showProvider && <div className="flex items-center">Provider</div>}
+                    <div className="flex items-center">Pax *</div>
+                    {invoiceSettings?.showUnitPrice && <div className="flex items-center">Unit Price ({currencySymbol}) *</div>}
+                    <div className="flex items-center">Selling Price ({currencySymbol}) *</div>
+                    <div className="flex items-center">Purchase Price ({currencySymbol}) *</div>
+                    {invoiceSettings?.showTax && <div className="flex items-center">Tax ({currencySymbol})</div>}
+                    <div className="flex items-center">Amount ({currencySymbol})</div>
+                    {invoiceSettings?.showAdditionalCommission && <div className="flex items-center">Commission ({currencySymbol})</div>}
+                    {invoiceSettings?.showVoucherInvoice && <div className="flex items-center">Invoice/Voucher</div>}
+                    <div className="flex items-center"></div>
+                  </div>
 
-                {/* Table Body */}
-                <div className="divide-y divide-gray-200 dark:divide-gray-700">
+                  {/* Table Body */}
                   {lineItems.map((item, index) => (
                     <div
                       key={index}
-                      className="grid grid-cols-12 gap-2 p-3 hover:bg-gray-50 dark:hover:bg-gray-900"
+                      className="grid gap-2 p-3 border-b last:border-b-0"
+                      style={{ gridTemplateColumns: gridTemplate }}
                     >
-                      <div className="col-span-1 flex items-center justify-center">
+                      <div className="flex items-center justify-center">
                         <span className="font-medium text-sm">{index + 1}</span>
                       </div>
 
-                      <div className="col-span-2">
+                      <div className="flex items-center">
                         <AutocompleteInput
                           data-testid={`autocomplete-category-${index}`}
                           suggestions={getTravelCategories()}
@@ -1208,7 +2086,7 @@ export default function InvoiceCreate() {
                       </div>
 
                       {invoiceSettings?.showVendor && (
-                        <div className="col-span-1">
+                        <div className="flex items-center">
                           <AutocompleteInput
                             data-testid={`autocomplete-vendor-${index}`}
                             suggestions={getVendorOptions()}
@@ -1223,7 +2101,7 @@ export default function InvoiceCreate() {
                       )}
 
                       {invoiceSettings?.showProvider && (
-                        <div className="col-span-1">
+                        <div className="flex items-center">
                           <AutocompleteInput
                             data-testid={`autocomplete-service-provider-${index}`}
                             suggestions={getServiceProviderOptions(
@@ -1239,7 +2117,7 @@ export default function InvoiceCreate() {
                         </div>
                       )}
 
-                      <div className="col-span-1">
+                      <div className="flex items-center">
                         <Input
                           data-testid={`input-quantity-${index}`}
                           value={item.quantity}
@@ -1252,7 +2130,7 @@ export default function InvoiceCreate() {
                       </div>
 
                       {invoiceSettings?.showUnitPrice && (
-                        <div className="col-span-1">
+                        <div className="flex items-center">
                           <Input
                             data-testid={`input-unit-price-${index}`}
                             value={item.unitPrice}
@@ -1265,7 +2143,7 @@ export default function InvoiceCreate() {
                         </div>
                       )}
 
-                      <div className="col-span-1">
+                      <div className="flex items-center">
                         <Input
                           data-testid={`input-selling-price-${index}`}
                           value={item.sellingPrice}
@@ -1281,7 +2159,7 @@ export default function InvoiceCreate() {
                         />
                       </div>
 
-                      <div className="col-span-1">
+                      <div className="flex items-center">
                         <Input
                           data-testid={`input-purchase-price-${index}`}
                           value={item.purchasePrice}
@@ -1298,30 +2176,72 @@ export default function InvoiceCreate() {
                       </div>
 
                       {invoiceSettings?.showTax && (
-                        <div className="col-span-1">
-                          <Input
-                            data-testid={`input-tax-${index}`}
-                            value={item.tax}
-                            onChange={(e) =>
-                              updateLineItem(index, "tax", e.target.value)
+                        <div className="flex items-center">
+                          <Select
+                            value={item.taxRateId || "none"}
+                            onValueChange={(value) =>
+                              updateLineItem(index, "taxRateId", value === "none" ? "" : value)
                             }
-                            onKeyPress={handleNumericKeyPress}
-                            placeholder="0"
-                          />
+                            disabled={!selectedTaxSettingId || selectedTaxSettingId === "none" || gstRates.length === 0}
+                          >
+                            <SelectTrigger data-testid={`select-tax-rate-${index}`}>
+                              <SelectValue placeholder={
+                                !selectedTaxSettingId || selectedTaxSettingId === "none" 
+                                  ? "Select tax setting first" 
+                                  : gstRates.length === 0 
+                                  ? "No rates available"
+                                  : "Select tax rate"
+                              } />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">No Tax</SelectItem>
+                              {gstRates
+                                .filter((rate: any) => rate.isActive)
+                                .map((rate: any) => (
+                                  <SelectItem key={rate.id} value={rate.id.toString()}>
+                                    {rate.rateName} ({rate.ratePercentage}%)
+                                  </SelectItem>
+                                ))}
+                            </SelectContent>
+                          </Select>
+                          {item.tax && (
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Tax: {currencySymbol}{parseFloat(item.tax).toFixed(2)}
+                            </p>
+                          )}
                         </div>
                       )}
 
-                      <div className="col-span-1">
+                      <div className="flex items-center">
                         <Input
                           data-testid={`input-total-amount-${index}`}
                           value={item.totalAmount.toFixed(2)}
                           readOnly
-                          className="bg-gray-100 dark:bg-gray-800"
+                          className="bg-transparent"
                         />
                       </div>
 
+                      {invoiceSettings?.showAdditionalCommission && (
+                        <div className="flex items-center">
+                          <Input
+                            data-testid={`input-additional-commission-${index}`}
+                            type="text"
+                            value={item.additionalCommission || ""}
+                            onChange={(e) =>
+                              updateLineItem(
+                                index,
+                                "additionalCommission",
+                                e.target.value,
+                              )
+                            }
+                            onKeyPress={handleNumericKeyPress}
+                            placeholder="0.00"
+                          />
+                        </div>
+                      )}
+
                       {invoiceSettings?.showVoucherInvoice && (
-                        <div className="col-span-1">
+                        <div className="flex items-center">
                           <Input
                             data-testid={`input-line-invoice-number-${index}`}
                             value={item.invoiceNumber}
@@ -1337,7 +2257,7 @@ export default function InvoiceCreate() {
                         </div>
                       )}
 
-                      <div className="col-span-1 flex items-center justify-center">
+                      <div className="flex items-center justify-center">
                         {lineItems.length > 1 && (
                           <Button
                             type="button"
@@ -1346,7 +2266,7 @@ export default function InvoiceCreate() {
                             onClick={() => removeLineItem(index)}
                             data-testid={`button-remove-item-${index}`}
                           >
-                            <Trash2 className="h-4 w-4 text-red-500" />
+                            <Trash2 className="h-4 w-4 text-gray-900 dark:text-white" />
                           </Button>
                         )}
                       </div>
@@ -1373,88 +2293,31 @@ export default function InvoiceCreate() {
                   {/* Left Side - Tax and Discount Inputs */}
                   <div className="space-y-4">
                     {invoiceSettings?.showTax && (
-                      <>
-                        <div>
-                          <Label htmlFor="taxSetting">Tax</Label>
-                          <Select
-                            value={selectedTaxSettingId}
-                            onValueChange={(value) => {
-                              setSelectedTaxSettingId(value);
-                              setSelectedTaxRateId(""); // Reset rate when setting changes
-                            }}
-                          >
-                            <SelectTrigger data-testid="select-tax-setting">
-                              <SelectValue placeholder="Select tax configuration..." />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="none">No Tax</SelectItem>
-                              {gstSettings.map((setting: any) => (
-                                <SelectItem
-                                  key={setting.id}
-                                  value={setting.id.toString()}
-                                >
-                                  {setting.taxName} ({setting.country})
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                      <div className="flex items-center justify-between p-3 border rounded-lg">
+                        <div className="flex flex-col">
+                          <Label htmlFor="taxInclusive" className="text-sm font-medium">
+                            Tax Type
+                          </Label>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {isTaxInclusive ? "Tax is included in prices" : "Tax will be added to prices"}
+                          </p>
                         </div>
-
-                        {selectedTaxSettingId &&
-                          selectedTaxSettingId !== "none" &&
-                          gstRates.length > 0 && (
-                            <div>
-                              <Label htmlFor="taxRate">Tax Rate</Label>
-                              <Select
-                                value={selectedTaxRateId}
-                                onValueChange={setSelectedTaxRateId}
-                              >
-                                <SelectTrigger data-testid="select-tax-rate">
-                                  <SelectValue placeholder="Select tax rate..." />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {gstRates.map((rate: any) => (
-                                    <SelectItem
-                                      key={rate.id}
-                                      value={rate.id.toString()}
-                                    >
-                                      {rate.rateName} ({rate.ratePercentage}%)
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          )}
-
-                        {selectedTaxRateId && (
-                          <div>
-                            <Label htmlFor="taxType">Tax Type</Label>
-                            <Select
-                              value={isTaxInclusive ? "inclusive" : "exclusive"}
-                              onValueChange={(value) =>
-                                setIsTaxInclusive(value === "inclusive")
-                              }
-                            >
-                              <SelectTrigger data-testid="select-tax-type">
-                                <SelectValue placeholder="Select tax type..." />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="inclusive">
-                                  Tax Inclusive
-                                </SelectItem>
-                                <SelectItem value="exclusive">
-                                  Tax Exclusive
-                                </SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        )}
-                      </>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-muted-foreground">Exclusive</span>
+                          <Switch
+                            id="taxInclusive"
+                            checked={isTaxInclusive}
+                            onCheckedChange={setIsTaxInclusive}
+                            data-testid="switch-tax-inclusive"
+                          />
+                          <span className="text-sm text-muted-foreground">Inclusive</span>
+                        </div>
+                      </div>
                     )}
 
                     {invoiceSettings?.showDiscount && (
                       <div>
-                        <Label htmlFor="discountAmount">Discount Amount</Label>
+                        <Label htmlFor="discountAmount">Discount Amount ({currencySymbol})</Label>
                         <Input
                           data-testid="input-discount-amount"
                           value={discountAmount}
@@ -1464,6 +2327,74 @@ export default function InvoiceCreate() {
                         />
                       </div>
                     )}
+                    {/* Payment Reminder Section */}
+                    <div className="border rounded-lg p-4">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-2">
+                          <Bell className="h-5 w-5 text-gray-900 dark:text-white" />
+                          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                            Payment Reminder
+                          </h3>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Label htmlFor="enableReminder" className="text-sm">
+                            Enable Reminder
+                          </Label>
+                          <Switch
+                            id="enableReminder"
+                            checked={enableReminder}
+                            onCheckedChange={setEnableReminder}
+                            data-testid="switch-enable-reminder"
+                          />
+                        </div>
+                      </div>
+
+                      {enableReminder && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <Label htmlFor="reminderFrequency">Reminder Frequency *</Label>
+                            <Select
+                              value={reminderFrequency}
+                              onValueChange={setReminderFrequency}
+                            >
+                              <SelectTrigger data-testid="select-reminder-frequency">
+                                <SelectValue placeholder="Select frequency..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="daily">Daily</SelectItem>
+                                <SelectItem value="weekly">Weekly</SelectItem>
+                                <SelectItem value="monthly">Monthly</SelectItem>
+                                <SelectItem value="specific_date">Specific Date</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <input type="hidden" name="reminderFrequency" value={reminderFrequency} />
+                          </div>
+
+                          {reminderFrequency === "specific_date" && (
+                            <div>
+                              <Label htmlFor="reminderSpecificDate">Reminder Date *</Label>
+                              <DatePicker
+                                value={reminderSpecificDate}
+                                onChange={setReminderSpecificDate}
+                                placeholder="Select reminder date"
+                                className="w-full"
+                              />
+                              <input type="hidden" name="reminderSpecificDate" value={reminderSpecificDate} />
+                            </div>
+                          )}
+
+                          <div className="col-span-full">
+                            <p className="text-sm text-gray-600 dark:text-gray-400">
+                              {reminderFrequency === "daily" && "Customer will receive payment reminders every day until the invoice is paid."}
+                              {reminderFrequency === "weekly" && "Customer will receive payment reminders every week until the invoice is paid."}
+                              {reminderFrequency === "monthly" && "Customer will receive payment reminders every month until the invoice is paid."}
+                              {reminderFrequency === "specific_date" && "Customer will receive a payment reminder on the selected date."}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                      <input type="hidden" name="enableReminder" value={enableReminder.toString()} />
+                    </div>
                   </div>
 
                   {/* Right Side - Calculation Summary */}
@@ -1471,11 +2402,11 @@ export default function InvoiceCreate() {
                     <h3 className="font-semibold text-gray-900 dark:text-white mb-4">
                       Calculation Summary
                     </h3>
-                    
+
                     <div className="flex justify-between items-center py-2 border-b">
                       <span className="text-gray-700 dark:text-gray-300">Subtotal:</span>
                       <span className="font-medium" data-testid="text-subtotal">
-                        ₹{calculateGrandTotal().toFixed(2)}
+                        {currencySymbol}{calculateSubtotal().toFixed(2)}
                       </span>
                     </div>
 
@@ -1483,10 +2414,7 @@ export default function InvoiceCreate() {
                       <div className="flex justify-between items-center py-2 border-b">
                         <span className="text-gray-700 dark:text-gray-300">Tax:</span>
                         <span className="font-medium" data-testid="text-tax">
-                          ₹{lineItems.reduce(
-                            (total, item) => total + parseFloat(item.tax || "0"),
-                            0
-                          ).toFixed(2)}
+                          {currencySymbol}{calculateTotalTax().toFixed(2)}
                         </span>
                       </div>
                     )}
@@ -1494,30 +2422,49 @@ export default function InvoiceCreate() {
                     {invoiceSettings?.showDiscount && (
                       <div className="flex justify-between items-center py-2 border-b">
                         <span className="text-gray-700 dark:text-gray-300">Discount:</span>
-                        <span className="font-medium text-red-600" data-testid="text-discount">
-                          -₹{parseFloat(discountAmount || "0").toFixed(2)}
+                        <span className="font-medium text-gray-900 dark:text-white" data-testid="text-discount">
+                          -{currencySymbol}{parseFloat(discountAmount || "0").toFixed(2)}
                         </span>
                       </div>
                     )}
 
-                    <div className="flex justify-between items-center py-3 bg-cyan-50 dark:bg-cyan-950/20 px-3 rounded-lg">
+                    <div className="flex justify-between items-center py-3 border px-3 rounded-lg">
                       <span className="text-lg font-semibold text-gray-900 dark:text-white">Total Amount:</span>
-                      <span className="text-lg font-bold text-cyan-600" data-testid="text-total-amount">
-                        ₹{(calculateGrandTotal() - parseFloat(discountAmount || "0")).toFixed(2)}
+                      <span className="text-lg font-bold text-gray-900 dark:text-white" data-testid="text-total-amount">
+                        {currencySymbol}{calculateGrandTotal().toFixed(2)}
                       </span>
                     </div>
 
-                    <div className="pt-2">
-                      <Label htmlFor="amountPaid" className="mb-2 block">Amount Paid</Label>
-                      <Input
-                        data-testid="input-amount-paid"
-                        value={amountPaid}
-                        onChange={(e) => setAmountPaid(e.target.value)}
-                        onKeyPress={handleNumericKeyPress}
-                        placeholder="0"
-                        className="text-lg font-medium"
-                      />
-                    </div>
+                    {/* Show existing paid amount in edit mode */}
+                    {isEditMode && existingPaidAmount > 0 && (
+                      <div className="flex justify-between items-center py-2 px-3 mt-2">
+                        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Previously Paid:</span>
+                        <span className="text-sm font-semibold text-gray-900 dark:text-white">
+                          {currencySymbol}{existingPaidAmount.toFixed(2)}
+                        </span>
+                      </div>
+                    )}
+
+                    {paymentStatus !== "paid" && (
+                      <div className="pt-2">
+                        <Label htmlFor="amountPaid" className="mb-2 block">
+                          {isEditMode ? "Additional Amount Paid" : "Amount Paid"} ({currencySymbol})
+                        </Label>
+                        <Input
+                          data-testid="input-amount-paid"
+                          value={amountPaid}
+                          onChange={(e) => setAmountPaid(e.target.value)}
+                          onKeyPress={handleNumericKeyPress}
+                          placeholder="0"
+                          className="text-lg font-medium"
+                        />
+                        {isEditMode && (
+                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                            This will be added to the existing paid amount of {currencySymbol}{existingPaidAmount.toFixed(2)}
+                          </p>
+                        )}
+                      </div>
+                    )}
 
                     {/* Payment Installments Section */}
                     <div className="pt-4 border-t mt-4">
@@ -1534,7 +2481,7 @@ export default function InvoiceCreate() {
                       </div>
 
                       {enableInstallments && (
-                        <div className="space-y-3 bg-blue-50 dark:bg-blue-950/20 p-4 rounded-lg">
+                        <div className="space-y-3 border p-4 rounded-lg">
                           <div className="grid grid-cols-2 gap-3">
                             <div>
                               <Label className="text-sm">Number of Installments</Label>
@@ -1585,15 +2532,18 @@ export default function InvoiceCreate() {
                                       <tr key={inst.installmentNumber} className="border-b last:border-0">
                                         <td className="py-2">{inst.installmentNumber}</td>
                                         <td className="py-2">{new Date(inst.dueDate).toLocaleDateString()}</td>
-                                        <td className="py-2 text-right font-medium">₹{inst.amount}</td>
+                                        <td className="py-2 text-right font-medium">{currencySymbol}{inst.amount}</td>
                                       </tr>
                                     ))}
                                   </tbody>
                                 </table>
                                 <div className="mt-3 pt-2 border-t flex justify-between font-semibold">
                                   <span>Total Pending:</span>
-                                  <span className="text-cyan-600">
-                                    ₹{(calculateGrandTotal() - parseFloat(discountAmount || "0") - parseFloat(amountPaid || "0")).toFixed(2)}
+                                  <span className="text-gray-900 dark:text-white">
+                                    {currencySymbol}{(
+                                      calculateGrandTotal() - 
+                                      (isEditMode ? existingPaidAmount + parseFloat(amountPaid || "0") : parseFloat(amountPaid || "0"))
+                                    ).toFixed(2)}
                                   </span>
                                 </div>
                               </div>
@@ -1606,11 +2556,82 @@ export default function InvoiceCreate() {
                 </div>
               </div>
 
+              {/* Notes Section with Rich Text Editor - Side by Side */}
+              {invoiceSettings?.showNotes && (
+                <div className="border-t pt-6">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div className="rounded-lg p-2 sm:p-4">
+                      <Label htmlFor="notes" className="text-base sm:text-lg font-semibold mb-2 sm:mb-3 block">
+                        Notes
+                      </Label>
+                      <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-2 sm:mb-3">
+                        Add notes for the invoice.
+                      </p>
+                       <div className="bg-white dark:bg-gray-900 rounded-lg" data-testid="rich-text-editor-notes">
+                         <ReactQuill
+                           theme="snow"
+                           value={notesContent}
+                           onChange={setNotesContent}
+                           className="h-40"
+                          modules={{
+                            toolbar: [
+                              ['bold', 'italic', 'underline'],
+                              [{ 'list': 'ordered' }, { 'list': 'bullet' }],
+                              ['link', 'image'],
+                              ['clean']
+                            ],
+                          }}
+                          formats={[
+                            'bold', 'italic', 'underline',
+                            'list', 'bullet',
+                            'link', 'image'
+                          ]}
+                          placeholder="Type your notes here..."
+                        />
+                      </div>
+                      <input type="hidden" name="notes" value={notesContent} />
+                    </div>
+
+                    <div className="rounded-lg p-2 sm:p-4">
+                      <Label htmlFor="notes" className="text-base sm:text-lg font-semibold mb-2 sm:mb-3 block">
+                        Additional Notes 
+                      </Label>
+                      <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-2 sm:mb-3">
+                         It will be hidden to the invoice .
+                      </p>
+                      <div className="bg-white dark:bg-gray-900 rounded-lg" data-testid="rich-text-editor-additional-notes">
+                        <ReactQuill
+                          theme="snow"
+                          value={additionalNotesContent}
+                          onChange={setAdditionalNotesContent}
+                          className="h-40"
+                          modules={{
+                            toolbar: [
+                              ['bold', 'italic', 'underline'],
+                              [{ 'list': 'ordered' }, { 'list': 'bullet' }],
+                              ['link', 'image'],
+                              ['clean']
+                            ],
+                          }}
+                          formats={[
+                            'bold', 'italic', 'underline',
+                            'list', 'bullet',
+                            'link', 'image'
+                          ]}
+                          placeholder="Type your notes here..."
+                        />
+                      </div>
+                      <input type="hidden" name="notes" value={additionalNotesContent} />
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {(generateExpenses().length > 0 || manualExpenses.length > 0) && (
-                <div className="border-t pt-6 space-y-4">
+                <div className="pt-6 space-y-4">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <Receipt className="h-5 w-5 text-cyan-600" />
+                      <Receipt className="h-5 w-5 text-gray-900 dark:text-white" />
                       <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
                         Expenses ({getAllExpenses().length})
                       </h3>
@@ -1630,41 +2651,45 @@ export default function InvoiceCreate() {
                     Auto-generated expenses from purchase prices and manually added expenses
                   </p>
 
-                  <div className="overflow-x-auto">
-                    <table className="w-full border-collapse">
-                      <thead>
-                        <tr className="bg-gray-100 dark:bg-gray-800">
-                          <th className="px-4 py-2 text-left text-sm font-medium">
-                            Item
-                          </th>
-                          <th className="px-4 py-2 text-left text-sm font-medium">
-                            Title
-                          </th>
-                          <th className="px-4 py-2 text-left text-sm font-medium">
-                            Category
-                          </th>
-                          <th className="px-4 py-2 text-left text-sm font-medium">
-                            Vendor
-                          </th>
-                          <th className="px-4 py-2 text-left text-sm font-medium">
-                            Qty
-                          </th>
-                          <th className="px-4 py-2 text-right text-sm font-medium">
-                            Amount
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
+                  <div className="border rounded-lg overflow-x-auto">
+                    <div className="min-w-[2200px]">
+                      {/* Table Header */}
+                      <div 
+                        className="top-0 z-[100] grid gap-2 border-b p-3 font-medium text-sm bg-gray-50 dark:bg-gray-800"
+                        style={{ 
+                          gridTemplateColumns: expenseGridTemplate,
+                          backgroundColor: 'rgb(249, 250, 251)',
+                          // position: 'sticky',
+                          top: 0,
+                          zIndex: 100,
+                          minWidth: '2200px',
+                          width: '100%',
+                          willChange: 'transform'
+                        }}
+                      >
+                        <div className="text-center flex items-center justify-center">#</div>
+                        <div className="flex items-center">Title</div>
+                        <div className="flex items-center">Category</div>
+                        <div className="flex items-center">Vendor</div>
+                        <div className="flex items-center">Qty</div>
+                        <div className="flex items-center">Purchase Price ({currencySymbol})</div>
+                        <div className="flex items-center">Amount ({currencySymbol})</div>
+                        <div className="flex items-center"></div>
+                      </div>
+
+                      {/* Table Body */}
+                      <div>
                         {getAllExpenses().map((expense, idx) =>
                           expense.expenseType === "manual" ? (
-                            <tr
+                            <div
                               key={idx}
-                              className="border-t border-gray-200 dark:border-gray-700 bg-blue-50 dark:bg-blue-900/20"
+                              className="grid gap-2 p-3 border-b last:border-b-0"
+                              style={{ gridTemplateColumns: expenseGridTemplate }}
                             >
-                              <td className="px-4 py-3 text-sm">
-                                {expense.itemIndex}
-                              </td>
-                              <td className="px-4 py-3">
+                              <div className="flex items-center justify-center">
+                                <span className="font-medium text-sm">{expense.itemIndex}</span>
+                              </div>
+                              <div className="flex items-center">
                                 <Input
                                   value={expense.title}
                                   onChange={(e) =>
@@ -1675,10 +2700,9 @@ export default function InvoiceCreate() {
                                     )
                                   }
                                   placeholder="Expense title"
-                                  className="h-8"
                                 />
-                              </td>
-                              <td className="px-4 py-3">
+                              </div>
+                              <div className="flex items-center">
                                 <AutocompleteInput
                                   suggestions={getTravelCategories().filter(
                                     (cat) => cat.value !== "create_new",
@@ -1693,8 +2717,8 @@ export default function InvoiceCreate() {
                                   }
                                   placeholder="Category"
                                 />
-                              </td>
-                              <td className="px-4 py-3">
+                              </div>
+                              <div className="flex items-center">
                                 <AutocompleteInput
                                   suggestions={getVendorOptions().filter(
                                     (v) => v.value !== "create_new",
@@ -1709,8 +2733,8 @@ export default function InvoiceCreate() {
                                   }
                                   placeholder="Vendor"
                                 />
-                              </td>
-                              <td className="px-4 py-3">
+                              </div>
+                              <div className="flex items-center">
                                 <Input
                                   value={expense.quantity}
                                   onChange={(e) =>
@@ -1722,126 +2746,136 @@ export default function InvoiceCreate() {
                                   }
                                   onKeyPress={handleNumericKeyPress}
                                   placeholder="1"
-                                  className="h-8 w-16"
                                 />
-                              </td>
-                              <td className="px-4 py-3">
-                                <div className="flex items-center gap-2">
-                                  <Input
-                                    value={expense.amount}
-                                    onChange={(e) =>
-                                      updateManualExpense(
-                                        parseInt(expense.itemIndex.split("-")[1]) - 1,
-                                        "amount",
-                                        e.target.value,
-                                      )
-                                    }
-                                    onKeyPress={handleNumericKeyPress}
-                                    placeholder="0.00"
-                                    className="h-8 w-24"
-                                  />
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() =>
-                                      removeManualExpense(
-                                        parseInt(expense.itemIndex.split("-")[1]) - 1,
-                                      )
-                                    }
-                                  >
-                                    <Trash2 className="h-4 w-4 text-red-500" />
-                                  </Button>
-                                </div>
-                              </td>
-                            </tr>
+                              </div>
+                              <div className="flex items-center">
+                                <Input
+                                  value={expense.purchasePrice || ""}
+                                  onChange={(e) =>
+                                    updateManualExpense(
+                                      parseInt(expense.itemIndex.split("-")[1]) - 1,
+                                      "purchasePrice",
+                                      e.target.value,
+                                    )
+                                  }
+                                  onKeyPress={handleNumericKeyPress}
+                                  placeholder="0.00"
+                                />
+                              </div>
+                              <div className="flex items-center">
+                                <span className="font-semibold text-sm">
+                                  {currencySymbol}{expense.amount ? parseFloat(expense.amount).toFixed(2) : "0.00"}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-center">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() =>
+                                    removeManualExpense(
+                                      parseInt(expense.itemIndex.split("-")[1]) - 1,
+                                    )
+                                  }
+                                >
+                                  <Trash2 className="h-4 w-4 text-gray-900 dark:text-white" />
+                                </Button>
+                              </div>
+                            </div>
                           ) : (
-                            <tr
+                            <div
                               key={idx}
-                              className="border-t border-gray-200 dark:border-gray-700"
+                              className="grid gap-2 p-3 border-b last:border-b-0"
+                              style={{ gridTemplateColumns: expenseGridTemplate }}
                             >
-                              <td className="px-4 py-3 text-sm">
-                                #{expense.itemIndex + 1}
-                              </td>
-                              <td className="px-4 py-3 text-sm font-medium">
-                                {expense.title}
-                              </td>
-                              <td className="px-4 py-3 text-sm">
-                                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200">
+                              <div className="flex items-center justify-center">
+                                <span className="font-medium text-sm">#{expense.itemIndex + 1}</span>
+                              </div>
+                              <div className="flex items-center">
+                                <span className="text-sm font-medium">{expense.title}</span>
+                              </div>
+                              <div className="flex items-center">
+                                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs border text-gray-900 dark:text-white">
                                   {expense.category}
                                 </span>
-                              </td>
-                              <td className="px-4 py-3 text-sm">
-                                {expense.vendorName}
-                              </td>
-                              <td className="px-4 py-3 text-sm">
-                                {expense.quantity}
-                              </td>
-                              <td className="px-4 py-3 text-sm text-right font-semibold">
-                                {currency === "INR"
-                                  ? "₹"
-                                  : currency === "USD"
-                                    ? "$"
-                                    : "€"}
-                                {expense.amount.toFixed(2)}
-                              </td>
-                            </tr>
+                              </div>
+                              <div className="flex items-center">
+                                <span className="text-sm">{expense.vendorName}</span>
+                              </div>
+                              <div className="flex items-center">
+                                <span className="text-sm">{expense.quantity}</span>
+                              </div>
+                              <div className="flex items-center">
+                                <span className="text-sm text-right">
+                                  {currencySymbol}{expense.purchasePrice?.toFixed(2) || "0.00"}
+                                </span>
+                              </div>
+                              <div className="flex items-center">
+                                <span className="text-sm font-semibold">
+                                  {currencySymbol}{expense.amount.toFixed(2)}
+                                </span>
+                              </div>
+                              <div className="flex items-center"></div>
+                            </div>
                           ),
                         )}
-                        <tr className="border-t-2 border-gray-300 dark:border-gray-600 font-semibold bg-gray-50 dark:bg-gray-900">
-                          <td
-                            colSpan={5}
-                            className="px-4 py-3 text-sm text-right"
-                          >
-                            Total Expenses:
-                          </td>
-                          <td className="px-4 py-3 text-sm text-right">
-                            {currency === "INR"
-                              ? "₹"
-                              : currency === "USD"
-                                ? "$"
-                                : "€"}
-                            {getAllExpenses()
-                              .reduce((sum, exp) => sum + exp.amount, 0)
-                              .toFixed(2)}
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
+                        {/* Total Row */}
+                        <div 
+                          className="grid gap-2 p-3 border-t font-semibold"
+                          style={{ gridTemplateColumns: expenseGridTemplate }}
+                        >
+                          <div></div>
+                          <div></div>
+                          <div></div>
+                          <div></div>
+                          <div></div>
+                          <div className="flex items-center justify-end">
+                            <span className="text-sm">Total Expenses:</span>
+                          </div>
+                          <div className="flex items-center">
+                            <span className="text-sm">
+                              {currencySymbol}{getAllExpenses()
+                                .reduce((sum, exp) => sum + exp.amount, 0)
+                                .toFixed(2)}
+                            </span>
+                          </div>
+                          <div className="flex items-center"></div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
 
                   {/* Profit Calculation Section */}
-                  <div className="mt-6 border-t-2 pt-4">
-                    <div className="bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-950/20 dark:to-emerald-950/20 rounded-lg p-6">
+                  <div className="mt-6  pt-4">
+                    <div className="border rounded-lg p-6">
                       <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
-                        <span className="text-green-600">💰</span> Profit Analysis
+                        <span className="text-gray-900 dark:text-white">💰</span> Profit Analysis
                       </h3>
-                      
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
                         {/* Left Side - Values */}
                         <div className="space-y-3">
-                          <div className="flex justify-between items-center py-2 border-b border-green-200 dark:border-green-800">
+                          <div className="flex justify-between items-center py-2 border-b">
                             <span className="text-gray-700 dark:text-gray-300 font-medium">Total Invoice Amount:</span>
                             <span className="font-semibold text-lg">
-                              {currency === "INR" ? "₹" : currency === "USD" ? "$" : "€"}
-                              {(calculateGrandTotal() - parseFloat(discountAmount || "0")).toFixed(2)}
+                              {currencySymbol}{calculateGrandTotal().toFixed(2)}
                             </span>
                           </div>
-                          
-                          <div className="flex justify-between items-center py-2 border-b border-green-200 dark:border-green-800">
+
+                          <div className="flex justify-between items-center py-2 border-b">
                             <span className="text-gray-700 dark:text-gray-300 font-medium">Total Expenses:</span>
-                            <span className="font-semibold text-lg text-red-600">
-                              -{currency === "INR" ? "₹" : currency === "USD" ? "$" : "€"}
+                            <span className="font-semibold text-lg text-gray-900 dark:text-white">
+                              -{currencySymbol}
                               {getAllExpenses()
                                 .reduce((sum, exp) => sum + exp.amount, 0)
                                 .toFixed(2)}
                             </span>
                           </div>
 
-                          <div className="flex justify-between items-center py-2 border-b border-green-200 dark:border-green-800">
+                          <div className="flex justify-between items-center py-2 border-b">
                             <span className="text-gray-700 dark:text-gray-300 font-medium">Tax Amount:</span>
-                            <span className="font-semibold text-lg text-blue-600">
-                              {currency === "INR" ? "₹" : currency === "USD" ? "$" : "€"}
+                            <span className="font-semibold text-lg text-gray-900 dark:text-white">
+                              {currencySymbol}
                               {lineItems.reduce(
                                 (total, item) => total + parseFloat(item.tax || "0"),
                                 0
@@ -1852,12 +2886,11 @@ export default function InvoiceCreate() {
 
                         {/* Right Side - Profit Display */}
                         <div className="flex items-center justify-center">
-                          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-md border-2 border-green-500 w-full">
+                          <div className="border rounded-lg p-6 shadow-md w-full">
                             <p className="text-sm text-gray-600 dark:text-gray-400 mb-2 text-center">Net Profit</p>
-                            <p className="text-3xl font-bold text-center text-green-600">
-                              {currency === "INR" ? "₹" : currency === "USD" ? "$" : "€"}
-                              {(
-                                (calculateGrandTotal() - parseFloat(discountAmount || "0")) -
+                            <p className="text-3xl font-bold text-center text-gray-900 dark:text-white">
+                              {currencySymbol}{(
+                                calculateGrandTotal() -
                                 getAllExpenses().reduce((sum, exp) => sum + exp.amount, 0)
                               ).toFixed(2)}
                             </p>
@@ -1871,7 +2904,7 @@ export default function InvoiceCreate() {
                   </div>
                 </div>
               )}
-              <div className="flex justify-end space-x-2 pt-4">
+              <div className="flex flex-col sm:flex-row justify-end gap-2 sm:space-x-2 pt-4">
                 <Button
                   type="button"
                   variant="outline"
@@ -1887,13 +2920,54 @@ export default function InvoiceCreate() {
                 >
                   {createInvoiceMutation.isPending
                     ? "Creating..."
-                    : "Create Invoice"}
+                    : "Save Invoice"}
                 </Button>
               </div>
             </CardContent>
           </Card>
         </form>
       </div>
+
+      {/* Invoice Preview Dialog */}
+      <Dialog open={showPreview} onOpenChange={setShowPreview}>
+        <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Invoice Preview</DialogTitle>
+            <DialogDescription>
+              Review your invoice before saving. All invoice data will be displayed as shown below.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="mt-4">
+            {previewInvoiceData && (
+              <>
+                {/* Use actual invoice template */}
+                <ModernTemplate data={previewInvoiceData} />
+                
+              </>
+            )}
+          </div>
+          <div className="flex justify-end gap-2 pt-4 border-t mt-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowPreview(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={handleSaveFromPreview}
+              disabled={isEditMode ? updateInvoiceMutation.isPending : createInvoiceMutation.isPending}
+              className="bg-gray-900 hover:bg-gray-800 dark:bg-gray-100 dark:hover:bg-gray-200 text-white dark:text-gray-900"
+            >
+              {isEditMode 
+                ? (updateInvoiceMutation.isPending ? "Updating..." : "Update Invoice")
+                : (createInvoiceMutation.isPending ? "Saving..." : "Save Invoice")
+              }
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Customer Create Slide Panel */}
       <Sheet open={isCustomerPanelOpen} onOpenChange={setIsCustomerPanelOpen}>
@@ -1991,12 +3065,12 @@ export default function InvoiceCreate() {
               preselectedLeadTypeId={
                 lineItems[currentItemIndex]?.travelCategory
                   ? leadTypes
-                      .find(
-                        (lt: any) =>
-                          lt.name ===
-                          lineItems[currentItemIndex].travelCategory,
-                      )
-                      ?.id.toString()
+                    .find(
+                      (lt: any) =>
+                        lt.name ===
+                        lineItems[currentItemIndex].travelCategory,
+                    )
+                    ?.id.toString()
                   : undefined
               }
               onSuccess={(provider) => {

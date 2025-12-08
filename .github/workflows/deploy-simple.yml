@@ -59,4 +59,3 @@ jobs:
             curl -f http://localhost:5000/health || echo "⚠️ Health check failed, but deployment completed"
             
             echo "✅ Deployment completed!"
-

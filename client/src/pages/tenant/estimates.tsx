@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useEffect } from "react";
 import { Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -38,6 +38,8 @@ import {
   Grid3X3,
   List,
   Search,
+  MessageCircle,
+  Pencil,
 } from "lucide-react";
 import {
   Dialog,
@@ -64,6 +66,8 @@ import { EmailEstimateDialog } from "@/components/estimates/email-estimate-dialo
 import { useAuth } from "@/components/auth/auth-provider";
 import { DateFilter } from "@/components/ui/date-filter";
 import { buildDateFilters } from "@/lib/date-filter-helpers";
+import { EnhancedTable, TableColumn } from "@/components/ui/enhanced-table";
+import { useLocation } from "wouter";
 import {
   BarChart,
   Bar,
@@ -136,6 +140,7 @@ interface FullEstimate extends Estimate {
   notes?: string;
   validUntil?: string;
   lineItems?: LineItem[];
+  attachments?: Array<{filename: string; path: string; size: number; mimetype: string}>;
 }
 
 export default function Estimates() {
@@ -149,8 +154,18 @@ export default function Estimates() {
     null,
   );
   const [emailEstimate, setEmailEstimate] = useState<Estimate | null>(null);
+  const [whatsappEstimate, setWhatsappEstimate] = useState<Estimate | null>(null);
   const [showAnalyticsSheet, setShowAnalyticsSheet] = useState(false);
   const [viewMode, setViewMode] = useState<"card" | "list">("card");
+  const previewRef = useRef<{ downloadPDF: () => void } | null>(null);
+  
+  // Sorting state
+  const [sortColumn, setSortColumn] = useState<string | null>(null);
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   // Filter states
   const [searchTerm, setSearchTerm] = useState("");
@@ -240,15 +255,61 @@ export default function Estimates() {
     },
   });
 
-  // Fetch estimates with search, status, and date filters
-  const { data: estimates = [], isLoading } = useQuery<Estimate[]>({
+  // Fetch tenant settings for company info
+  const { data: tenantSettings } = useQuery({
+    queryKey: ["/api/tenant/settings"],
+    enabled: !!tenant?.id,
+    queryFn: async () => {
+      const token =
+        localStorage.getItem("token") || localStorage.getItem("auth_token");
+      const response = await fetch(`/api/tenant/settings`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) return null;
+      return response.json();
+    },
+  });
+
+  // Map frontend column keys to database column names
+  const getSortColumnName = (columnKey: string): string => {
+    const columnMap: Record<string, string> = {
+      estimateNumber: "estimate_number",
+      customerName: "customer_name",
+      createdAt: "created_at",
+      totalAmount: "total_amount",
+      status: "status",
+    };
+    return columnMap[columnKey] || columnKey;
+  };
+
+  // Handle sort change
+  const handleSort = (columnKey: string) => {
+    if (sortColumn === columnKey) {
+      // Toggle direction if same column
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      // New column, default to desc
+      setSortColumn(columnKey);
+      setSortDirection('desc');
+    }
+  };
+
+  // Fetch estimates with search, status, date filters, sorting, and pagination
+  const { 
+    data: estimatesResponse, 
+    isLoading 
+  } = useQuery<{ data: Estimate[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }>({
     queryKey: [
       `/api/estimates`,
       searchTerm,
       statusFilter,
       dateFilter,
+      currentPage,
+      pageSize,
       customDateFrom,
       customDateTo,
+      sortColumn,
+      sortDirection,
     ],
     enabled: !!tenant?.id,
     queryFn: async () => {
@@ -261,6 +322,8 @@ export default function Estimates() {
         searchTerm,
         statusFilter,
         dateFilters,
+        sortColumn,
+        sortDirection,
       });
       const token =
         localStorage.getItem("token") || localStorage.getItem("auth_token");
@@ -282,6 +345,14 @@ export default function Estimates() {
       if (dateFilters?.filterType) {
         queryParams.append("filterType", dateFilters.filterType);
       }
+      // Add sorting parameters
+      if (sortColumn) {
+        queryParams.append("sortBy", getSortColumnName(sortColumn));
+        queryParams.append("sortOrder", sortDirection);
+      }
+      // Add pagination parameters
+      queryParams.append("page", currentPage.toString());
+      queryParams.append("pageSize", pageSize.toString());
 
       const url = queryParams.toString()
         ? `/api/estimates?${queryParams.toString()}`
@@ -290,11 +361,53 @@ export default function Estimates() {
       const response = await fetch(url, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!response.ok) return [];
+      if (!response.ok) {
+        return {
+          data: [],
+          pagination: {
+            page: currentPage,
+            pageSize: pageSize,
+            total: 0,
+            totalPages: 0,
+          },
+        };
+      }
       const result = await response.json();
-      return Array.isArray(result) ? result : result.estimates || [];
+      
+      // Handle both old format (array) and new format (object with data and pagination)
+      if (Array.isArray(result)) {
+        return {
+          data: result,
+          pagination: {
+            page: currentPage,
+            pageSize: pageSize,
+            total: result.length,
+            totalPages: Math.ceil(result.length / pageSize),
+          },
+        };
+      }
+      
+      // New format with pagination
+      return {
+        data: result.data || result.estimates || [],
+        pagination: result.pagination || {
+          page: currentPage,
+          pageSize: pageSize,
+          total: result.data?.length || 0,
+          totalPages: Math.ceil((result.data?.length || 0) / pageSize),
+        },
+      };
     },
   });
+
+  // Extract estimates and pagination from response
+  const estimates = estimatesResponse?.data || [];
+  const pagination = estimatesResponse?.pagination || {
+    page: currentPage,
+    pageSize: pageSize,
+    total: 0,
+    totalPages: 0,
+  };
 
   // Function to fetch full estimate details for preview
   const fetchFullEstimate = async (
@@ -550,30 +663,148 @@ export default function Estimates() {
     createMutation.mutate(formData);
   };
 
-  const handleDownloadPDF = async (estimate: Estimate) => {
+  const handleDownloadPDF = async (estimate: Estimate | FullEstimate) => {
     try {
-      const token =
-        localStorage.getItem("token") || localStorage.getItem("auth_token");
-      const response = await fetch(`/api/estimates/${estimate.id}/pdf`, {
-        headers: { Authorization: `Bearer ${token}` },
+      // Fetch full estimate details for PDF generation
+      const fullEstimate = await fetchFullEstimate(estimate.id);
+      
+      // Dynamically import PDF libraries
+      const [{ default: jsPDF }, { default: html2canvas }] = await Promise.all([
+        import('jspdf'),
+        import('html2canvas')
+      ]);
+
+      toast({
+        title: "Generating PDF",
+        description: "Please wait...",
       });
-      if (response.ok) {
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = `estimate-${estimate.estimateNumber}.pdf`;
-        link.click();
-        window.URL.revokeObjectURL(url);
+
+      // Create a hidden container for rendering the preview
+      const hiddenContainer = document.createElement('div');
+      hiddenContainer.style.position = 'absolute';
+      hiddenContainer.style.left = '-9999px';
+      hiddenContainer.style.top = '0';
+      hiddenContainer.style.width = '210mm'; // A4 width
+      hiddenContainer.style.backgroundColor = '#ffffff';
+      document.body.appendChild(hiddenContainer);
+
+      // Get tenant settings for company info
+      const companyInfo = tenantSettings ? {
+        name: (tenantSettings as any)?.companyName || (tenant as any)?.name || '',
+        address: (tenantSettings as any)?.companyAddress || '',
+        phone: (tenantSettings as any)?.companyPhone || '',
+        email: (tenantSettings as any)?.companyEmail || '',
+        logo: (tenantSettings as any)?.companyLogo || (fullEstimate as any)?.logoUrl,
+      } : undefined;
+
+      // Render the preview component in the hidden container using React 18 createRoot
+      const React = await import('react');
+      const ReactDOM = await import('react-dom/client');
+      const root = ReactDOM.createRoot(hiddenContainer);
+      
+      root.render(
+        React.createElement(EstimatePreview, {
+          estimate: fullEstimate as any,
+          companyInfo: companyInfo,
+          hideActions: true,
+        })
+      );
+
+      // Wait for the component to render and images to load
+      await new Promise(resolve => setTimeout(resolve, 1500));
+
+      // Find the preview content element
+      const previewElement = hiddenContainer.querySelector('[data-estimate-preview-content]') as HTMLElement;
+      
+      if (!previewElement) {
+        root.unmount();
+        document.body.removeChild(hiddenContainer);
+        throw new Error("Preview content not found");
       }
-    } catch (error) {
+
+      // Generate PDF from the rendered content
+      const canvas = await html2canvas(previewElement, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+        allowTaint: false,
+      });
+
+      const imgData = canvas.toDataURL("image/png", 1.0);
+      const pdf = new jsPDF("p", "mm", "a4");
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+
+      // Handle multi-page PDF
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      let heightLeft = pdfHeight;
+      let position = 0;
+
+      pdf.addImage(imgData, "PNG", 0, position, pdfWidth, pdfHeight);
+      heightLeft -= pageHeight;
+
+      while (heightLeft > 0) {
+        position = heightLeft - pageHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, "PNG", 0, position, pdfWidth, pdfHeight);
+        heightLeft -= pageHeight;
+      }
+
+      pdf.save(`Estimate-${fullEstimate.estimateNumber || estimate.id}.pdf`);
+      
+      // Clean up: unmount React component and remove container
+      root.unmount();
+      setTimeout(() => {
+        if (document.body.contains(hiddenContainer)) {
+          document.body.removeChild(hiddenContainer);
+        }
+      }, 100);
+      
+      toast({
+        title: "Success",
+        description: "PDF downloaded successfully",
+      });
+    } catch (error: any) {
+      console.error("Error downloading PDF:", error);
       toast({
         title: "Error",
-        description: "Failed to download PDF",
+        description: error.message || "Failed to download PDF. Please try again.",
         variant: "destructive",
       });
     }
   };
+
+  // Update estimate status mutation
+  const updateStatusMutation = useMutation({
+    mutationFn: async ({ estimateId, status }: { estimateId: number; status: string }) => {
+      const response = await apiRequest("PATCH", `/api/estimates/${estimateId}/status`, { status });
+      return response.json();
+    },
+    onSuccess: (data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/estimates"] });
+      // Update preview estimate if it's the same one
+      if (previewEstimate && Number(previewEstimate.id) === variables.estimateId) {
+        setPreviewEstimate({ ...previewEstimate, status: variables.status });
+      }
+      toast({
+        title: "Success",
+        description: `Estimate status updated to ${variables.status}`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update estimate status",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleStatusChange = (estimateId: number, newStatus: string) => {
+    updateStatusMutation.mutate({ estimateId, status: newStatus });
+  };
+
 
   const getStatusBadge = (status: string) => {
     const variants: Record<string, any> = {
@@ -592,6 +823,200 @@ export default function Estimates() {
       </Badge>
     );
   };
+
+  const [, navigate] = useLocation();
+
+  // Handle WhatsApp send
+  const handleSendWhatsApp = async (estimate: Estimate | FullEstimate) => {
+    const customerPhone = (estimate as any).customerPhone;
+    if (!customerPhone) {
+      toast({
+        title: "Error",
+        description: "Customer phone number is not available",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Generate WhatsApp message
+    const message = `*Estimate ${estimate.estimateNumber}*\n\n` +
+      `Dear ${estimate.customerName},\n\n` +
+      `Please find your estimate details:\n` +
+      `- Estimate Number: ${estimate.estimateNumber}\n` +
+      `- Total Amount: $${estimate.totalAmount}\n` +
+      `- Status: ${estimate.status || 'Draft'}\n\n` +
+      `Please review the estimate and let us know if you have any questions.\n\n` +
+      `Thank you for your business!`;
+
+    // Create WhatsApp link
+    const phoneNumber = customerPhone.replace(/[^0-9]/g, '');
+    const whatsappLink = `https://wa.me/${phoneNumber}?text=${encodeURIComponent(message)}`;
+    
+    // Open WhatsApp in new tab
+    window.open(whatsappLink, '_blank');
+    
+    toast({
+      title: "WhatsApp Opened",
+      description: "WhatsApp chat opened in new window",
+    });
+  };
+
+  // Column definitions for the enhanced table
+  const estimateColumns: TableColumn<Estimate>[] = [
+    {
+      key: "estimateNumber",
+      label: "Estimate #",
+      sortable: true,
+      render: (value) => (
+        <div className="font-medium flex items-center">{value || `EST-${value}`}</div>
+      ),
+    },
+    {
+      key: "customerName",
+      label: "Customer",
+      sortable: true,
+      render: (customerName, estimate) => (
+        <div className="flex flex-col">
+          <div className="font-medium">{customerName || "Unknown"}</div>
+          <div className="text-sm text-gray-500 flex items-center mt-1">
+            <Mail className="h-3 w-3 mr-1" />
+            {estimate.customerEmail || ""}
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: "createdAt",
+      label: "Date",
+      sortable: true,
+      render: (createdAt) => (
+        <div className="flex items-center">
+          <Calendar className="h-4 w-4 mr-2 text-gray-400" />
+          <span>
+            {createdAt ? new Date(createdAt).toLocaleDateString() : "-"}
+          </span>
+        </div>
+      ),
+    },
+    {
+      key: "totalAmount",
+      label: "Total Amount",
+      sortable: true,
+      render: (totalAmount) => (
+        <div className="flex items-center font-semibold">
+          <span className="mr-1">$</span>
+          <span>
+            {totalAmount
+              ? parseFloat(totalAmount.toString()).toLocaleString(undefined, {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })
+              : "0.00"}
+          </span>
+        </div>
+      ),
+    },
+    {
+      key: "status",
+      label: "Status",
+      sortable: true,
+      render: (status, estimate) => {
+        const statusConfig = estimateStatuses.find((s) => s.value === status);
+        const currentStatus = status || "draft";
+        const badgeVariant = 
+          currentStatus === "rejected"
+            ? "destructive"
+            : currentStatus === "draft"
+              ? "secondary"
+              : "default";
+        const badgeColor = statusConfig?.color || "bg-gray-100 text-gray-800";
+        
+        return (
+          <Select
+            value={currentStatus}
+            onValueChange={(value) => handleStatusChange(Number(estimate.id), value)}
+            disabled={updateStatusMutation.isPending}
+          >
+            <SelectTrigger className={`w-auto h-7 px-2 border-0 ${badgeColor} hover:opacity-80 cursor-pointer`}>
+              <SelectValue>
+                <span className="text-xs font-medium">
+                  {statusConfig?.label || currentStatus}
+                </span>
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="draft">Draft</SelectItem>
+              <SelectItem value="sent">Sent</SelectItem>
+              <SelectItem value="viewed">Viewed</SelectItem>
+              <SelectItem value="accepted">Accepted</SelectItem>
+              <SelectItem value="rejected">Rejected</SelectItem>
+            </SelectContent>
+          </Select>
+        );
+      },
+    },
+    {
+      key: "actions",
+      label: "Actions",
+      sortable: false,
+      className: "text-right",
+      render: (_, estimate) => (
+        <div className="flex items-center gap-1">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => handlePreviewEstimate(estimate)}
+            title="Preview Estimate"
+            className="h-8 w-8 p-0"
+          >
+            <Eye className="h-4 w-4" />
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              // Invalidate the query cache for this estimate to force a fresh fetch
+              queryClient.invalidateQueries({
+                queryKey: ["/api/estimates", estimate.id],
+              });
+              navigate(`/estimates/edit/${estimate.id}`);
+            }}
+            className="h-8 w-8 p-0 text-purple-600 hover:text-purple-700"
+            title="Edit Estimate"
+          >
+            <Pencil className="h-4 w-4" />
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setEmailEstimate(estimate)}
+            className="h-8 w-8 p-0 text-green-600 hover:text-green-700"
+            title="Send Email"
+          >
+            <Mail className="h-4 w-4" />
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setWhatsappEstimate(estimate)}
+            className="h-8 w-8 p-0 text-green-600 hover:text-green-700"
+            title="Send WhatsApp"
+          >
+            <MessageCircle className="h-4 w-4" />
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => handleDownloadPDF(estimate)}
+            className="h-8 w-8 p-0 text-blue-600 hover:text-blue-700"
+            title="Download PDF"
+          >
+            <Download className="h-4 w-4" />
+          </Button>
+        </div>
+      ),
+    },
+  ];
 
   // Define estimate statuses first
   const estimateStatuses = [
@@ -631,9 +1056,9 @@ export default function Estimates() {
         0,
       );
     const conversionRate =
-      estimates.length > 0
+      pagination.total > 0
         ? (estimates.filter((est) => est.status === "accepted").length /
-            estimates.length) *
+            pagination.total) *
           100
         : 0;
 
@@ -926,64 +1351,18 @@ export default function Estimates() {
                   </div>
                 </SheetContent>
               </Sheet>
+              {/* New Estimate Button */}
+              <Link href="/estimates/create">
+                <Button
+                  size="lg"
+                  className="gap-2"
+                  data-testid="button-new-estimate"
+                >
+                  <Plus className="w-4 h-4" />
+                  New Estimate
+                </Button>
+              </Link>
             </div>
-          </div>
-
-          {/* Filters Section */}
-          <Card className="border-0 shadow-sm">
-            <CardContent className="p-4">
-              <div className="flex flex-col md:flex-row gap-4">
-                {/* Search Input */}
-                <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                  <Input
-                    placeholder="Search by estimate number, customer name, or email..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-10"
-                    data-testid="input-search-estimates"
-                  />
-                </div>
-
-                {/* Status Filter */}
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger className="w-full md:w-48" data-testid="select-status-filter">
-                    <SelectValue placeholder="Filter by status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {estimateStatuses.map((status) => (
-                      <SelectItem key={status.value} value={status.value}>
-                        {status.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                {/* Date Filter */}
-                <DateFilter
-                  value={dateFilter}
-                  onChange={setDateFilter}
-                  customDateFrom={customDateFrom}
-                  customDateTo={customDateTo}
-                  onCustomDateFromChange={setCustomDateFrom}
-                  onCustomDateToChange={setCustomDateTo}
-                />
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* New Estimate Button - Separate Row */}
-          <div className="flex justify-end">
-            <Link href="/estimates/create">
-              <Button
-                size="lg"
-                className="gap-2"
-                data-testid="button-new-estimate"
-              >
-                <Plus className="w-4 h-4" />
-                New Estimate
-              </Button>
-            </Link>
           </div>
 
           {/* New Estimate Dialog */}
@@ -1490,226 +1869,155 @@ export default function Estimates() {
             </DialogContent>
           </Dialog>
 
-          {/* Estimates Grid */}
-          <Card className="w-full">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle>Estimates List</CardTitle>
-                  <CardDescription>
-                    {estimates.length === 0
-                      ? "No estimates found. Create your first estimate to get started."
-                      : `Showing ${estimates.length} estimate${estimates.length !== 1 ? "s" : ""}`}
-                  </CardDescription>
-                </div>
-                <div className="flex items-center space-x-2">
-                  {/* Search Filter */}
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      placeholder="Search estimates..."
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      className="w-64 pl-9"
-                      data-testid="input-search-estimates"
-                    />
-                  </div>
-
-                  {/* Status Filter */}
-                  <Select value={statusFilter} onValueChange={setStatusFilter}>
-                    <SelectTrigger
-                      className="w-40"
-                      data-testid="select-status-filter"
-                    >
-                      <SelectValue placeholder="Filter by status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {estimateStatuses.map((status) => (
-                        <SelectItem key={status.value} value={status.value}>
-                          {status.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-
-                  {/* Date Filter */}
-                  <DateFilter
-                    dateFilter={dateFilter}
-                    setDateFilter={setDateFilter}
-                    customDateFrom={customDateFrom}
-                    setCustomDateFrom={setCustomDateFrom}
-                    customDateTo={customDateTo}
-                    setCustomDateTo={setCustomDateTo}
-                  />
-
-                  {/* View Toggle */}
-                  <div className="flex items-center border rounded-md">
-                    <Button
-                      variant={viewMode === "card" ? "default" : "ghost"}
-                      size="sm"
-                      onClick={() => setViewMode("card")}
-                      className="rounded-r-none"
-                    >
-                      <Grid3X3 className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      variant={viewMode === "list" ? "default" : "ghost"}
-                      size="sm"
-                      onClick={() => setViewMode("list")}
-                      className="rounded-l-none"
-                    >
-                      <List className="w-4 h-4" />
-                    </Button>
-                  </div>
-                </div>
-              </div>
+          {/* Filters */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Filter Estimates</CardTitle>
             </CardHeader>
             <CardContent>
-              {estimates.length === 0 ? (
-                <div className="text-center py-8">
-                  <FileText className="mx-auto h-12 w-12 text-gray-400" />
-                  <h3 className="mt-2 text-sm font-medium text-gray-900">
-                    No estimates
-                  </h3>
-                  <p className="mt-1 text-sm text-gray-500">
-                    Get started by creating a new estimate.
-                  </p>
-                  <div className="mt-6">
-                    <Link href="/estimates/create">
-                      <Button data-testid="button-new-estimate-empty">
-                        <Plus className="mr-2 h-4 w-4" />
-                        New Estimate
-                      </Button>
-                    </Link>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 mb-3">
+                <div className="relative">
+                  <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400 h-3 w-3" />
+                  <Input
+                    placeholder="Search estimates..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-7 h-9 text-sm"
+                  />
+                </div>
+                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                  <SelectTrigger className="h-9 text-sm">
+                    <SelectValue placeholder="Status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {estimateStatuses.map((status) => (
+                      <SelectItem key={status.value} value={status.value}>
+                        {status.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <DateFilter
+                  dateFilter={dateFilter}
+                  setDateFilter={setDateFilter}
+                  customDateFrom={customDateFrom}
+                  setCustomDateFrom={setCustomDateFrom}
+                  customDateTo={customDateTo}
+                  setCustomDateTo={setCustomDateTo}
+                />
+              </div>
+              <div className="flex items-center justify-between mt-3 pt-3 border-t">
+                <div className="text-xs text-gray-500">
+                  {pagination.total > 0 ? (
+                    <>Total: {pagination.total} estimate{pagination.total !== 1 ? "s" : ""}</>
+                  ) : (
+                    <>No estimates found</>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Estimates Table */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Estimates List</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <EnhancedTable
+                data={estimates}
+                columns={estimateColumns}
+                isLoading={isLoading}
+                showPagination={false}
+                emptyMessage="No estimates found. Create your first estimate to get started."
+                externalSort={{
+                  sortColumn: sortColumn,
+                  sortDirection: sortDirection,
+                  onSort: handleSort,
+                }}
+              />
+              {/* Pagination Controls - Below table like invoices */}
+              <div className="flex items-center justify-between mt-4 pt-4 border-t">
+                <div className="flex items-center gap-4">
+                  <div className="text-sm text-gray-500">
+                    Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, pagination.total)} of {pagination.total} estimates
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="pageSize" className="text-sm text-gray-500">
+                      Show:
+                    </Label>
+                    <Select
+                      value={pageSize.toString()}
+                      onValueChange={(value) => {
+                        setPageSize(parseInt(value));
+                        setCurrentPage(1); // Reset to first page when changing page size
+                      }}
+                    >
+                      <SelectTrigger id="pageSize" className="w-20 h-8">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="10">10</SelectItem>
+                        <SelectItem value="50">50</SelectItem>
+                        <SelectItem value="100">100</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
-              ) : viewMode === "card" ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                  {estimates.map((estimate) => (
-                    <Card
-                      key={estimate.id}
-                      className="hover:shadow-md transition-shadow"
+                {pagination.totalPages > 1 && (
+                  <div className="flex items-center space-x-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={currentPage === 1}
+                      onClick={() => setCurrentPage(currentPage - 1)}
                     >
-                      <CardHeader className="pb-3">
-                        <div className="flex items-center justify-between">
-                          <CardTitle className="text-lg font-semibold">
-                            {estimate.estimateNumber}
-                          </CardTitle>
-                          {getStatusBadge(estimate.status)}
-                        </div>
-                        <CardDescription className="text-sm">
-                          {estimate.customerName}
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent className="space-y-3">
-                        <div className="flex items-center justify-between text-sm">
-                          <div className="flex items-center gap-2 font-medium text-green-600">
-                            <DollarSign className="w-4 h-4" />$
-                            {estimate.totalAmount}
-                          </div>
-                          <div className="flex items-center gap-2 text-muted-foreground">
-                            <Calendar className="w-4 h-4" />
-                            {new Date(estimate.createdAt).toLocaleDateString()}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <Users className="w-4 h-4" />
-                          <span className="truncate">
-                            {estimate.customerEmail}
-                          </span>
-                        </div>
-                        <div className="flex gap-2 pt-2">
+                      Previous
+                    </Button>
+                    
+                    {/* Page Numbers */}
+                    <div className="flex items-center space-x-1">
+                      {Array.from({ length: Math.min(5, pagination.totalPages) }, (_, i) => {
+                        let pageNum;
+                        if (pagination.totalPages <= 5) {
+                          // Show all pages if 5 or fewer
+                          pageNum = i + 1;
+                        } else if (currentPage <= 3) {
+                          // Show first 5 pages
+                          pageNum = i + 1;
+                        } else if (currentPage >= pagination.totalPages - 2) {
+                          // Show last 5 pages
+                          pageNum = pagination.totalPages - 4 + i;
+                        } else {
+                          // Show pages around current page
+                          pageNum = currentPage - 2 + i;
+                        }
+                        
+                        return (
                           <Button
+                            key={pageNum}
+                            variant={currentPage === pageNum ? "default" : "outline"}
                             size="sm"
-                            variant="outline"
-                            className="flex-1"
-                            onClick={() => handlePreviewEstimate(estimate)}
+                            onClick={() => setCurrentPage(pageNum)}
+                            className="min-w-[2.5rem]"
                           >
-                            <Eye className="w-4 h-4 mr-1" />
-                            Preview
+                            {pageNum}
                           </Button>
-                          <Button
-                            size="sm"
-                            className="flex-1"
-                            onClick={() => setEmailEstimate(estimate)}
-                          >
-                            <Mail className="w-4 h-4 mr-1" />
-                            Email
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleDownloadPDF(estimate)}
-                          >
-                            <Download className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {/* List View Header */}
-                  <div className="grid grid-cols-12 gap-4 px-4 py-2 bg-gray-50 rounded-md font-medium text-sm text-gray-700">
-                    <div className="col-span-2">Estimate #</div>
-                    <div className="col-span-2">Customer</div>
-                    <div className="col-span-2">Email</div>
-                    <div className="col-span-1">Amount</div>
-                    <div className="col-span-1">Status</div>
-                    <div className="col-span-2">Date</div>
-                    <div className="col-span-2">Actions</div>
-                  </div>
-                  {/* List View Items */}
-                  {estimates.map((estimate) => (
-                    <div
-                      key={estimate.id}
-                      className="grid grid-cols-12 gap-4 px-4 py-3 bg-white border rounded-md hover:bg-gray-50 transition-colors"
-                    >
-                      <div className="col-span-2 font-medium">
-                        {estimate.estimateNumber}
-                      </div>
-                      <div className="col-span-2 truncate">
-                        {estimate.customerName}
-                      </div>
-                      <div className="col-span-2 truncate text-sm text-gray-600">
-                        {estimate.customerEmail}
-                      </div>
-                      <div className="col-span-1 font-semibold text-green-600">
-                        ${estimate.totalAmount}
-                      </div>
-                      <div className="col-span-1">
-                        {getStatusBadge(estimate.status)}
-                      </div>
-                      <div className="col-span-2 text-sm text-gray-600">
-                        {new Date(estimate.createdAt).toLocaleDateString()}
-                      </div>
-                      <div className="col-span-2 flex gap-1">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handlePreviewEstimate(estimate)}
-                        >
-                          <Eye className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          size="sm"
-                          onClick={() => setEmailEstimate(estimate)}
-                        >
-                          <Mail className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleDownloadPDF(estimate)}
-                        >
-                          <Download className="w-4 h-4" />
-                        </Button>
-                      </div>
+                        );
+                      })}
                     </div>
-                  ))}
-                </div>
-              )}
+                    
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={currentPage >= pagination.totalPages}
+                      onClick={() => setCurrentPage(currentPage + 1)}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                )}
+              </div>
             </CardContent>
           </Card>
 
@@ -1717,18 +2025,93 @@ export default function Estimates() {
           {previewEstimate && (
             <Dialog
               open={!!previewEstimate}
-              onOpenChange={(open) => !open && setPreviewEstimate(null)}
+              onOpenChange={(open) => {
+                if (!open) {
+                  setPreviewEstimate(null);
+                }
+              }}
             >
-              <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
-                <DialogHeader>
-                  <DialogTitle>
-                    Estimate Preview - {previewEstimate?.estimateNumber}
-                  </DialogTitle>
-                  <DialogDescription>
-                    Preview of estimate for {previewEstimate?.customerName}
-                  </DialogDescription>
+              <DialogContent className="max-w-6xl max-h-[95vh] overflow-hidden flex flex-col p-0">
+                <DialogHeader className="px-6 pt-6 pb-4 border-b">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <DialogTitle className="text-xl font-semibold">
+                        Estimate Preview - {previewEstimate?.estimateNumber}
+                      </DialogTitle>
+                      <DialogDescription className="mt-1">
+                        Preview of estimate for {previewEstimate?.customerName}
+                      </DialogDescription>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      {/* Status Change Dropdown */}
+                      <Select
+                        value={previewEstimate.status || "draft"}
+                        onValueChange={(value) => handleStatusChange(Number(previewEstimate.id), value)}
+                        disabled={updateStatusMutation.isPending}
+                      >
+                        <SelectTrigger className="w-32">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="draft">Draft</SelectItem>
+                          <SelectItem value="sent">Sent</SelectItem>
+                          <SelectItem value="viewed">Viewed</SelectItem>
+                          <SelectItem value="accepted">Accepted</SelectItem>
+                          <SelectItem value="rejected">Rejected</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {/* Action Buttons */}
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          if (previewRef.current) {
+                            previewRef.current.downloadPDF();
+                          } else {
+                            handleDownloadPDF(previewEstimate);
+                          }
+                        }}
+                        className="flex items-center gap-2"
+                      >
+                        <Download className="h-4 w-4" />
+                        Download PDF
+                      </Button>
+                      <Button
+                        onClick={() => {
+                          setEmailEstimate(previewEstimate as any);
+                        }}
+                        className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700"
+                      >
+                        <Mail className="h-4 w-4" />
+                        Send Email
+                      </Button>
+                      <Button
+                        onClick={() => {
+                          if (previewEstimate) {
+                            handleSendWhatsApp(previewEstimate as any);
+                          }
+                        }}
+                        className="flex items-center gap-2 bg-green-600 hover:bg-green-700"
+                      >
+                        <MessageCircle className="h-4 w-4" />
+                        Send WhatsApp
+                      </Button>
+                    </div>
+                  </div>
                 </DialogHeader>
-                <EstimatePreview estimate={previewEstimate as any} />
+                <div className="flex-1 overflow-y-auto px-6 py-4">
+                  <EstimatePreview 
+                    ref={previewRef as any}
+                    estimate={previewEstimate as any} 
+                    hideActions={true}
+                    companyInfo={{
+                      name: (tenantSettings as any)?.companyName || (tenant as any)?.name || "Your Company Name",
+                      logo: (tenantSettings as any)?.companyLogo || (previewEstimate as any)?.logoUrl,
+                      address: (tenantSettings as any)?.companyAddress,
+                      phone: (tenantSettings as any)?.companyPhone,
+                      email: (tenantSettings as any)?.companyEmail,
+                    }}
+                  />
+                </div>
               </DialogContent>
             </Dialog>
           )}

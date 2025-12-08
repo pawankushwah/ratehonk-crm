@@ -27,6 +27,7 @@ export function DatePicker({
   const [date, setDate] = React.useState<Date | undefined>(
     value ? new Date(value) : undefined
   )
+  const [open, setOpen] = React.useState(false)
 
   React.useEffect(() => {
     if (value) {
@@ -39,10 +40,12 @@ export function DatePicker({
     if (selectedDate && onChange) {
       onChange(format(selectedDate, "yyyy-MM-dd"))
     }
+    // Auto-close the popover after date selection
+    setOpen(false)
   }
 
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
           variant="outline"

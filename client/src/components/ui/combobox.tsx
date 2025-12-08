@@ -44,8 +44,25 @@ export function Combobox({
 }: ComboboxProps) {
   const [open, setOpen] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState("");
+  const triggerRef = React.useRef<HTMLButtonElement>(null);
+  const justOpenedRef = React.useRef(false);
 
   const selectedOption = options.find((option) => option.value === value);
+
+  // Handle open state changes
+  const handleOpenChange = React.useCallback((newOpen: boolean) => {
+    setOpen(newOpen);
+    if (newOpen) {
+      // Mark as just opened to prevent immediate closing
+      justOpenedRef.current = true;
+      // Reset flag after a delay to allow click events to process
+      setTimeout(() => {
+        justOpenedRef.current = false;
+      }, 300);
+    } else {
+      justOpenedRef.current = false;
+    }
+  }, []);
 
   // Filter options based on search query
   const filteredOptions = React.useMemo(() => {
@@ -59,9 +76,10 @@ export function Combobox({
   }, [options, searchQuery]);
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
         <button
+          ref={triggerRef}
           type="button"
           role="combobox"
           aria-expanded={open}
@@ -87,6 +105,28 @@ export function Combobox({
         className="w-[var(--radix-popover-trigger-width)] p-0 rounded-lg border border-gray-200 dark:border-gray-700 shadow-xl bg-white dark:bg-gray-900" 
         align="start"
         onOpenAutoFocus={(e) => e.preventDefault()}
+        onInteractOutside={(e) => {
+          // Prevent closing when clicking on the trigger button or if just opened
+          if (justOpenedRef.current) {
+            e.preventDefault();
+            return;
+          }
+          const target = e.target as HTMLElement;
+          if (triggerRef.current && (triggerRef.current.contains(target) || triggerRef.current === target)) {
+            e.preventDefault();
+          }
+        }}
+        onPointerDownOutside={(e) => {
+          // Prevent closing when clicking on the trigger button or if just opened
+          const target = e.target as HTMLElement;
+          if (justOpenedRef.current) {
+            e.preventDefault();
+            return;
+          }
+          if (triggerRef.current && (triggerRef.current.contains(target) || triggerRef.current === target)) {
+            e.preventDefault();
+          }
+        }}
       >
         <Command shouldFilter={false} className="bg-transparent">
           <div className="border-b border-gray-200 dark:border-gray-700 px-3 py-2">

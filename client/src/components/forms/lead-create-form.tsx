@@ -35,6 +35,8 @@ interface LeadCreateFormProps {
   tenantId: string;
   onSuccess?: (lead: any) => void;
   onCancel?: () => void;
+   onFillOnly?: (data: any) => void;  
+  enableFillOnlyButton?: boolean;
 }
 
 const sourceOptions = [
@@ -63,6 +65,8 @@ export function LeadCreateForm({
   tenantId,
   onSuccess,
   onCancel,
+  enableFillOnlyButton,
+  onFillOnly
 }: LeadCreateFormProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -349,14 +353,30 @@ export function LeadCreateForm({
           >
             Cancel
           </Button>
-          <Button type="submit" disabled={createMutation.isPending}>
-            {createMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Create Lead
-          </Button>
+ {enableFillOnlyButton ? (
+    <Button
+      type="button"
+      variant="secondary"
+      onClick={() => {
+        const values = form.getValues();
+        onFillOnly?.(values);
+      }}
+    >
+      Use This Data
+    </Button>
+  ) : (
+    
+    <Button type="submit" disabled={createMutation.isPending}>
+      {createMutation.isPending && (
+        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+      )}
+      Create Lead
+    </Button>
+  )}
         </div>
       </form>
 
-      {/* Slide Panel for Creating New Travel Category */}
+     
       <SlidePanel
         isOpen={isLeadTypePanelOpen}
         onClose={() => setIsLeadTypePanelOpen(false)}

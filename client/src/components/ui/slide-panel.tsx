@@ -23,14 +23,14 @@ export function SlidePanel({
     <>
       {/* Overlay */}
       <div
-        className="fixed inset-0 bg-black/50 z-40 transition-opacity"
+        className="fixed inset-0 bg-black/20 z-40 transition-opacity"
         onClick={onClose}
       />
 
       {/* Slide Panel */}
       <div
         className={cn(
-          "fixed top-0 right-0 h-full bg-white dark:bg-gray-900 z-50",
+          "fixed top-0 right-0 h-full bg-white dark:bg-gray-900 shadow-2xl z-50",
           "transform transition-transform duration-300 ease-in-out",
           "w-full",
           width,

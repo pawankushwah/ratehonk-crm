@@ -1,10 +1,10 @@
-import { forwardRef, useRef } from "react";
+import React, { forwardRef, useRef, useImperativeHandle } from "react";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
 import { RateHonkLogo } from "@/components/ui/ratehonk-logo";
 import { useReactToPrint } from "react-to-print";
+import { useToast } from "@/hooks/use-toast";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 import Logo from "../../assets/Logo-sidebar.svg"
@@ -15,6 +15,10 @@ interface EstimateLineItem {
   quantity: number;
   unitPrice: string;
   totalPrice: string;
+  category?: string;
+  taxRate?: string;
+  discount?: number;
+  tax?: number;
 }
 
 interface EstimatePreviewProps {
@@ -52,11 +56,14 @@ interface EstimatePreviewProps {
     email?: string;
     logo?: string;
   };
+  hideActions?: boolean;
+  onDownloadPDF?: () => void;
 }
 
 export const EstimatePreview = forwardRef<HTMLDivElement, EstimatePreviewProps>(
-  ({ estimate, companyInfo }, ref) => {
+  ({ estimate, companyInfo, hideActions = false, onDownloadPDF }, ref) => {
     const componentRef = useRef<HTMLDivElement>(null);
+    const { toast } = useToast();
 
     const formatCurrency = (amount: string | number) => {
       const num = typeof amount === "string" ? parseFloat(amount) : amount;
@@ -76,29 +83,97 @@ export const EstimatePreview = forwardRef<HTMLDivElement, EstimatePreviewProps>(
     });
 
     const handleDownloadPDF = async () => {
-      if (!componentRef.current) return;
+      if (!componentRef.current) {
+        console.error("PDF generation failed: componentRef is null");
+        toast({
+          title: "Error",
+          description: "Failed to generate PDF. Content not available.",
+          variant: "destructive",
+        });
+        return;
+      }
 
-      const canvas = await html2canvas(componentRef.current);
-      const imgData = canvas.toDataURL("image/png");
-      const pdf = new jsPDF("p", "mm", "a4");
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+      try {
+        // Show loading indicator
+        toast({
+          title: "Generating PDF",
+          description: "Please wait...",
+        });
 
-      pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight);
-      pdf.save(`Estimate-${estimate.estimateNumber}.pdf`);
+        // Wait a bit for any images to load
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        const canvas = await html2canvas(componentRef.current, {
+          scale: 2,
+          useCORS: true,
+          logging: false,
+          backgroundColor: '#ffffff',
+          allowTaint: false,
+          onclone: (clonedDoc) => {
+            // Ensure all images are loaded in the cloned document
+            const images = clonedDoc.querySelectorAll('img');
+            images.forEach((img: any) => {
+              if (!img.complete) {
+                img.style.display = 'none';
+              }
+            });
+          }
+        });
+
+        const imgData = canvas.toDataURL("image/png", 1.0);
+        const pdf = new jsPDF("p", "mm", "a4");
+        const pdfWidth = pdf.internal.pageSize.getWidth();
+        const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+
+        // Handle multi-page PDF if content is too long
+        const pageHeight = pdf.internal.pageSize.getHeight();
+        let heightLeft = pdfHeight;
+        let position = 0;
+
+        pdf.addImage(imgData, "PNG", 0, position, pdfWidth, pdfHeight);
+        heightLeft -= pageHeight;
+
+        while (heightLeft > 0) {
+          position = heightLeft - pdfHeight;
+          pdf.addPage();
+          pdf.addImage(imgData, "PNG", 0, position, pdfWidth, pdfHeight);
+          heightLeft -= pageHeight;
+        }
+
+        pdf.save(`Estimate-${estimate.estimateNumber}.pdf`);
+        
+        toast({
+          title: "Success",
+          description: "PDF downloaded successfully",
+        });
+      } catch (error: any) {
+        console.error("PDF generation error:", error);
+        toast({
+          title: "Error",
+          description: error.message || "Failed to generate PDF. Please try again.",
+          variant: "destructive",
+        });
+      }
     };
+
+    // Expose download function to parent if provided
+    useImperativeHandle(ref, () => ({
+      downloadPDF: handleDownloadPDF,
+    } as any));
 
     return (
       <div className="w-full">
-        {/* Action Buttons */}
-        <div className="flex justify-end space-x-2 mb-4">
-          <Button variant="outline" onClick={handlePrint}>
-            Print
-          </Button>
-          <Button onClick={handleDownloadPDF}>Download PDF</Button>
-        </div>
+        {/* Action Buttons - Hidden when hideActions is true */}
+        {!hideActions && (
+          <div className="flex justify-end space-x-2 mb-4">
+            <Button variant="outline" onClick={handlePrint}>
+              Print
+            </Button>
+            <Button onClick={handleDownloadPDF}>Download PDF</Button>
+          </div>
+        )}
 
-        <div ref={componentRef} className="max-w-4xl mx-auto bg-white p-8 print:p-0">
+        <div ref={componentRef} data-estimate-preview-content className="max-w-4xl mx-auto bg-white p-8 print:p-0" style={{ fontFamily: 'Arial, sans-serif', fontSize: '14px' }}>
           {/* Header Section */}
           <div className="flex justify-between items-start mb-8">
             <div className="flex items-center space-x-4">
@@ -109,141 +184,154 @@ export const EstimatePreview = forwardRef<HTMLDivElement, EstimatePreviewProps>(
                   className="h-16 w-auto"
                 />
               ) : (
-                // <RateHonkLogo className="h-16 w-auto" />
-                 <img
-                                  src={Logo}
-                                  alt="Logo"
-                                  className="w-[180px] h-[60px] object-contain center mx-auto rounded-md bg-white p-2"
-                                />
+                <img
+                  src={Logo}
+                  alt="Logo"
+                  className="w-[180px] h-[60px] object-contain rounded-md bg-white p-2"
+                />
               )}
               <div>
-                <h1 className="text-2xl font-bold text-gray-900">
+                <h1 className="text-xl font-bold text-gray-900" style={{ fontSize: '20px' }}>
                   {companyInfo?.name || "Your Company Name"}
                 </h1>
                 {companyInfo?.address && (
-                  <p className="text-sm text-gray-600">{companyInfo.address}</p>
+                  <p className="text-gray-600" style={{ fontSize: '12px' }}>{companyInfo.address}</p>
                 )}
                 {companyInfo?.phone && (
-                  <p className="text-sm text-gray-600">{companyInfo.phone}</p>
+                  <p className="text-gray-600" style={{ fontSize: '12px' }}>{companyInfo.phone}</p>
                 )}
                 {companyInfo?.email && (
-                  <p className="text-sm text-gray-600">{companyInfo.email}</p>
+                  <p className="text-gray-600" style={{ fontSize: '12px' }}>{companyInfo.email}</p>
                 )}
               </div>
             </div>
 
             <div className="text-right">
-              <h2 className="text-3xl font-bold text-gray-900 mb-2">ESTIMATE</h2>
-              <Badge
-                variant={estimate.status === "sent" ? "default" : "secondary"}
-              >
-                {estimate.status.toUpperCase()}
-              </Badge>
-            </div>
-          </div>
-
-          {/* Estimate Details */}
-          <div className="grid grid-cols-2 gap-8 mb-8">
-            <div>
-              <h3 className="font-semibold text-gray-900 mb-3">BILL TO:</h3>
-              <div className="text-sm text-gray-700">
-                <p className="font-medium">{estimate.customerName}</p>
-                {estimate.customerEmail && <p>{estimate.customerEmail}</p>}
-                {estimate.customerPhone && <p>{estimate.customerPhone}</p>}
-                {estimate.customerAddress && (
-                  <div className="mt-2 whitespace-pre-line">
-                    {estimate.customerAddress}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="text-right">
-              <div className="space-y-1 text-sm">
-                <div className="flex justify-between">
-                  <span className="font-medium">ESTIMATE #:</span>
-                  <span>{estimate.estimateNumber}</span>
+              <h2 className="text-2xl font-bold text-gray-900 mb-2" style={{ fontSize: '24px' }}>ESTIMATE</h2>
+              <div className="space-y-1 mt-2" style={{ fontSize: '12px' }}>
+                <div>
+                  <span className="font-semibold">ESTIMATE #:</span> {estimate.estimateNumber}
                 </div>
-                <div className="flex justify-between">
-                  <span className="font-medium">DATE:</span>
-                  <span>{formatDate(estimate.createdAt)}</span>
+                <div>
+                  <span className="font-semibold">DATE:</span> {formatDate(estimate.createdAt)}
                 </div>
                 {estimate.validUntil && (
-                  <div className="flex justify-between">
-                    <span className="font-medium">VALID UNTIL:</span>
-                    <span>{formatDate(estimate.validUntil)}</span>
+                  <div>
+                    <span className="font-semibold">VALID UNTIL:</span> {formatDate(estimate.validUntil)}
                   </div>
                 )}
-                <div className="flex justify-between">
-                  <span className="font-medium">TERMS:</span>
-                  <span>{estimate.paymentTerms || "Due on receipt"}</span>
+                <div>
+                  <span className="font-semibold">TERMS:</span> {estimate.paymentTerms || "net30"}
                 </div>
               </div>
             </div>
           </div>
 
-          {estimate.title && (
-            <div className="mb-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                {estimate.title}
-              </h3>
-              {estimate.description && (
-                <p className="text-gray-700 text-sm">{estimate.description}</p>
+          {/* Bill To Section */}
+          <div className="mb-6">
+            <h3 className="font-semibold text-gray-900 mb-2" style={{ fontSize: '14px' }}>BILL TO:</h3>
+            <div className="text-gray-700" style={{ fontSize: '12px' }}>
+              <p className="font-medium">{estimate.customerName}</p>
+              {estimate.customerEmail && <p>{estimate.customerEmail}</p>}
+              {estimate.customerPhone && <p>{estimate.customerPhone}</p>}
+              {estimate.customerAddress && (
+                <div className="mt-2 whitespace-pre-line">
+                  {estimate.customerAddress}
+                </div>
               )}
             </div>
-          )}
+          </div>
 
           <Separator className="mb-6" />
 
           {/* Line Items Table */}
           <div className="mb-8">
-            <table className="w-full">
+            <table className="w-full border-collapse" style={{ fontSize: '12px' }}>
               <thead>
-                <tr className="border-b border-gray-300">
-                  <th className="text-left py-2 font-semibold text-gray-900">
+                <tr className="border-b-2 border-gray-300">
+                  <th className="text-left py-3 px-2 font-semibold text-gray-900" style={{ fontSize: '12px' }}>
                     ACTIVITY
                   </th>
-                  <th className="text-center py-2 font-semibold text-gray-900 w-20">
+                  {estimate.lineItems?.some(item => item.category) && (
+                    <th className="text-left py-3 px-2 font-semibold text-gray-900" style={{ fontSize: '12px' }}>
+                      CATEGORY
+                    </th>
+                  )}
+                  <th className="text-center py-3 px-2 font-semibold text-gray-900 w-20" style={{ fontSize: '12px' }}>
                     QTY
                   </th>
-                  <th className="text-right py-2 font-semibold text-gray-900 w-24">
+                  <th className="text-right py-3 px-2 font-semibold text-gray-900 w-24" style={{ fontSize: '12px' }}>
                     RATE
                   </th>
-                  <th className="text-right py-2 font-semibold text-gray-900 w-24">
+                  {estimate.lineItems?.some(item => item.taxRate) && (
+                    <th className="text-center py-3 px-2 font-semibold text-gray-900" style={{ fontSize: '12px' }}>
+                      TAX RATE
+                    </th>
+                  )}
+                  {estimate.lineItems?.some(item => item.discount !== undefined && item.discount !== null) && (
+                    <th className="text-right py-3 px-2 font-semibold text-gray-900" style={{ fontSize: '12px' }}>
+                      DISCOUNT
+                    </th>
+                  )}
+                  <th className="text-right py-3 px-2 font-semibold text-gray-900 w-24" style={{ fontSize: '12px' }}>
                     AMOUNT
                   </th>
                 </tr>
               </thead>
               <tbody>
                 {estimate.lineItems && estimate.lineItems.length > 0 ? (
-                  estimate.lineItems.map((item, index) => (
-                    <tr key={index} className="border-b border-gray-100">
-                      <td className="py-3">
-                        <div>
-                          <div className="font-medium text-gray-900">
-                            {item.itemName}
-                          </div>
-                          {item.description && (
-                            <div className="text-sm text-gray-600 mt-1">
-                              {item.description}
+                  estimate.lineItems.map((item, index) => {
+                    const hasCategory = estimate.lineItems?.some(i => i.category);
+                    const hasTaxRate = estimate.lineItems?.some(i => i.taxRate);
+                    const hasDiscount = estimate.lineItems?.some(i => i.discount !== undefined && i.discount !== null);
+                    const colSpan = 4 + (hasCategory ? 1 : 0) + (hasTaxRate ? 1 : 0) + (hasDiscount ? 1 : 0);
+                    
+                    return (
+                      <tr key={index} className="border-b border-gray-200">
+                        <td className="py-3 px-2" style={{ fontSize: '12px' }}>
+                          <div>
+                            <div className="font-medium text-gray-900">
+                              {item.itemName}
                             </div>
-                          )}
-                        </div>
-                      </td>
-                      <td className="py-3 text-center text-gray-700">
-                        {item.quantity}
-                      </td>
-                      <td className="py-3 text-right text-gray-700">
-                        {formatCurrency(item.unitPrice)}
-                      </td>
-                      <td className="py-3 text-right font-medium text-gray-900">
-                        {formatCurrency(item.totalPrice)}
-                      </td>
-                    </tr>
-                  ))
+                            {item.description && (
+                              <div className="text-gray-600 mt-1" style={{ fontSize: '11px' }}>
+                                {item.description}
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                        {hasCategory && (
+                          <td className="py-3 px-2 text-gray-700" style={{ fontSize: '12px' }}>
+                            {item.category || "-"}
+                          </td>
+                        )}
+                        <td className="py-3 px-2 text-center text-gray-700" style={{ fontSize: '12px' }}>
+                          {parseFloat(item.quantity.toString()).toFixed(2)}
+                        </td>
+                        <td className="py-3 px-2 text-right text-gray-700" style={{ fontSize: '12px' }}>
+                          {formatCurrency(item.unitPrice)}
+                        </td>
+                        {hasTaxRate && (
+                          <td className="py-3 px-2 text-center text-gray-700" style={{ fontSize: '12px' }}>
+                            {item.taxRate || "-"}
+                          </td>
+                        )}
+                        {hasDiscount && (
+                          <td className="py-3 px-2 text-right text-gray-700" style={{ fontSize: '12px' }}>
+                            {item.discount !== undefined && item.discount !== null && parseFloat(item.discount.toString()) > 0 
+                              ? formatCurrency(item.discount.toString())
+                              : "-"}
+                          </td>
+                        )}
+                        <td className="py-3 px-2 text-right font-medium text-gray-900" style={{ fontSize: '12px' }}>
+                          {formatCurrency(item.totalPrice)}
+                        </td>
+                      </tr>
+                    );
+                  })
                 ) : (
                   <tr>
-                    <td colSpan={4} className="py-6 text-center text-gray-500">
+                    <td colSpan={7} className="py-6 text-center text-gray-500" style={{ fontSize: '12px' }}>
                       No line items added
                     </td>
                   </tr>
@@ -254,75 +342,70 @@ export const EstimatePreview = forwardRef<HTMLDivElement, EstimatePreviewProps>(
 
           <Separator className="mb-6" />
 
-          {/* Message Section */}
-          {estimate.notes && (
-            <div className="mb-8">
-              <h4 className="font-semibold text-gray-900 mb-2">MESSAGE:</h4>
-              <p className="text-sm text-gray-700 whitespace-pre-line">
-                {estimate.notes}
-              </p>
-            </div>
-          )}
+          {/* Message and Totals Section */}
+          <div className="grid grid-cols-2 gap-8 mb-8">
+            {/* Message Section */}
+            {estimate.notes && (
+              <div>
+                <h4 className="font-semibold text-gray-900 mb-2" style={{ fontSize: '12px' }}>MESSAGE:</h4>
+                <p className="text-gray-700 whitespace-pre-line" style={{ fontSize: '12px' }}>
+                  {estimate.notes}
+                </p>
+              </div>
+            )}
 
-          {/* Totals Section */}
-          <div className="flex justify-end">
-            <div className="w-80">
+            {/* Totals Section */}
+            <div className="text-right">
               <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="font-medium">SUBTOTAL</span>
+                <div className="flex justify-between" style={{ fontSize: '12px' }}>
+                  <span className="font-medium">SUBTOTAL:</span>
                   <span>{formatCurrency(estimate.subtotal)}</span>
                 </div>
 
-                {estimate.discountAmount &&
-                  parseFloat(estimate.discountAmount) > 0 && (
-                    <div className="flex justify-between text-sm text-green-600">
-                      <span className="font-medium">
-                        DISCOUNT
-                        {estimate.discountType === "percentage" &&
-                        estimate.discountValue
-                          ? `(${estimate.discountValue}%)`
-                          : ""}
-                      </span>
-                      <span>-{formatCurrency(estimate.discountAmount)}</span>
-                    </div>
-                  )}
-
                 {estimate.taxAmount && parseFloat(estimate.taxAmount) > 0 && (
-                  <div className="flex justify-between text-sm">
+                  <div className="flex justify-between" style={{ fontSize: '12px' }}>
                     <span className="font-medium">
-                      TAX {estimate.taxRate ? `(${estimate.taxRate}%)` : ""}
+                      TAX {estimate.taxRate ? `(${estimate.taxRate}%)` : ""}:
                     </span>
                     <span>{formatCurrency(estimate.taxAmount)}</span>
                   </div>
                 )}
 
+                {estimate.discountAmount &&
+                  parseFloat(estimate.discountAmount) > 0 && (
+                    <div className="flex justify-between text-green-600" style={{ fontSize: '12px' }}>
+                      <span className="font-medium">
+                        DISCOUNT
+                        {estimate.discountType === "percentage" &&
+                        estimate.discountValue
+                          ? `(${estimate.discountValue}%)`
+                          : ""}:
+                      </span>
+                      <span>-{formatCurrency(estimate.discountAmount)}</span>
+                    </div>
+                  )}
+
                 <Separator />
 
-                <div className="flex justify-between text-lg font-bold">
-                  <span>TOTAL</span>
+                <div className="flex justify-between font-bold text-gray-900" style={{ fontSize: '12px' }}>
+                  <span>TOTAL:</span>
                   <span>{formatCurrency(estimate.totalAmount)}</span>
                 </div>
 
                 {estimate.depositRequired &&
                   estimate.depositAmount &&
                   parseFloat(estimate.depositAmount) > 0 && (
-                    <>
-                      <Separator />
-                      <div className="flex justify-between text-sm font-medium text-blue-600">
-                        <span>
-                          DEPOSIT
-                          {estimate.depositPercentage
-                            ? `(${estimate.depositPercentage}%)`
-                            : ""}
-                        </span>
-                        <span>{formatCurrency(estimate.depositAmount)}</span>
-                      </div>
-                    </>
+                    <div className="flex justify-between font-medium text-blue-600" style={{ fontSize: '12px' }}>
+                      <span>
+                        DEPOSIT ({estimate.depositPercentage ? `${estimate.depositPercentage}%` : "100%"}):
+                      </span>
+                      <span>{formatCurrency(estimate.depositAmount)}</span>
+                    </div>
                   )}
 
-                <div className="bg-gray-100 p-3 mt-4 rounded">
-                  <div className="flex justify-between text-xl font-bold">
-                    <span>BALANCE DUE</span>
+                <div className="mt-4">
+                  <div className="flex justify-between font-bold" style={{ fontSize: '12px' }}>
+                    <span>BALANCE DUE:</span>
                     <span className="text-green-600">
                       {formatCurrency(estimate.totalAmount)}
                     </span>
@@ -333,7 +416,7 @@ export const EstimatePreview = forwardRef<HTMLDivElement, EstimatePreviewProps>(
           </div>
 
           {/* Footer */}
-          <div className="mt-12 pt-6 border-t border-gray-200 text-center text-xs text-gray-500">
+          <div className="mt-12 pt-6 border-t border-gray-200 text-center text-gray-500" style={{ fontSize: '11px' }}>
             <p>Thank you for your business!</p>
           </div>
         </div>

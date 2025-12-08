@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Combobox } from "@/components/ui/combobox";
 import { SlidePanel } from "@/components/ui/slide-panel";
 import { LeadTypeCreateForm } from "@/components/forms/lead-type-create-form";
+import { cn } from "@/lib/utils";
 import {
   Form,
   FormControl,
@@ -27,13 +28,26 @@ import { DollarSign, Plus } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { auth } from "@/lib/auth";
 import { TravelModuleForm } from "./travel-module-form";
-import { handleNumericKeyDown } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+
+import { useAuth } from "@/components/auth/auth-provider";
+import type { Customer } from "@shared/schema";
+import { directCustomersApi } from "@/lib/direct-customers-api";
+
+import {
+  AutocompleteInput,
+  AutocompleteOption,
+} from "../ui/autocomplete-input";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../ui/sheet";
+import { CustomerCreateForm } from "../forms/customer-create-form";
+import { LeadCreateForm } from "../forms/lead-create-form";
 
 const leadSchema = z.object({
   leadTypeId: z.string().min(1, "Lead type is required"),
   firstName: z.string().min(1, "First name is required"),
   lastName: z.string().optional(),
+  customerId: z.string().optional(),
+  leadId: z.string().optional(),
   email: z
     .string()
     .email("Please enter a valid email address")
@@ -83,6 +97,7 @@ export function FlexibleLeadForm({
 }: FlexibleLeadFormProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { tenant } = useAuth();
 
   const handleNumericKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (
@@ -108,14 +123,19 @@ export function FlexibleLeadForm({
   };
 
   const [selectedLeadType, setSelectedLeadType] = useState(
-    lead?.leadTypeId?.toString() || "",
+    lead?.leadTypeId?.toString() || ""
   );
   const [selectedCountry, setSelectedCountry] = useState(lead?.country || "");
   const [selectedState, setSelectedState] = useState(lead?.state || "");
   const [typeSpecificData, settypeSpecificData] = useState(
-    lead?.typeSpecificData || {},
+    lead?.typeSpecificData || {}
   );
-  const [isLeadTypePanelOpen, setIsLeadTypePanelOpen] = useState(false);
+  const [isLeadPanelOpen, setIsLeadPanelOpen] = useState(false);
+  const [isCustomerPanelOpen, setIsCustomerPanelOpen] = useState(false);
+  const [selectedCustomer, setSelectedCustomer] = useState<any | null>(null);
+  const [selectedLead, setSelectedLead] = useState<any | null>(null);
+  const [customerInput, setCustomerInput] = useState("");
+  const [leadInput, setLeadInput] = useState("");
 
   const {
     data: leadTypes = [],
@@ -144,12 +164,16 @@ export function FlexibleLeadForm({
     },
   });
 
+  console.log("leadTypes:", leadTypes);
+
   const form = useForm<LeadFormData>({
     resolver: zodResolver(leadSchema),
     defaultValues: {
       leadTypeId: lead?.leadTypeId?.toString() || "",
-      firstName: lead?.fisrt_name || "",
+      firstName: lead?.first_name || "",
       lastName: lead?.email_name || "",
+      customerId: lead?.customerId || "",
+      leadId: lead?.id?.toString() || "",
       email: lead?.email || "",
       phone: lead?.phone || "",
       source: lead?.source || "",
@@ -206,7 +230,7 @@ export function FlexibleLeadForm({
               Authorization: `Bearer ${token}`,
               "Content-Type": "application/json",
             },
-          },
+          }
         );
         if (!response.ok) {
           return [];
@@ -240,11 +264,13 @@ export function FlexibleLeadForm({
       "1": "flight",
       "2": "hotel",
       "3": "package",
-      "4": "event",
-      "5": "car-rental",
+      "4": "Event Booking",
+      "5": "Car Rental",
       "6": "attraction",
       "7": "holiday",
-      "0": "default",
+      "8": "Activities",
+      "9": "Insurance",
+      "10": "Cruise",
     };
 
     return categoryToKeyMap[categoryNumber || "0"] || "flight";
@@ -253,13 +279,16 @@ export function FlexibleLeadForm({
   const setupDefaultTypes = useMutation({
     mutationFn: async () => {
       const token = auth.getToken();
-      const response = await fetch(`/api/tenants/${tenantId}/lead-types/setup`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      const response = await fetch(
+        `/api/tenants/${tenantId}/lead-types/setup`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
       if (!response.ok) {
         throw new Error("Failed to setup default lead types");
       }
@@ -383,7 +412,7 @@ export function FlexibleLeadForm({
           Object.entries(lead.typeSpecificData).forEach(
             ([fieldName, fieldValue]) => {
               form.setValue(`typeSpecificData.${fieldName}`, fieldValue);
-            },
+            }
           );
         }
       }, 100);
@@ -440,7 +469,7 @@ export function FlexibleLeadForm({
 
   const handleLeadTypeChange = (leadTypeId: string) => {
     if (leadTypeId === "create_new") {
-      setIsLeadTypePanelOpen(true);
+      setIsLeadPanelOpen(true);
     } else {
       setSelectedLeadType(leadTypeId);
       form.setValue("leadTypeId", leadTypeId);
@@ -448,22 +477,8 @@ export function FlexibleLeadForm({
     }
   };
 
-  const handleCountryChange = (countryCode: string) => {
-    setSelectedCountry(countryCode);
-    setSelectedState("");
-    form.setValue("country", countryCode);
-    form.setValue("state", "");
-    form.setValue("city", "");
-  };
-
-  const handleStateChange = (stateName: string) => {
-    setSelectedState(stateName);
-    form.setValue("state", stateName);
-    form.setValue("city", "");
-  };
-
   const selectedLeadTypeData = leadTypes.find(
-    (type: any) => type.id === parseInt(selectedLeadType),
+    (type: any) => type.id === parseInt(selectedLeadType)
   );
 
   const renderDynamicField = (fieldConfig: any) => {
@@ -647,11 +662,6 @@ export function FlexibleLeadForm({
   };
 
   const leadTypeOptions = [
-    {
-      value: "create_new",
-      label: "+ Create New Travel Category",
-      icon: <Plus className="h-4 w-4 text-cyan-600" />,
-    },
     ...leadTypes.map((type) => {
       const categoryInfo = getCategoryInfo(type.id.toString());
       return {
@@ -661,6 +671,8 @@ export function FlexibleLeadForm({
       };
     }),
   ];
+
+  console.log("leadTypeOptions:", leadTypeOptions);
 
   const priorityOptions = [
     { value: "low", label: "Low" },
@@ -695,229 +707,359 @@ export function FlexibleLeadForm({
     { value: "other", label: "Other" },
   ];
 
-  const countryOptions = countries.map((country: any) => ({
-    value: country.code,
-    label: `${country.flag} ${country.name}`,
-  }));
+  // fetch customers details
 
-  const stateOptions = states.map((state: any) => ({
-    value: state.name,
-    label: state.name,
-  }));
+  const { data: customers = [] } = useQuery({
+    queryKey: [`customers-tenant-${tenant?.id}`],
+    enabled: !!tenant?.id,
+    queryFn: async () => {
+      const token = auth.getToken();
+      const response = await fetch(
+        `/api/customers?action=get-customers&tenantId=${tenant?.id}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      if (!response.ok) return [];
+      const result = await response.json();
+      return Array.isArray(result)
+        ? result
+        : result.customers || result.data || result.rows || [];
+    },
+  });
+
+  console.log("customers :", customers);
+
+  const customerOptions: AutocompleteOption[] = [
+    ...customers.map((customer: any) => ({
+      value: customer.id?.toString(),
+      label: `${customer.firstName || ""} ${customer.lastName || ""} | ${
+        customer.phone || ""
+      } | ${customer.email || ""}`,
+    })),
+  ];
+
+  const handleCustomerSelectionChange = (value: string) => {
+    if (value === "create_new_customer") {
+      setIsCustomerPanelOpen(true);
+      return;
+    }
+
+    setLeadInput("");
+    form.setValue("leadId", "");
+    setSelectedLead(null);
+
+    const selectedCustomer = customers.find(
+      (c: any) => c.id?.toString() === value
+    );
+
+    if (!selectedCustomer) {
+      form.setValue("customerId", "");
+      setCustomerInput("");
+      return;
+    }
+
+    setSelectedCustomer(selectedCustomer);
+
+    form.setValue("customerId", selectedCustomer.id?.toString());
+    setCustomerInput(selectedCustomer.id?.toString());
+
+    form.setValue("firstName", selectedCustomer.firstName || "");
+    form.setValue("lastName", selectedCustomer.lastName || "");
+    form.setValue("email", selectedCustomer.email || "");
+    form.setValue("phone", selectedCustomer.phone || "");
+    form.setValue("country", selectedCustomer.country || "");
+    form.setValue("state", selectedCustomer.state || "");
+    form.setValue("city", selectedCustomer.city || "");
+  };
+
+  //add leads
+
+  const { data: leads = [] } = useQuery({
+    queryKey: [`/api/leads`, tenant?.id],
+    enabled: !!tenant?.id,
+    queryFn: async () => {
+      const token = auth.getToken();
+      const response = await fetch("/api/leads", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) return [];
+      const result = await response.json();
+      if (Array.isArray(result)) {
+        return result;
+      } else if (result.leads && Array.isArray(result.leads)) {
+        return result.leads;
+      } else if (result.data && Array.isArray(result.data)) {
+        return result.data;
+      } else if (result.rows && Array.isArray(result.rows)) {
+        return result.rows;
+      }
+      return [];
+    },
+  });
+
+  console.log("🚀 ~ FlexibleLeadForm ~ leads:", leads);
+
+  const leadOptions = [
+    {
+      value: "create_new_lead",
+      label: "+ Create New Lead",
+      icon: <Plus className="h-4 w-4 text-cyan-600" />,
+    },
+
+    ...leads.map((lead: any) => ({
+      value: lead.id.toString(),
+      label: `${lead.first_name} | ${lead.phone} | ${lead.email}`,
+    })),
+  ];
+
+  const handleLeadSelectionChange = (value: string) => {
+    if (value === "create_new_lead") {
+      setIsLeadPanelOpen(true);
+      return;
+    }
+
+    setCustomerInput("");
+    form.setValue("customerId", "");
+    setSelectedCustomer(null);
+
+    const selectedLead = leads.find((l: any) => l.id.toString() === value);
+
+    if (!selectedLead) {
+      form.setValue("leadId", "");
+      setLeadInput("");
+      return;
+    }
+
+    setSelectedLead(selectedLead);
+
+    form.setValue("leadId", selectedLead.id.toString());
+    setLeadInput(selectedLead.id.toString());
+
+    form.setValue("firstName", selectedLead.first_name || "");
+    form.setValue("lastName", selectedLead.last_name || "");
+    form.setValue("email", selectedLead.email || "");
+    form.setValue("phone", selectedLead.phone || "");
+    form.setValue("country", selectedLead.country || "");
+    form.setValue("state", selectedLead.state || "");
+    form.setValue("city", selectedLead.city || "");
+  };
+
+const handlePrefillFromLead = (leadData: any) => {
+  console.log("Received lead data →", leadData);
+
+  // -------------------------
+  // Lead Autocomplete
+  // -------------------------
+  form.setValue("leadId", leadData.id?.toString() || "");
+
+  // Your Autocomplete input
+  setLeadInput(leadData.firstName + " " + leadData.lastName + "  " + leadData.phone + " " + leadData.email );
+
+  // -------------------------
+  // Basic Lead Info
+  // -------------------------
+  form.setValue("firstName", leadData.firstName || "");
+  form.setValue("lastName", leadData.lastName || "");
+  form.setValue("email", leadData.email || "");
+  form.setValue("phone", leadData.phone || "");
+
+  // -------------------------
+  // Address Info
+  // -------------------------
+  form.setValue("country", leadData.country || "");
+  form.setValue("state", leadData.state || "");
+  form.setValue("city", leadData.city || "");
+
+  // -------------------------
+  // Budget / Priority / Source
+  // -------------------------
+  form.setValue("budgetRange", leadData.budgetRange || "");
+  form.setValue("priority", leadData.priority || "");
+  form.setValue("source", leadData.source || "");
+
+  // -------------------------
+  // Status → Not in leadData!
+  // -------------------------
+  // If you expect "status", ensure LeadCreateForm returns it.
+  form.setValue("status", leadData.status || "");
+
+  // -------------------------
+  // Notes
+  // -------------------------
+  form.setValue("notes", leadData.notes || "");
+};
+
+
 
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-3">
-        <div className="grid grid-cols-12 gap-3">
-          <div className="col-span-4">
-            <FormField
-              control={form.control}
-              name="firstName"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel className="text-xs font-semibold mb-1.5 block">
-                    First Name
-                  </FormLabel>
-                  <FormControl>
-                    <Input
-                      className="h-10 rounded-lg px-3 py-2 border border-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
-                      placeholder="First name"
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </div>
+        <div>
+          <div className="w-full max-w-[987px] bg-white border border-[#E3E8EF] rounded-lg p-5 space-y-4">
+            <h2 className="text-sm font-semibold text-gray-900">
+              Basic Information
+            </h2>
 
-          <div className="col-span-4">
-            <FormField
-              control={form.control}
-              name="lastName"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel className="text-xs font-semibold mb-1.5 block">
-                    Last Name
-                  </FormLabel>
-                  <FormControl>
-                    <Input
-                      className="h-10 rounded-lg px-3 py-2 border border-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
-                      placeholder="Last name"
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </div>
+            <div className="grid grid-cols-2 gap-4 items-end">
+              {/* Search Customer */}
+              <div>
+                <FormField
+                  control={form.control}
+                  name="customerId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Search Customer</FormLabel>
 
-          <div className="col-span-4">
-            <FormField
-              control={form.control}
-              name="email"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel className="text-xs font-semibold mb-1.5 block">
-                    Email
-                  </FormLabel>
-                  <FormControl>
-                    <Input
-                      className="h-10 rounded-lg px-3 py-2 border border-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
-                      type="email"
-                      placeholder="Email address"
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </div>
+                      <FormControl>
+                        <AutocompleteInput
+                          suggestions={customerOptions}
+                          value={customerInput}
+                          onValueChange={(val) => {
+                            setCustomerInput(val);
+                            field.onChange(val);
+                            handleCustomerSelectionChange(val);
+                          }}
+                          placeholder="Search customer"
+                          emptyText="No customers found"
+                          className="h-10 rounded-md border-gray-300 focus:ring-2 focus:ring-cyan-500"
+                        />
+                      </FormControl>
 
-          <div className="col-span-4">
-            <FormField
-              control={form.control}
-              name="phone"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel className="text-xs font-semibold mb-1.5 block">
-                    Phone
-                  </FormLabel>
-                  <FormControl>
-                    <Input
-                      className="h-10 rounded-lg px-3 py-2 border border-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
-                      placeholder="Phone number"
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </div>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
 
-          <div className="col-span-4">
-            <FormField
-              control={form.control}
-              name="source"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel className="text-xs font-semibold mb-1.5 block">
-                    Source
-                  </FormLabel>
-                  <FormControl>
-                    <Combobox
-                      options={sourceOptions}
-                      value={field.value || ""}
-                      onValueChange={field.onChange}
-                      placeholder="Select source"
-                      searchPlaceholder="Search sources..."
-                      emptyText="No source found"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </div>
+              <div>
+                <FormField
+                  control={form.control}
+                  name="leadId"
+                  render={({ field }) => (
+                    <FormItem className="col-span-12 md:col-span-6">
+                      <FormLabel>Search Lead</FormLabel>
 
-          <div className="col-span-4">
-            <FormField
-              control={form.control}
-              name="budgetRange"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel className="text-xs font-semibold mb-1.5 block">
-                    Budget
-                  </FormLabel>
-                  <FormControl>
-                    <Input
-                      className="h-10 rounded-lg px-3 py-2 border border-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
-                      placeholder="e.g., $5,000 - $10,000"
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </div>
+                      <FormControl>
+                        <AutocompleteInput
+                          suggestions={leadOptions}
+                          value={leadInput}
+                          onValueChange={(val) => {
+                            setLeadInput(val);
+                            field.onChange(val);
+                            handleLeadSelectionChange(val);
+                          }}
+                          placeholder="Search lead"
+                          emptyText="No leads found"
+                          className="h-10 rounded-md border-gray-300 focus:ring-2 focus:ring-cyan-500"
+                        />
+                      </FormControl>
 
-          <div className="col-span-4">
-            <FormField
-              control={form.control}
-              name="country"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel className="text-xs font-semibold mb-1.5 block">
-                    Country
-                  </FormLabel>
-                  <FormControl>
-                    <Combobox
-                      options={countryOptions}
-                      value={selectedCountry}
-                      onValueChange={handleCountryChange}
-                      placeholder="Select country"
-                      searchPlaceholder="Search countries..."
-                      emptyText="No country found"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </div>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            </div>
 
-          <div className="col-span-4">
-            <FormField
-              control={form.control}
-              name="state"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel className="text-xs font-semibold mb-1.5 block">
-                    State
-                  </FormLabel>
-                  <FormControl>
-                    <Combobox
-                      options={stateOptions}
-                      value={selectedState}
-                      onValueChange={handleStateChange}
-                      placeholder={
-                        statesLoading ? "Loading..." : "Select state"
-                      }
-                      searchPlaceholder="Search states..."
-                      emptyText="No state found"
-                      disabled={!selectedCountry || statesLoading}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </div>
+            <div className="grid grid-cols-12 gap-3"></div>
 
-          <div className="col-span-4">
-            <FormField
-              control={form.control}
-              name="city"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel className="text-xs font-semibold mb-1.5 block">
-                    City
-                  </FormLabel>
-                  <FormControl>
-                    <Input
-                      className="h-10 rounded-lg px-3 py-2 border border-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
-                      placeholder="City name"
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            <div className="grid grid-cols-12 gap-3">
+              <div className="col-span-3 md:col-span-4">
+                <FormField
+                  control={form.control}
+                  name="budgetRange"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs font-semibold text-gray-700 block mb-1.5">
+                        Budget
+                      </FormLabel>
+                      <FormControl>
+                        <Input
+                          className="h-10 rounded-md border-gray-300 focus:ring-2 focus:ring-cyan-500 placeholder:text-gray-400"
+                          placeholder="Enter Budget"
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+              <div className="col-span-12 md:col-span-4">
+                <FormField
+                  control={form.control}
+                  name="status"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs font-semibold text-gray-700 block mb-1.5">
+                        Status
+                      </FormLabel>
+                      <FormControl>
+                        <Combobox
+                          options={statusOptions}
+                          value={field.value}
+                          onValueChange={field.onChange}
+                          placeholder="Select Status"
+                          className="h-10"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <div className="col-span-12 md:col-span-4">
+                <FormField
+                  control={form.control}
+                  name="priority"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs font-semibold text-gray-700 block mb-1.5">
+                        Priority
+                      </FormLabel>
+                      <FormControl>
+                        <Combobox
+                          options={priorityOptions}
+                          value={field.value}
+                          onValueChange={field.onChange}
+                          placeholder="Select Priority"
+                          className="h-10"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-12 gap-3">
+              <div className="col-span-4">
+                <FormField
+                  control={form.control}
+                  name="source"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs font-semibold text-gray-700 block mb-1.5">
+                        Source
+                      </FormLabel>
+                      <FormControl>
+                        <Combobox
+                          options={sourceOptions}
+                          value={field.value || ""}
+                          onValueChange={field.onChange}
+                          placeholder="Select Source"
+                          className="h-10"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            </div>
           </div>
 
           {dynamicFields.length > 0 && (
@@ -941,156 +1083,134 @@ export function FlexibleLeadForm({
             </div>
           )}
 
-          <div className="col-span-4">
-            <FormField
-              control={form.control}
-              name="leadTypeId"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel className="text-xs font-semibold mb-1.5 block">
-                    Travel Category
-                  </FormLabel>
-                  <FormControl>
-                    <Combobox
-                      options={leadTypeOptions}
-                      value={selectedLeadType}
-                      onValueChange={handleLeadTypeChange}
-                      placeholder="Select category"
-                      searchPlaceholder="Search categories..."
-                      emptyText="No categories found"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </div>
+          <div className="col-span-12 mt-5">
+            <div className="w-[987px] bg-white border border-[#E3E8EF] rounded-[8px] p-[20px] space-y-[16px]">
+              <h2 className="text-sm font-semibold text-gray-900">
+                Lead Details
+              </h2>
+              <h2 className="text-sm font-semibold text-gray-900">Lead Type</h2>
 
-          <div className="col-span-4">
-            <FormField
-              control={form.control}
-              name="priority"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel className="text-xs font-semibold mb-1.5 block">
-                    Priority
-                  </FormLabel>
-                  <FormControl>
-                    <Combobox
-                      options={priorityOptions}
-                      value={field.value}
-                      onValueChange={field.onChange}
-                      placeholder="Select priority"
-                      searchPlaceholder="Search..."
-                      emptyText="No priority found"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </div>
-
-          <div className="col-span-4">
-            <FormField
-              control={form.control}
-              name="status"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel className="text-xs font-semibold mb-1.5 block">
-                    Status
-                  </FormLabel>
-                  <FormControl>
-                    <Combobox
-                      options={statusOptions}
-                      value={field.value}
-                      onValueChange={field.onChange}
-                      placeholder="Select status"
-                      searchPlaceholder="Search..."
-                      emptyText="No status found"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </div>
-
-          {selectedLeadType &&
-            selectedLeadTypeData &&
-            selectedLeadTypeData.lead_type_category != 0 && (
-              <div className="col-span-12">
-                <TravelModuleForm
-                  form={form}
-                  selectedCategory={getTravelCategoryKey(
-                    selectedLeadTypeData?.lead_type_category,
-                  )}
-                  typeSpecificData={typeSpecificData}
-                />
+              <div className="flex flex-wrap">
+                {leadTypeOptions.map((type) => (
+                  <button
+                    key={type.value}
+                    onClick={() => handleLeadTypeChange(type.value)}
+                    type="button"
+                    className={cn(
+                      "px-3 py-1.5 rounded-md text-xs font-medium border transition-colors",
+                      selectedLeadType === type.value
+                        ? "bg-blue-400 text-black border-[#E2E8F0]"
+                        : "bg-white text-black border-gray-300 hover:bg-blue-300"
+                    )}
+                  >
+                    {type.label}
+                  </button>
+                ))}
               </div>
-            )}
 
-          <div className="col-span-12">
-            <FormField
-              control={form.control}
-              name="notes"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel className="text-xs font-semibold mb-1.5 block">
-                    Notes
-                  </FormLabel>
-                  <FormControl>
-                    <Textarea
-                      rows={2}
-                      placeholder="Additional notes or comments"
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+              {/* Travel Module Form */}
+              {selectedLeadType &&
+                selectedLeadTypeData &&
+                selectedLeadTypeData.lead_type_category != 0 && (
+                  <TravelModuleForm
+                    form={form}
+                    selectedCategory={getTravelCategoryKey(
+                      selectedLeadTypeData?.lead_type_category
+                    )}
+                    typeSpecificData={typeSpecificData}
+                  />
+                )}
+            </div>
+          </div>
+
+          <div className="col-span-12 mt-5">
+            <div className="w-full max-w-[987px] bg-white border border-[#E3E8EF] rounded-lg p-5 space-y-4">
+              <FormField
+                control={form.control}
+                name="notes"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-xs font-semibold mb-1.5 block">
+                      Notes
+                    </FormLabel>
+                    <FormControl>
+                      <Textarea rows={2} placeholder="Enter Notes" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
           </div>
         </div>
 
-        <div className="flex justify-end gap-2 pt-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={onCancel}
-            disabled={isLoading}
-          >
-            Cancel
-          </Button>
-          <Button type="submit" disabled={isLoading}>
-            {isLoading ? "Saving..." : lead ? "Update Lead" : "Create Lead"}
-          </Button>
+        <div
+          className="
+    w-full lg:w-[987px]
+    flex items-center justify-between
+    px-5 py-5
+  "
+        >
+          <div className="flex gap-3 w-full max-w-[947px] justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onCancel}
+              disabled={isLoading}
+              className="
+        h-[44px] px-5 
+        rounded-[8px] text-sm font-medium
+        border border-[#D0D5DD] 
+        text-gray-700 bg-white 
+        hover:bg-gray-50
+        disabled:opacity-50 disabled:cursor-not-allowed
+      "
+            >
+              Cancel
+            </Button>
+
+            <Button
+              type="submit"
+              disabled={isLoading}
+              className="
+        h-[44px] px-6 
+        rounded-[8px] text-sm font-medium
+        bg-[#0E76BC] text-white 
+        hover:bg-[#0C5F96]
+        shadow-[0px_1px_2px_rgba(16,24,40,0.05)]
+        disabled:opacity-50 disabled:cursor-not-allowed
+      "
+            >
+              {isLoading ? "Saving..." : lead ? "Update Lead" : "Create Lead"}
+            </Button>
+          </div>
         </div>
       </form>
 
-      {/* Slide Panel for Creating New Travel Category */}
-      <SlidePanel
-        isOpen={isLeadTypePanelOpen}
-        onClose={() => setIsLeadTypePanelOpen(false)}
-        title="Create New Travel Category"
-      >
-        <LeadTypeCreateForm
-          tenantId={parseInt(tenantId)}
-          onSuccess={(leadType) => {
-            queryClient.invalidateQueries({
-              queryKey: [`/api/tenants/${tenantId}/lead-types`],
-            });
-            setSelectedLeadType(leadType.id.toString());
-            form.setValue("leadTypeId", leadType.id.toString());
-            setIsLeadTypePanelOpen(false);
-            toast({
-              title: "Success",
-              description: "Travel category created successfully",
-            });
-          }}
-          onCancel={() => setIsLeadTypePanelOpen(false)}
-        />
-      </SlidePanel>
+  <SlidePanel
+  isOpen={isLeadPanelOpen}
+  onClose={() => setIsLeadPanelOpen(false)}
+  title="Create New Lead"
+>
+  <LeadCreateForm
+    tenantId={tenantId}
+
+    onSuccess={(lead) => {
+      setSelectedLead(lead.id.toString());
+      setIsLeadPanelOpen(false);
+      queryClient.invalidateQueries({
+        queryKey: [`leads-tenant-${tenantId}-won`],
+      });
+    }}
+    onFillOnly={(data) => {
+      handlePrefillFromLead(data);
+      setIsLeadPanelOpen(false);
+    }}
+    enableFillOnlyButton={true}
+
+    onCancel={() => setIsLeadPanelOpen(false)}
+  />
+</SlidePanel>
     </Form>
   );
 }

@@ -31,28 +31,6 @@ export const passwordResetTokens = pgTable("password_reset_tokens", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
-// Email activation tokens table
-export const emailActivationTokens = pgTable("email_activation_tokens", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull(),
-  token: text("token").notNull().unique(),
-  expiresAt: timestamp("expires_at").notNull(),
-  usedAt: timestamp("used_at"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
-
-// Login verification codes table (for 2FA on every login)
-export const loginVerificationCodes = pgTable("login_verification_codes", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull(),
-  code: text("code").notNull(),
-  email: text("email").notNull(),
-  expiresAt: timestamp("expires_at").notNull(),
-  usedAt: timestamp("used_at"),
-  attempts: integer("attempts").notNull().default(0),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
-
 // Roles table for tenant-specific roles
 export const roles = pgTable("roles", {
   id: serial("id").primaryKey(),
@@ -86,7 +64,15 @@ export const tenantSettings = pgTable("tenant_settings", {
   tenantId: integer("tenant_id").notNull().unique(),
   // Invoice Settings
   invoiceNumberStart: integer("invoice_number_start").default(1),
+  invoiceNumberPrefix: text("invoice_number_prefix").default("INV"),
+  // Estimate Settings
+  estimateNumberStart: integer("estimate_number_start").default(1),
+  estimateNumberPrefix: text("estimate_number_prefix").default("EST"),
+  // Expense Settings
+  expenseNumberStart: integer("expense_number_start").default(1),
+  expenseNumberPrefix: text("expense_number_prefix").default("EXP"),
   defaultCurrency: text("default_currency").default("USD"),
+  defaultGstSettingId: integer("default_gst_setting_id"), // Default tax setting for invoices
   // Field visibility toggles for invoice create page
   showTax: boolean("show_tax").default(true),
   showDiscount: boolean("show_discount").default(true),
@@ -95,6 +81,9 @@ export const tenantSettings = pgTable("tenant_settings", {
   showProvider: boolean("show_provider").default(true),
   showVendor: boolean("show_vendor").default(true),
   showUnitPrice: boolean("show_unit_price").default(true),
+  showAdditionalCommission: boolean("show_additional_commission").default(false),
+  sendInvoiceViaEmail: boolean("send_invoice_via_email").default(true),
+  sendInvoiceViaWhatsapp: boolean("send_invoice_via_whatsapp").default(false),
   // WhatsApp Welcome Messages
   enableLeadWelcomeMessage: boolean("enable_lead_welcome_message").default(true),
   leadWelcomeMessage: text("lead_welcome_message").default("Hello! Thank you for your interest. Our team will get in touch with you shortly."),
@@ -365,6 +354,7 @@ export const invoices = pgTable("invoices", {
   tenantId: integer("tenant_id").notNull(),
   customerId: integer("customer_id").notNull(),
   bookingId: integer("booking_id"),
+  invoicePrefix: text("invoice_prefix").default("INV"),
   invoiceNumber: text("invoice_number").notNull().unique(),
   status: text("status").notNull().default("draft"), // draft, pending, paid, overdue, cancelled
   invoiceDate: timestamp("invoice_date").notNull(),
@@ -897,8 +887,11 @@ export const callLogs = pgTable("call_logs", {
 export const expenses = pgTable("expenses", {
   id: serial("id").primaryKey(),
   tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+  expensePrefix: text("expense_prefix").default("EXP"), // Expense number prefix
+  expenseNumber: varchar("expense_number", { length: 50 }), // Expense reference number (numeric part)
   title: text("title").notNull(),
   description: text("description"),
+  quantity: integer("quantity").default(1), // Quantity for the expense item
   amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
   currency: text("currency").notNull().default("USD"),
   category: text("category").notNull(), // travel, office, marketing, software, etc.
@@ -916,6 +909,8 @@ export const expenses = pgTable("expenses", {
   isRecurring: boolean("is_recurring").default(false),
   recurringFrequency: text("recurring_frequency"), // monthly, quarterly, yearly
   status: text("status").notNull().default("pending"), // pending, approved, rejected, paid
+  amountPaid: decimal("amount_paid", { precision: 10, scale: 2 }).default("0"), // Amount paid towards this expense
+  amountDue: decimal("amount_due", { precision: 10, scale: 2 }).default("0"), // Amount due for this expense
   approvedBy: integer("approved_by").references(() => users.id),
   approvedAt: timestamp("approved_at"),
   rejectionReason: text("rejection_reason"),
@@ -926,8 +921,8 @@ export const expenses = pgTable("expenses", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
-// Consulation form templates table
-export const consulationFormTemplates = pgTable("consulation_form_templates", {
+// Expense line items table for storing multiple items per expense
+export const expenseLineItems = pgTable("expense_line_items", {
   id: serial("id").primaryKey(),
   tenantId: integer("tenant_id").notNull().references(() => tenants.id),
   fields: json("fields").$type<Array<{
@@ -954,6 +949,25 @@ export const consulationFormSubmissions = pgTable("consulation_form_submissions"
   }>>().notNull(),
   responses: json("responses").$type<Record<string, string>>().notNull(),
   formType: varchar("form_type", { length: 50 }).default("consulation").notNull(),
+  expenseId: integer("expense_id").notNull().references(() => expenses.id, { onDelete: "cascade" }),
+  category: text("category").notNull(),
+  title: text("title").notNull(),
+  description: text("description"),
+  quantity: integer("quantity").default(1),
+  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
+  taxRateId: integer("tax_rate_id"), // Reference to tax rate if applicable
+  taxAmount: decimal("tax_amount", { precision: 10, scale: 2 }).default("0"),
+  taxRate: decimal("tax_rate", { precision: 5, scale: 2 }).default("0"),
+  totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
+  vendorId: integer("vendor_id").references(() => vendors.id),
+  leadTypeId: integer("lead_type_id").references(() => leadTypes.id),
+  paymentMethod: text("payment_method").notNull().default("credit_card"),
+  paymentStatus: text("payment_status").notNull().default("paid"), // paid, credit, due
+  amountPaid: decimal("amount_paid", { precision: 10, scale: 2 }).default("0"),
+  amountDue: decimal("amount_due", { precision: 10, scale: 2 }).default("0"),
+  receiptUrl: text("receipt_url"), // URL to receipt image/document for this line item
+  notes: text("notes"),
+  displayOrder: integer("display_order").default(0), // Order in which items should be displayed
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -1013,6 +1027,12 @@ export const insertVendorSchema = createInsertSchema(vendors).omit({
 });
 
 export const insertExpenseSchema = createInsertSchema(expenses).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertExpenseLineItemSchema = createInsertSchema(expenseLineItems).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
@@ -1362,7 +1382,9 @@ export const estimates = pgTable("estimates", {
   id: serial("id").primaryKey(),
   tenantId: integer("tenant_id").notNull().references(() => tenants.id),
   customerId: integer("customer_id").references(() => customers.id),
+  leadId: integer("lead_id").references(() => leads.id),
   estimateNumber: varchar("estimate_number", { length: 50 }).notNull(),
+  estimatePrefix: text("estimate_prefix").default("EST"),
   invoiceNumber: varchar("invoice_number", { length: 50 }), // New field for invoice number
   title: varchar("title", { length: 200 }).notNull(),
   description: text("description"),
@@ -1391,6 +1413,7 @@ export const estimates = pgTable("estimates", {
   logoUrl: text("logo_url"),
   brandColor: varchar("brand_color", { length: 7 }).default("#0BBCD6"),
   notes: text("notes"),
+  attachments: json("attachments").$type<Array<{filename: string; path: string; size: number; mimetype: string}>>().default([]), // File attachments
   
   // Status and dates
   status: varchar("status", { length: 20 }).notNull().default("draft"), // draft, sent, viewed, accepted, rejected, expired
@@ -1410,9 +1433,13 @@ export const estimateLineItems = pgTable("estimate_line_items", {
   estimateId: integer("estimate_id").notNull().references(() => estimates.id, { onDelete: 'cascade' }),
   itemName: varchar("item_name", { length: 200 }).notNull(),
   description: text("description"),
+  category: varchar("category", { length: 200 }),
   quantity: decimal("quantity", { precision: 10, scale: 2 }).notNull().default("1.00"),
   unitPrice: decimal("unit_price", { precision: 10, scale: 2 }).notNull().default("0.00"),
   totalPrice: decimal("total_price", { precision: 10, scale: 2 }).notNull().default("0.00"),
+  taxRateId: integer("tax_rate_id").references(() => gstRates.id),
+  tax: decimal("tax", { precision: 10, scale: 2 }).default("0.00"),
+  discount: decimal("discount", { precision: 10, scale: 2 }).default("0.00"),
   displayOrder: integer("display_order").default(0),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
@@ -1517,8 +1544,6 @@ export const leadActivities = pgTable("lead_activities", {
   activityDescription: text("activity_description"),
   activityStatus: integer("activity_status").notNull(), // 1: Active/Completed, 0: Inactive/Pending
   activityDate: timestamp("activity_date").defaultNow().notNull(),
-  activityTableId: integer("activity_table_id"), // ID of the primary table record (e.g., invoice_id, booking_id)
-  activityTableName: text("activity_table_name"), // Name of the primary table (e.g., "invoices", "bookings", "estimates")
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -1584,8 +1609,6 @@ export const customerActivities = pgTable("customer_activities", {
   activityDescription: text("activity_description"),
   activityStatus: integer("activity_status").notNull(), // 1: Active/Completed, 0: Inactive/Pending
   activityDate: timestamp("activity_date").defaultNow().notNull(),
-  activityTableId: integer("activity_table_id"), // ID of the primary table record (e.g., invoice_id, booking_id)
-  activityTableName: text("activity_table_name"), // Name of the primary table (e.g., "invoices", "bookings", "estimates")
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

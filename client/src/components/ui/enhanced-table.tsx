@@ -23,6 +23,11 @@ export interface EnhancedTableProps<T> {
   pageSize?: number;
   emptyMessage?: string;
   isLoading?: boolean;
+  externalSort?: {
+    sortColumn: string | null;
+    sortDirection: 'asc' | 'desc';
+    onSort: (columnKey: string) => void;
+  };
 }
 
 export function EnhancedTable<T extends Record<string, any>>({
@@ -34,11 +39,16 @@ export function EnhancedTable<T extends Record<string, any>>({
   pageSize = 10,
   emptyMessage = "No data available",
   isLoading = false,
+  externalSort,
 }: EnhancedTableProps<T>) {
-  const [sortColumn, setSortColumn] = useState<string | null>(null);
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+  const [internalSortColumn, setInternalSortColumn] = useState<string | null>(null);
+  const [internalSortDirection, setInternalSortDirection] = useState<'asc' | 'desc'>('asc');
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(pageSize);
+
+  // Use external sort if provided, otherwise use internal sort
+  const sortColumn = externalSort?.sortColumn ?? internalSortColumn;
+  const sortDirection = externalSort?.sortDirection ?? internalSortDirection;
 
   // Filter data based on search term
   const filteredData = useMemo(() => {
@@ -113,11 +123,17 @@ export function EnhancedTable<T extends Record<string, any>>({
 
   // Handle sorting
   const handleSort = (columnKey: string) => {
-    if (sortColumn === columnKey) {
-      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    if (externalSort) {
+      // Use external sort handler
+      externalSort.onSort(columnKey);
     } else {
-      setSortColumn(columnKey);
-      setSortDirection('asc');
+      // Use internal sort state
+      if (internalSortColumn === columnKey) {
+        setInternalSortDirection(internalSortDirection === 'asc' ? 'desc' : 'asc');
+      } else {
+        setInternalSortColumn(columnKey);
+        setInternalSortDirection('asc');
+      }
     }
   };
 
@@ -160,11 +176,10 @@ export function EnhancedTable<T extends Record<string, any>>({
                   key={column.key as string}
                   className={cn(
                     "font-medium",
-                    // column.sortable && "cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800  ",
-                    // column.className
+                    column.sortable && "cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800",
+                    column.className
                   )}
-                  // className="text-left px-2 py-3 text-[#364152] font-[500] text-[15px]  "
-                  // onClick={() => column.sortable && handleSort(column.key as string)}
+                  onClick={() => column.sortable && handleSort(column.key as string)}
                 >
                   <div className="flex items-center space-x-2  text-[#364152] font-[500] text-[15px] ">
                     <span>{column.label}</span>
@@ -174,10 +189,10 @@ export function EnhancedTable<T extends Record<string, any>>({
               ))}
             </TableRow>
           </TableHeader>
-          <TableBody>
+          <TableBody className="bg-white">
             {paginatedData.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={columns.length} className="text-center py-8">
+                <TableCell colSpan={columns.length} className="text-center py-8 bg-white">
                   <div className="text-gray-500 dark:text-gray-400">
                     {emptyMessage}
                   </div>

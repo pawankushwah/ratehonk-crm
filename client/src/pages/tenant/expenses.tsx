@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -12,12 +12,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { EnhancedTable, TableColumn } from "@/components/ui/enhanced-table";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { Layout } from "@/components/layout/layout";
 import { DateFilter } from "@/components/ui/date-filter";
 import { buildDateFilters } from "@/lib/date-filter-helpers";
+import { useAuth } from "@/components/auth/auth-provider";
+import { auth } from "@/lib/auth";
 import { 
   Plus, DollarSign, Receipt, Building2, Calendar, CreditCard, 
   Search, Filter, Grid, List, MoreHorizontal, Trash2, 
@@ -35,10 +38,35 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 
-interface Expense {
-  id: number;
+interface ExpenseLineItem {
+  id?: number;
+  category: string;
   title: string;
   description?: string;
+  quantity: number;
+  amount: string | number;
+  taxAmount?: string | number;
+  taxRate?: string | number;
+  totalAmount: string | number;
+  vendorId?: number;
+  vendorName?: string;
+  leadTypeId?: number;
+  leadTypeName?: string;
+  leadTypeColor?: string;
+  paymentMethod?: string;
+  paymentStatus?: string;
+  amountPaid?: string | number;
+  amountDue?: string | number;
+  receiptUrl?: string;
+  notes?: string;
+}
+
+interface Expense {
+  id: number;
+  expense_number?: string | null;
+  title: string;
+  description?: string;
+  quantity?: number;
   amount: string;
   currency: string;
   category: string;
@@ -55,6 +83,8 @@ interface Expense {
   receiptUrl?: string;
   taxAmount: string;
   taxRate: string;
+  amountPaid?: string | number;
+  amountDue?: string | number;
   isReimbursable: boolean;
   isRecurring: boolean;
   recurringFrequency?: string;
@@ -65,7 +95,10 @@ interface Expense {
   tags: string[];
   notes?: string;
   createdAt: Date;
+  updatedAt?: Date;
+  createdBy?: number;
   createdByName?: string;
+  lineItems?: ExpenseLineItem[];
 }
 
 interface Vendor {
@@ -121,8 +154,10 @@ const STATUS_OPTIONS = [
 ];
 
 export default function Expenses() {
+  const { tenant } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [, navigate] = useLocation();
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -142,6 +177,10 @@ export default function Expenses() {
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
+  
+  // Sorting state
+  const [sortColumn, setSortColumn] = useState<string | null>(null);
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
   // Form state
   const [formData, setFormData] = useState({
@@ -168,7 +207,33 @@ export default function Expenses() {
     notes: "",
   });
 
-  // Fetch expenses with comprehensive filtering and pagination
+  // Map frontend column keys to database column names
+  const getSortColumnName = (columnKey: string): string => {
+    const columnMap: Record<string, string> = {
+      title: "title",
+      category: "category",
+      amount: "amount",
+      status: "status",
+      expenseDate: "expense_date",
+      vendorName: "vendor_name",
+      createdAt: "created_at",
+    };
+    return columnMap[columnKey] || columnKey;
+  };
+
+  // Handle sort change
+  const handleSort = (columnKey: string) => {
+    if (sortColumn === columnKey) {
+      // Toggle direction if same column
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      // New column, default to desc
+      setSortColumn(columnKey);
+      setSortDirection('desc');
+    }
+  };
+
+  // Fetch expenses with comprehensive filtering, pagination, and sorting
   const { data: rawExpenses = [], isLoading, error } = useQuery<any[]>({
     queryKey: [
       "/api/expenses",
@@ -180,6 +245,8 @@ export default function Expenses() {
       customDateTo,
       currentPage,
       itemsPerPage,
+      sortColumn,
+      sortDirection,
     ],
     queryFn: async () => {
       const dateFilters = buildDateFilters(dateFilter, customDateFrom, customDateTo);
@@ -215,6 +282,12 @@ export default function Expenses() {
       queryParams.append("page", currentPage.toString());
       queryParams.append("limit", itemsPerPage.toString());
       
+      // Add sorting parameters
+      if (sortColumn) {
+        queryParams.append("sortBy", getSortColumnName(sortColumn));
+        queryParams.append("sortOrder", sortDirection);
+      }
+      
       const url = queryParams.toString() 
         ? `/api/expenses?${queryParams.toString()}`
         : `/api/expenses`;
@@ -228,7 +301,13 @@ export default function Expenses() {
       if (!response.ok) return [];
       const result = await response.json();
       
-      // Handle paginated response structure like customers page
+      // Handle paginated response structure
+      if (result && typeof result === "object" && "data" in result && "pagination" in result) {
+        setTotalItems(result.pagination?.total || 0);
+        return result.data;
+      }
+
+      // Handle old paginated response structure (with total at root)
       if (result && typeof result === "object" && "data" in result) {
         setTotalItems(result.total || 0);
         return result.data;
@@ -255,12 +334,30 @@ export default function Expenses() {
     queryKey: ["/api/lead-types"],
   });
 
+  // Helper function to normalize tags to an array
+  const normalizeTags = (tags: any): string[] => {
+    if (!tags) return [];
+    if (Array.isArray(tags)) return tags;
+    if (typeof tags === 'string') {
+      try {
+        const parsed = JSON.parse(tags);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        // If it's not JSON, treat as comma-separated string
+        return tags.split(',').map(t => t.trim()).filter(t => t.length > 0);
+      }
+    }
+    return [];
+  };
+
   // Transform and filter expenses
   const expenses = rawExpenses
     .map((expense: any) => ({
       id: expense.id,
+      expense_number: expense.expense_number,
       title: expense.title,
       description: expense.description,
+      quantity: expense.quantity,
       amount: expense.amount,
       currency: expense.currency,
       category: expense.category,
@@ -277,6 +374,8 @@ export default function Expenses() {
       receiptUrl: expense.receipt_url,
       taxAmount: expense.tax_amount,
       taxRate: expense.tax_rate,
+      amountPaid: expense.amount_paid,
+      amountDue: expense.amount_due,
       isReimbursable: expense.is_reimbursable,
       isRecurring: expense.is_recurring,
       recurringFrequency: expense.recurring_frequency,
@@ -284,23 +383,34 @@ export default function Expenses() {
       approvedBy: expense.approved_by,
       approvedAt: expense.approved_at,
       rejectionReason: expense.rejection_reason,
-      tags: (() => {
-        // Handle tags - they might be a JSON string, array, null, or undefined
-        if (!expense.tags) return [];
-        if (Array.isArray(expense.tags)) return expense.tags;
-        if (typeof expense.tags === 'string') {
-          try {
-            const parsed = JSON.parse(expense.tags);
-            return Array.isArray(parsed) ? parsed : [];
-          } catch {
-            return [];
-          }
-        }
-        return [];
-      })(),
+      tags: normalizeTags(expense.tags),
       notes: expense.notes,
       createdAt: new Date(expense.created_at),
+      updatedAt: expense.updated_at ? new Date(expense.updated_at) : undefined,
+      createdBy: expense.created_by,
       createdByName: expense.created_by_name,
+      lineItems: expense.lineItems ? expense.lineItems.map((item: any) => ({
+        id: item.id,
+        category: item.category,
+        title: item.title,
+        description: item.description,
+        quantity: item.quantity || 1,
+        amount: item.amount,
+        taxAmount: item.tax_amount || item.taxAmount,
+        taxRate: item.tax_rate || item.taxRate,
+        totalAmount: item.total_amount || item.totalAmount,
+        vendorId: item.vendor_id || item.vendorId,
+        vendorName: item.vendor_name || item.vendorName,
+        leadTypeId: item.lead_type_id || item.leadTypeId,
+        leadTypeName: item.lead_type_name || item.leadTypeName,
+        leadTypeColor: item.lead_type_color || item.leadTypeColor,
+        paymentMethod: item.payment_method || item.paymentMethod,
+        paymentStatus: item.payment_status || item.paymentStatus,
+        amountPaid: item.amount_paid || item.amountPaid,
+        amountDue: item.amount_due || item.amountDue,
+        receiptUrl: item.receipt_url || item.receiptUrl,
+        notes: item.notes,
+      })) : [],
     }));
 
   // Pagination calculations now use totalItems from API metadata
@@ -385,6 +495,48 @@ export default function Expenses() {
     }
   });
 
+  // Status update mutation
+  const updateStatusMutation = useMutation({
+    mutationFn: async ({ expenseId, status }: { expenseId: number; status: string }) => {
+      const token = auth.getToken();
+      const response = await fetch(`/api/expenses/${expenseId}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ status }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `Failed to update expense status: ${response.status} - ${errorText}`,
+        );
+      }
+
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Status Updated",
+        description: "Expense status has been updated successfully.",
+      });
+
+      queryClient.invalidateQueries({
+        queryKey: ["/api/expenses"],
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Status Update Failed",
+        description:
+          error.message || "Failed to update expense status. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
   // Helper functions
   const resetForm = () => {
     setFormData({
@@ -429,31 +581,12 @@ export default function Expenses() {
   };
 
   const handleEdit = (expense: Expense) => {
-    setFormData({
-      title: expense.title,
-      description: expense.description || "",
-      amount: expense.amount,
-      currency: expense.currency,
-      category: expense.category,
-      subcategory: expense.subcategory || "",
-      expenseDate: expense.expenseDate.split('T')[0],
-      paymentMethod: expense.paymentMethod,
-      paymentReference: expense.paymentReference || "",
-      vendorId: expense.vendorId?.toString() || "none",
-      leadTypeId: expense.leadTypeId?.toString() || "none",
-      expenseType: expense.expenseType || "purchase",
-      receiptUrl: expense.receiptUrl || "",
-      taxAmount: expense.taxAmount,
-      taxRate: expense.taxRate,
-      isReimbursable: expense.isReimbursable,
-      isRecurring: expense.isRecurring,
-      recurringFrequency: expense.recurringFrequency || "",
-      status: expense.status,
-      tags: expense.tags,
-      notes: expense.notes || "",
+    // Invalidate the query cache for this expense to force a fresh fetch
+    queryClient.invalidateQueries({
+      queryKey: ["/api/expenses", expense.id],
     });
-    setEditingExpense(expense);
-    setShowCreateDialog(true);
+    // Navigate to expense create page with ID for editing
+    navigate(`/expenses/create/${expense.id}`);
   };
 
   const handleDelete = (id: number) => {
@@ -483,15 +616,183 @@ export default function Expenses() {
     return PAYMENT_METHODS.find(pm => pm.value === method) || PAYMENT_METHODS[0];
   };
 
-  if (isLoading) {
-    return (
-      <Layout>
-        <div className="flex items-center justify-center h-64">
-          <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full" />
+  // Column definitions for the enhanced table
+  const expenseColumns: TableColumn<Expense>[] = [
+    {
+      key: "title",
+      label: "Expense Details",
+      sortable: true,
+      render: (title, expense) => (
+        <div className="space-y-1">
+          <div className="font-medium">{title}</div>
+          {expense.description && (
+            <div className="text-sm text-muted-foreground">
+              {expense.description.length > 50 
+                ? `${expense.description.substring(0, 50)}...` 
+                : expense.description
+              }
+            </div>
+          )}
+          {Array.isArray(expense.tags) && expense.tags.length > 0 && (
+            <div className="flex gap-1 flex-wrap">
+              {expense.tags.slice(0, 2).map((tag, index) => (
+                <Badge key={index} variant="secondary" className="text-xs">
+                  {tag}
+                </Badge>
+              ))}
+              {expense.tags.length > 2 && (
+                <Badge variant="secondary" className="text-xs">
+                  +{expense.tags.length - 2}
+                </Badge>
+              )}
+            </div>
+          )}
         </div>
-      </Layout>
-    );
-  }
+      ),
+    },
+    {
+      key: "amount",
+      label: "Amount",
+      sortable: true,
+      render: (amount, expense) => (
+        <div className="space-y-1">
+          <div className="font-medium">
+            {formatCurrency(amount, expense.currency)}
+          </div>
+          {expense.isReimbursable && (
+            <Badge variant="outline" className="text-xs">
+              Reimbursable
+            </Badge>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: "status",
+      label: "Status",
+      sortable: true,
+      render: (status, expense) => {
+        const statusConfig = getStatusConfig(status || "pending");
+        return (
+          <Select
+            value={status || "pending"}
+            onValueChange={(value) => {
+              updateStatusMutation.mutate({
+                expenseId: expense.id,
+                status: value,
+              });
+            }}
+            disabled={updateStatusMutation.isPending}
+          >
+            <SelectTrigger className={`w-[140px] h-8 ${statusConfig.color} border-0`}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {STATUS_OPTIONS.map((statusOption) => (
+                <SelectItem key={statusOption.value} value={statusOption.value}>
+                  {statusOption.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        );
+      },
+    },
+    {
+      key: "expenseDate",
+      label: "Date",
+      sortable: true,
+      render: (expenseDate) => (
+        <div className="text-sm">
+          {expenseDate 
+            ? new Date(expenseDate).toLocaleDateString() 
+            : "N/A"}
+        </div>
+      ),
+    },
+    {
+      key: "lineItems",
+      label: "Line Items",
+      sortable: false,
+      render: (_, expense) => {
+        const lineItems = expense.lineItems || [];
+        if (lineItems.length === 0) {
+          return <span className="text-sm text-muted-foreground">No items</span>;
+        }
+        return (
+          <div className="space-y-1 max-w-md">
+            <div className="text-sm font-medium">{lineItems.length} item{lineItems.length !== 1 ? 's' : ''}</div>
+            <div className="text-xs text-muted-foreground space-y-1">
+              {lineItems.map((item: any, idx: number) => (
+                <div key={item.id || idx} className="flex items-center gap-2">
+                  <span className="font-medium">{item.title || 'Untitled'}</span>
+                  <span className="text-muted-foreground">-</span>
+                  <span>{formatCurrency(item.totalAmount || item.amount || 0, expense.currency)}</span>
+                  {item.category && (
+                    <>
+                      <span className="text-muted-foreground">•</span>
+                      <Badge variant="outline" className="text-xs">
+                        {getCategoryConfig(item.category).icon} {getCategoryConfig(item.category).label}
+                      </Badge>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      },
+    },
+    {
+      key: "actions",
+      label: "Actions",
+      sortable: false,
+      className: "text-right",
+      render: (_, expense) => (
+        <div className="flex space-x-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setSelectedExpense(expense);
+              setShowDetailsDialog(true);
+            }}
+            title="View Details"
+          >
+            <Eye className="h-4 w-4" />
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => handleEdit(expense)}
+            title="Edit Expense"
+          >
+            <Edit className="h-4 w-4" />
+          </Button>
+          {expense.receiptUrl && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => window.open(expense.receiptUrl, '_blank')}
+              className="text-blue-600 hover:text-blue-700"
+              title="Download Receipt"
+            >
+              <Download className="h-4 w-4" />
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => handleDelete(expense.id)}
+            className="text-red-600 hover:text-red-700"
+            title="Delete Expense"
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
+      ),
+    },
+  ];
 
   if (error) {
     return (
@@ -712,20 +1013,20 @@ export default function Expenses() {
             </div>
             
             <div className="flex items-center gap-2">
-              <Button
+              {/* <Button
                 variant={viewMode === "table" ? "default" : "outline"}
                 size="sm"
                 onClick={() => setViewMode("table")}
               >
                 <List className="h-4 w-4" />
-              </Button>
-              <Button
+              </Button> */}
+              {/* <Button
                 variant={viewMode === "grid" ? "default" : "outline"}
                 size="sm"
                 onClick={() => setViewMode("grid")}
               >
                 <Grid className="h-4 w-4" />
-              </Button>
+              </Button> */}
             </div>
           </div>
         </Card>
@@ -733,213 +1034,114 @@ export default function Expenses() {
         {/* Expenses List */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center justify-between">
-              <span>Expenses ({totalItems})</span>
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Select value={itemsPerPage.toString()} onValueChange={(value) => setItemsPerPage(parseInt(value))}>
-                  <SelectTrigger className="w-20">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="5">5</SelectItem>
-                    <SelectItem value="10">10</SelectItem>
-                    <SelectItem value="25">25</SelectItem>
-                    <SelectItem value="50">50</SelectItem>
-                  </SelectContent>
-                </Select>
-                <span>per page</span>
-              </div>
-            </CardTitle>
+            <CardTitle>Expense List</CardTitle>
           </CardHeader>
           <CardContent>
-            {expenses.length === 0 ? (
-              <div className="text-center py-12">
-                <Archive className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                <h3 className="text-lg font-semibold text-muted-foreground">No expenses found</h3>
-                <p className="text-sm text-muted-foreground mt-2">
-                  {searchQuery || categoryFilter !== "all" || statusFilter !== "all" 
-                    ? "Try adjusting your filters to see more results."
-                    : "Get started by adding your first expense."
-                  }
-                </p>
-                {!searchQuery && categoryFilter === "all" && statusFilter === "all" && (
-                  <Link href="/expenses/create">
-                    <Button
-                      className="mt-4"
-                      data-testid="button-add-first-expense"
-                    >
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add First Expense
-                    </Button>
-                  </Link>
-                )}
+            <EnhancedTable
+              data={expenses}
+              columns={expenseColumns}
+              isLoading={isLoading}
+              showPagination={false}
+              emptyMessage="No expenses found. Create your first expense to get started."
+              externalSort={{
+                sortColumn: sortColumn,
+                sortDirection: sortDirection,
+                onSort: handleSort,
+              }}
+            />
+            {/* Backend Pagination Controls */}
+            <div className="flex items-center justify-between mt-4 pt-4 border-t">
+              <div className="flex items-center gap-4">
+                <div className="text-sm text-gray-500">
+                  Showing {(currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, totalItems)} of {totalItems} expenses
+                </div>
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="pageSize" className="text-sm text-gray-500">
+                    Show:
+                  </Label>
+                  <Select
+                    value={itemsPerPage.toString()}
+                    onValueChange={(value) => {
+                      setItemsPerPage(parseInt(value));
+                      setCurrentPage(1); // Reset to first page when changing page size
+                    }}
+                  >
+                    <SelectTrigger id="pageSize" className="w-20 h-8">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="5">5</SelectItem>
+                      <SelectItem value="10">10</SelectItem>
+                      <SelectItem value="25">25</SelectItem>
+                      <SelectItem value="50">50</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
-            ) : viewMode === "table" ? (
-              <div className="space-y-4">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Expense Details</TableHead>
-                      <TableHead>Category</TableHead>
-                      <TableHead>Amount</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Date</TableHead>
-                      <TableHead>Vendor</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {expenses.map((expense) => {
-                      const categoryConfig = getCategoryConfig(expense.category);
-                      const statusConfig = getStatusConfig(expense.status);
-                      const StatusIcon = statusConfig.icon;
+              {totalPages > 1 && (
+                <div className="flex items-center space-x-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={currentPage === 1}
+                    onClick={() => setCurrentPage(currentPage - 1)}
+                  >
+                    Previous
+                  </Button>
+                  
+                  {/* Page Numbers */}
+                  <div className="flex items-center space-x-1">
+                    {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                      let pageNum;
+                      if (totalPages <= 5) {
+                        // Show all pages if 5 or fewer
+                        pageNum = i + 1;
+                      } else if (currentPage <= 3) {
+                        // Show first 5 pages
+                        pageNum = i + 1;
+                      } else if (currentPage >= totalPages - 2) {
+                        // Show last 5 pages
+                        pageNum = totalPages - 4 + i;
+                      } else {
+                        // Show pages around current page
+                        pageNum = currentPage - 2 + i;
+                      }
                       
                       return (
-                        <TableRow key={expense.id} className="hover:bg-muted/50">
-                          <TableCell>
-                            <div className="space-y-1">
-                              <div className="font-medium">{expense.title}</div>
-                              {expense.description && (
-                                <div className="text-sm text-muted-foreground">
-                                  {expense.description.length > 50 
-                                    ? `${expense.description.substring(0, 50)}...` 
-                                    : expense.description
-                                  }
-                                </div>
-                              )}
-                              {Array.isArray(expense.tags) && expense.tags.length > 0 && (
-                                <div className="flex gap-1 flex-wrap">
-                                  {expense.tags.slice(0, 2).map((tag, index) => (
-                                    <Badge key={index} variant="secondary" className="text-xs">
-                                      {tag}
-                                    </Badge>
-                                  ))}
-                                  {expense.tags.length > 2 && (
-                                    <Badge variant="secondary" className="text-xs">
-                                      +{expense.tags.length - 2}
-                                    </Badge>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge className={categoryConfig.color}>
-                              <span className="mr-1">{categoryConfig.icon}</span>
-                              {categoryConfig.label}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <div className="space-y-1">
-                              <div className="font-medium">
-                                {formatCurrency(expense.amount, expense.currency)}
-                              </div>
-                              {expense.isReimbursable && (
-                                <Badge variant="outline" className="text-xs">
-                                  Reimbursable
-                                </Badge>
-                              )}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge className={statusConfig.color}>
-                              <StatusIcon className="h-3 w-3 mr-1" />
-                              {statusConfig.label}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <div className="text-sm">
-                              {new Date(expense.expenseDate).toLocaleDateString()}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            {expense.vendorName ? (
-                              <div className="flex items-center gap-2">
-                                <Building2 className="h-4 w-4 text-muted-foreground" />
-                                <span className="text-sm">{expense.vendorName}</span>
-                              </div>
-                            ) : (
-                              <span className="text-sm text-muted-foreground">No vendor</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" size="sm">
-                                  <MoreHorizontal className="h-4 w-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem
-                                  onClick={() => {
-                                    setSelectedExpense(expense);
-                                    setShowDetailsDialog(true);
-                                  }}
-                                >
-                                  <Eye className="h-4 w-4 mr-2" />
-                                  View Details
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => handleEdit(expense)}>
-                                  <Edit className="h-4 w-4 mr-2" />
-                                  Edit
-                                </DropdownMenuItem>
-                                {expense.receiptUrl && (
-                                  <DropdownMenuItem>
-                                    <Download className="h-4 w-4 mr-2" />
-                                    Download Receipt
-                                  </DropdownMenuItem>
-                                )}
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem
-                                  onClick={() => handleDelete(expense.id)}
-                                  className="text-red-600 dark:text-red-400"
-                                >
-                                  <Trash2 className="h-4 w-4 mr-2" />
-                                  Delete
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </TableCell>
-                        </TableRow>
+                        <Button
+                          key={pageNum}
+                          variant={currentPage === pageNum ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => setCurrentPage(pageNum)}
+                          className="min-w-[2.5rem]"
+                        >
+                          {pageNum}
+                        </Button>
                       );
                     })}
-                  </TableBody>
-                </Table>
-
-                {/* Pagination */}
-                {totalPages > 1 && (
-                  <div className="flex items-center justify-between mt-4">
-                    <p className="text-sm text-muted-foreground">
-                      Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, totalItems)} of {totalItems} expenses
-                    </p>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={currentPage === 1}
-                        onClick={() => setCurrentPage(currentPage - 1)}
-                      >
-                        Previous
-                      </Button>
-                      <span className="text-sm text-muted-foreground">
-                        Page {currentPage} of {totalPages}
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={currentPage === totalPages}
-                        onClick={() => setCurrentPage(currentPage + 1)}
-                      >
-                        Next
-                      </Button>
-                    </div>
                   </div>
-                )}
-              </div>
-            ) : (
-              // Grid View
+                  
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={currentPage >= totalPages}
+                    onClick={() => setCurrentPage(currentPage + 1)}
+                  >
+                    Next
+                  </Button>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Grid View - keeping for now but can be removed if not needed */}
+        {viewMode === "grid" && expenses.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Expenses Grid View</CardTitle>
+            </CardHeader>
+            <CardContent>
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                 {expenses.map((expense) => {
                   const categoryConfig = getCategoryConfig(expense.category);
@@ -1011,7 +1213,9 @@ export default function Expenses() {
                           
                           <div className="flex items-center gap-2 text-sm text-muted-foreground">
                             <Calendar className="h-4 w-4" />
-                            {new Date(expense.expenseDate).toLocaleDateString()}
+                            {expense.expenseDate 
+                              ? new Date(expense.expenseDate).toLocaleDateString() 
+                              : "N/A"}
                           </div>
                           
                           {expense.vendorName && (
@@ -1041,39 +1245,9 @@ export default function Expenses() {
                   );
                 })}
               </div>
-            )}
-
-            {/* Pagination Navigation */}
-            {totalItems > 0 && (
-              <div className="flex items-center justify-between pt-4 border-t mt-4">
-                <div className="text-sm text-muted-foreground">
-                  Showing {Math.min((currentPage - 1) * itemsPerPage + 1, totalItems)} - {Math.min(currentPage * itemsPerPage, totalItems)} of {totalItems} expenses
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-                    disabled={currentPage <= 1}
-                  >
-                    Previous
-                  </Button>
-                  <span className="text-sm text-muted-foreground px-3">
-                    Page {currentPage} of {Math.ceil(totalItems / itemsPerPage)}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setCurrentPage(currentPage + 1)}
-                    disabled={currentPage >= Math.ceil(totalItems / itemsPerPage)}
-                  >
-                    Next
-                  </Button>
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Create/Edit Expense Dialog */}
         <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
@@ -1475,7 +1649,7 @@ export default function Expenses() {
 
         {/* Expense Details Dialog */}
         <Dialog open={showDetailsDialog} onOpenChange={setShowDetailsDialog}>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
             <DialogHeader>
               <DialogTitle>Expense Details</DialogTitle>
               <DialogDescription>
@@ -1484,37 +1658,82 @@ export default function Expenses() {
             </DialogHeader>
             
             {selectedExpense && (
-              <div className="space-y-6">
+              <div className="space-y-6 max-h-[80vh] overflow-y-auto">
                 {/* Header */}
                 <div className="flex items-start justify-between">
                   <div>
                     <h3 className="text-xl font-semibold">{selectedExpense.title}</h3>
-                    <p className="text-muted-foreground mt-1">{selectedExpense.description}</p>
+                    {selectedExpense.description && (
+                      <p className="text-muted-foreground mt-1">{selectedExpense.description}</p>
+                    )}
+                    {selectedExpense.expense_number && (
+                      <p className="text-sm text-muted-foreground mt-1">Expense Number: {selectedExpense.expense_number}</p>
+                    )}
                   </div>
                   <Badge className={getStatusConfig(selectedExpense.status).color}>
                     {getStatusConfig(selectedExpense.status).label}
                   </Badge>
                 </div>
                 
-                {/* Amount and Category */}
-                <div className="grid grid-cols-2 gap-4">
+                {/* Financial Summary */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <Card>
                     <CardContent className="p-4">
                       <div className="flex items-center gap-2 mb-2">
                         <DollarSign className="h-4 w-4 text-muted-foreground" />
                         <span className="text-sm font-medium">Amount</span>
                       </div>
-                      <div className="text-2xl font-bold">
+                      <div className="text-xl font-bold">
                         {formatCurrency(selectedExpense.amount, selectedExpense.currency)}
                       </div>
-                      {selectedExpense.isReimbursable && (
-                        <Badge variant="outline" className="mt-2">
-                          Reimbursable
-                        </Badge>
-                      )}
                     </CardContent>
                   </Card>
                   
+                  {selectedExpense.quantity && selectedExpense.quantity > 1 && (
+                    <Card>
+                      <CardContent className="p-4">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Package className="h-4 w-4 text-muted-foreground" />
+                          <span className="text-sm font-medium">Quantity</span>
+                        </div>
+                        <div className="text-xl font-bold">
+                          {selectedExpense.quantity}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+                  
+                  {selectedExpense.amountPaid !== undefined && selectedExpense.amountPaid !== null && (
+                    <Card>
+                      <CardContent className="p-4">
+                        <div className="flex items-center gap-2 mb-2">
+                          <CheckCircle className="h-4 w-4 text-green-600" />
+                          <span className="text-sm font-medium">Amount Paid</span>
+                        </div>
+                        <div className="text-xl font-bold text-green-600">
+                          {formatCurrency(selectedExpense.amountPaid.toString(), selectedExpense.currency)}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+                  
+                  {selectedExpense.amountDue !== undefined && selectedExpense.amountDue !== null && (
+                    <Card>
+                      <CardContent className="p-4">
+                        <div className="flex items-center gap-2 mb-2">
+                          <AlertCircle className="h-4 w-4 text-orange-600" />
+                          <span className="text-sm font-medium">Amount Due</span>
+                        </div>
+                        <div className="text-xl font-bold text-orange-600">
+                          {formatCurrency(selectedExpense.amountDue.toString(), selectedExpense.currency)}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+                </div>
+                
+                {/* Category and Type */}
+                <div className="grid grid-cols-2 gap-4">
                   <Card>
                     <CardContent className="p-4">
                       <div className="flex items-center gap-2 mb-2">
@@ -1526,53 +1745,207 @@ export default function Expenses() {
                         {getCategoryConfig(selectedExpense.category).label}
                       </Badge>
                       {selectedExpense.subcategory && (
-                        <div className="text-sm text-muted-foreground mt-1">
-                          {selectedExpense.subcategory}
+                        <div className="text-sm text-muted-foreground mt-2">
+                          Subcategory: {selectedExpense.subcategory}
                         </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                  
+                  <Card>
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Receipt className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm font-medium">Expense Type</span>
+                      </div>
+                      <div className="text-sm capitalize">{selectedExpense.expenseType || "purchase"}</div>
+                      {selectedExpense.isReimbursable && (
+                        <Badge variant="outline" className="mt-2">
+                          Reimbursable
+                        </Badge>
+                      )}
+                      {selectedExpense.isRecurring && (
+                        <Badge variant="outline" className="mt-2 ml-2">
+                          Recurring {selectedExpense.recurringFrequency && `(${selectedExpense.recurringFrequency})`}
+                        </Badge>
                       )}
                     </CardContent>
                   </Card>
                 </div>
                 
                 {/* Details Grid */}
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <span className="font-medium">Date:</span>
-                    <span className="ml-2">{new Date(selectedExpense.expenseDate).toLocaleDateString()}</span>
-                  </div>
-                  <div>
-                    <span className="font-medium">Type:</span>
-                    <span className="ml-2 capitalize">{selectedExpense.expenseType}</span>
-                  </div>
-                  <div>
-                    <span className="font-medium">Payment Method:</span>
-                    <span className="ml-2 capitalize">{selectedExpense.paymentMethod.replace('_', ' ')}</span>
-                  </div>
-                  {selectedExpense.paymentReference && (
-                    <div>
-                      <span className="font-medium">Reference:</span>
-                      <span className="ml-2">{selectedExpense.paymentReference}</span>
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">Expense Details</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <span className="font-medium">Expense Date:</span>
+                        <span className="ml-2">{new Date(selectedExpense.expenseDate).toLocaleDateString()}</span>
+                      </div>
+                      <div>
+                        <span className="font-medium">Payment Method:</span>
+                        <span className="ml-2 capitalize">{selectedExpense.paymentMethod.replace(/_/g, ' ')}</span>
+                      </div>
+                      {selectedExpense.paymentReference && (
+                        <div>
+                          <span className="font-medium">Payment Reference:</span>
+                          <span className="ml-2">{selectedExpense.paymentReference}</span>
+                        </div>
+                      )}
+                      {selectedExpense.vendorName && (
+                        <div>
+                          <span className="font-medium">Vendor:</span>
+                          <span className="ml-2">{selectedExpense.vendorName}</span>
+                        </div>
+                      )}
+                      {selectedExpense.leadTypeName && (
+                        <div>
+                          <span className="font-medium">Lead Type:</span>
+                          <span className="ml-2 flex items-center gap-2">
+                            {selectedExpense.leadTypeColor && (
+                              <span 
+                                className="w-3 h-3 rounded-full" 
+                                style={{ backgroundColor: selectedExpense.leadTypeColor }}
+                              />
+                            )}
+                            {selectedExpense.leadTypeName}
+                          </span>
+                        </div>
+                      )}
+                      {selectedExpense.createdByName && (
+                        <div>
+                          <span className="font-medium">Created By:</span>
+                          <span className="ml-2">{selectedExpense.createdByName}</span>
+                        </div>
+                      )}
+                      {selectedExpense.createdAt && (
+                        <div>
+                          <span className="font-medium">Created At:</span>
+                          <span className="ml-2">{new Date(selectedExpense.createdAt).toLocaleString()}</span>
+                        </div>
+                      )}
+                      {selectedExpense.updatedAt && (
+                        <div>
+                          <span className="font-medium">Updated At:</span>
+                          <span className="ml-2">{new Date(selectedExpense.updatedAt).toLocaleString()}</span>
+                        </div>
+                      )}
                     </div>
-                  )}
-                  {selectedExpense.vendorName && (
-                    <div>
-                      <span className="font-medium">Vendor:</span>
-                      <span className="ml-2">{selectedExpense.vendorName}</span>
-                    </div>
-                  )}
-                  {selectedExpense.leadTypeName && (
-                    <div>
-                      <span className="font-medium">Lead Type:</span>
-                      <span className="ml-2">{selectedExpense.leadTypeName}</span>
-                    </div>
-                  )}
-                </div>
+                  </CardContent>
+                </Card>
                 
-                {/* Tax Information */}
-                {(parseFloat(selectedExpense.taxAmount) > 0 || parseFloat(selectedExpense.taxRate) > 0) && (
+                {/* Line Items */}
+                {selectedExpense.lineItems && Array.isArray(selectedExpense.lineItems) && selectedExpense.lineItems.length > 0 && (
                   <Card>
-                    <CardContent className="p-4">
-                      <h4 className="font-medium mb-2">Tax Information</h4>
+                    <CardHeader>
+                      <CardTitle className="text-lg">Line Items</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-4">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>#</TableHead>
+                              <TableHead>Category</TableHead>
+                              <TableHead>Title</TableHead>
+                              <TableHead>Quantity</TableHead>
+                              <TableHead>Amount</TableHead>
+                              <TableHead>Tax</TableHead>
+                              <TableHead>Total</TableHead>
+                              <TableHead>Status</TableHead>
+                              <TableHead>Paid</TableHead>
+                              <TableHead>Due</TableHead>
+                              {selectedExpense.lineItems.some((item: any) => item.receiptUrl) && (
+                                <TableHead>Receipt</TableHead>
+                              )}
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {selectedExpense.lineItems.map((item: any, index: number) => (
+                              <TableRow key={item.id || index}>
+                                <TableCell>{index + 1}</TableCell>
+                                <TableCell>
+                                  <Badge className={getCategoryConfig(item.category || selectedExpense.category).color}>
+                                    {getCategoryConfig(item.category || selectedExpense.category).icon} {getCategoryConfig(item.category || selectedExpense.category).label}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="font-medium">{item.title}</TableCell>
+                                <TableCell>{item.quantity || 1}</TableCell>
+                                <TableCell>{formatCurrency(item.amount || 0, selectedExpense.currency)}</TableCell>
+                                <TableCell>
+                                  {item.taxAmount ? formatCurrency(item.taxAmount, selectedExpense.currency) : '-'}
+                                  {item.taxRate && ` (${item.taxRate}%)`}
+                                </TableCell>
+                                <TableCell className="font-medium">
+                                  {formatCurrency(item.totalAmount || item.amount || 0, selectedExpense.currency)}
+                                </TableCell>
+                                <TableCell>
+                                  <Badge className={getStatusConfig(item.paymentStatus || 'paid').color}>
+                                    {getStatusConfig(item.paymentStatus || 'paid').label}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell>{formatCurrency(item.amountPaid || 0, selectedExpense.currency)}</TableCell>
+                                <TableCell>{formatCurrency(item.amountDue || 0, selectedExpense.currency)}</TableCell>
+                                {selectedExpense.lineItems.some((i: any) => i.receiptUrl) && (
+                                  <TableCell>
+                                    {item.receiptUrl ? (
+                                      <a 
+                                        href={item.receiptUrl} 
+                                        target="_blank" 
+                                        rel="noopener noreferrer"
+                                        className="text-blue-600 hover:underline"
+                                      >
+                                        View
+                                      </a>
+                                    ) : (
+                                      <span className="text-muted-foreground">-</span>
+                                    )}
+                                  </TableCell>
+                                )}
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                        <div className="flex justify-end pt-2 border-t">
+                          <div className="text-sm space-y-1">
+                            <div className="flex justify-between gap-4">
+                              <span className="font-medium">Subtotal:</span>
+                              <span>{formatCurrency(
+                                selectedExpense.lineItems.reduce((sum: number, item: any) => 
+                                  sum + parseFloat(item.amount?.toString() || "0") * (item.quantity || 1), 0
+                                ), 
+                                selectedExpense.currency
+                              )}</span>
+                            </div>
+                            <div className="flex justify-between gap-4">
+                              <span className="font-medium">Tax:</span>
+                              <span>{formatCurrency(
+                                selectedExpense.lineItems.reduce((sum: number, item: any) => 
+                                  sum + parseFloat(item.taxAmount?.toString() || "0"), 0
+                                ), 
+                                selectedExpense.currency
+                              )}</span>
+                            </div>
+                            <div className="flex justify-between gap-4 font-bold text-lg">
+                              <span>Total:</span>
+                              <span>{formatCurrency(selectedExpense.amount, selectedExpense.currency)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Tax Information */}
+                {(parseFloat(selectedExpense.taxAmount?.toString() || "0") > 0 || parseFloat(selectedExpense.taxRate?.toString() || "0") > 0) && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg">Tax Information</CardTitle>
+                    </CardHeader>
+                    <CardContent>
                       <div className="grid grid-cols-2 gap-4 text-sm">
                         <div>
                           <span className="font-medium">Tax Rate:</span>
@@ -1587,30 +1960,92 @@ export default function Expenses() {
                   </Card>
                 )}
                 
+                {/* Approval Information */}
+                {(selectedExpense.status === "approved" || selectedExpense.status === "rejected") && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg">Approval Information</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        {selectedExpense.approvedAt && (
+                          <div>
+                            <span className="font-medium">Approved At:</span>
+                            <span className="ml-2">{new Date(selectedExpense.approvedAt).toLocaleString()}</span>
+                          </div>
+                        )}
+                        {selectedExpense.approvedBy && (
+                          <div>
+                            <span className="font-medium">Approved By:</span>
+                            <span className="ml-2">User ID: {selectedExpense.approvedBy}</span>
+                          </div>
+                        )}
+                        {selectedExpense.rejectionReason && (
+                          <div className="col-span-2">
+                            <span className="font-medium">Rejection Reason:</span>
+                            <p className="mt-1 text-muted-foreground">{selectedExpense.rejectionReason}</p>
+                          </div>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+                
+                {/* Receipt */}
+                {selectedExpense.receiptUrl && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg">Receipt</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <a 
+                        href={selectedExpense.receiptUrl} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="text-blue-600 hover:underline flex items-center gap-2"
+                      >
+                        <FileText className="h-4 w-4" />
+                        View Receipt
+                      </a>
+                    </CardContent>
+                  </Card>
+                )}
+                
                 {/* Tags */}
-                {Array.isArray(selectedExpense.tags) && selectedExpense.tags.length > 0 && (
-                  <div>
-                    <h4 className="font-medium mb-2">Tags</h4>
-                    <div className="flex gap-2 flex-wrap">
-                      {selectedExpense.tags.map((tag, index) => (
-                        <Badge key={index} variant="secondary">
-                          {tag}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
+                {selectedExpense.tags && selectedExpense.tags.length > 0 && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg">Tags</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="flex gap-2 flex-wrap">
+                        {selectedExpense.tags.map((tag, index) => (
+                          <Badge key={index} variant="secondary">
+                            {tag}
+                          </Badge>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
                 )}
                 
                 {/* Notes */}
                 {selectedExpense.notes && (
-                  <div>
-                    <h4 className="font-medium mb-2">Notes</h4>
-                    <p className="text-sm text-muted-foreground">{selectedExpense.notes}</p>
-                  </div>
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg">Notes</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div 
+                        className="text-sm text-muted-foreground prose prose-sm max-w-none"
+                        dangerouslySetInnerHTML={{ __html: selectedExpense.notes }}
+                      />
+                    </CardContent>
+                  </Card>
                 )}
                 
                 {/* Actions */}
-                <div className="flex items-center justify-end gap-3 pt-4 border-t">
+                <div className="flex items-center justify-end gap-3 pt-4 border-t sticky bottom-0 bg-white dark:bg-gray-900">
                   <Button variant="outline" onClick={() => setShowDetailsDialog(false)}>
                     Close
                   </Button>

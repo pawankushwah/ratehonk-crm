@@ -57,6 +57,7 @@ export default function GstSettingsPage() {
   const [editingSetting, setEditingSetting] = useState<GstSetting | null>(null);
   const [editingRate, setEditingRate] = useState<GstRate | null>(null);
   const [selectedSetting, setSelectedSetting] = useState<GstSetting | null>(null);
+  const [selectedCountry, setSelectedCountry] = useState<string>("");
 
   const settingForm = useForm<GstSettingForm>({
     resolver: zodResolver(gstSettingSchema),
@@ -88,9 +89,45 @@ export default function GstSettingsPage() {
     enabled: !!tenant?.id,
   });
 
-  const { data: rates = [], isLoading: isLoadingRates } = useQuery<GstRate[]>({
+  const { data: rates = [], isLoading: isLoadingRates, error: ratesError } = useQuery<GstRate[]>({
     queryKey: ['/api/gst-rates', selectedSetting?.id],
     enabled: !!tenant?.id && !!selectedSetting?.id,
+    queryFn: async ({ queryKey }) => {
+      const gstSettingId = queryKey[1] as number;
+      if (!gstSettingId) {
+        throw new Error('GST Setting ID is required');
+      }
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch(`/api/gst-rates?gstSettingId=${gstSettingId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Failed to fetch tax rates:', response.status, errorText);
+        throw new Error(`Failed to fetch tax rates: ${response.status}`);
+      }
+      const data = await response.json();
+      console.log('Fetched tax rates:', data);
+      return Array.isArray(data) ? data : [];
+    },
+    refetchOnMount: true,
+    staleTime: 0,
+  });
+
+  // Fetch countries
+  const { data: countries = [] } = useQuery<Array<{ code: string; name: string; flag: string }>>({
+    queryKey: ['/api/location/countries'],
+    enabled: true,
+  });
+
+  // Fetch states for selected country
+  const { data: states = [], isLoading: isLoadingStates } = useQuery<Array<{ code: string; name: string }>>({
+    queryKey: [`/api/location/states/${selectedCountry}`],
+    enabled: !!selectedCountry,
+    refetchOnMount: true,
+    staleTime: 0,
   });
 
   const createSettingMutation = useMutation({
@@ -121,6 +158,7 @@ export default function GstSettingsPage() {
         description: "Tax setting created successfully",
       });
       setIsSettingDialogOpen(false);
+      setSelectedCountry("");
       settingForm.reset();
       setEditingSetting(null);
     },
@@ -158,6 +196,7 @@ export default function GstSettingsPage() {
         description: "Tax setting updated successfully",
       });
       setIsSettingDialogOpen(false);
+      setSelectedCountry("");
       settingForm.reset();
       setEditingSetting(null);
     },
@@ -226,7 +265,7 @@ export default function GstSettingsPage() {
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`gst-rates-${tenant?.id}`, selectedSetting?.id] });
+      queryClient.invalidateQueries({ queryKey: ['/api/gst-rates', selectedSetting?.id] });
       toast({
         title: "Success",
         description: "Tax rate created successfully",
@@ -266,7 +305,7 @@ export default function GstSettingsPage() {
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`gst-rates-${tenant?.id}`, selectedSetting?.id] });
+      queryClient.invalidateQueries({ queryKey: ['/api/gst-rates', selectedSetting?.id] });
       toast({
         title: "Success",
         description: "Tax rate updated successfully",
@@ -301,7 +340,7 @@ export default function GstSettingsPage() {
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`gst-rates-${tenant?.id}`, selectedSetting?.id] });
+      queryClient.invalidateQueries({ queryKey: ['/api/gst-rates', selectedSetting?.id] });
       toast({
         title: "Success",
         description: "Tax rate deleted successfully",
@@ -318,6 +357,7 @@ export default function GstSettingsPage() {
 
   const handleEditSetting = (setting: GstSetting) => {
     setEditingSetting(setting);
+    setSelectedCountry(setting.country || "");
     settingForm.reset({
       taxName: setting.taxName,
       taxNumber: setting.taxNumber || "",
@@ -328,6 +368,12 @@ export default function GstSettingsPage() {
       isDefault: setting.isDefault,
     });
     setIsSettingDialogOpen(true);
+  };
+
+  const handleCountryChange = (countryCode: string) => {
+    setSelectedCountry(countryCode);
+    settingForm.setValue("country", countryCode);
+    settingForm.setValue("state", ""); // Reset state when country changes
   };
 
   const handleEditRate = (rate: GstRate) => {
@@ -367,10 +413,18 @@ export default function GstSettingsPage() {
             <h1 className="text-3xl font-bold">Tax Settings</h1>
             <p className="text-muted-foreground mt-1">Configure tax settings and rates for your business</p>
           </div>
-          <Dialog open={isSettingDialogOpen} onOpenChange={setIsSettingDialogOpen}>
+          <Dialog open={isSettingDialogOpen} onOpenChange={(open) => {
+            setIsSettingDialogOpen(open);
+            if (!open) {
+              setSelectedCountry("");
+              settingForm.reset();
+              setEditingSetting(null);
+            }
+          }}>
             <DialogTrigger asChild>
               <Button data-testid="button-create-tax-setting" onClick={() => {
                 setEditingSetting(null);
+                setSelectedCountry("");
                 settingForm.reset();
               }}>
                 <Plus className="h-4 w-4 mr-2" />
@@ -419,9 +473,26 @@ export default function GstSettingsPage() {
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Country *</FormLabel>
-                          <FormControl>
-                            <Input {...field} placeholder="e.g., India" data-testid="input-country" />
-                          </FormControl>
+                          <Select
+                            onValueChange={(value) => {
+                              handleCountryChange(value);
+                              field.onChange(value);
+                            }}
+                            value={field.value}
+                          >
+                            <FormControl>
+                              <SelectTrigger data-testid="select-country">
+                                <SelectValue placeholder="Select country" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {countries.map((country) => (
+                                <SelectItem key={country.code} value={country.code}>
+                                  {country.flag} {country.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -432,9 +503,24 @@ export default function GstSettingsPage() {
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>State/Province</FormLabel>
-                          <FormControl>
-                            <Input {...field} placeholder="e.g., Maharashtra" data-testid="input-state" />
-                          </FormControl>
+                          <Select
+                            onValueChange={field.onChange}
+                            value={field.value}
+                            disabled={!selectedCountry || isLoadingStates}
+                          >
+                            <FormControl>
+                              <SelectTrigger data-testid="select-state">
+                                <SelectValue placeholder={isLoadingStates ? "Loading..." : selectedCountry ? "Select state" : "Select country first"} />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {states.map((state) => (
+                                <SelectItem key={state.code} value={state.name}>
+                                  {state.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -506,6 +592,7 @@ export default function GstSettingsPage() {
                       variant="outline"
                       onClick={() => {
                         setIsSettingDialogOpen(false);
+                        setSelectedCountry("");
                         settingForm.reset();
                         setEditingSetting(null);
                       }}
@@ -754,6 +841,10 @@ export default function GstSettingsPage() {
 
                 {isLoadingRates ? (
                   <div className="text-center py-8">Loading rates...</div>
+                ) : ratesError ? (
+                  <div className="text-center py-8 text-destructive">
+                    Error loading tax rates: {ratesError.message}
+                  </div>
                 ) : rates.length === 0 ? (
                   <div className="text-center py-8 text-muted-foreground">
                     No tax rates configured for this setting.

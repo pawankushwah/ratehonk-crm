@@ -18,7 +18,6 @@ import { registerZoomRoutes } from "./zoom-routes";
 import {
   registerWhatsAppRoutes,
   sendWhatsAppWelcomeMessage,
-  sendWhatsAppCustomMessage,
 } from "./whatsapp-routes";
 import { registerMeetingRoutes } from "./meeting-routes";
 
@@ -29,57 +28,11 @@ import bcrypt from "bcrypt";
 // import { google } from 'googleapis';
 import jwt from "jsonwebtoken";
 import multer from "multer";
-
-// Helper function to get correct base URL
-function getBaseUrl(): string {
-  let baseUrl = process.env.APP_URL || process.env.FRONTEND_URL || "http://localhost:5000";
-  
-  // Remove trailing slash if present
-  baseUrl = baseUrl.replace(/\/$/, "");
-  
-  // Check if we're in development mode
-  const isDevelopment = process.env.NODE_ENV !== "production";
-  
-  // In development, allow localhost and 127.0.0.1
-  if (isDevelopment) {
-    // Allow localhost URLs in development
-    if (baseUrl.includes("localhost") || baseUrl.includes("127.0.0.1") || baseUrl.includes("0.0.0.0")) {
-      if (!baseUrl.startsWith("http")) {
-        baseUrl = `http://${baseUrl}`;
-      }
-      console.log("🔧 Development mode - Using local URL:", baseUrl);
-      return baseUrl;
-    }
-  }
-  
-  // Force correct domain in production - reject any wrong domains
-  if (baseUrl.includes("your-app-url.com") || baseUrl.includes("ww25")) {
-    console.log("⚠️ Detected wrong domain in env, overriding to crm.ratehonk.com");
-    baseUrl = "https://crm.ratehonk.com";
-  }
-  
-  // Ensure URL is absolute
-  if (!baseUrl.startsWith("http")) {
-    // Use https for production, http for development
-    const protocol = isDevelopment ? "http" : "https";
-    baseUrl = `${protocol}://${baseUrl}`;
-  }
-  
-  // In production, ensure it ends with the correct domain
-  if (!isDevelopment && !baseUrl.includes("crm.ratehonk.com")) {
-    console.log("⚠️ Production mode - Base URL doesn't contain crm.ratehonk.com, forcing correct domain");
-    baseUrl = "https://crm.ratehonk.com";
-  }
-  
-  return baseUrl;
-}
 import nodemailer from "nodemailer";
 import * as XLSX from "xlsx";
 // import pdfParse from "pdf-parse"; // Temporarily disabled
 import Tesseract from "tesseract.js";
 import { c } from "node_modules/vite/dist/node/types.d-aGj9QkWt.js";
-import fs from "fs";
-import path from "path";
 
 // Gmail OAuth handling function - COMPLETELY REWRITTEN to avoid googleapis imports
 async function handleGmailCallback(
@@ -1088,6 +1041,58 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Expense Settings Routes
+  app.get("/api/expense-settings/:tenantId", async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId);
+      const settings = await simpleStorage.getExpenseSettings(tenantId);
+      res.json({ success: true, data: settings });
+    } catch (error: any) {
+      console.error("Error getting expense settings:", error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  app.post("/api/expense-settings", async (req, res) => {
+    try {
+      const { tenantId, ...settings } = req.body;
+      const updated = await simpleStorage.upsertExpenseSettings(
+        tenantId,
+        settings,
+      );
+      res.json({ success: true, data: updated });
+    } catch (error: any) {
+      console.error("Error updating expense settings:", error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  // Estimate Settings API Endpoints
+  app.get("/api/estimate-settings/:tenantId", async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId);
+      const settings = await simpleStorage.getEstimateSettings(tenantId);
+      res.json({ success: true, data: settings });
+    } catch (error: any) {
+      console.error("Error getting estimate settings:", error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  app.post("/api/estimate-settings", async (req, res) => {
+    try {
+      const { tenantId, ...settings } = req.body;
+      const updated = await simpleStorage.upsertEstimateSettings(
+        tenantId,
+        settings,
+      );
+      res.json({ success: true, data: updated });
+    } catch (error: any) {
+      console.error("Error updating estimate settings:", error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
   app.post("/api/invoice-settings", async (req, res) => {
     try {
       const { tenantId, ...settings } = req.body;
@@ -1754,16 +1759,7 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
         typeSpecificFilters: String(typeSpecificFilters),
       });
 
-      // Return paginated response with total count
-      res.json(
-        leads || {
-          data: [],
-          total: 0,
-          page: Number(page) || 1,
-          limit: Number(limit),
-          totalPages: 0,
-        },
-      );
+      res.json(leads || []);
     } catch (error: any) {
       console.error("❌ Enhanced leads API error:", error);
       res.status(500).json({ error: error.message });
@@ -3122,11 +3118,59 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
   app.get("/api/tenants/:tenantId/invoices", authenticateToken, async (req, res) => {
     try {
       const tenantId = parseInt(req.params.tenantId);
-      const invoices = await simpleStorage.getInvoicesByTenant(tenantId);
+      const invoices = await simpleStorage.getInvoicesByTenant(tenantId, req.query);
       return res.json(invoices);
     } catch (error: any) {
       console.error("Get invoices error:", error);
       return res.status(500).json({
+        message: "Internal server error",
+        error: error.message,
+      });
+    }
+  });
+
+  // ALL INVOICES ROUTE 
+app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, res) => {
+  try {
+    const tenantId = parseInt(req.params.tenantId);
+
+    const { startDate = "", endDate = "" } = req.query;
+
+    const invoices = await simpleStorage.getAllInvoicesByTenant(
+      tenantId,
+      startDate as string,
+      endDate as string
+    );
+
+    return res.json(invoices);
+  } catch (error: any) {
+    console.error("Get invoices error:", error);
+    return res.status(500).json({
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+});
+
+  app.get("/api/tenants/:tenantId/invoices/:invoiceId", authenticateToken, async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId);
+      const invoiceId = parseInt(req.params.invoiceId);
+      const invoice = await simpleStorage.getInvoiceById(tenantId, invoiceId);
+      return res.json({
+        success: true,
+        invoice: invoice,
+      });
+    } catch (error: any) {
+      console.error("Get invoice error:", error);
+      if (error.message === "Invoice not found") {
+        return res.status(404).json({
+          success: false,
+          message: "Invoice not found",
+        });
+      }
+      return res.status(500).json({
+        success: false,
         message: "Internal server error",
         error: error.message,
       });
@@ -3371,7 +3415,8 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
 </html>
       `;
 
-      // Set headers for PDF
+      // For now, return HTML that can be printed as PDF
+      // In production, you would use a library like puppeteer or pdfkit to generate actual PDF
       res.setHeader('Content-Type', 'text/html');
       res.setHeader('Content-Disposition', `inline; filename="invoice-${invoiceData.invoiceNumber || invoiceData.id}.html"`);
       res.send(pdfHtml);
@@ -3379,6 +3424,363 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
       console.error("Error generating invoice PDF:", error);
       return res.status(500).json({ 
         error: "Failed to generate PDF", 
+        message: error.message 
+      });
+    }
+  });
+
+  // Send invoice via email
+  app.post("/api/tenants/:tenantId/invoices/:invoiceId/email", authenticateToken, async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId);
+      const invoiceId = parseInt(req.params.invoiceId);
+
+      // Verify user has access to this tenant
+      if (req.user.tenantId !== tenantId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      // Get invoice details
+      const invoice = await simpleStorage.getInvoiceById(tenantId, invoiceId);
+      if (!invoice) {
+        return res.status(404).json({ error: "Invoice not found" });
+      }
+
+      // Get customer details
+      let customer = null;
+      if (invoice.customerId) {
+        const customers = await sql`
+          SELECT * FROM customers WHERE id = ${invoice.customerId} AND tenant_id = ${tenantId}
+        `;
+        customer = customers[0] || null;
+      }
+
+      if (!customer || !customer.email) {
+        return res.status(400).json({ error: "Customer email not found" });
+      }
+
+      // Get tenant details for company info
+      const tenants = await sql`
+        SELECT * FROM tenants WHERE id = ${tenantId}
+      `;
+      const tenant = tenants[0] || null;
+
+      // Generate invoice HTML for email
+      const invoiceHtml = `
+        <html>
+        <head>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 20px; color: #333; }
+            .header { margin-bottom: 30px; border-bottom: 2px solid #333; padding-bottom: 20px; }
+            .invoice-info { display: flex; justify-content: space-between; margin-bottom: 30px; }
+            .info-section { flex: 1; }
+            .line-items { width: 100%; border-collapse: collapse; margin: 30px 0; }
+            .line-items th { background: #f5f5f5; padding: 12px; text-align: left; border-bottom: 2px solid #333; }
+            .line-items td { padding: 10px 12px; border-bottom: 1px solid #ddd; }
+            .text-right { text-align: right; }
+            .totals { margin-top: 30px; margin-left: auto; width: 300px; }
+            .totals-row { display: flex; justify-content: space-between; padding: 8px 0; }
+            .totals-row.total { font-size: 18px; font-weight: bold; border-top: 2px solid #333; padding-top: 10px; margin-top: 10px; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>INVOICE</h1>
+            <p>Invoice #: ${invoice.invoiceNumber || `INV-${invoice.id}`}</p>
+          </div>
+          <div class="invoice-info">
+            <div class="info-section">
+              <h3>Bill To:</h3>
+              <p><strong>${customer.name || 'N/A'}</strong></p>
+              ${customer.email ? `<p>${customer.email}</p>` : ''}
+              ${customer.phone ? `<p>${customer.phone}</p>` : ''}
+            </div>
+            <div class="info-section">
+              <h3>Invoice Details:</h3>
+              <p><strong>Issue Date:</strong> ${invoice.issueDate ? new Date(invoice.issueDate).toLocaleDateString() : 'N/A'}</p>
+              <p><strong>Due Date:</strong> ${invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString() : 'N/A'}</p>
+              <p><strong>Status:</strong> ${invoice.status || 'N/A'}</p>
+            </div>
+          </div>
+          ${invoice.lineItems && invoice.lineItems.length > 0 ? `
+            <table class="line-items">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Description</th>
+                  <th class="text-right">Quantity</th>
+                  <th class="text-right">Unit Price</th>
+                  <th class="text-right">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${invoice.lineItems.map((item: any, index: number) => `
+                  <tr>
+                    <td>${index + 1}</td>
+                    <td>${item.itemTitle || item.description || 'N/A'}</td>
+                    <td class="text-right">${item.quantity || 1}</td>
+                    <td class="text-right">${invoice.currency === 'USD' ? '$' : '₹'}${parseFloat(item.sellingPrice || item.unitPrice || 0).toFixed(2)}</td>
+                    <td class="text-right">${invoice.currency === 'USD' ? '$' : '₹'}${parseFloat(item.totalAmount || 0).toFixed(2)}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          ` : ''}
+          <div class="totals">
+            <div class="totals-row total">
+              <span>Total Amount:</span>
+              <span>${invoice.currency === 'USD' ? '$' : '₹'}${parseFloat(invoice.totalAmount || 0).toFixed(2)}</span>
+            </div>
+          </div>
+          ${invoice.notes ? `<p><strong>Notes:</strong> ${invoice.notes}</p>` : ''}
+        </body>
+        </html>
+      `;
+
+      // Send email using tenant email service
+      try {
+        const { tenantEmailService } = await import("./tenant-email-service.js");
+        await tenantEmailService.sendCustomerEmail({
+          to: customer.email,
+          subject: `Invoice ${invoice.invoiceNumber || `INV-${invoice.id}`} from ${tenant?.company_name || tenant?.name || 'Company'}`,
+          body: `Please find attached invoice ${invoice.invoiceNumber || `INV-${invoice.id}`}. Total amount: ${invoice.currency === 'USD' ? '$' : '₹'}${parseFloat(invoice.totalAmount?.toString() || "0").toFixed(2)}`,
+          htmlBody: invoiceHtml,
+          tenantId: tenantId,
+        });
+
+        return res.json({ 
+          success: true, 
+          message: "Invoice sent via email successfully" 
+        });
+      } catch (emailError: any) {
+        console.error("Failed to send invoice email:", emailError);
+        return res.status(500).json({ 
+          error: "Failed to send email", 
+          message: emailError.message 
+        });
+      }
+    } catch (error: any) {
+      console.error("Error sending invoice email:", error);
+      return res.status(500).json({ 
+        error: "Internal server error", 
+        message: error.message 
+      });
+    }
+  });
+
+  // Send invoice via WhatsApp
+  app.post("/api/tenants/:tenantId/invoices/:invoiceId/whatsapp", authenticateToken, async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId);
+      const invoiceId = parseInt(req.params.invoiceId);
+
+      // Verify user has access to this tenant
+      if (req.user.tenantId !== tenantId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      // Get invoice details
+      const invoice = await simpleStorage.getInvoiceById(tenantId, invoiceId);
+      if (!invoice) {
+        return res.status(404).json({ error: "Invoice not found" });
+      }
+
+      // Get customer details
+      let customer = null;
+      if (invoice.customerId) {
+        const customers = await sql`
+          SELECT * FROM customers WHERE id = ${invoice.customerId} AND tenant_id = ${tenantId}
+        `;
+        customer = customers[0] || null;
+      }
+
+      if (!customer || !customer.phone) {
+        return res.status(400).json({ error: "Customer phone number not found" });
+      }
+
+      // Generate WhatsApp message
+      const message = `*Invoice ${invoice.invoiceNumber || `INV-${invoice.id}`}*\n\n` +
+        `Total Amount: ${invoice.currency === 'USD' ? '$' : '₹'}${parseFloat(invoice.totalAmount?.toString() || "0").toFixed(2)}\n` +
+        `Due Date: ${invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString() : 'N/A'}\n` +
+        `Status: ${invoice.status || 'N/A'}\n\n` +
+        `Please make the payment by the due date. Thank you!`;
+
+      // For now, return a WhatsApp link (in production, integrate with WhatsApp Business API)
+      const whatsappLink = `https://wa.me/${customer.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(message)}`;
+
+      return res.json({ 
+        success: true, 
+        message: "WhatsApp link generated",
+        whatsappLink: whatsappLink,
+        phone: customer.phone
+      });
+    } catch (error: any) {
+      console.error("Error sending invoice via WhatsApp:", error);
+      return res.status(500).json({ 
+        error: "Internal server error", 
+        message: error.message 
+      });
+    }
+  });
+
+  // Send estimate via email
+  app.post("/api/tenants/:tenantId/estimates/:estimateId/email", authenticateToken, async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId);
+      const estimateId = parseInt(req.params.estimateId);
+
+      // Verify user has access to this tenant
+      if (req.user.tenantId !== tenantId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      // Get estimate details
+      const estimate = await simpleStorage.getEstimate(estimateId, tenantId);
+      if (!estimate) {
+        return res.status(404).json({ error: "Estimate not found" });
+      }
+
+      if (!estimate.customer_email) {
+        return res.status(400).json({ error: "Customer email not found" });
+      }
+
+      // Get tenant details for company info
+      const tenants = await sql`
+        SELECT * FROM tenants WHERE id = ${tenantId}
+      `;
+      const tenant = tenants[0] || null;
+
+      // Generate estimate HTML for email
+      const estimateHtml = `
+        <html>
+        <head>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 20px; color: #333; }
+            .header { margin-bottom: 30px; border-bottom: 2px solid #333; padding-bottom: 20px; }
+            .estimate-info { display: flex; justify-content: space-between; margin-bottom: 30px; }
+            .info-section { flex: 1; }
+            .totals { margin-top: 30px; margin-left: auto; width: 300px; }
+            .totals-row { display: flex; justify-content: space-between; padding: 8px 0; }
+            .totals-row.total { font-size: 18px; font-weight: bold; border-top: 2px solid #333; padding-top: 10px; margin-top: 10px; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>ESTIMATE</h1>
+            <p>Estimate #: ${estimate.estimate_number || `EST-${estimate.id}`}</p>
+          </div>
+          <div class="estimate-info">
+            <div class="info-section">
+              <h3>Bill To:</h3>
+              <p><strong>${estimate.customer_name || 'N/A'}</strong></p>
+              ${estimate.customer_email ? `<p>${estimate.customer_email}</p>` : ''}
+              ${estimate.customer_phone ? `<p>${estimate.customer_phone}</p>` : ''}
+            </div>
+            <div class="info-section">
+              <h3>Estimate Details:</h3>
+              <p><strong>Valid Until:</strong> ${estimate.valid_until ? new Date(estimate.valid_until).toLocaleDateString() : 'N/A'}</p>
+              <p><strong>Status:</strong> ${estimate.status || 'N/A'}</p>
+            </div>
+          </div>
+          <div class="totals">
+            <div class="totals-row">
+              <span>Subtotal:</span>
+              <span>${estimate.currency === 'USD' ? '$' : '₹'}${parseFloat(estimate.subtotal?.toString() || "0").toFixed(2)}</span>
+            </div>
+            ${estimate.discount_amount > 0 ? `
+              <div class="totals-row">
+                <span>Discount:</span>
+                <span>-${estimate.currency === 'USD' ? '$' : '₹'}${parseFloat(estimate.discount_amount?.toString() || "0").toFixed(2)}</span>
+              </div>
+            ` : ''}
+            ${estimate.tax_amount > 0 ? `
+              <div class="totals-row">
+                <span>Tax:</span>
+                <span>${estimate.currency === 'USD' ? '$' : '₹'}${parseFloat(estimate.tax_amount?.toString() || "0").toFixed(2)}</span>
+              </div>
+            ` : ''}
+            <div class="totals-row total">
+              <span>Total Amount:</span>
+              <span>${estimate.currency === 'USD' ? '$' : '₹'}${parseFloat(estimate.total_amount?.toString() || "0").toFixed(2)}</span>
+            </div>
+          </div>
+          ${estimate.notes ? `<p><strong>Notes:</strong> ${estimate.notes}</p>` : ''}
+        </body>
+        </html>
+      `;
+
+      // Send email using tenant email service
+      try {
+        const { tenantEmailService } = await import("./tenant-email-service.js");
+        await tenantEmailService.sendCustomerEmail({
+          to: estimate.customer_email,
+          subject: `Estimate ${estimate.estimate_number || `EST-${estimate.id}`} from ${tenant?.company_name || tenant?.name || 'Company'}`,
+          body: `Please find attached estimate ${estimate.estimate_number || `EST-${estimate.id}`}. Total amount: ${estimate.currency === 'USD' ? '$' : '₹'}${parseFloat(estimate.total_amount?.toString() || "0").toFixed(2)}`,
+          htmlBody: estimateHtml,
+          tenantId: tenantId,
+        });
+
+        return res.json({ 
+          success: true, 
+          message: "Estimate sent via email successfully" 
+        });
+      } catch (emailError: any) {
+        console.error("Failed to send estimate email:", emailError);
+        return res.status(500).json({ 
+          error: "Failed to send email", 
+          message: emailError.message 
+        });
+      }
+    } catch (error: any) {
+      console.error("Error sending estimate email:", error);
+      return res.status(500).json({ 
+        error: "Internal server error", 
+        message: error.message 
+      });
+    }
+  });
+
+  // Send estimate via WhatsApp
+  app.post("/api/tenants/:tenantId/estimates/:estimateId/whatsapp", authenticateToken, async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId);
+      const estimateId = parseInt(req.params.estimateId);
+
+      // Verify user has access to this tenant
+      if (req.user.tenantId !== tenantId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      // Get estimate details
+      const estimate = await simpleStorage.getEstimate(estimateId, tenantId);
+      if (!estimate) {
+        return res.status(404).json({ error: "Estimate not found" });
+      }
+
+      if (!estimate.customer_phone) {
+        return res.status(400).json({ error: "Customer phone number not found" });
+      }
+
+      // Generate WhatsApp message
+      const message = `*Estimate ${estimate.estimate_number || `EST-${estimate.id}`}*\n\n` +
+        `Total Amount: ${estimate.currency === 'USD' ? '$' : '₹'}${parseFloat(estimate.total_amount?.toString() || "0").toFixed(2)}\n` +
+        `Valid Until: ${estimate.valid_until ? new Date(estimate.valid_until).toLocaleDateString() : 'N/A'}\n` +
+        `Status: ${estimate.status || 'N/A'}\n\n` +
+        `Please review the estimate and let us know if you have any questions. Thank you!`;
+
+      // For now, return a WhatsApp link (in production, integrate with WhatsApp Business API)
+      const whatsappLink = `https://wa.me/${estimate.customer_phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(message)}`;
+
+      return res.json({ 
+        success: true, 
+        message: "WhatsApp link generated",
+        whatsappLink: whatsappLink,
+        phone: estimate.customer_phone
+      });
+    } catch (error: any) {
+      console.error("Error sending estimate via WhatsApp:", error);
+      return res.status(500).json({ 
+        error: "Internal server error", 
         message: error.message 
       });
     }
@@ -7745,85 +8147,48 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
 
       // Password is valid, continue with login
 
-      // CRITICAL: Check if email is verified/activated - MUST be checked BEFORE sending verification code
-      // This check MUST happen before any verification code generation or email sending
-      console.log("🔐 Checking email verification status for user:", user.email);
-      console.log("🔐 is_email_verified value:", user.is_email_verified);
-      console.log("🔐 is_email_verified type:", typeof user.is_email_verified);
-      
-      // Strict check: user must be activated (is_email_verified must be exactly true)
-      // This catches: false, null, undefined, 0, "", etc.
-      // Only proceed if is_email_verified is explicitly true
-      if (user.is_email_verified !== true) {
-        console.log("❌ BLOCKED: Login attempt by unactivated user:", user.email);
-        console.log("❌ User activation status:", user.is_email_verified);
-        console.log("❌ Blocking login - user must activate account first");
-        console.log("❌ NO verification code will be sent");
-        // Return immediately - DO NOT proceed to verification code generation
-        return res.status(403).json({ 
-          message: "Please activate your account by clicking the activation link sent to your email before logging in.",
-          requiresActivation: true,
-        });
+      // Generate JWT token
+      const token = jwt.sign({ userId: user.id }, JWT_SECRET);
+
+      // Get tenant info if user is not saas_owner
+      let tenant = null;
+      let permissions = null;
+      if (user.tenant_id) {
+        console.log("Fetching tenant data for tenant ID:", user.tenant_id);
+        tenant = await simpleStorage.getTenant(user.tenant_id);
+        console.log("Tenant data retrieved:", user ? user : "Not found");
+        permissions = await simpleStorage.getRoleById(
+          user.role_id,
+          user.tenant_id,
+        );
       }
 
-      console.log("✅ User is activated, proceeding with verification code generation");
-
-      // Generate 6-digit verification code
-      const crypto = await import("crypto");
-      const verificationCode = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit code
-      const expiresAt = new Date();
-      expiresAt.setMinutes(expiresAt.getMinutes() + 10); // 10 minutes expiration
-
-      // Save verification code
-      await simpleStorage.createLoginVerificationCode(
-        user.id,
-        user.email,
-        verificationCode,
-        expiresAt,
-      );
-
-      // Send verification code email
-      const firstName = user.first_name || "";
-      const lastName = user.last_name || "";
-      console.log("📧 Sending login verification code to:", user.email);
-      console.log("📧 Environment variables check:", {
-        SMTP_HOST: process.env.SMTP_HOST ? "✅ Set" : "❌ Not set",
-        SMTP_PORT: process.env.SMTP_PORT ? "✅ Set" : "❌ Not set",
-        EMAIL_USER: process.env.EMAIL_USER ? "✅ Set" : "❌ Not set",
-        SMTP_USER: process.env.SMTP_USER ? "✅ Set" : "❌ Not set",
-        EMAIL_PASS: process.env.EMAIL_PASS ? "✅ Set (hidden)" : "❌ Not set",
-        SMTP_PASS: process.env.SMTP_PASS ? "✅ Set (hidden)" : "❌ Not set",
-        NODE_ENV: process.env.NODE_ENV,
-      });
-      
-      const emailSent = await emailService.sendLoginVerificationCode({
-        to: user.email,
-        firstName: firstName,
-        lastName: lastName,
-        verificationCode: verificationCode,
-      });
-
-      if (!emailSent) {
-        console.error("❌ Failed to send verification code email");
-        console.error("❌ Please check server logs for detailed error information");
-        console.error("❌ Common issues:");
-        console.error("   1. SMTP credentials not set in environment variables");
-        console.error("   2. SMTP server connection failed");
-        console.error("   3. Firewall blocking SMTP port");
-        console.error("   4. Invalid SMTP configuration");
-        // return res.status(500).json({ 
-        //   message: "Failed to send verification code. Please try again.",
-        // });
-      }
-
-      // Return response indicating code was sent (don't return token yet)
+      console.log("Login successful for user:", user.email);
       res.json({
-        requiresVerification: true,
-        message: "Verification code sent to your email. Please check your inbox.",
-        userId: user.id, // Send userId for verification step
-        emailVerificationCode: verificationCode,
+        user: {
+          id: user.id,
+          email: user.email,
+          role: user.role,
+          tenantId: user.tenant_id,
+          firstName: user.first_name || "",
+          lastName: user.last_name || "",
+          permissions: permissions ? permissions.permissions : {},
+          isActive: user.is_active,
+        },
+        tenant: tenant
+          ? {
+              id: tenant.id,
+              companyName: tenant.company_name,
+              subdomain: tenant.subdomain,
+              contactEmail: tenant.contact_email,
+              contactPhone: tenant.contact_phone,
+              address: tenant.address,
+              isActive: tenant.is_active,
+              logo: tenant.logo,
+            }
+          : null,
+        token,
       });
-      return;
     } catch (error: any) {
       console.error("Login error details:", error);
       console.error("Error message:", error.message);
@@ -7946,7 +8311,7 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
       // Hash password
       const hashedPassword = await bcrypt.hash(password, 10);
 
-      // Create user with email verification set to false
+      // Create user
       const user = await simpleStorage.createUser({
         email,
         password: hashedPassword,
@@ -7955,7 +8320,6 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
         firstName,
         lastName,
         isActive: true,
-        isEmailVerified: false,
       });
 
       // Create 14-day trial subscription
@@ -7988,78 +8352,43 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
         // Continue without subscription - user can set it up later
       }
 
-      // Generate activation token and send activation email
+      // Send welcome email
       try {
-        const crypto = await import("crypto");
-        const activationToken = crypto.randomBytes(32).toString("hex");
-        const expiresAt = new Date();
-        expiresAt.setHours(expiresAt.getHours() + 24); // 24 hours expiration
-
-        // Save activation token
-        await simpleStorage.createActivationToken(
-          user.id,
-          activationToken,
-          expiresAt,
-        );
-
-        // Send activation email
-        console.log("📧 ===== REGISTRATION - SENDING ACTIVATION EMAIL =====");
-        console.log("📧 Email:", email);
-        console.log("📧 First Name:", firstName);
-        console.log("📧 Last Name:", lastName);
-        console.log("📧 Company Name:", companyName);
-        console.log("📧 Activation token (first 8 chars):", activationToken.substring(0, 8));
-        console.log("📧 EmailService instance:", typeof emailService);
-        console.log("📧 EmailService method exists:", typeof emailService?.sendActivationEmail);
-
-        try {
-          const emailSent = await emailService.sendActivationEmail({
-            to: email,
-            firstName: firstName,
-            lastName: lastName,
-            activationToken: activationToken,
-            companyName: companyName,
-          });
-          
-          if (emailSent) {
-            console.log("✅ ===== ACTIVATION EMAIL SENT - REGISTRATION CONFIRMED =====");
-            console.log("✅ Activation email sent successfully to:", email);
-          } else {
-            console.error("❌ ===== ACTIVATION EMAIL SEND FAILED - FUNCTION RETURNED FALSE =====");
-            console.error("❌ Failed to send activation email to:", email);
-            console.error("❌ User can still activate manually via support");
-          }
-        } catch (emailError: any) {
-          console.error("❌ ===== EXCEPTION IN ACTIVATION EMAIL SENDING =====");
-          console.error("❌ Activation email error:", emailError);
-          console.error("❌ Exception message:", emailError?.message);
-          console.error("❌ Exception stack:", emailError?.stack);
-          console.error("❌ Error details:", {
-            message: emailError?.message,
-            code: emailError?.code,
-            command: emailError?.command,
-            response: emailError?.response,
-            responseCode: emailError?.responseCode,
-          });
-          // Continue without email - user account is still created
-        }
-      } catch (emailError: any) {
-        console.error("❌ ===== EXCEPTION IN ACTIVATION TOKEN CREATION =====");
-        console.error("❌ Activation token/email error:", emailError);
-        console.error("❌ Exception message:", emailError?.message);
-        console.error("❌ Exception stack:", emailError?.stack);
+        const userName = `${firstName} ${lastName}`;
+        console.log("📧 Sending welcome email to:", email);
+        // await emailService.sendWelcomeEmail(email, companyName, userName);
+        await emailService.sendWelcomeEmail({
+          to: email,
+          firstName: firstName,
+          lastName: lastName,
+          companyName,
+          email,
+          temporaryPassword: "",
+        });
+        console.log("✅ Welcome email sent successfully");
+      } catch (emailError) {
+        console.error("Welcome email failed (non-critical):", emailError);
         // Continue without email - user account is still created
       }
 
-      // Don't return token - user needs to activate first
-      // Return success message indicating activation email was sent
+      // Generate JWT token
+      const token = jwt.sign({ userId: user.id }, JWT_SECRET);
+
       res.status(201).json({
-        message: "Registration successful! Please check your email to activate your account.",
-        requiresActivation: true,
         user: {
           id: user.id,
           email: user.email,
+          role: user.role,
+          tenantId: user.tenant_id,
+          firstName:
+            user.first_name || (user.name ? user.name.split(" ")[0] : ""),
+          lastName:
+            user.last_name ||
+            (user.name ? user.name.split(" ").slice(1).join(" ") : ""),
+          isActive: user.is_active,
         },
+        tenant,
+        token,
       });
     } catch (error: any) {
       console.error("Registration error details:", error);
@@ -8169,34 +8498,23 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
       const displayName =
         `${user.first_name || ""} ${user.last_name || ""}`.trim() || "User";
 
-      console.log("📧 ===== FORGOT PASSWORD ENDPOINT - SENDING EMAIL =====");
+      console.log("📧 Attempting to send password reset email...");
       console.log("📧 Email:", email);
       console.log("📧 Name:", displayName);
       console.log("📧 Token (first 8 chars):", resetToken.substring(0, 8));
-      console.log("📧 EmailService instance:", typeof emailService);
-      console.log("📧 EmailService method exists:", typeof emailService?.sendPasswordResetEmail);
 
       // Send the email
-      try {
-        const emailSent = await emailService.sendPasswordResetEmail({
-          to: email,
-          displayName,
-          resetToken,
-          companyName: "RateHonk",
-        });
+      const emailSent = await emailService.sendPasswordResetEmail({
+        to: email,
+        displayName,
+        resetToken,
+        companyName: "RateHonk",
+      });
 
-        if (emailSent) {
-          console.log("✅ ===== EMAIL SENT - ENDPOINT CONFIRMED =====");
-          console.log("✅ Password reset email sent successfully");
-        } else {
-          console.error("❌ ===== EMAIL SEND FAILED - FUNCTION RETURNED FALSE =====");
-          console.warn("⚠️ Failed to send password reset email - sendPasswordResetEmail returned false");
-        }
-      } catch (emailError: any) {
-        console.error("❌ ===== EXCEPTION IN EMAIL SENDING =====");
-        console.error("❌ Exception caught:", emailError);
-        console.error("❌ Exception message:", emailError?.message);
-        console.error("❌ Exception stack:", emailError?.stack);
+      if (emailSent) {
+        console.log("✅ Password reset email sent successfully");
+      } else {
+        console.warn("⚠️ Failed to send password reset email");
       }
 
       // Clean up expired tokens (asynchronously)
@@ -8206,7 +8524,6 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
       res.json({
         message:
           "If an account with this email exists, you will receive a password reset link shortly.",
-          otp: resetToken.substring(0, 8),
       });
     } catch (error: any) {
       console.error("❌ Password reset request error:", error);
@@ -8278,242 +8595,6 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
       res.status(500).json({
         valid: false,
         message: "Internal server error",
-        details:
-          process.env.NODE_ENV === "development" ? error.message : undefined,
-      });
-    }
-  });
-
-  // Verify login code endpoint
-  app.post("/api/auth/verify-login-code", async (req, res) => {
-    try {
-      const { userId, code } = req.body;
-
-      if (!userId || !code) {
-        return res.status(400).json({ 
-          message: "User ID and verification code are required" 
-        });
-      }
-
-      console.log("🔐 Verifying login code for user:", userId);
-
-      // Get verification code
-      const verificationCodeData = await simpleStorage.getLoginVerificationCode(
-        userId,
-        code,
-      );
-
-      if (!verificationCodeData) {
-        // Check if there's a code but it's wrong (to increment attempts)
-        const existingCode = await sql`
-          SELECT * FROM login_verification_codes 
-          WHERE user_id = ${userId} 
-          AND used_at IS NULL 
-          AND expires_at > NOW()
-          ORDER BY created_at DESC
-          LIMIT 1
-        `;
-
-        if (existingCode[0]) {
-          await simpleStorage.incrementVerificationAttempts(existingCode[0].id);
-          
-          // Check if too many attempts
-          if (existingCode[0].attempts >= 4) {
-            return res.status(400).json({
-              message: "Too many failed attempts. Please request a new code.",
-              tooManyAttempts: true,
-            });
-          }
-        }
-
-        return res.status(400).json({
-          message: "Invalid or expired verification code. Please try again.",
-          attemptsRemaining: existingCode[0] ? (5 - existingCode[0].attempts - 1) : 4,
-        });
-      }
-
-      // Check if too many attempts
-      if (verificationCodeData.attempts >= 5) {
-        return res.status(400).json({
-          message: "Too many failed attempts. Please request a new code.",
-          tooManyAttempts: true,
-        });
-      }
-
-      // Code is valid - mark as used
-      await simpleStorage.markVerificationCodeAsUsed(verificationCodeData.id);
-
-      // Get user info
-      const user = await simpleStorage.getUser(userId);
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
-      }
-
-      // Generate JWT token
-      const token = jwt.sign({ userId: user.id }, JWT_SECRET);
-
-      // Get tenant info if user is not saas_owner
-      let tenant = null;
-      let permissions = null;
-      if (user.tenant_id) {
-        console.log("Fetching tenant data for tenant ID:", user.tenant_id);
-        tenant = await simpleStorage.getTenant(user.tenant_id);
-        permissions = await simpleStorage.getRoleById(
-          user.role_id,
-          user.tenant_id,
-        );
-      }
-
-      console.log("✅ Login successful for user:", user.email);
-
-      res.json({
-        user: {
-          id: user.id,
-          email: user.email,
-          role: user.role,
-          tenantId: user.tenant_id,
-          firstName: user.first_name || "",
-          lastName: user.last_name || "",
-          permissions: permissions ? permissions.permissions : {},
-          isActive: user.is_active,
-        },
-        tenant: tenant
-          ? {
-              id: tenant.id,
-              companyName: tenant.company_name,
-              subdomain: tenant.subdomain,
-              contactEmail: tenant.contact_email,
-              contactPhone: tenant.contact_phone,
-              address: tenant.address,
-              isActive: tenant.is_active,
-              logo: tenant.logo,
-            }
-          : null,
-        token,
-      });
-    } catch (error: any) {
-      console.error("Error verifying login code:", error);
-      res.status(500).json({
-        message: "Error verifying code. Please try again.",
-        details: process.env.NODE_ENV === "development" ? error.message : undefined,
-      });
-    }
-  });
-
-  // Resend verification code endpoint
-  app.post("/api/auth/resend-verification-code", async (req, res) => {
-    try {
-      const { userId } = req.body;
-
-      if (!userId) {
-        return res.status(400).json({ message: "User ID is required" });
-      }
-
-      const user = await simpleStorage.getUser(userId);
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
-      }
-
-      // Generate new 6-digit verification code
-      const crypto = await import("crypto");
-      const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
-      const expiresAt = new Date();
-      expiresAt.setMinutes(expiresAt.getMinutes() + 10);
-
-      // Save verification code
-      await simpleStorage.createLoginVerificationCode(
-        user.id,
-        user.email,
-        verificationCode,
-        expiresAt,
-      );
-
-      // Send verification code email
-      const firstName = user.first_name || "";
-      const lastName = user.last_name || "";
-      const emailSent = await emailService.sendLoginVerificationCode({
-        to: user.email,
-        firstName: firstName,
-        lastName: lastName,
-        verificationCode: verificationCode,
-      });
-
-      if (!emailSent) {
-        // return res.status(500).json({ 
-        //   message: "Failed to send verification code. Please try again.",
-        // });
-      }
-
-      res.json({
-        success: true,
-        message: "Verification code resent to your email.",
-        otp: verificationCode,
-      });
-    } catch (error: any) {
-      console.error("Error resending verification code:", error);
-      res.status(500).json({
-        message: "Error resending code. Please try again.",
-      });
-    }
-  });
-
-  // Email activation endpoint
-  app.get("/api/auth/activate/:token", async (req, res) => {
-    try {
-      const { token } = req.params;
-
-      if (!token) {
-        return res.status(400).json({
-          success: false,
-          message: "Activation token is required",
-        });
-      }
-
-      console.log("🔐 Activating account with token:", token.substring(0, 8) + "...");
-
-      // Check if token exists and is not expired
-      const activationTokenData = await simpleStorage.getActivationToken(token);
-
-      if (!activationTokenData) {
-        console.log("🔐 Activation token not found or expired");
-        return res.status(400).json({
-          success: false,
-          message:
-            "Invalid or expired activation token. Please contact support or register again.",
-        });
-      }
-
-      // Check if user is already activated
-      if (activationTokenData.is_email_verified) {
-        console.log("✅ User already activated");
-        return res.status(400).json({
-          success: false,
-          message: "Account is already activated. You can login now.",
-        });
-      }
-
-      // Activate the user
-      await simpleStorage.activateUser(activationTokenData.user_id);
-
-      // Mark token as used
-      await simpleStorage.markActivationTokenAsUsed(activationTokenData.id);
-
-      console.log("✅ Account activated successfully for user:", activationTokenData.email);
-
-      // Redirect to login page (frontend will handle this)
-      const baseUrl = getBaseUrl();
-      const loginUrl = `${baseUrl}/login?activated=true`;
-      
-      res.json({
-        success: true,
-        message: "Account activated successfully! You can now login.",
-        redirectUrl: loginUrl,
-      });
-    } catch (error: any) {
-      console.error("Error activating account:", error);
-      res.status(500).json({
-        success: false,
-        message: "Error activating account. Please contact support.",
         details:
           process.env.NODE_ENV === "development" ? error.message : undefined,
       });
@@ -9884,31 +9965,451 @@ David,Brown,david.brown@example.com,555-0127,email_campaign,contacted,Prefers lu
     }
   });
 
-  app.post("/api/tenants/:tenantId/packages", async (req, res) => {
+  app.get("/api/tenants/:tenantId/packages/:packageId", async (req, res) => {
     try {
-      const { tenantId } = req.params;
-      const packageData = { ...req.body, tenantId: parseInt(tenantId) };
-      const travelPackage = await simpleStorage.createPackage(packageData);
-      res.status(201).json(travelPackage);
+      const { packageId } = req.params;
+      const package_ = await simpleStorage.getPackage(parseInt(packageId));
+      if (!package_) {
+        return res.status(404).json({ message: "Package not found" });
+      }
+      res.json(package_);
     } catch (error) {
-      console.error("Create package error:", error);
+      console.error("Get package error:", error);
       res.status(500).json({ message: "Internal server error" });
     }
   });
 
-  app.put("/api/tenants/:tenantId/packages/:packageId", async (req, res) => {
-    try {
-      const { packageId } = req.params;
-      const travelPackage = await simpleStorage.updatePackage(
-        parseInt(packageId),
-        req.body,
-      );
-      res.json(travelPackage);
-    } catch (error) {
-      console.error("Update package error:", error);
-      res.status(500).json({ message: "Internal server error" });
-    }
+  // Configure multer for package image uploads (accepts any field names for flexibility)
+  const packageImageUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+      fileSize: 10 * 1024 * 1024, // 10MB per file
+    },
+    fileFilter: (req, file, cb) => {
+      const allowedTypes = [
+        "image/jpeg",
+        "image/jpg",
+        "image/png",
+        "image/gif",
+        "image/webp",
+      ];
+      if (allowedTypes.includes(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(new Error(`Unsupported file type: ${file.mimetype}`) as any, false);
+      }
+    },
   });
+
+  app.post(
+    "/api/tenants/:tenantId/packages",
+    packageImageUpload.any(), // Accept any field names for flexibility with day-wise images
+    async (req: any, res) => {
+      // Optional authentication - verify token if provided, but don't block on database errors
+      try {
+        const authHeader = req.headers["authorization"];
+        const token = authHeader && authHeader.split(" ")[1]; // Bearer TOKEN
+
+        if (token) {
+          try {
+            const decoded = jwt.verify(token, JWT_SECRET) as any;
+            // Try to get user, but don't fail if database quota is exceeded
+            try {
+              const user = await simpleStorage.getUser(decoded.userId);
+              if (user) {
+                req.user = {
+                  id: user.id,
+                  email: user.email,
+                  role: user.role,
+                  tenantId: user.tenant_id,
+                  firstName: user.first_name,
+                  lastName: user.last_name,
+                  isActive: user.is_active,
+                };
+              }
+            } catch (dbError: any) {
+              // If database quota exceeded, log but continue
+              if (dbError.code === 'XX000' || dbError.message?.includes('quota')) {
+                console.warn("⚠️ Database quota exceeded during auth, continuing with package creation");
+              } else {
+                throw dbError;
+              }
+            }
+          } catch (tokenError: any) {
+            // Invalid token - return error
+            return res.status(403).json({ message: "Invalid or expired token" });
+          }
+        }
+        // If no token, continue without authentication (matching other package routes pattern)
+      } catch (authError: any) {
+        // If outer auth check fails, log but continue (handles any unexpected errors)
+        console.error("Auth check error:", authError);
+      }
+
+      try {
+        const { tenantId } = req.params;
+        const { ObjectStorageService } = await import("./objectStorage.js");
+        const objectStorage = new ObjectStorageService();
+
+        // Process uploaded images
+        const imageUrls: any = {
+          packageStayingImage: "",
+          itineraryImages: "",
+          dayWiseItinerary: [],
+        };
+
+        // Organize files by field name
+        const filesByField: { [key: string]: any[] } = {};
+        if (req.files && Array.isArray(req.files)) {
+          console.log(`📁 Total files received: ${req.files.length}`);
+          req.files.forEach((file: any) => {
+            const fieldName = file.fieldname || "";
+            console.log(`📁 File field name: "${fieldName}", originalname: "${file.originalname}"`);
+            if (!filesByField[fieldName]) {
+              filesByField[fieldName] = [];
+            }
+            filesByField[fieldName].push(file);
+          });
+          console.log(`📁 Files organized by field:`, Object.keys(filesByField).map(key => `${key}: ${filesByField[key].length} files`));
+        }
+
+        // Helper function to sanitize filename (remove spaces, hyphens, and special chars)
+        const sanitizeFileName = (filename: string) => {
+          // Remove all spaces, hyphens, and special characters (keep only alphanumeric and dots)
+          return filename
+            .replace(/\s+/g, '') // Remove all spaces
+            .replace(/-/g, '') // Remove all hyphens
+            .replace(/[^a-zA-Z0-9.]/g, '') // Keep only alphanumeric and dots
+            .toLowerCase();
+        };
+
+        // Upload package staying image
+        if (filesByField["packageStayingImage"]?.[0]) {
+          const file = filesByField["packageStayingImage"][0];
+          const sanitizedName = sanitizeFileName(file.originalname);
+          // Don't add timestamp/random here - objectStorage will add it
+          const fileName = `packages/${tenantId}/${sanitizedName}`;
+          const url = await objectStorage.uploadFile(
+            fileName,
+            file.buffer,
+            file.mimetype
+          );
+          imageUrls.packageStayingImage = url;
+        }
+
+        // Upload general itinerary images
+        // Only process files with exact field name "itineraryImages" (not dayWiseItineraryImages)
+        if (filesByField["itineraryImages"] && filesByField["itineraryImages"].length > 0) {
+          console.log(`📸 Uploading ${filesByField["itineraryImages"].length} general itinerary images`);
+          const uploadedUrls = await Promise.all(
+            filesByField["itineraryImages"].map(async (file: any) => {
+              const sanitizedName = sanitizeFileName(file.originalname);
+              // Don't add timestamp/random here - objectStorage will add it
+              const fileName = `packages/${tenantId}/itinerary/${sanitizedName}`;
+              console.log(`📸 Uploading itinerary image: ${fileName}`);
+              return await objectStorage.uploadFile(
+                fileName,
+                file.buffer,
+                file.mimetype
+              );
+            })
+          );
+          imageUrls.itineraryImages = uploadedUrls.join(", ");
+          console.log(`✅ General itinerary images uploaded: ${uploadedUrls.length}`);
+        }
+
+        // Process day-wise itinerary images
+        let dayWiseItinerary = [];
+        if (req.body.dayWiseItinerary) {
+          try {
+            dayWiseItinerary = typeof req.body.dayWiseItinerary === 'string' 
+              ? JSON.parse(req.body.dayWiseItinerary) 
+              : req.body.dayWiseItinerary;
+          } catch (e) {
+            console.error("Error parsing dayWiseItinerary:", e);
+          }
+        }
+
+        // Upload day-wise images if provided
+        if (dayWiseItinerary.length > 0) {
+          // Get all day-wise image files from filesByField
+          // IMPORTANT: Only process files that start with "dayWiseItineraryImages" (not "itineraryImages")
+          // This ensures general itinerary images don't get mixed with day-wise images
+          const dayWiseFiles: any[] = [];
+          Object.keys(filesByField).forEach((fieldName) => {
+            // Strict check: must start with "dayWiseItineraryImages" and NOT be just "itineraryImages"
+            if (fieldName.startsWith('dayWiseItineraryImages') && fieldName !== 'itineraryImages') {
+              console.log(`📸 Processing day-wise files with field: "${fieldName}"`);
+              filesByField[fieldName].forEach((file: any) => {
+                // Extract day index from field name like "dayWiseItineraryImages[0]"
+                const match = fieldName.match(/\[(\d+)\]/);
+                const dayIndex = match ? parseInt(match[1]) : null;
+                if (dayIndex === null) {
+                  console.warn(`⚠️ Warning: Could not extract day index from field name: "${fieldName}"`);
+                }
+                console.log(`📸 Day-wise file: dayIndex=${dayIndex}, originalname="${file.originalname}"`);
+                dayWiseFiles.push({ ...file, dayIndex });
+              });
+            } else if (fieldName === 'itineraryImages') {
+              console.log(`✅ Skipping field "${fieldName}" - this is for general itinerary images, not day-wise`);
+            }
+          });
+          console.log(`📸 Total day-wise files found: ${dayWiseFiles.length}`);
+
+          // Process each day and upload its images
+          const processedDayWise = await Promise.all(
+            dayWiseItinerary.map(async (day: any, index: number) => {
+              // Find images for this day index
+              const dayImages = dayWiseFiles.filter(
+                (file: any) => file.dayIndex === index
+              );
+
+              let itineraryImageNames = "";
+              if (dayImages.length > 0) {
+                console.log(`📸 Uploading ${dayImages.length} images for Day ${day.day} to day-${day.day} folder`);
+                const uploadedDayUrls = await Promise.all(
+                  dayImages.map(async (file: any) => {
+                    const sanitizedName = sanitizeFileName(file.originalname);
+                    // Don't add timestamp/random here - objectStorage will add it
+                    const fileName = `packages/${tenantId}/day-${day.day}/${sanitizedName}`;
+                    console.log(`📸 Uploading day-${day.day} image: ${fileName}`);
+                    return await objectStorage.uploadFile(
+                      fileName,
+                      file.buffer,
+                      file.mimetype
+                    );
+                  })
+                );
+                itineraryImageNames = uploadedDayUrls.join(", ");
+                console.log(`✅ Day ${day.day} images uploaded: ${uploadedDayUrls.length}`);
+              }
+
+              return {
+                day: day.day,
+                place: day.place,
+                itineraryDescription: day.itineraryDescription || "",
+                itineraryImageNames,
+              };
+            })
+          );
+          imageUrls.dayWiseItinerary = processedDayWise;
+        }
+
+        // Parse other form fields
+        const packageData = {
+          tenantId: parseInt(tenantId),
+          packageTypeId: parseInt(req.body.packageTypeId) || 1,
+          name: req.body.name,
+          description: req.body.description || "",
+          destination: req.body.destination || "",
+          duration: parseInt(req.body.duration) || 1,
+          price: parseFloat(req.body.price) || 0,
+          maxCapacity: parseInt(req.body.maxCapacity) || 1,
+          inclusions: req.body.inclusions || "",
+          exclusions: req.body.exclusions || "",
+          isActive: req.body.isActive !== "false",
+          durationType: req.body.durationType || null,
+          region: req.body.region || null,
+          country: req.body.country || null,
+          city: req.body.city || null,
+          altName: req.body.altName !== undefined ? req.body.altName : null, // Preserve empty strings
+          vendorName: req.body.vendorName !== undefined ? req.body.vendorName : null,
+          rating: req.body.rating ? parseFloat(req.body.rating) : null,
+          status: req.body.status || "draft",
+          itineraryDescription: req.body.itineraryDescription !== undefined ? req.body.itineraryDescription : null,
+          cancellationPolicy: req.body.cancellationPolicy !== undefined ? req.body.cancellationPolicy : null,
+          cancellationBenefit: req.body.cancellationBenefit !== undefined ? req.body.cancellationBenefit : null, // Preserve empty strings
+          itinerary: req.body.itinerary || null,
+          // Add processed image URLs
+          packageStayingImage: imageUrls.packageStayingImage,
+          itineraryImages: imageUrls.itineraryImages,
+          dayWiseItinerary: imageUrls.dayWiseItinerary.length > 0 
+            ? imageUrls.dayWiseItinerary 
+            : (dayWiseItinerary.length > 0 ? dayWiseItinerary : null),
+          image: imageUrls.packageStayingImage, // Legacy field
+        };
+
+        const travelPackage = await simpleStorage.createPackage(packageData);
+        res.status(201).json(travelPackage);
+      } catch (error: any) {
+        console.error("Create package error:", error);
+        res.status(500).json({ 
+          message: "Internal server error",
+          error: error.message 
+        });
+      }
+    }
+  );
+
+  app.put(
+    "/api/tenants/:tenantId/packages/:packageId",
+    packageImageUpload.any(), // Accept any field names for flexibility with day-wise images
+    async (req: any, res) => {
+      try {
+        const { packageId, tenantId } = req.params;
+        const { ObjectStorageService } = await import("./objectStorage.js");
+        const objectStorage = new ObjectStorageService();
+
+        // Process uploaded images (similar to POST)
+        const imageUrls: any = {
+          packageStayingImage: "",
+          itineraryImages: "",
+          dayWiseItinerary: [],
+        };
+
+        // Organize files by field name
+        const filesByField: { [key: string]: any[] } = {};
+        if (req.files && Array.isArray(req.files)) {
+          req.files.forEach((file: any) => {
+            const fieldName = file.fieldname || "";
+            if (!filesByField[fieldName]) {
+              filesByField[fieldName] = [];
+            }
+            filesByField[fieldName].push(file);
+          });
+        }
+
+        // Helper function to sanitize filename
+        const sanitizeFileName = (filename: string) => {
+          return filename
+            .replace(/\s+/g, '')
+            .replace(/-/g, '')
+            .replace(/[^a-zA-Z0-9.]/g, '')
+            .toLowerCase();
+        };
+
+        // Upload package staying image
+        if (filesByField["packageStayingImage"]?.[0]) {
+          const file = filesByField["packageStayingImage"][0];
+          const sanitizedName = sanitizeFileName(file.originalname);
+          const fileName = `packages/${tenantId}/${sanitizedName}`;
+          const url = await objectStorage.uploadFile(
+            fileName,
+            file.buffer,
+            file.mimetype
+          );
+          imageUrls.packageStayingImage = url;
+        }
+
+        // Upload general itinerary images
+        if (filesByField["itineraryImages"] && filesByField["itineraryImages"].length > 0) {
+          const uploadedUrls = await Promise.all(
+            filesByField["itineraryImages"].map(async (file: any) => {
+              const sanitizedName = sanitizeFileName(file.originalname);
+              const fileName = `packages/${tenantId}/itinerary/${sanitizedName}`;
+              return await objectStorage.uploadFile(
+                fileName,
+                file.buffer,
+                file.mimetype
+              );
+            })
+          );
+          imageUrls.itineraryImages = uploadedUrls.join(", ");
+        }
+
+        // Process day-wise itinerary images
+        let dayWiseItinerary = [];
+        if (req.body.dayWiseItinerary) {
+          try {
+            dayWiseItinerary = typeof req.body.dayWiseItinerary === 'string' 
+              ? JSON.parse(req.body.dayWiseItinerary) 
+              : req.body.dayWiseItinerary;
+          } catch (e) {
+            console.error("Error parsing dayWiseItinerary:", e);
+          }
+        }
+
+        // Upload day-wise images if provided
+        if (dayWiseItinerary.length > 0) {
+          const dayWiseFiles: any[] = [];
+          Object.keys(filesByField).forEach((fieldName) => {
+            if (fieldName.startsWith('dayWiseItineraryImages') && fieldName !== 'itineraryImages') {
+              filesByField[fieldName].forEach((file: any) => {
+                const match = fieldName.match(/\[(\d+)\]/);
+                const dayIndex = match ? parseInt(match[1]) : null;
+                if (dayIndex !== null) {
+                  dayWiseFiles.push({ ...file, dayIndex });
+                }
+              });
+            }
+          });
+
+          const processedDayWise = await Promise.all(
+            dayWiseItinerary.map(async (day: any, index: number) => {
+              const dayImages = dayWiseFiles.filter(
+                (file: any) => file.dayIndex === index
+              );
+
+              let itineraryImageNames = "";
+              if (dayImages.length > 0) {
+                const uploadedDayUrls = await Promise.all(
+                  dayImages.map(async (file: any) => {
+                    const sanitizedName = sanitizeFileName(file.originalname);
+                    const fileName = `packages/${tenantId}/day-${day.day}/${sanitizedName}`;
+                    return await objectStorage.uploadFile(
+                      fileName,
+                      file.buffer,
+                      file.mimetype
+                    );
+                  })
+                );
+                itineraryImageNames = uploadedDayUrls.join(", ");
+              }
+
+              return {
+                day: day.day,
+                place: day.place,
+                itineraryDescription: day.itineraryDescription || "",
+                itineraryImageNames,
+              };
+            })
+          );
+          imageUrls.dayWiseItinerary = processedDayWise;
+        }
+
+        // Parse form fields - preserve empty strings for text fields
+        const packageData = {
+          name: req.body.name,
+          description: req.body.description !== undefined ? req.body.description : null,
+          destination: req.body.destination,
+          duration: req.body.duration !== undefined ? parseInt(req.body.duration) : undefined,
+          price: req.body.price !== undefined ? parseFloat(req.body.price) : undefined,
+          maxCapacity: req.body.maxCapacity !== undefined ? parseInt(req.body.maxCapacity) : undefined,
+          inclusions: req.body.inclusions !== undefined ? req.body.inclusions : undefined,
+          exclusions: req.body.exclusions !== undefined ? req.body.exclusions : undefined,
+          isActive: req.body.isActive !== undefined ? (req.body.isActive !== "false") : undefined,
+          durationType: req.body.durationType !== undefined ? req.body.durationType : undefined,
+          region: req.body.region !== undefined ? req.body.region : undefined,
+          country: req.body.country !== undefined ? req.body.country : undefined,
+          city: req.body.city !== undefined ? req.body.city : undefined,
+          altName: req.body.altName !== undefined ? req.body.altName : undefined, // Preserve empty strings
+          vendorName: req.body.vendorName !== undefined ? req.body.vendorName : undefined,
+          rating: req.body.rating !== undefined ? (req.body.rating ? parseFloat(req.body.rating) : null) : undefined,
+          status: req.body.status !== undefined ? req.body.status : undefined,
+          itineraryDescription: req.body.itineraryDescription !== undefined ? req.body.itineraryDescription : undefined,
+          cancellationPolicy: req.body.cancellationPolicy !== undefined ? req.body.cancellationPolicy : undefined,
+          cancellationBenefit: req.body.cancellationBenefit !== undefined ? req.body.cancellationBenefit : undefined, // Preserve empty strings
+          itinerary: req.body.itinerary !== undefined ? req.body.itinerary : undefined,
+          // Add processed image URLs if provided
+          packageStayingImage: imageUrls.packageStayingImage || undefined,
+          itineraryImages: imageUrls.itineraryImages || undefined,
+          dayWiseItinerary: imageUrls.dayWiseItinerary.length > 0 
+            ? imageUrls.dayWiseItinerary 
+            : (dayWiseItinerary.length > 0 ? dayWiseItinerary : undefined),
+          image: imageUrls.packageStayingImage || undefined,
+        };
+
+        const travelPackage = await simpleStorage.updatePackage(
+          parseInt(packageId),
+          packageData,
+        );
+        res.json(travelPackage);
+      } catch (error) {
+        console.error("Update package error:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    }
+  );
 
   app.delete("/api/tenants/:tenantId/packages/:packageId", async (req, res) => {
     try {
@@ -13901,14 +14402,34 @@ Please improve this email.`;
           return res.status(400).json({ message: "Invalid tenant ID" });
         }
 
-        console.log("📋 Calling getInvoicesByTenant with ID:", tenantIdNum);
+        // Extract query parameters
+        // Handle customerId as array (multiple selection)
+        let customerId: number | number[] | undefined = undefined;
+        if (req.query.customerId) {
+          if (Array.isArray(req.query.customerId)) {
+            customerId = (req.query.customerId as string[]).map(id => parseInt(id));
+          } else {
+            customerId = parseInt(req.query.customerId as string);
+          }
+        }
 
-        const invoices = await simpleStorage.getInvoicesByTenant(tenantIdNum);
-        console.log("📋 Retrieved invoices count:", invoices?.length || 0);
+        const filters = {
+          customerId: customerId,
+          vendorId: req.query.vendorId ? parseInt(req.query.vendorId as string) : undefined,
+          providerId: req.query.providerId ? parseInt(req.query.providerId as string) : undefined,
+          leadTypeId: req.query.leadTypeId ? parseInt(req.query.leadTypeId as string) : undefined,
+          status: req.query.status as string | undefined,
+          search: req.query.search as string | undefined,
+          page: req.query.page ? parseInt(req.query.page as string) : 1,
+          pageSize: req.query.pageSize ? parseInt(req.query.pageSize as string) : 10,
+          sortBy: req.query.sortBy as string | undefined,
+          sortOrder: req.query.sortOrder as 'asc' | 'desc' | undefined,
+        };
 
-        // Ensure we return an array
-        const result = Array.isArray(invoices) ? invoices : [];
-        console.log("📋 Returning:", result.length, "invoices");
+        console.log("📋 Calling getInvoicesByTenant with ID:", tenantIdNum, "filters:", filters);
+
+        const result = await simpleStorage.getInvoicesByTenant(tenantIdNum, filters);
+        console.log("📋 Retrieved invoices count:", result?.data?.length || 0, "total:", result?.pagination?.total || 0);
 
         res.json(result);
       } catch (error) {
@@ -13948,22 +14469,60 @@ Please improve this email.`;
           const connectionString = process.env.DATABASE_URL;
           const expenseSql = postgres(connectionString, { ssl: "require" });
 
+          // Get expense settings for default prefix
+          const expenseSettings = await simpleStorage.getExpenseSettings(parseInt(tenantId));
+          const defaultPrefix = expenseSettings?.expenseNumberPrefix || "EXP";
+
+          // Split expense number helper
+          const splitExpenseNumber = (fullNumber: string, defaultPrefix: string = "EXP"): { prefix: string; number: string } => {
+            if (!fullNumber) {
+              return { prefix: defaultPrefix, number: "" };
+            }
+            const matchWithSeparator = fullNumber.match(/^([A-Za-z0-9]+)[\s-]+(.+)$/);
+            if (matchWithSeparator) {
+              return { prefix: matchWithSeparator[1].toUpperCase(), number: matchWithSeparator[2] };
+            }
+            const numberMatch = fullNumber.match(/^([A-Za-z]+)(\d+.*)$/);
+            if (numberMatch) {
+              return { prefix: numberMatch[1].toUpperCase(), number: numberMatch[2] };
+            }
+            if (/^\d+/.test(fullNumber)) {
+              return { prefix: defaultPrefix, number: fullNumber };
+            }
+            return { prefix: defaultPrefix, number: fullNumber };
+          };
+
           for (const expenseData of req.body.expenses) {
             try {
-              // Map camelCase to snake_case for database
+              const expenseAmount = parseFloat(expenseData.amount?.toString() || "0");
+              const expenseTaxAmount = parseFloat(expenseData.taxAmount?.toString() || "0");
+              const expenseTaxRate = parseFloat(expenseData.taxRate?.toString() || "0");
+              const expenseQuantity = parseFloat(expenseData.quantity?.toString() || "1");
+              const expenseAmountPaid = parseFloat(expenseData.amountPaid?.toString() || "0");
+              const expenseAmountDue = parseFloat(expenseData.amountDue?.toString() || expenseAmount.toString() || "0");
+              const totalAmount = expenseAmount + expenseTaxAmount;
+
+              // Split expense number
+              const fullExpenseNumber = expenseData.expenseNumber || "";
+              const { prefix: expensePrefix, number: expenseNumber } = splitExpenseNumber(fullExpenseNumber, defaultPrefix);
+
+              // Create expense header
               const expenseResult = await expenseSql`
                 INSERT INTO expenses (
-                  tenant_id, created_by, title, description, amount, currency,
+                  tenant_id, expense_prefix, expense_number, created_by, title, description, quantity, amount, currency,
                   category, subcategory, expense_date, payment_method, payment_reference,
                   vendor_id, lead_type_id, expense_type, receipt_url,
                   tax_amount, tax_rate, is_reimbursable, is_recurring,
-                  recurring_frequency, status, tags, notes
+                  recurring_frequency, status, amount_paid, amount_due, tags, notes
                 ) VALUES (
                   ${parseInt(tenantId)},
+                  ${expensePrefix},
+                  ${expenseNumber || null},
                   ${req.user?.id || 1},
                   ${expenseData.title || ""},
                   ${expenseData.description || null},
-                  ${expenseData.amount || 0},
+                  1,
+                  ${totalAmount},
                   ${expenseData.currency || "USD"},
                   ${expenseData.category || "purchase"},
                   ${expenseData.subcategory || null},
@@ -13973,20 +14532,52 @@ Please improve this email.`;
                   ${expenseData.vendorId || null},
                   ${expenseData.leadTypeId || null},
                   ${expenseData.expenseType || "purchase"},
-                  ${expenseData.receiptUrl || null},
-                  ${expenseData.taxAmount || 0},
-                  ${expenseData.taxRate || 0},
+                  null,
+                  ${expenseTaxAmount},
+                  ${expenseTaxRate},
                   ${expenseData.isReimbursable || false},
                   ${expenseData.isRecurring || false},
                   ${expenseData.recurringFrequency || null},
                   ${expenseData.status || "approved"},
+                  ${expenseAmountPaid},
+                  ${expenseAmountDue},
                   ${expenseData.tags ? JSON.stringify(expenseData.tags) : "[]"},
                   ${expenseData.notes || null}
                 )
-                RETURNING *
+                RETURNING id
               `;
 
-              console.log(`✅ Created expense: ${expenseData.title}`);
+              // Create line item for this expense
+              const paymentStatus = expenseData.status === "paid" ? "paid" : (expenseData.status === "due" ? "due" : "credit");
+              await expenseSql`
+                INSERT INTO expense_line_items (
+                  expense_id, category, title, description, quantity, amount, tax_rate_id, tax_amount, tax_rate,
+                  total_amount, vendor_id, lead_type_id, payment_method, payment_status, amount_paid, amount_due,
+                  receipt_url, notes, display_order
+                ) VALUES (
+                  ${expenseResult[0].id},
+                  ${expenseData.category || "purchase"},
+                  ${expenseData.title || ""},
+                  ${expenseData.description || null},
+                  ${expenseQuantity},
+                  ${expenseAmount},
+                  ${expenseData.taxRateId || null},
+                  ${expenseTaxAmount},
+                  ${expenseTaxRate},
+                  ${totalAmount},
+                  ${expenseData.vendorId || null},
+                  ${expenseData.leadTypeId || null},
+                  ${expenseData.paymentMethod || "other"},
+                  ${paymentStatus},
+                  ${expenseAmountPaid},
+                  ${expenseAmountDue},
+                  ${expenseData.receiptUrl || null},
+                  ${expenseData.notes || null},
+                  0
+                )
+              `;
+
+              console.log(`✅ Created expense with line item: ${expenseData.title}`);
             } catch (expenseError) {
               console.error("❌ Error creating expense:", expenseError);
             }
@@ -14097,7 +14688,64 @@ Please improve this email.`;
       `;
 
         console.log("💰 Found", expenses.length, "expenses");
-        res.json(expenses);
+
+        // Fetch line items for all expenses
+        const expenseIds = expenses.map((e: any) => parseInt(e.id)).filter((id: number) => !isNaN(id));
+        let allLineItems: any[] = [];
+        
+        if (expenseIds.length > 0) {
+          allLineItems = await sql`
+            SELECT 
+              eli.id,
+              eli.expense_id as "expenseId",
+              eli.category,
+              eli.title,
+              eli.description,
+              eli.quantity,
+              eli.amount,
+              eli.tax_rate_id as "taxRateId",
+              eli.tax_amount as "taxAmount",
+              eli.tax_rate as "taxRate",
+              eli.total_amount as "totalAmount",
+              eli.vendor_id as "vendorId",
+              eli.lead_type_id as "leadTypeId",
+              eli.payment_method as "paymentMethod",
+              eli.payment_status as "paymentStatus",
+              eli.amount_paid as "amountPaid",
+              eli.amount_due as "amountDue",
+              eli.receipt_url as "receiptUrl",
+              eli.notes,
+              eli.display_order as "displayOrder",
+              eli.created_at as "createdAt",
+              eli.updated_at as "updatedAt",
+              v.name as "vendorName",
+              lt.name as "leadTypeName",
+              lt.color as "leadTypeColor"
+            FROM expense_line_items eli
+            LEFT JOIN vendors v ON eli.vendor_id = v.id
+            LEFT JOIN lead_types lt ON eli.lead_type_id = lt.id
+            WHERE eli.expense_id = ANY(${sql.array(expenseIds)})
+            ORDER BY eli.display_order ASC, eli.id ASC
+          `;
+        }
+
+        // Group line items by expense_id
+        const lineItemsByExpenseId: { [key: number]: any[] } = {};
+        for (const item of allLineItems) {
+          const expenseId = item.expenseId;
+          if (!lineItemsByExpenseId[expenseId]) {
+            lineItemsByExpenseId[expenseId] = [];
+          }
+          lineItemsByExpenseId[expenseId].push(item);
+        }
+
+        // Attach line items to each expense
+        const expensesWithLineItems = expenses.map((expense: any) => ({
+          ...expense,
+          lineItems: lineItemsByExpenseId[expense.id] || [],
+        }));
+
+        res.json(expensesWithLineItems);
       } catch (error) {
         console.error("💰 Error fetching expenses:", error);
         res.status(500).json({ message: "Failed to fetch expenses" });
@@ -16875,6 +17523,37 @@ Please improve this email.`;
     }
   });
 
+  // Get all vendors for a tenant (tenant-specific endpoint)
+  app.get(
+    "/api/tenants/:tenantId/vendors",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        const { tenantId } = req.params;
+        const tenantIdNum = parseInt(tenantId);
+
+        if (isNaN(tenantIdNum)) {
+          return res.status(400).json({ message: "Invalid tenant ID" });
+        }
+
+        const vendors = await sql`
+          SELECT 
+            v.*,
+            u.first_name || ' ' || u.last_name as created_by_name
+          FROM vendors v
+          LEFT JOIN users u ON v.created_by = u.id
+          WHERE v.tenant_id = ${tenantIdNum}
+          ORDER BY v.name ASC
+        `;
+
+        res.json(vendors);
+      } catch (error: any) {
+        console.error("Error fetching vendors:", error);
+        res.status(500).json({ message: "Failed to fetch vendors" });
+      }
+    },
+  );
+
   // Create new vendor
   app.post("/api/vendors", authenticateVendor, async (req: any, res) => {
     try {
@@ -17202,6 +17881,7 @@ Please improve this email.`;
   // ========== EXPENSE MANAGEMENT ROUTES ==========
 
   // Get all expenses for a tenant with filtering and pagination
+  // Note: Using explicit column lists instead of e.* to avoid cached plan issues after schema changes
   app.get("/api/expenses", authenticateVendor, async (req: any, res) => {
     try {
       console.log("💰 GET /api/expenses - User authenticated:", {
@@ -17209,189 +17889,866 @@ Please improve this email.`;
         tenantId: req.user.tenantId,
       });
 
-      const expenses = await sql`
-        SELECT 
-          e.*,
-          v.name as vendor_name,
-          lt.name as lead_type_name,
-          lt.color as lead_type_color,
-          u.first_name || ' ' || u.last_name as created_by_name
-        FROM expenses e
-        LEFT JOIN vendors v ON e.vendor_id = v.id
-        LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
-        LEFT JOIN users u ON e.created_by = u.id
-        WHERE e.tenant_id = ${req.user.tenantId}
-        ORDER BY e.expense_date DESC, e.created_at DESC
-      `;
+      // Extract query parameters
+      const page = req.query.page ? parseInt(req.query.page as string) : 1;
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : 10;
+      const offset = (page - 1) * limit;
+      const search = req.query.search as string | undefined;
+      const status = req.query.status as string | undefined;
+      const category = req.query.category as string | undefined;
+      const startDate = req.query.startDate as string | undefined;
+      const endDate = req.query.endDate as string | undefined;
+      const sortBy = (req.query.sortBy as string) || "created_at";
+      const sortOrder = (req.query.sortOrder as string) || "desc";
 
-      console.log("💰 GET /api/expenses - Found expenses:", expenses.length);
-      res.json(expenses);
+      console.log("💰 GET /api/expenses - Query params:", {
+        page,
+        limit,
+        offset,
+        search,
+        status,
+        category,
+        startDate,
+        endDate,
+        sortBy,
+        sortOrder,
+      });
+
+      // Build WHERE clause dynamically
+      let whereClause = sql`e.tenant_id = ${req.user.tenantId}`;
+
+      if (search) {
+        const searchPattern = `%${search}%`;
+        whereClause = sql`${whereClause} AND (e.title ILIKE ${searchPattern} OR e.description ILIKE ${searchPattern})`;
+      }
+
+      if (status && status !== "all") {
+        whereClause = sql`${whereClause} AND e.status = ${status}`;
+      }
+
+      // Category filter now checks line items instead of expense table
+      if (category && category !== "all") {
+        whereClause = sql`${whereClause} AND EXISTS (
+          SELECT 1 FROM expense_line_items eli 
+          WHERE eli.expense_id = e.id AND eli.category = ${category}
+        )`;
+      }
+
+      if (startDate) {
+        whereClause = sql`${whereClause} AND e.expense_date >= ${startDate}`;
+      }
+
+      if (endDate) {
+        whereClause = sql`${whereClause} AND e.expense_date <= ${endDate}`;
+      }
+
+      // Get total count for pagination
+      const [countResult] = await sql`
+        SELECT COUNT(*) as total
+        FROM expenses e
+        WHERE ${whereClause}
+      `;
+      const total = Number(countResult.total);
+
+      // Validate and map sort column
+      const validSortFields = [
+        "title",
+        "category",
+        "amount",
+        "status",
+        "expense_date",
+        "vendor_name",
+        "created_at",
+      ];
+      const safeSortBy = validSortFields.includes(sortBy) ? sortBy : "created_at";
+      const orderDirection = sortOrder.toLowerCase() === "asc" ? "ASC" : "DESC";
+
+      // Build ORDER BY clause based on sort column (using separate queries for safety)
+      let expenses;
+      if (safeSortBy === "vendor_name") {
+        expenses = orderDirection === "ASC"
+          ? await sql`
+            SELECT 
+              e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
+              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
+              e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color,
+              u.first_name || ' ' || u.last_name as created_by_name
+            FROM expenses e
+            LEFT JOIN vendors v ON e.vendor_id = v.id
+            LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+            LEFT JOIN users u ON e.created_by = u.id
+            WHERE ${whereClause}
+            ORDER BY v.name ASC, e.created_at DESC
+            LIMIT ${limit} OFFSET ${offset}
+          `
+          : await sql`
+            SELECT 
+              e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
+              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
+              e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color,
+              u.first_name || ' ' || u.last_name as created_by_name
+            FROM expenses e
+            LEFT JOIN vendors v ON e.vendor_id = v.id
+            LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+            LEFT JOIN users u ON e.created_by = u.id
+            WHERE ${whereClause}
+            ORDER BY v.name DESC, e.created_at DESC
+            LIMIT ${limit} OFFSET ${offset}
+          `;
+      } else if (safeSortBy === "expense_date") {
+        expenses = orderDirection === "ASC"
+          ? await sql`
+            SELECT 
+              e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
+              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
+              e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color,
+              u.first_name || ' ' || u.last_name as created_by_name
+            FROM expenses e
+            LEFT JOIN vendors v ON e.vendor_id = v.id
+            LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+            LEFT JOIN users u ON e.created_by = u.id
+            WHERE ${whereClause}
+            ORDER BY e.expense_date ASC, e.created_at DESC
+            LIMIT ${limit} OFFSET ${offset}
+          `
+          : await sql`
+            SELECT 
+              e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
+              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
+              e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color,
+              u.first_name || ' ' || u.last_name as created_by_name
+            FROM expenses e
+            LEFT JOIN vendors v ON e.vendor_id = v.id
+            LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+            LEFT JOIN users u ON e.created_by = u.id
+            WHERE ${whereClause}
+            ORDER BY e.expense_date DESC, e.created_at DESC
+            LIMIT ${limit} OFFSET ${offset}
+          `;
+      } else if (safeSortBy === "title") {
+        expenses = orderDirection === "ASC"
+          ? await sql`
+            SELECT 
+              e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
+              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
+              e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color,
+              u.first_name || ' ' || u.last_name as created_by_name
+            FROM expenses e
+            LEFT JOIN vendors v ON e.vendor_id = v.id
+            LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+            LEFT JOIN users u ON e.created_by = u.id
+            WHERE ${whereClause}
+            ORDER BY e.title ASC, e.created_at DESC
+            LIMIT ${limit} OFFSET ${offset}
+          `
+          : await sql`
+            SELECT 
+              e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
+              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
+              e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color,
+              u.first_name || ' ' || u.last_name as created_by_name
+            FROM expenses e
+            LEFT JOIN vendors v ON e.vendor_id = v.id
+            LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+            LEFT JOIN users u ON e.created_by = u.id
+            WHERE ${whereClause}
+            ORDER BY e.title DESC, e.created_at DESC
+            LIMIT ${limit} OFFSET ${offset}
+          `;
+      } else if (safeSortBy === "category") {
+        expenses = orderDirection === "ASC"
+          ? await sql`
+            SELECT 
+              e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
+              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
+              e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color,
+              u.first_name || ' ' || u.last_name as created_by_name
+            FROM expenses e
+            LEFT JOIN vendors v ON e.vendor_id = v.id
+            LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+            LEFT JOIN users u ON e.created_by = u.id
+            WHERE ${whereClause}
+            ORDER BY e.category ASC, e.created_at DESC
+            LIMIT ${limit} OFFSET ${offset}
+          `
+          : await sql`
+            SELECT 
+              e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
+              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
+              e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color,
+              u.first_name || ' ' || u.last_name as created_by_name
+            FROM expenses e
+            LEFT JOIN vendors v ON e.vendor_id = v.id
+            LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+            LEFT JOIN users u ON e.created_by = u.id
+            WHERE ${whereClause}
+            ORDER BY e.category DESC, e.created_at DESC
+            LIMIT ${limit} OFFSET ${offset}
+          `;
+      } else if (safeSortBy === "amount") {
+        expenses = orderDirection === "ASC"
+          ? await sql`
+            SELECT 
+              e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
+              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
+              e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color,
+              u.first_name || ' ' || u.last_name as created_by_name
+            FROM expenses e
+            LEFT JOIN vendors v ON e.vendor_id = v.id
+            LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+            LEFT JOIN users u ON e.created_by = u.id
+            WHERE ${whereClause}
+            ORDER BY e.amount ASC, e.created_at DESC
+            LIMIT ${limit} OFFSET ${offset}
+          `
+          : await sql`
+            SELECT 
+              e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
+              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
+              e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color,
+              u.first_name || ' ' || u.last_name as created_by_name
+            FROM expenses e
+            LEFT JOIN vendors v ON e.vendor_id = v.id
+            LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+            LEFT JOIN users u ON e.created_by = u.id
+            WHERE ${whereClause}
+            ORDER BY e.amount DESC, e.created_at DESC
+            LIMIT ${limit} OFFSET ${offset}
+          `;
+      } else if (safeSortBy === "status") {
+        expenses = orderDirection === "ASC"
+          ? await sql`
+            SELECT 
+              e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
+              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
+              e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color,
+              u.first_name || ' ' || u.last_name as created_by_name
+            FROM expenses e
+            LEFT JOIN vendors v ON e.vendor_id = v.id
+            LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+            LEFT JOIN users u ON e.created_by = u.id
+            WHERE ${whereClause}
+            ORDER BY e.status ASC, e.created_at DESC
+            LIMIT ${limit} OFFSET ${offset}
+          `
+          : await sql`
+            SELECT 
+              e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
+              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
+              e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color,
+              u.first_name || ' ' || u.last_name as created_by_name
+            FROM expenses e
+            LEFT JOIN vendors v ON e.vendor_id = v.id
+            LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+            LEFT JOIN users u ON e.created_by = u.id
+            WHERE ${whereClause}
+            ORDER BY e.status DESC, e.created_at DESC
+            LIMIT ${limit} OFFSET ${offset}
+          `;
+      } else {
+        // Default to created_at
+        expenses = orderDirection === "ASC"
+          ? await sql`
+            SELECT 
+              e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
+              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
+              e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color,
+              u.first_name || ' ' || u.last_name as created_by_name
+            FROM expenses e
+            LEFT JOIN vendors v ON e.vendor_id = v.id
+            LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+            LEFT JOIN users u ON e.created_by = u.id
+            WHERE ${whereClause}
+            ORDER BY e.created_at ASC
+            LIMIT ${limit} OFFSET ${offset}
+          `
+          : await sql`
+            SELECT 
+              e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
+              e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
+              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
+              e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color,
+              u.first_name || ' ' || u.last_name as created_by_name
+            FROM expenses e
+            LEFT JOIN vendors v ON e.vendor_id = v.id
+            LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+            LEFT JOIN users u ON e.created_by = u.id
+            WHERE ${whereClause}
+            ORDER BY e.created_at DESC
+            LIMIT ${limit} OFFSET ${offset}
+          `;
+      }
+
+      console.log("💰 GET /api/expenses - Found expenses:", expenses.length, "Total:", total);
+
+      // Fetch line items for all expenses
+      const expenseIds = expenses.map((e: any) => parseInt(e.id)).filter((id: number) => !isNaN(id));
+      let allLineItems: any[] = [];
+      
+      if (expenseIds.length > 0) {
+        // Fetch line items using individual queries to avoid array parameter issues
+        // This is less efficient but more reliable
+        const lineItemPromises = expenseIds.map(expenseId => 
+          sql`
+            SELECT 
+              eli.*,
+              v.name as vendor_name,
+              lt.name as lead_type_name,
+              lt.color as lead_type_color
+            FROM expense_line_items eli
+            LEFT JOIN vendors v ON eli.vendor_id = v.id
+            LEFT JOIN lead_types lt ON eli.lead_type_id = lt.id
+            WHERE eli.expense_id = ${expenseId}
+            ORDER BY eli.display_order ASC, eli.id ASC
+          `
+        );
+        const lineItemResults = await Promise.all(lineItemPromises);
+        allLineItems = lineItemResults.flat();
+      }
+
+      // Group line items by expense_id
+      const lineItemsByExpenseId: { [key: number]: any[] } = {};
+      for (const item of allLineItems) {
+        const expenseId = item.expense_id;
+        if (!lineItemsByExpenseId[expenseId]) {
+          lineItemsByExpenseId[expenseId] = [];
+        }
+        lineItemsByExpenseId[expenseId].push(item);
+      }
+
+      // Attach line items to each expense and combine prefix and number
+      const expensesWithLineItems = expenses.map((expense: any) => ({
+        ...expense,
+        expenseNumber: `${expense.expense_prefix || ""}${expense.expense_number || ""}`,
+        lineItems: lineItemsByExpenseId[expense.id] || [],
+      }));
+
+      // Return paginated response structure
+      res.json({
+        data: expensesWithLineItems,
+        pagination: {
+          page,
+          pageSize: limit,
+          total,
+          totalPages: Math.ceil(total / limit),
+        },
+      });
     } catch (error: unknown) {
       console.error("💰 Error fetching expenses:", error);
       res.status(500).json({ message: "Failed to fetch expenses" });
     }
   });
 
+
+
+  app.get("/api/all-expenses", authenticateVendor, async (req: any, res) => {
+  try {
+    console.log("💰 GET /api/all-expenses - User authenticated:", {
+      id: req.user.id,
+      tenantId: req.user.tenantId,
+    });
+
+    const { startDate = "", endDate = "" } = req.query;
+
+    // ---------- DATE FILTER ----------
+    let dateFilter = sql`1=1`;
+    if (startDate && endDate) {
+      dateFilter = sql`
+        e.expense_date >= ${startDate}
+        AND e.expense_date <= ${endDate}
+      `;
+    }
+
+    // ---------- FETCH EXPENSES ----------
+    const expenses = await sql`
+      SELECT 
+        e.*,
+        v.name as vendor_name,
+        lt.name as lead_type_name,
+        lt.color as lead_type_color,
+        u.first_name || ' ' || u.last_name as created_by_name
+      FROM expenses e
+      LEFT JOIN vendors v ON e.vendor_id = v.id
+      LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+      LEFT JOIN users u ON e.created_by = u.id
+      WHERE e.tenant_id = ${req.user.tenantId}
+        AND ${dateFilter}
+      ORDER BY e.expense_date DESC, e.created_at DESC
+    `;
+
+    console.log("💰 GET /api/all-expenses - Found:", expenses.length);
+
+    // Fetch line items for all expenses
+    const expenseIds = expenses.map((e: any) => parseInt(e.id)).filter((id: number) => !isNaN(id));
+    let allLineItems: any[] = [];
+    
+    if (expenseIds.length > 0) {
+      // Fetch line items using individual queries to avoid array parameter issues
+      // This is less efficient but more reliable
+      const lineItemPromises = expenseIds.map(expenseId => 
+        sql`
+          SELECT 
+            eli.*,
+            v.name as vendor_name,
+            lt.name as lead_type_name,
+            lt.color as lead_type_color
+          FROM expense_line_items eli
+          LEFT JOIN vendors v ON eli.vendor_id = v.id
+          LEFT JOIN lead_types lt ON eli.lead_type_id = lt.id
+          WHERE eli.expense_id = ${expenseId}
+          ORDER BY eli.display_order ASC, eli.id ASC
+        `
+      );
+      const lineItemResults = await Promise.all(lineItemPromises);
+      allLineItems = lineItemResults.flat();
+    }
+
+    // Group line items by expense_id
+    const lineItemsByExpenseId: { [key: number]: any[] } = {};
+    for (const item of allLineItems) {
+      const expenseId = item.expense_id;
+      if (!lineItemsByExpenseId[expenseId]) {
+        lineItemsByExpenseId[expenseId] = [];
+      }
+      lineItemsByExpenseId[expenseId].push(item);
+    }
+
+    // Attach line items to each expense and combine prefix and number
+    const expensesWithLineItems = expenses.map((expense: any) => ({
+      ...expense,
+      expenseNumber: `${expense.expense_prefix || ""}${expense.expense_number || ""}`,
+      lineItems: lineItemsByExpenseId[expense.id] || [],
+    }));
+
+    return res.json(expensesWithLineItems);
+
+  } catch (error: unknown) {
+    console.error("💰 Error fetching expenses:", error);
+    return res.status(500).json({
+      message: "Failed to fetch expenses",
+    });
+  }
+});
+
+
+  // Configure multer for expense bill uploads
+  const expenseBillUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+      fileSize: 10 * 1024 * 1024, // 10MB per file
+    },
+    fileFilter: (req, file, cb) => {
+      const allowedTypes = [
+        "application/pdf",
+        "image/jpeg",
+        "image/jpg",
+        "image/png",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      ];
+      if (allowedTypes.includes(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(new Error(`Unsupported file type: ${file.mimetype}`) as any, false);
+      }
+    },
+  });
+
   // Create new expense
-  app.post("/api/expenses", authenticateVendor, async (req: any, res) => {
+  app.post("/api/expenses", expenseBillUpload.any(), authenticateVendor, async (req: any, res) => {
     try {
-      console.log("💰 Creating expense - Request body:", req.body);
+      const { ObjectStorageService } = await import("./objectStorage.js");
+      const objectStorage = new ObjectStorageService();
+      
+      // Check if request has files (FormData) or is JSON
+      const hasFiles = req.files && req.files.length > 0;
+      
+      let expenseHeader: any = {};
+      let lineItems: any[] = [];
+      
+      if (hasFiles) {
+        // Handle FormData request with files
+        console.log("💰 Creating expense with FormData - Files received:", req.files.length);
+        
+        // Parse expense header and line items from FormData
+        if (req.body.expenseHeader) {
+          expenseHeader = typeof req.body.expenseHeader === 'string' 
+            ? JSON.parse(req.body.expenseHeader) 
+            : req.body.expenseHeader;
+        }
+        
+        if (req.body.lineItems) {
+          lineItems = typeof req.body.lineItems === 'string' 
+            ? JSON.parse(req.body.lineItems) 
+            : req.body.lineItems;
+        }
+        
+        // Organize bill files by index
+        const billFilesByIndex: { [key: number]: any } = {};
+        if (req.files && Array.isArray(req.files)) {
+          req.files.forEach((file: any) => {
+            const fieldName = file.fieldname || "";
+            // Match pattern: billFiles[0], billFiles[1], etc.
+            const match = fieldName.match(/billFiles\[(\d+)\]/);
+            if (match) {
+              const index = parseInt(match[1]);
+              billFilesByIndex[index] = file;
+            }
+          });
+        }
+        
+        // Helper function to sanitize filename
+        const sanitizeFileName = (filename: string) => {
+          return filename
+            .replace(/\s+/g, '')
+            .replace(/-/g, '')
+            .replace(/[^a-zA-Z0-9.]/g, '')
+            .toLowerCase();
+        };
+        
+        // Upload bill files and update receiptUrl for line items
+        for (let i = 0; i < lineItems.length; i++) {
+          if (billFilesByIndex[i]) {
+            const file = billFilesByIndex[i];
+            const sanitizedName = sanitizeFileName(file.originalname);
+            const fileName = `expenses/${req.user.tenantId}/${Date.now()}_${sanitizedName}`;
+            
+            try {
+              const url = await objectStorage.uploadFile(
+                fileName,
+                file.buffer,
+                file.mimetype
+              );
+              lineItems[i].receiptUrl = url;
+              console.log(`✅ Bill uploaded for line item ${i}: ${url}`);
+            } catch (uploadError) {
+              console.error(`❌ Failed to upload bill for line item ${i}:`, uploadError);
+              // Continue without bill URL if upload fails
+            }
+          }
+        }
+      } else {
+        // Handle JSON request
+        console.log("💰 Creating expense - Request body:", req.body);
+        
+        // Check if new format (with lineItems) or old format (array of expenses)
+        if (req.body.lineItems && Array.isArray(req.body.lineItems)) {
+          // New format: expense header with line items
+          expenseHeader = req.body.expenseHeader || {};
+          lineItems = req.body.lineItems || [];
+        } else if (Array.isArray(req.body)) {
+          // Old format: array of expenses (for backward compatibility during migration)
+          // Convert to new format: use first expense as header, all as line items
+          if (req.body.length > 0) {
+            const firstExpense = req.body[0];
+            expenseHeader = {
+              expenseNumber: firstExpense.expenseNumber || null,
+              expenseDate: firstExpense.expenseDate || new Date().toISOString().split("T")[0],
+              currency: firstExpense.currency || "USD",
+              notes: firstExpense.notes || null,
+            };
+            lineItems = req.body.map((exp: any) => ({
+              category: exp.category || "",
+              title: exp.title || "",
+              description: exp.description || null,
+              quantity: exp.quantity || 1,
+              amount: exp.amount || 0,
+              taxAmount: exp.taxAmount || 0,
+              taxRate: exp.taxRate || 0,
+              totalAmount: exp.amount || 0,
+              vendorId: exp.vendorId || null,
+              leadTypeId: exp.leadTypeId || null,
+              paymentMethod: exp.paymentMethod || "credit_card",
+              paymentStatus: exp.status === "paid" ? "paid" : (exp.status === "due" ? "due" : "credit"),
+              amountPaid: exp.amountPaid || 0,
+              amountDue: exp.amountDue || 0,
+              receiptUrl: exp.receiptUrl || null,
+              notes: exp.notes || null,
+            }));
+          }
+        } else {
+          // Single expense object (old format)
+          expenseHeader = {
+            expenseNumber: req.body.expenseNumber || null,
+            expenseDate: req.body.expenseDate || new Date().toISOString().split("T")[0],
+            currency: req.body.currency || "USD",
+            notes: req.body.notes || null,
+          };
+          lineItems = [{
+            category: req.body.category || "",
+            title: req.body.title || "",
+            description: req.body.description || null,
+            quantity: req.body.quantity || 1,
+            amount: req.body.amount || 0,
+            taxAmount: req.body.taxAmount || 0,
+            taxRate: req.body.taxRate || 0,
+            totalAmount: req.body.amount || 0,
+            vendorId: req.body.vendorId || null,
+            leadTypeId: req.body.leadTypeId || null,
+            paymentMethod: req.body.paymentMethod || "credit_card",
+            paymentStatus: req.body.status === "paid" ? "paid" : (req.body.status === "due" ? "due" : "credit"),
+            amountPaid: req.body.amountPaid || 0,
+            amountDue: req.body.amountDue || 0,
+            receiptUrl: req.body.receiptUrl || null,
+            notes: req.body.notes || null,
+          }];
+        }
+      }
+      
       console.log("💰 Creating expense - User info:", {
         id: req.user.id,
         tenantId: req.user.tenantId,
       });
 
-      const expenseData = {
-        tenantId: req.user.tenantId,
-        createdBy: req.user.id,
-        title: req.body.title || "",
-        description: req.body.description || null,
-        amount: req.body.amount,
-        currency: req.body.currency || "USD",
-        category: req.body.category || "",
-        subcategory: req.body.subcategory || null,
-        expenseDate:
-          req.body.expenseDate || new Date().toISOString().split("T")[0],
-        paymentMethod: req.body.paymentMethod || "credit_card",
-        paymentReference: req.body.paymentReference || null,
-        vendorId: req.body.vendorId || null,
-        leadTypeId: req.body.leadTypeId || null,
-        expenseType: req.body.expenseType || "purchase",
-        receiptUrl: req.body.receiptUrl || null,
-        taxAmount: req.body.taxAmount || 0,
-        taxRate: req.body.taxRate || 0,
-        isReimbursable: req.body.isReimbursable || false,
-        isRecurring: req.body.isRecurring || false,
-        recurringFrequency: req.body.recurringFrequency || null,
-        status: req.body.status || "pending",
-        tags: req.body.tags || [],
-        notes: req.body.notes || null,
-        approvedBy: req.body.approvedBy || null,
-        approvedAt: req.body.approvedAt || null,
-        rejectionReason: req.body.rejectionReason || null,
+      // Calculate totals from line items
+      const totalAmount = lineItems.reduce((sum, item) => sum + parseFloat(item.totalAmount?.toString() || item.amount?.toString() || "0"), 0);
+      const totalTaxAmount = lineItems.reduce((sum, item) => sum + parseFloat(item.taxAmount?.toString() || "0"), 0);
+      const totalPaid = lineItems.reduce((sum, item) => sum + parseFloat(item.amountPaid?.toString() || "0"), 0);
+      const totalDue = lineItems.reduce((sum, item) => sum + parseFloat(item.amountDue?.toString() || "0"), 0);
+
+      // Get expense settings for default prefix
+      const expenseSettings = await simpleStorage.getExpenseSettings(req.user.tenantId);
+      const defaultPrefix = expenseSettings?.expenseNumberPrefix || "EXP";
+
+      // Split expense number into prefix and number
+      const splitExpenseNumber = (fullNumber: string, defaultPrefix: string = "EXP"): { prefix: string; number: string } => {
+        if (!fullNumber) {
+          return { prefix: defaultPrefix, number: "" };
+        }
+        // Try to extract prefix and number (format: PREFIX-NUMBER, PREFIXNUMBER, or PREFIX NUMBER)
+        const matchWithSeparator = fullNumber.match(/^([A-Za-z0-9]+)[\s-]+(.+)$/);
+        if (matchWithSeparator) {
+          return { prefix: matchWithSeparator[1].toUpperCase(), number: matchWithSeparator[2] };
+        }
+        // If no separator, try to find where numbers start (format: PREFIXNUMBER like EXP001)
+        const numberMatch = fullNumber.match(/^([A-Za-z]+)(\d+.*)$/);
+        if (numberMatch) {
+          return { prefix: numberMatch[1].toUpperCase(), number: numberMatch[2] };
+        }
+        // If it's all numbers, use default prefix
+        if (/^\d+/.test(fullNumber)) {
+          return { prefix: defaultPrefix, number: fullNumber };
+        }
+        // Default: use as number with default prefix
+        return { prefix: defaultPrefix, number: fullNumber };
       };
 
-      console.log("💰 Creating expense - Expense data:", expenseData);
+      const fullExpenseNumber = expenseHeader.expenseNumber || "";
+      const { prefix: expensePrefix, number: expenseNumber } = splitExpenseNumber(fullExpenseNumber, defaultPrefix);
 
-      // Debug each field individually to identify undefined values
-      console.log("💰 Field-by-field debug:");
-      console.log(
-        "tenantId:",
-        expenseData.tenantId,
-        typeof expenseData.tenantId,
-      );
-      console.log("title:", expenseData.title, typeof expenseData.title);
-      console.log(
-        "description:",
-        expenseData.description,
-        typeof expenseData.description,
-      );
-      console.log("amount:", expenseData.amount, typeof expenseData.amount);
-      console.log(
-        "currency:",
-        expenseData.currency,
-        typeof expenseData.currency,
-      );
-      console.log(
-        "category:",
-        expenseData.category,
-        typeof expenseData.category,
-      );
-      console.log(
-        "subcategory:",
-        expenseData.subcategory,
-        typeof expenseData.subcategory,
-      );
-      console.log(
-        "expenseDate:",
-        expenseData.expenseDate,
-        typeof expenseData.expenseDate,
-      );
-      console.log(
-        "paymentMethod:",
-        expenseData.paymentMethod,
-        typeof expenseData.paymentMethod,
-      );
-      console.log(
-        "paymentReference:",
-        expenseData.paymentReference,
-        typeof expenseData.paymentReference,
-      );
-      console.log(
-        "vendorId:",
-        expenseData.vendorId,
-        typeof expenseData.vendorId,
-      );
-      console.log(
-        "leadTypeId:",
-        expenseData.leadTypeId,
-        typeof expenseData.leadTypeId,
-      );
-      console.log(
-        "expenseType:",
-        expenseData.expenseType,
-        typeof expenseData.expenseType,
-      );
-      console.log(
-        "receiptUrl:",
-        expenseData.receiptUrl,
-        typeof expenseData.receiptUrl,
-      );
-      console.log(
-        "taxAmount:",
-        expenseData.taxAmount,
-        typeof expenseData.taxAmount,
-      );
-      console.log("taxRate:", expenseData.taxRate, typeof expenseData.taxRate);
-      console.log(
-        "isReimbursable:",
-        expenseData.isReimbursable,
-        typeof expenseData.isReimbursable,
-      );
-      console.log(
-        "isRecurring:",
-        expenseData.isRecurring,
-        typeof expenseData.isRecurring,
-      );
-      console.log(
-        "recurringFrequency:",
-        expenseData.recurringFrequency,
-        typeof expenseData.recurringFrequency,
-      );
-      console.log("status:", expenseData.status, typeof expenseData.status);
-      console.log("tags:", expenseData.tags, typeof expenseData.tags);
-      console.log("notes:", expenseData.notes, typeof expenseData.notes);
-      console.log(
-        "createdBy:",
-        expenseData.createdBy,
-        typeof expenseData.createdBy,
-      );
+      // Create expense header
+      const expenseHeaderData = {
+        tenantId: req.user.tenantId,
+        createdBy: req.user.id,
+        expensePrefix: expensePrefix,
+        expenseNumber: expenseNumber || null,
+        title: expenseHeader.title || "Expense", // Default title
+        description: expenseHeader.description || null,
+        quantity: 1, // Header quantity is always 1
+        amount: totalAmount,
+        currency: expenseHeader.currency || "USD",
+        category: expenseHeader.category || "other", // Default category
+        subcategory: expenseHeader.subcategory || null,
+        expenseDate: expenseHeader.expenseDate ? new Date(expenseHeader.expenseDate).toISOString() : new Date().toISOString(),
+        paymentMethod: expenseHeader.paymentMethod || "credit_card",
+        paymentReference: expenseHeader.paymentReference || null,
+        vendorId: expenseHeader.vendorId || null,
+        leadTypeId: expenseHeader.leadTypeId || null,
+        expenseType: expenseHeader.expenseType || "purchase",
+        receiptUrl: null, // Receipt URLs are stored in line items
+        taxAmount: totalTaxAmount,
+        taxRate: totalTaxAmount > 0 && totalAmount > 0 ? (totalTaxAmount / totalAmount) * 100 : 0,
+        isReimbursable: expenseHeader.isReimbursable || false,
+        isRecurring: expenseHeader.isRecurring || false,
+        recurringFrequency: expenseHeader.recurringFrequency || null,
+        status: expenseHeader.status || "pending",
+        amountPaid: totalPaid,
+        amountDue: totalDue,
+        tags: expenseHeader.tags || [],
+        notes: expenseHeader.notes || null,
+        approvedBy: expenseHeader.approvedBy || null,
+        approvedAt: expenseHeader.approvedAt || null,
+        rejectionReason: expenseHeader.rejectionReason || null,
+      };
 
-      const [expense] = await sql`
+      console.log("💰 Creating expense header:", expenseHeaderData);
+
+      const [createdExpense] = await sql`
         INSERT INTO expenses (
-          tenant_id, title, description, amount, currency, category, subcategory,
+          tenant_id, expense_prefix, expense_number, title, description, quantity, amount, currency, category, subcategory,
           expense_date, payment_method, payment_reference, vendor_id, lead_type_id,
           expense_type, receipt_url, tax_amount, tax_rate, is_reimbursable, is_recurring,
-          recurring_frequency, status, approved_by, approved_at, rejection_reason,
+          recurring_frequency, status, amount_paid, amount_due, approved_by, approved_at, rejection_reason,
           tags, notes, created_by
         ) VALUES (
-          ${expenseData.tenantId}, ${expenseData.title}, ${expenseData.description},
-          ${expenseData.amount}, ${expenseData.currency}, ${expenseData.category},
-          ${expenseData.subcategory}, ${expenseData.expenseDate}, ${expenseData.paymentMethod},
-          ${expenseData.paymentReference}, ${expenseData.vendorId}, ${expenseData.leadTypeId},
-          ${expenseData.expenseType || "purchase"}, ${expenseData.receiptUrl}, ${expenseData.taxAmount || 0}, ${expenseData.taxRate || 0},
-          ${expenseData.isReimbursable || false}, ${expenseData.isRecurring || false},
-          ${expenseData.recurringFrequency}, ${expenseData.status || "pending"},
-          ${expenseData.approvedBy}, ${expenseData.approvedAt}, ${expenseData.rejectionReason},
-          ${JSON.stringify(expenseData.tags || [])}, ${expenseData.notes}, ${expenseData.createdBy}
+          ${expenseHeaderData.tenantId}, ${expenseHeaderData.expensePrefix}, ${expenseHeaderData.expenseNumber}, ${expenseHeaderData.title}, ${expenseHeaderData.description},
+          ${expenseHeaderData.quantity}, ${expenseHeaderData.amount}, ${expenseHeaderData.currency}, ${expenseHeaderData.category},
+          ${expenseHeaderData.subcategory}, ${expenseHeaderData.expenseDate}, ${expenseHeaderData.paymentMethod},
+          ${expenseHeaderData.paymentReference}, ${expenseHeaderData.vendorId}, ${expenseHeaderData.leadTypeId},
+          ${expenseHeaderData.expenseType}, ${expenseHeaderData.receiptUrl}, ${expenseHeaderData.taxAmount}, ${expenseHeaderData.taxRate},
+          ${expenseHeaderData.isReimbursable}, ${expenseHeaderData.isRecurring},
+          ${expenseHeaderData.recurringFrequency}, ${expenseHeaderData.status},
+          ${expenseHeaderData.amountPaid}, ${expenseHeaderData.amountDue},
+          ${expenseHeaderData.approvedBy}, ${expenseHeaderData.approvedAt}, ${expenseHeaderData.rejectionReason},
+          ${JSON.stringify(expenseHeaderData.tags || [])}, ${expenseHeaderData.notes}, ${expenseHeaderData.createdBy}
         )
         RETURNING *
       `;
 
-      console.log("💰 Expense created successfully:", expense);
-      res.status(201).json(expense);
+      console.log("💰 Expense header created successfully:", createdExpense);
+
+      // Create line items
+      const createdLineItems = [];
+      for (let i = 0; i < lineItems.length; i++) {
+        const item = lineItems[i];
+        const lineItemData = {
+          expenseId: createdExpense.id,
+          category: item.category || "",
+          title: item.title || "",
+          description: item.description || null,
+          quantity: item.quantity || 1,
+          amount: parseFloat(item.amount?.toString() || "0"),
+          taxRateId: item.taxRateId || null,
+          taxAmount: parseFloat(item.taxAmount?.toString() || "0"),
+          taxRate: parseFloat(item.taxRate?.toString() || "0"),
+          totalAmount: parseFloat(item.totalAmount?.toString() || item.amount?.toString() || "0"),
+          vendorId: item.vendorId || null,
+          leadTypeId: item.leadTypeId || null,
+          paymentMethod: item.paymentMethod || "credit_card",
+          paymentStatus: item.paymentStatus || "paid",
+          amountPaid: parseFloat(item.amountPaid?.toString() || "0"),
+          amountDue: parseFloat(item.amountDue?.toString() || "0"),
+          receiptUrl: item.receiptUrl || null,
+          notes: item.notes || null,
+          displayOrder: i,
+        };
+
+        const [createdLineItem] = await sql`
+          INSERT INTO expense_line_items (
+            expense_id, category, title, description, quantity, amount, tax_rate_id, tax_amount, tax_rate,
+            total_amount, vendor_id, lead_type_id, payment_method, payment_status, amount_paid, amount_due,
+            receipt_url, notes, display_order
+          ) VALUES (
+            ${lineItemData.expenseId}, ${lineItemData.category}, ${lineItemData.title}, ${lineItemData.description},
+            ${lineItemData.quantity}, ${lineItemData.amount}, ${lineItemData.taxRateId}, ${lineItemData.taxAmount}, ${lineItemData.taxRate},
+            ${lineItemData.totalAmount}, ${lineItemData.vendorId}, ${lineItemData.leadTypeId}, ${lineItemData.paymentMethod},
+            ${lineItemData.paymentStatus}, ${lineItemData.amountPaid}, ${lineItemData.amountDue},
+            ${lineItemData.receiptUrl}, ${lineItemData.notes}, ${lineItemData.displayOrder}
+          )
+          RETURNING *
+        `;
+
+        createdLineItems.push(createdLineItem);
+        console.log(`✅ Line item ${i} created successfully`);
+      }
+
+      // Update expense settings starting number to the next number
+      try {
+        const newExpNumber = createdExpense.expense_number || "";
+        // Extract the numeric part from the expense number
+        const expenseNumberValue = parseInt(newExpNumber, 10);
+        if (!isNaN(expenseNumberValue)) {
+          // Increment the starting number to be one more than the current expense number
+          const nextStartNumber = expenseNumberValue + 1;
+          
+          // Get current settings to preserve other values
+          const currentSettings = await simpleStorage.getExpenseSettings(req.user.tenantId);
+          
+          // Update only the expenseNumberStart
+          await simpleStorage.upsertExpenseSettings(req.user.tenantId, {
+            ...currentSettings,
+            expenseNumberStart: nextStartNumber,
+          });
+          
+          console.log(`✅ Updated expense settings: expenseNumberStart set to ${nextStartNumber} (was ${currentSettings.expenseNumberStart || 1})`);
+        }
+      } catch (settingsError) {
+        console.error("⚠️ Failed to update expense settings starting number:", settingsError);
+        // Don't fail the expense creation if settings update fails
+      }
+
+      // Return expense with line items (combine prefix and number for client compatibility)
+      res.status(201).json({
+        ...createdExpense,
+        expenseNumber: `${createdExpense.expense_prefix || ""}${createdExpense.expense_number || ""}`,
+        lineItems: createdLineItems,
+      });
     } catch (error: unknown) {
       console.error("💰 Error creating expense:", error);
+      console.error("💰 Error details:", {
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        name: error instanceof Error ? error.name : undefined,
+      });
       res.status(500).json({
         message: "Failed to create expense",
         error: error instanceof Error ? error.message : String(error),
@@ -17400,50 +18757,345 @@ Please improve this email.`;
   });
 
   // Update expense
-  app.put("/api/expenses/:id", authenticateVendor, async (req: any, res) => {
+  app.put("/api/expenses/:id", expenseBillUpload.any(), authenticateVendor, async (req: any, res) => {
     try {
+      const { ObjectStorageService } = await import("./objectStorage.js");
+      const objectStorage = new ObjectStorageService();
+      
       const expenseId = parseInt(req.params.id);
-      const expenseData = req.body;
+      const hasFiles = req.files && req.files.length > 0;
 
+      // First, get the existing expense to use as defaults for partial updates
+      const [existingExpense] = await sql`
+        SELECT * FROM expenses 
+        WHERE id = ${expenseId} AND tenant_id = ${req.user.tenantId}
+      `;
+
+      if (!existingExpense) {
+        return res.status(404).json({ message: "Expense not found" });
+      }
+
+      let expenseHeader: any = {};
+      let lineItems: any[] = [];
+
+      if (hasFiles) {
+        // Handle FormData request with files
+        if (req.body.expenseHeader) {
+          expenseHeader = typeof req.body.expenseHeader === 'string' 
+            ? JSON.parse(req.body.expenseHeader) 
+            : req.body.expenseHeader;
+        }
+        
+        if (req.body.lineItems) {
+          lineItems = typeof req.body.lineItems === 'string' 
+            ? JSON.parse(req.body.lineItems) 
+            : req.body.lineItems;
+        }
+        
+        // Organize bill files by index
+        const billFilesByIndex: { [key: number]: any } = {};
+        if (req.files && Array.isArray(req.files)) {
+          req.files.forEach((file: any) => {
+            const fieldName = file.fieldname || "";
+            const match = fieldName.match(/billFiles\[(\d+)\]/);
+            if (match) {
+              const index = parseInt(match[1]);
+              billFilesByIndex[index] = file;
+            }
+          });
+        }
+        
+        // Upload bill files
+        const sanitizeFileName = (filename: string) => {
+          return filename
+            .replace(/\s+/g, '')
+            .replace(/-/g, '')
+            .replace(/[^a-zA-Z0-9.]/g, '')
+            .toLowerCase();
+        };
+        
+        for (let i = 0; i < lineItems.length; i++) {
+          if (billFilesByIndex[i]) {
+            const file = billFilesByIndex[i];
+            const sanitizedName = sanitizeFileName(file.originalname);
+            const fileName = `expenses/${req.user.tenantId}/${Date.now()}_${sanitizedName}`;
+            
+            try {
+              const url = await objectStorage.uploadFile(
+                fileName,
+                file.buffer,
+                file.mimetype
+              );
+              lineItems[i].receiptUrl = url;
+            } catch (uploadError) {
+              console.error(`❌ Failed to upload bill for line item ${i}:`, uploadError);
+            }
+          }
+        }
+      } else {
+        // Handle JSON request
+        if (req.body.lineItems && Array.isArray(req.body.lineItems)) {
+          expenseHeader = req.body.expenseHeader || {};
+          lineItems = req.body.lineItems || [];
+        } else {
+          // Old format - convert to new format
+          expenseHeader = req.body;
+          lineItems = [];
+        }
+      }
+
+      // Calculate totals from line items if provided
+      let totalAmount = existingExpense.amount;
+      let totalTaxAmount = existingExpense.tax_amount || 0;
+      let totalPaid = existingExpense.amount_paid || 0;
+      let totalDue = existingExpense.amount_due || 0;
+
+      if (lineItems.length > 0) {
+        totalAmount = lineItems.reduce((sum, item) => sum + parseFloat(item.totalAmount?.toString() || item.amount?.toString() || "0"), 0);
+        totalTaxAmount = lineItems.reduce((sum, item) => sum + parseFloat(item.taxAmount?.toString() || "0"), 0);
+        totalPaid = lineItems.reduce((sum, item) => sum + parseFloat(item.amountPaid?.toString() || "0"), 0);
+        totalDue = lineItems.reduce((sum, item) => sum + parseFloat(item.amountDue?.toString() || "0"), 0);
+      }
+
+      // Handle tags - ensure it's always a JSON string
+      let existingTagsString = existingExpense.tags;
+      if (existingTagsString && typeof existingTagsString !== 'string') {
+        existingTagsString = JSON.stringify(existingTagsString);
+      } else if (!existingTagsString) {
+        existingTagsString = '[]';
+      }
+
+      // Get expense settings for default prefix
+      const expenseSettings = await simpleStorage.getExpenseSettings(req.user.tenantId);
+      const defaultPrefix = expenseSettings?.expenseNumberPrefix || "EXP";
+
+      // Split expense number if provided
+      let expensePrefix = existingExpense.expense_prefix || defaultPrefix;
+      let expenseNumber = existingExpense.expense_number || null;
+      
+      if (expenseHeader.expenseNumber !== undefined && expenseHeader.expenseNumber !== null) {
+        const splitExpenseNumber = (fullNumber: string, defaultPrefix: string = "EXP"): { prefix: string; number: string } => {
+          if (!fullNumber) {
+            return { prefix: defaultPrefix, number: "" };
+          }
+          const matchWithSeparator = fullNumber.match(/^([A-Za-z0-9]+)[\s-]+(.+)$/);
+          if (matchWithSeparator) {
+            return { prefix: matchWithSeparator[1].toUpperCase(), number: matchWithSeparator[2] };
+          }
+          const numberMatch = fullNumber.match(/^([A-Za-z]+)(\d+.*)$/);
+          if (numberMatch) {
+            return { prefix: numberMatch[1].toUpperCase(), number: numberMatch[2] };
+          }
+          if (/^\d+/.test(fullNumber)) {
+            return { prefix: defaultPrefix, number: fullNumber };
+          }
+          return { prefix: defaultPrefix, number: fullNumber };
+        };
+        const split = splitExpenseNumber(expenseHeader.expenseNumber, defaultPrefix);
+        expensePrefix = split.prefix;
+        expenseNumber = split.number || null;
+      }
+
+      // Update expense header
       const [expense] = await sql`
         UPDATE expenses SET
-          title = ${expenseData.title},
-          description = ${expenseData.description},
-          amount = ${expenseData.amount},
-          currency = ${expenseData.currency},
-          category = ${expenseData.category},
-          subcategory = ${expenseData.subcategory},
-          expense_date = ${expenseData.expenseDate},
-          payment_method = ${expenseData.paymentMethod},
-          payment_reference = ${expenseData.paymentReference},
-          vendor_id = ${expenseData.vendorId || null},
-          lead_type_id = ${expenseData.leadTypeId || null},
-          expense_type = ${expenseData.expenseType || "purchase"},
-          receipt_url = ${expenseData.receiptUrl},
-          tax_amount = ${expenseData.taxAmount || 0},
-          tax_rate = ${expenseData.taxRate || 0},
-          is_reimbursable = ${expenseData.isReimbursable || false},
-          is_recurring = ${expenseData.isRecurring || false},
-          recurring_frequency = ${expenseData.recurringFrequency},
-          status = ${expenseData.status},
-          approved_by = ${expenseData.approvedBy || null},
-          approved_at = ${expenseData.approvedAt || null},
-          rejection_reason = ${expenseData.rejectionReason},
-          tags = ${JSON.stringify(expenseData.tags || [])},
-          notes = ${expenseData.notes},
+          expense_prefix = ${expensePrefix},
+          expense_number = ${expenseNumber},
+          title = ${expenseHeader.title !== undefined ? expenseHeader.title : existingExpense.title},
+          description = ${expenseHeader.description !== undefined ? expenseHeader.description : existingExpense.description},
+          quantity = 1,
+          amount = ${lineItems.length > 0 ? totalAmount : (expenseHeader.amount !== undefined ? expenseHeader.amount : existingExpense.amount)},
+          currency = ${expenseHeader.currency !== undefined ? expenseHeader.currency : existingExpense.currency},
+          category = ${expenseHeader.category !== undefined ? expenseHeader.category : existingExpense.category},
+          subcategory = ${expenseHeader.subcategory !== undefined ? expenseHeader.subcategory : existingExpense.subcategory},
+          expense_date = ${expenseHeader.expenseDate !== undefined ? expenseHeader.expenseDate : existingExpense.expense_date},
+          payment_method = ${expenseHeader.paymentMethod !== undefined ? expenseHeader.paymentMethod : existingExpense.payment_method},
+          payment_reference = ${expenseHeader.paymentReference !== undefined ? expenseHeader.paymentReference : existingExpense.payment_reference},
+          vendor_id = ${expenseHeader.vendorId !== undefined ? (expenseHeader.vendorId || null) : existingExpense.vendor_id},
+          lead_type_id = ${expenseHeader.leadTypeId !== undefined ? (expenseHeader.leadTypeId || null) : existingExpense.lead_type_id},
+          expense_type = ${expenseHeader.expenseType !== undefined ? (expenseHeader.expenseType || "purchase") : existingExpense.expense_type},
+          receipt_url = null,
+          tax_amount = ${lineItems.length > 0 ? totalTaxAmount : (expenseHeader.taxAmount !== undefined ? expenseHeader.taxAmount : existingExpense.tax_amount)},
+          tax_rate = ${lineItems.length > 0 && totalAmount > 0 ? (totalTaxAmount / totalAmount) * 100 : (expenseHeader.taxRate !== undefined ? expenseHeader.taxRate : existingExpense.tax_rate)},
+          is_reimbursable = ${expenseHeader.isReimbursable !== undefined ? (expenseHeader.isReimbursable || false) : existingExpense.is_reimbursable},
+          is_recurring = ${expenseHeader.isRecurring !== undefined ? (expenseHeader.isRecurring || false) : existingExpense.is_recurring},
+          recurring_frequency = ${expenseHeader.recurringFrequency !== undefined ? (expenseHeader.recurringFrequency || null) : existingExpense.recurring_frequency},
+          status = ${expenseHeader.status !== undefined ? expenseHeader.status : existingExpense.status},
+          amount_paid = ${lineItems.length > 0 ? totalPaid : (expenseHeader.amountPaid !== undefined ? expenseHeader.amountPaid : existingExpense.amount_paid)},
+          amount_due = ${lineItems.length > 0 ? totalDue : (expenseHeader.amountDue !== undefined ? expenseHeader.amountDue : existingExpense.amount_due)},
+          approved_by = ${expenseHeader.approvedBy !== undefined ? (expenseHeader.approvedBy || null) : existingExpense.approved_by},
+          approved_at = ${expenseHeader.approvedAt !== undefined ? (expenseHeader.approvedAt || null) : existingExpense.approved_at},
+          rejection_reason = ${expenseHeader.rejectionReason !== undefined ? (expenseHeader.rejectionReason || null) : existingExpense.rejection_reason},
+          tags = ${expenseHeader.tags !== undefined ? JSON.stringify(expenseHeader.tags || []) : existingTagsString},
+          notes = ${expenseHeader.notes !== undefined ? (expenseHeader.notes || null) : existingExpense.notes},
           updated_at = NOW()
         WHERE id = ${expenseId} AND tenant_id = ${req.user.tenantId}
         RETURNING *
+      `;
+
+      // Update line items if provided
+      if (lineItems.length > 0) {
+        // Delete existing line items
+        await sql`DELETE FROM expense_line_items WHERE expense_id = ${expenseId}`;
+
+        // Insert new line items
+        for (let i = 0; i < lineItems.length; i++) {
+          const item = lineItems[i];
+          await sql`
+            INSERT INTO expense_line_items (
+              expense_id, category, title, description, quantity, amount, tax_rate_id, tax_amount, tax_rate,
+              total_amount, vendor_id, lead_type_id, payment_method, payment_status, amount_paid, amount_due,
+              receipt_url, notes, display_order
+            ) VALUES (
+              ${expenseId}, ${item.category || ""}, ${item.title || ""}, ${item.description || null},
+              ${item.quantity || 1}, ${parseFloat(item.amount?.toString() || "0")}, ${item.taxRateId || null},
+              ${parseFloat(item.taxAmount?.toString() || "0")}, ${parseFloat(item.taxRate?.toString() || "0")},
+              ${parseFloat(item.totalAmount?.toString() || item.amount?.toString() || "0")}, ${item.vendorId || null},
+              ${item.leadTypeId || null}, ${item.paymentMethod || "credit_card"}, ${item.paymentStatus || "paid"},
+              ${parseFloat(item.amountPaid?.toString() || "0")}, ${parseFloat(item.amountDue?.toString() || "0")},
+              ${item.receiptUrl || null}, ${item.notes || null}, ${i}
+            )
+          `;
+        }
+      }
+
+      // Fetch updated expense with line items
+      const updatedLineItems = await sql`
+        SELECT 
+          eli.*,
+          v.name as vendor_name,
+          lt.name as lead_type_name,
+          lt.color as lead_type_color
+        FROM expense_line_items eli
+        LEFT JOIN vendors v ON eli.vendor_id = v.id
+        LEFT JOIN lead_types lt ON eli.lead_type_id = lt.id
+        WHERE eli.expense_id = ${expenseId}
+        ORDER BY eli.display_order ASC, eli.id ASC
+      `;
+
+      res.json({
+        ...expense,
+        expenseNumber: `${expense.expense_prefix || ""}${expense.expense_number || ""}`,
+        lineItems: updatedLineItems,
+      });
+    } catch (error: unknown) {
+      console.error("💰 Error updating expense:", error);
+      res.status(500).json({ message: "Failed to update expense" });
+    }
+  });
+
+  // Get single expense by ID
+  app.get("/api/expenses/:id", authenticateVendor, async (req: any, res) => {
+    try {
+      const expenseId = parseInt(req.params.id);
+      
+      // Explicitly list all columns to avoid cached plan issues after schema changes
+      const [expense] = await sql`
+        SELECT 
+          e.id,
+          e.tenant_id,
+          e.expense_prefix,
+          e.expense_number,
+          e.title,
+          e.description,
+          e.quantity,
+          e.amount,
+          e.currency,
+          e.category,
+          e.subcategory,
+          e.expense_date,
+          e.payment_method,
+          e.payment_reference,
+          e.vendor_id,
+          e.lead_type_id,
+          e.expense_type,
+          e.receipt_url,
+          e.tax_amount,
+          e.tax_rate,
+          e.is_reimbursable,
+          e.is_recurring,
+          e.recurring_frequency,
+          e.status,
+          e.amount_paid,
+          e.amount_due,
+          e.approved_by,
+          e.approved_at,
+          e.rejection_reason,
+          e.tags,
+          e.notes,
+          e.created_by,
+          e.created_at,
+          e.updated_at,
+          v.name as vendor_name,
+          lt.name as lead_type_name,
+          lt.color as lead_type_color
+        FROM expenses e
+        LEFT JOIN vendors v ON e.vendor_id = v.id
+        LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+        WHERE e.id = ${expenseId} AND e.tenant_id = ${req.user.tenantId}
       `;
 
       if (!expense) {
         return res.status(404).json({ message: "Expense not found" });
       }
 
-      res.json(expense);
+      // Fetch line items for this expense
+      const lineItems = await sql`
+        SELECT 
+          eli.*,
+          v.name as vendor_name,
+          lt.name as lead_type_name,
+          lt.color as lead_type_color
+        FROM expense_line_items eli
+        LEFT JOIN vendors v ON eli.vendor_id = v.id
+        LEFT JOIN lead_types lt ON eli.lead_type_id = lt.id
+        WHERE eli.expense_id = ${expenseId}
+        ORDER BY eli.display_order ASC, eli.id ASC
+      `;
+
+      // If no line items exist, check if this is an old expense (before migration)
+      // In that case, return the expense as a single line item for backward compatibility
+      if (lineItems.length === 0) {
+        // This is an old expense without line items - return it as a single line item
+        res.json({
+          ...expense,
+          expenseNumber: `${expense.expense_prefix || ""}${expense.expense_number || ""}`,
+          lineItems: [{
+            id: null,
+            expense_id: expense.id,
+            category: expense.category,
+            title: expense.title,
+            description: expense.description,
+            quantity: expense.quantity || 1,
+            amount: expense.amount,
+            tax_rate_id: null,
+            tax_amount: expense.tax_amount,
+            tax_rate: expense.tax_rate,
+            total_amount: expense.amount,
+            vendor_id: expense.vendor_id,
+            lead_type_id: expense.lead_type_id,
+            payment_method: expense.payment_method,
+            payment_status: expense.status === "paid" ? "paid" : (expense.status === "due" ? "due" : "credit"),
+            amount_paid: expense.amount_paid,
+            amount_due: expense.amount_due,
+            receipt_url: expense.receipt_url,
+            notes: expense.notes,
+            display_order: 0,
+            vendor_name: expense.vendor_name,
+            lead_type_name: expense.lead_type_name,
+            lead_type_color: expense.lead_type_color,
+          }],
+        });
+      } else {
+        res.json({
+          ...expense,
+          expenseNumber: `${expense.expense_prefix || ""}${expense.expense_number || ""}`,
+          lineItems: lineItems,
+        });
+      }
     } catch (error: unknown) {
-      console.error("💰 Error updating expense:", error);
-      res.status(500).json({ message: "Failed to update expense" });
+      console.error("💰 Error fetching expense:", error);
+      res.status(500).json({ message: "Failed to fetch expense" });
     }
   });
 
@@ -17461,6 +19113,69 @@ Please improve this email.`;
     } catch (error: unknown) {
       console.error("💰 Error deleting expense:", error);
       res.status(500).json({ message: "Failed to delete expense" });
+    }
+  });
+
+  // Migration endpoint for expense line items
+  // Migration endpoint for expense prefixes
+  app.post("/api/migrate/expense-prefixes", authenticateToken, async (req: any, res) => {
+    try {
+      console.log("🔄 Starting expense prefix migration...");
+      const result = await simpleStorage.migrateExpensePrefixes();
+      res.json(result);
+    } catch (error: unknown) {
+      console.error("❌ Migration error:", error);
+      res.status(500).json({
+        message: "Migration failed",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.post("/api/migrate/expense-line-items", authenticateToken, async (req: any, res) => {
+    try {
+      console.log("🔄 Starting expense line items migration...");
+      
+      // Read and execute the migration SQL
+      const fs = await import("fs");
+      const path = await import("path");
+      const migrationSQL = fs.readFileSync(
+        path.join(process.cwd(), "migrations", "migrate_expense_line_items.sql"),
+        "utf-8"
+      );
+      
+      // Split by semicolons and execute each statement
+      const statements = migrationSQL
+        .split(";")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0 && !s.startsWith("--"));
+      
+      for (const statement of statements) {
+        if (statement.trim()) {
+          try {
+            await sql.unsafe(statement);
+            console.log("✅ Executed migration statement");
+          } catch (error: any) {
+            // Ignore errors for statements that might already be executed (e.g., CREATE TABLE IF NOT EXISTS)
+            if (!error.message?.includes("already exists") && !error.message?.includes("duplicate")) {
+              console.error("⚠️ Migration statement error (may be expected):", error.message);
+            }
+          }
+        }
+      }
+      
+      console.log("✅ Expense line items migration completed");
+      res.json({ 
+        success: true, 
+        message: "Expense line items migration completed successfully" 
+      });
+    } catch (error: unknown) {
+      console.error("❌ Error during expense line items migration:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to migrate expense line items",
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   });
 
@@ -17677,16 +19392,11 @@ Please improve this email.`;
     }
   });
 
-  app.post("/api/tenants/:tenantId/leads/:leadId/notes", authenticateToken, async (req, res) => {
+  app.post("/api/tenants/:tenantId/leads/:leadId/notes", async (req, res) => {
     try {
       const leadId = parseInt(req.params.leadId);
       const tenantId = parseInt(req.params.tenantId);
-      const user = (req as any).user;
-
-      // Tenant access validation
-      if (user.tenantId !== tenantId) {
-        return res.status(403).json({ message: "Access denied" });
-      }
+      const userId = 64; // Using valid user ID for tenant 22 (shashivani01@gmail.com)
 
       console.log("🔍 API: Creating lead note for leadId:", leadId);
       console.log("🔍 API: Request body:", req.body);
@@ -17695,31 +19405,11 @@ Please improve this email.`;
         ...req.body,
         leadId,
         tenantId,
-        userId: user.id,
+        userId,
       };
 
       console.log("🔍 API: Final noteData being sent to storage:", noteData);
       const note = await simpleStorage.createLeadNote(noteData);
-
-      // Create activity for note creation
-      try {
-        await simpleStorage.createLeadActivity({
-          tenantId: tenantId,
-          leadId: leadId,
-          userId: user.id,
-          activityType: 7, // 7 = Note Created
-          activityTitle: `Note Created: ${noteData.noteTitle || note.noteTitle || 'Untitled Note'}`,
-          activityDescription: noteData.noteContent || note.noteContent || `Note type: ${noteData.noteType || 'general'}`,
-          activityStatus: 1, // 1 = Completed
-          activityDate: new Date().toISOString(),
-          activityTableId: note.id,
-          activityTableName: "lead_notes",
-        });
-        console.log(`✅ Lead activity logged for note creation: ${note.id}`);
-      } catch (activityError) {
-        // Don't fail the whole operation if activity logging fails
-        console.error("⚠️ Failed to log note creation activity:", activityError);
-      }
 
       res.json({
         success: true,
@@ -17793,61 +19483,47 @@ Please improve this email.`;
   });
 
   // POST /api/tenants/:tenantId/leads/:leadId/emails - Send email for a lead
-  app.post("/api/tenants/:tenantId/leads/:leadId/emails", authenticateToken, async (req, res) => {
+  app.post("/api/tenants/:tenantId/leads/:leadId/emails", async (req, res) => {
     try {
       const leadId = parseInt(req.params.leadId);
       const tenantId = parseInt(req.params.tenantId);
-      const user = (req as any).user;
+      const { email, subject, body, fromEmail } = req.body;
 
-      if (!tenantId) {
-        return res.status(403).json({ message: "Access denied - no tenant" });
-      }
+      console.log("🔍 API: Sending email for leadId:", leadId);
+      console.log("🔍 API: Email data:", { email, subject, fromEmail });
 
-      // First, try to send the actual email
-      let emailStatus = "failed";
-      let errorMessage = null;
+      // Insert into email_logs table
+      const result = await sql`
+        INSERT INTO email_logs (
+          tenant_id, lead_id, email, subject, body, from_email, status, sent_at
+        ) VALUES (${tenantId}, ${leadId}, ${email}, ${subject}, ${body}, ${fromEmail}, 'sent', NOW()) 
+        RETURNING id, lead_id, email, subject, body, from_email, status, sent_at
+      `;
 
-      try {
-        const { tenantEmailService } = await import(
-          "./tenant-email-service.js"
-        );
-        await tenantEmailService.sendCustomerEmail({
-          to: req.body.email,
-          subject: req.body.subject,
-          body: req.body.body,
-          htmlBody: req.body.htmlBody,
-          tenantId: tenantId,
-          attachments: req.body.attachments,
-        });
-        emailStatus = req.body.status || "sent";
-        console.log(`✅ Email sent successfully to ${req.body.email}`);
-      } catch (emailError: any) {
-        console.error(
-          `❌ Failed to send email to ${req.body.email}:`,
-          emailError,
-        );
-        emailStatus = "failed";
-        errorMessage = emailError.message;
-      }
+      const newEmail = result[0];
+      console.log("✅ API: Email logged successfully with ID:", newEmail.id);
 
-      // Save to database with status
-      const emailData = {
-        ...req.body,
-        tenantId: tenantId,
-        leadId: leadId,
-        userId: user?.id,
-        status: emailStatus,
-        errorMessage: errorMessage,
-        sentAt: new Date().toISOString(),
-      };
-
-      const email = await simpleStorage.createLeadEmail(emailData);
-      res.status(201).json(email);
-    } catch (error: any) {
-      console.error("❌ Error creating lead email:", error);
-      res
-        .status(500)
-        .json({ message: "Internal server error", error: error.message });
+      res.json({
+        success: true,
+        message: "Email sent successfully",
+        email: {
+          id: newEmail.id,
+          leadId: newEmail.lead_id,
+          email: newEmail.email,
+          subject: newEmail.subject,
+          body: newEmail.body,
+          fromEmail: newEmail.from_email,
+          status: newEmail.status,
+          sentAt: newEmail.sent_at,
+        },
+      });
+    } catch (error) {
+      console.error("❌ API: Error sending lead email:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to send email",
+        error: error.message,
+      });
     }
   });
 
@@ -17901,21 +19577,22 @@ Please improve this email.`;
   });
 
   // POST /api/tenants/:tenantId/leads/:leadId/calls - Create new call log
-  app.post("/api/tenants/:tenantId/leads/:leadId/calls", authenticateToken, async (req, res) => {
+  app.post("/api/tenants/:tenantId/leads/:leadId/calls", async (req, res) => {
     try {
       const { tenantId, leadId } = req.params;
-      const { callType, status, duration, notes, phoneNumber, followUpDateTime, followUpRequired } = req.body;
-      const user = (req as any).user;
-
-      // Tenant access validation
-      if (user.tenantId !== parseInt(tenantId)) {
-        return res.status(403).json({ message: "Access denied" });
-      }
+      const { callType, status, duration, notes } = req.body;
 
       console.log(
         `📞 SIMPLE ROUTES: Creating call log for tenant ${tenantId}, lead ${leadId}`,
       );
       console.log("📞 Call data:", req.body);
+
+      // Get a valid user ID for this tenant
+      const userData = await sql`
+        SELECT id FROM users WHERE tenant_id = ${tenantId} LIMIT 1
+      `;
+
+      const userId = userData[0]?.id || null;
 
       // Check if lead has been converted to customer
       const leadData = await sql`
@@ -17934,22 +19611,16 @@ Please improve this email.`;
           status, 
           duration, 
           notes,
-          caller_number,
-          "followUpDateTime",
-          "followUpRequired",
           started_at
         ) VALUES (
           ${tenantId}, 
           ${leadId}, 
           ${customerId},
-          ${user.id},
+          ${userId},
           ${callType || "outbound"}, 
           ${status || "completed"}, 
           ${duration ? parseInt(duration) : null}, 
           ${notes || ""},
-          ${phoneNumber || null},
-          ${followUpDateTime || null},
-          ${followUpRequired || false},
           NOW()
         ) RETURNING 
           id,
@@ -17958,35 +19629,12 @@ Please improve this email.`;
           status,
           duration,
           notes,
-          caller_number as "phoneNumber",
-          "followUpDateTime",
-          "followUpRequired",
           started_at as "startedAt",
           created_at as "createdAt"
       `;
 
       const newCall = result[0];
       console.log(`📞 SIMPLE ROUTES: Created call log with ID ${newCall.id}`);
-
-      // Create activity for call log creation
-      try {
-        await simpleStorage.createLeadActivity({
-          tenantId: parseInt(tenantId),
-          leadId: parseInt(leadId),
-          userId: user.id,
-          activityType: 3, // 3 = Call Made
-          activityTitle: callType || "Call Made",
-          activityDescription: `Mobile Number ${phoneNumber || "N/A"} Status ${status || "completed"} Minutes ${duration || 0} Notes ${notes || ""} Date ${new Date().toISOString()}${followUpDateTime ? ` Follow Up ${followUpDateTime}` : ""}${followUpRequired ? ` Follow Up Status ${followUpRequired}` : ""}`,
-          activityStatus: 1, // 1 = Completed
-          activityDate: new Date().toISOString(),
-          activityTableId: newCall.id,
-          activityTableName: "call_logs",
-        });
-        console.log(`✅ Lead activity logged for call creation: ${newCall.id}`);
-      } catch (activityError) {
-        // Don't fail the whole operation if activity logging fails
-        console.error("⚠️ Failed to log call creation activity:", activityError);
-      }
 
       return res.status(201).json({
         success: true,
@@ -18093,27 +19741,6 @@ Please improve this email.`;
         };
 
         const note = await simpleStorage.createCustomerNote(noteData);
-
-        // Create activity for note creation
-        try {
-          await simpleStorage.createCustomerActivity({
-            tenantId: parseInt(tenantId),
-            customerId: parseInt(customerId),
-            userId: user.id,
-            activityType: 7, // 7 = Note Created
-            activityTitle: `Note Created: ${noteData.noteTitle || note.noteTitle || 'Untitled Note'}`,
-            activityDescription: noteData.noteContent || note.noteContent || `Note type: ${noteData.noteType || 'general'}`,
-            activityStatus: 1, // 1 = Completed
-            activityDate: new Date().toISOString(),
-            activityTableId: note.id,
-            activityTableName: "customer_notes",
-          });
-          console.log(`✅ Customer activity logged for note creation: ${note.id}`);
-        } catch (activityError) {
-          // Don't fail the whole operation if activity logging fails
-          console.error("⚠️ Failed to log note creation activity:", activityError);
-        }
-
         res.status(201).json(note);
       } catch (error: any) {
         console.error("❌ Error creating customer note:", error);
@@ -18212,9 +19839,39 @@ Please improve this email.`;
     },
   });
 
-  // Serve uploaded files from local filesystem
-  // Handle both /uploads/email-attachments/ and /uploads/ paths
-  app.get("/uploads/email-attachments/:filename", (req, res) => {
+  // Serve uploaded email attachments from local filesystem
+  // Serve files from uploads directory (supports nested paths like packages/45/itinerary/...)
+  app.get("/uploads/*", async (req, res) => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const filePath = req.params[0]; // Get the path after /uploads/
+    
+    // Security: prevent path traversal
+    if (filePath.includes("..") || filePath.includes("//")) {
+      return res.status(403).json({ message: "Invalid path" });
+    }
+    
+    // Build the full file path
+    const fullPath = path.default.join(process.cwd(), "uploads", filePath);
+    
+    // Security: ensure the resolved path is within the uploads directory
+    const safePath = path.default.normalize(fullPath);
+    const uploadsDir = path.default.join(process.cwd(), "uploads");
+    if (!safePath.startsWith(path.default.normalize(uploadsDir))) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+    
+    if (fs.default.existsSync(safePath) && fs.default.statSync(safePath).isFile()) {
+      res.sendFile(safePath);
+    } else {
+      res.status(404).json({ message: "File not found" });
+    }
+  });
+
+  // Legacy route for email-attachments (for backward compatibility)
+  app.get("/uploads/email-attachments/:filename", async (req, res) => {
+    const fs = await import("fs");
+    const path = await import("path");
     const filename = req.params.filename;
     
     // Security: prevent path traversal - only allow alphanumeric, dash, underscore, and dot
@@ -18222,12 +19879,12 @@ Please improve this email.`;
       return res.status(403).json({ message: "Invalid filename" });
     }
     
-    const filePath = path.join(process.cwd(), "uploads", "email-attachments", filename);
+    const filePath = path.default.join(process.cwd(), "uploads", "email-attachments", filename);
     
     // Security: ensure the resolved path is within the uploads directory
-    const safePath = path.normalize(filePath);
-    const uploadsDir = path.join(process.cwd(), "uploads", "email-attachments");
-    if (!safePath.startsWith(path.normalize(uploadsDir))) {
+    const safePath = path.default.normalize(filePath);
+    const uploadsDir = path.default.join(process.cwd(), "uploads", "email-attachments");
+    if (!safePath.startsWith(path.default.normalize(uploadsDir))) {
       return res.status(403).json({ message: "Access denied" });
     }
     
@@ -18418,25 +20075,7 @@ Please improve this email.`;
         const uploadedFiles = [];
 
         for (const file of req.files) {
-          // Sanitize filename to prevent issues with spaces and special characters
-          const sanitizeFilename = (name: string): string => {
-            const ext = path.extname(name);
-            const baseName = path.basename(name, ext);
-            // Keep alphanumeric, spaces, dashes, underscores, dots, and parentheses
-            const sanitized = baseName
-              .replace(/[^a-zA-Z0-9._\s()-]/g, '') // Remove dangerous chars but keep parentheses
-              .replace(/\s+/g, ' ') // Normalize spaces
-              .trim()
-              .substring(0, 100); // Limit length
-            return `${sanitized}${ext}`;
-          };
-
-          const sanitizedOriginalName = sanitizeFilename(file.originalname);
-          const file_ext = path.extname(file.originalname);
-          const timestamp = Date.now();
-          const randomSuffix = Math.random().toString(36).substring(2, 8);
-          const safeFileName = `file_${randomSuffix}${file_ext}`;
-          const fileName = `email-attachments/${safeFileName}`;
+          const fileName = `email-attachments/${Date.now()}-${file.originalname}`;
 
           try {
             const url = await objectStorage.uploadFile(
@@ -18446,8 +20085,8 @@ Please improve this email.`;
             );
 
             uploadedFiles.push({
-              filename: file.originalname, // Keep original for display
-              path: url, // This will be the sanitized path
+              filename: file.originalname,
+              path: url,
               size: file.size,
               mimetype: file.mimetype,
             });
@@ -18756,18 +20395,14 @@ Please improve this email.`;
         );
 
         // Get customer's bookings and related data
-        const [customerBookings, customerInvoices, customersResult] =
+        const [customerBookings, customerInvoices, allCustomers] =
           await Promise.all([
             simpleStorage.getBookingsByTenant(parseInt(tenantId)),
             simpleStorage.getInvoicesByTenant(parseInt(tenantId)),
             simpleStorage.getCustomersByTenant({
               tenantId: parseInt(tenantId),
-              limit: 10000, // Get all customers for analytics
             }),
           ]);
-
-        // Extract the data array from the customers result
-        const allCustomers = customersResult.data || [];
 
         // Filter data for this specific customer
         const customerSpecificBookings = customerBookings.filter(
@@ -18987,6 +20622,8 @@ Please improve this email.`;
   const handleFileStorage = async (req: any, res: any) => {
     try {
       console.log("📁 File storage request received (POST - multipart/form-data)");
+      console.log("📁 Request file:", req.file ? "present" : "missing");
+      console.log("📁 Request files:", req.files ? "present" : "missing");
 
       if (!req.file) {
         return res
@@ -18997,164 +20634,108 @@ Please improve this email.`;
       // Generate a unique object path
       const timestamp = Date.now();
       const randomSuffix = Math.random().toString(36).substring(2, 8);
-      const objectPath = `uploads/${timestamp}-${randomSuffix}-${req.file.originalname}`;
+      const sanitizedFilename = req.file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_'); // Sanitize filename
+      const objectPath = `uploads/${timestamp}-${randomSuffix}-${sanitizedFilename}`;
 
       // Also create a public URL for accessing the file
-      const publicUrl = `/uploads/${timestamp}-${randomSuffix}-${req.file.originalname}`;
+      const publicUrl = `/uploads/${timestamp}-${randomSuffix}-${sanitizedFilename}`;
+
+      // Save file to local filesystem
+      const fs = await import("fs");
+      const path = await import("path");
+      const uploadsDir = path.default.join(process.cwd(), "uploads");
+      
+      if (!fs.default.existsSync(uploadsDir)) {
+        fs.default.mkdirSync(uploadsDir, { recursive: true });
+      }
+      
+      const filePath = path.default.join(uploadsDir, `${timestamp}-${randomSuffix}-${sanitizedFilename}`);
+      fs.default.writeFileSync(filePath, req.file.buffer);
 
       console.log("📁 File stored with path:", objectPath);
+      console.log("📁 File saved to:", filePath);
       console.log("📁 Public URL:", publicUrl);
-
-      res.json({
-        success: true,
-        objectPath,
-        publicUrl,
-        fileName: req.file.originalname,
-        mimeType: req.file.mimetype,
-        fileSize: req.file.size,
-      });
-    } catch (error) {
-      console.error("❌ File storage error:", error);
-      res
-        .status(500)
-        .json({ success: false, message: "Failed to store file" });
-    }
-  };
-
-  // Handle raw binary PUT requests from Uppy (AwsS3 plugin sends file as raw body)
-  // express.raw() middleware already parses the body into req.body as a Buffer
-  const handleRawFileUpload = async (req: any, res: any) => {
-    try {
-      console.log("📁 ========== Raw file upload (PUT) handler called ==========");
-      console.log("📁 Content-Type:", req.headers["content-type"]);
-      console.log("📁 Content-Length:", req.headers["content-length"]);
-      console.log("📁 Query params:", req.query);
-      console.log("📁 Request body type:", typeof req.body);
-      console.log("📁 Request body is Buffer:", Buffer.isBuffer(req.body));
-      console.log("📁 Request body length:", req.body?.length || 0);
-      
-      // express.raw() should parse the body into req.body as a Buffer
-      // But if express.json() ran first, req.body might be an object or string
-      let fileBuffer: Buffer;
-      
-      if (Buffer.isBuffer(req.body)) {
-        // Good - body is already a Buffer
-        fileBuffer = req.body;
-      } else if (typeof req.body === 'string') {
-        // Body was parsed as string, convert to Buffer
-        console.log("⚠️ Body was parsed as string, converting to Buffer");
-        fileBuffer = Buffer.from(req.body, 'binary');
-      } else if (req.body && typeof req.body === 'object') {
-        // Body was parsed as JSON, this shouldn't happen but handle it
-        console.error("❌ Body was parsed as JSON object - this shouldn't happen for binary uploads");
-        return res.status(400).json({
-          success: false,
-          message: "Request body was parsed as JSON instead of binary data. Check middleware order.",
-        });
-      } else {
-        // No body at all
-        console.error("❌ No request body found");
-        return res.status(400).json({
-          success: false,
-          message: "No file data received",
-        });
-      }
-      
-      if (!fileBuffer || fileBuffer.length === 0) {
-        console.error("❌ File buffer is empty");
-        return res.status(400).json({
-          success: false,
-          message: "No file data received",
-        });
-      }
-
-      console.log("📁 File buffer size:", fileBuffer.length, "bytes");
-
-      // Get filename from query parameter or use a default
-      let originalFilename = (req.query.filename as string) || `file-${Date.now()}`;
-      const contentType = req.headers["content-type"] || "application/octet-stream";
-
-      console.log("📁 Original filename:", originalFilename);
-      console.log("📁 Content-Type:", contentType);
-
-      // Sanitize filename: remove path separators and special characters, keep only safe characters
-      const sanitizeFilename = (name: string): string => {
-        // Get file extension
-        const ext = path.extname(name);
-        // Get base name without extension
-        const baseName = path.basename(name, ext);
-        // Sanitize: remove special characters, keep alphanumeric, spaces, dashes, underscores, dots
-        const sanitized = baseName
-          .replace(/[^a-zA-Z0-9._\s-]/g, '') // Remove special chars
-          .replace(/\s+/g, '_') // Replace spaces with underscores
-          .replace(/_{2,}/g, '_') // Replace multiple underscores with single
-          .substring(0, 100); // Limit length
-        return `${sanitized}${ext}`;
-      };
-
-      const sanitizedFilename = sanitizeFilename(originalFilename);
-
-      // Generate timestamp with timezone offset
-      const now = new Date();
-      const timestamp = now.getTime();
-      const timezoneOffset = -now.getTimezoneOffset(); // Offset in minutes
-      const timezoneOffsetHours = Math.floor(Math.abs(timezoneOffset) / 60);
-      const timezoneOffsetMinutes = Math.abs(timezoneOffset) % 60;
-      const timezoneSign = timezoneOffset >= 0 ? '+' : '-';
-      const timezoneString = `${timezoneSign}${String(timezoneOffsetHours).padStart(2, '0')}${String(timezoneOffsetMinutes).padStart(2, '0')}`;
-      
-      // Format: timestamp-timezone-sanitized-filename
-      // Example: 1763110450418+0530-Screenshot_2.png
-      const finalFilename = `${timestamp}${timezoneString}-${sanitizedFilename}`;
-      const objectPath = `uploads/${finalFilename}`;
-      const publicUrl = `/uploads/${finalFilename}`;
-
-      // Save file to local filesystem (or upload to object storage)
-      const uploadsDir = path.join(process.cwd(), "uploads");
-      
-      console.log("📁 Uploads directory:", uploadsDir);
-      
-      if (!fs.existsSync(uploadsDir)) {
-        console.log("📁 Creating uploads directory:", uploadsDir);
-        fs.mkdirSync(uploadsDir, { recursive: true });
-      }
-      
-      const filePath = path.join(uploadsDir, finalFilename);
-      
-      console.log("📁 Saving file to:", filePath);
-      console.log("📁 Final filename:", finalFilename);
-      fs.writeFileSync(filePath, fileBuffer);
-      
-      // Verify file was saved
-      if (fs.existsSync(filePath)) {
-        const stats = fs.statSync(filePath);
-        console.log("✅ File saved successfully!");
-        console.log("📁 File size on disk:", stats.size, "bytes");
-        console.log("📁 File path:", filePath);
-        console.log("📁 Public URL:", publicUrl);
-      } else {
-        console.error("❌ File was not saved - file does not exist after write");
-        return res.status(500).json({
-          success: false,
-          message: "File was not saved to disk",
-        });
-      }
+      console.log("📁 File size:", req.file.size, "bytes");
 
       res.json({
         success: true,
         objectPath,
         publicUrl,
         fileName: sanitizedFilename,
-        originalFileName: originalFilename,
+        mimeType: req.file.mimetype,
+        fileSize: req.file.size,
+      });
+    } catch (error: any) {
+      console.error("❌ File storage error:", error);
+      res
+        .status(500)
+        .json({ 
+          success: false, 
+          message: "Failed to store file",
+          error: error.message 
+        });
+    }
+  };
+
+  // Handle raw binary PUT requests from Uppy (AwsS3 plugin sends file as raw body)
+  const handleRawFileUpload = async (req: any, res: any) => {
+    try {
+      console.log("📁 Raw file upload (PUT) received");
+      console.log("📁 Content-Type:", req.headers["content-type"]);
+      console.log("📁 Content-Length:", req.headers["content-length"]);
+      
+      // express.raw() middleware already consumed the body and put it in req.body as a Buffer
+      const fileBuffer = req.body;
+      
+      if (!fileBuffer || fileBuffer.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "No file data received",
+        });
+      }
+
+      // Get filename from query parameter, header, or use a default
+      const filename = (req.query.filename as string) || 
+                      (req.headers["x-filename"] as string) || 
+                      `file-${Date.now()}`;
+      const contentType = req.headers["content-type"] || "application/octet-stream";
+
+      // Generate a unique object path
+      const timestamp = Date.now();
+      const randomSuffix = Math.random().toString(36).substring(2, 8);
+      const sanitizedFilename = filename.replace(/[^a-zA-Z0-9.-]/g, '_'); // Sanitize filename
+      const objectPath = `uploads/${timestamp}-${randomSuffix}-${sanitizedFilename}`;
+      const publicUrl = `/uploads/${timestamp}-${randomSuffix}-${sanitizedFilename}`;
+
+      // Save file to local filesystem (or upload to object storage)
+      const fs = await import("fs");
+      const path = await import("path");
+      const uploadsDir = path.default.join(process.cwd(), "uploads");
+      
+      if (!fs.default.existsSync(uploadsDir)) {
+        fs.default.mkdirSync(uploadsDir, { recursive: true });
+      }
+      
+      const filePath = path.default.join(uploadsDir, `${timestamp}-${randomSuffix}-${sanitizedFilename}`);
+      fs.default.writeFileSync(filePath, fileBuffer);
+
+      console.log("📁 File saved to:", filePath);
+      console.log("📁 Public URL:", publicUrl);
+      console.log("📁 File size:", fileBuffer.length, "bytes");
+
+      res.json({
+        success: true,
+        objectPath,
+        publicUrl,
+        fileName: sanitizedFilename,
         mimeType: contentType,
         fileSize: fileBuffer.length,
       });
     } catch (error: any) {
-      console.error("❌ Error processing raw file upload:", error);
-      console.error("❌ Error stack:", error.stack);
+      console.error("❌ Raw file upload error:", error);
       res.status(500).json({
         success: false,
-        message: "Failed to store file",
+        message: "Failed to process file upload",
         error: error.message,
       });
     }
@@ -19168,180 +20749,13 @@ Please improve this email.`;
   );
 
   // PUT endpoint handles raw binary uploads from Uppy
-  // express.raw() parses the body into req.body as a Buffer
-  // IMPORTANT: This must be registered BEFORE any JSON body parsers that might consume the stream
+  // Use express.raw() to handle binary data without consuming the stream
   app.put(
     "/api/objects/store",
-    (req, res, next) => {
-      console.log("🔵 PUT /api/objects/store - Request received");
-      console.log("🔵 Method:", req.method);
-      console.log("🔵 URL:", req.url);
-      console.log("🔵 Headers:", {
-        "content-type": req.headers["content-type"],
-        "content-length": req.headers["content-length"],
-        "authorization": req.headers["authorization"] ? "Present" : "Missing"
-      });
-      next();
-    },
     authenticateToken,
     express.raw({ type: "*/*", limit: "50mb" }), // Handle any content type, up to 50MB
     handleRawFileUpload
   );
-
-  // Get data from any table by table name and ID (for activity popups)
-  app.get("/api/activity-table-data", authenticateToken, async (req, res) => {
-    try {
-      const user = (req as any).user;
-      const { tableName, tableId, tenantId } = req.query;
-
-      if (!tableName || !tableId) {
-        return res.status(400).json({
-          success: false,
-          message: "tableName and tableId are required",
-        });
-      }
-
-      const finalTenantId = tenantId ? parseInt(tenantId as string) : user.tenantId;
-
-      // Sanitize table name to prevent SQL injection
-      const allowedTables = [
-        "invoices",
-        "bookings",
-        "estimates",
-        "leads",
-        "customers",
-        "expenses",
-        "packages",
-        "email_logs",
-        "call_logs",
-        "whatsapp_messages",
-        "customer_files",
-        "customer_notes",
-      ];
-      
-      const sanitizedTableName = tableName as string;
-      if (!allowedTables.includes(sanitizedTableName)) {
-        return res.status(400).json({
-          success: false,
-          message: `Table "${sanitizedTableName}" is not allowed`,
-        });
-      }
-
-      const tableIdNum = parseInt(tableId as string);
-      if (isNaN(tableIdNum)) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid tableId",
-        });
-      }
-
-      // Fetch data from the specified table using a switch to prevent SQL injection
-      let result: any[] = [];
-      
-      switch (sanitizedTableName) {
-        case "invoices":
-          result = await sql`
-            SELECT * FROM invoices 
-            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
-          `;
-          break;
-        case "bookings":
-          result = await sql`
-            SELECT * FROM bookings 
-            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
-          `;
-          break;
-        case "estimates":
-          result = await sql`
-            SELECT * FROM estimates 
-            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
-          `;
-          break;
-        case "leads":
-          result = await sql`
-            SELECT * FROM leads 
-            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
-          `;
-          break;
-        case "customers":
-          result = await sql`
-            SELECT * FROM customers 
-            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
-          `;
-          break;
-        case "expenses":
-          result = await sql`
-            SELECT * FROM expenses 
-            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
-          `;
-          break;
-        case "packages":
-          result = await sql`
-            SELECT * FROM packages 
-            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
-          `;
-          break;
-        case "email_logs":
-          // Select all columns that exist in email_logs table
-          // Note: Some columns may not exist in all databases, so we use a safe approach
-          result = await sql`
-            SELECT *
-            FROM email_logs 
-            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
-          `;
-          break;
-        case "call_logs":
-          result = await sql`
-            SELECT * FROM call_logs 
-            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
-          `;
-          break;
-        case "whatsapp_messages":
-          result = await sql`
-            SELECT * FROM whatsapp_messages 
-            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
-          `;
-          break;
-        case "customer_files":
-          result = await sql`
-            SELECT * FROM customer_files 
-            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
-          `;
-          break;
-        case "customer_notes":
-          result = await sql`
-            SELECT * FROM customer_notes 
-            WHERE id = ${tableIdNum} AND tenant_id = ${finalTenantId}
-          `;
-          break;
-        default:
-          return res.status(400).json({
-            success: false,
-            message: `Table "${sanitizedTableName}" is not supported`,
-          });
-      }
-
-      if (!result || result.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: `Record not found in ${sanitizedTableName}`,
-        });
-      }
-
-      res.json({
-        success: true,
-        data: result[0],
-        tableName: sanitizedTableName,
-      });
-    } catch (error: any) {
-      console.error("❌ Error fetching activity table data:", error);
-      res.status(500).json({
-        success: false,
-        message: "Failed to fetch data",
-        error: error.message,
-      });
-    }
-  });
 
   // Get customer files
   app.get("/api/customer-files", authenticateToken, async (req, res) => {
@@ -19434,30 +20848,9 @@ Please improve this email.`;
         uploadedBy: user.id,
         tags: req.body.tags || [],
         isPublic: req.body.isPublic || false,
-        description: req.body.description || null,
       };
 
       const file = await simpleStorage.createCustomerFile(fileData);
-
-      // Create activity for file upload
-      try {
-        await simpleStorage.createCustomerActivity({
-          tenantId: finalTenantId,
-          customerId: parseInt(customerId),
-          userId: user.id,
-          activityType: 6, // 6 = File Uploaded
-          activityTitle: `File Uploaded: ${fileData.fileName}`,
-          activityDescription: fileData.description || `File type: ${fileType}, Size: ${(fileSize / 1024).toFixed(2)} KB`,
-          activityStatus: 1, // 1 = Completed
-          activityDate: new Date().toISOString(),
-          activityTableId: file.id,
-          activityTableName: "customer_files",
-        });
-        console.log(`✅ Customer activity logged for file upload: ${file.id}`);
-      } catch (activityError) {
-        // Don't fail the whole operation if activity logging fails
-        console.error("⚠️ Failed to log file upload activity:", activityError);
-      }
 
       res.json({ success: true, file });
     } catch (error) {
@@ -19548,9 +20941,9 @@ Please improve this email.`;
     "✅ SIMPLE ROUTES: Customer file API endpoints registered successfully",
   );
 
-  // ====================================================
+
   // DASHBOARD & REPORTS API ENDPOINTS
-  // ====================================================
+ 
 
   // Dashboard main metrics endpoint
   app.get("/api/reports/dashboard", authenticateToken, async (req, res) => {
@@ -20370,122 +21763,163 @@ Please improve this email.`;
     }
   });
 
-  // GET profit and loss data with date filtering
-  app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
-    try {
-      const tenantId = req.user.tenantId;
-      if (!tenantId) {
-        return res
-          .status(400)
-          .json({ error: "Tenant ID not found in user session" });
-      }
-
-      const { startDate = "", endDate = "" } = req.query;
-
-      // Build date filter for expenses
-      let expenseDateFilter = sql`1=1`;
-      if (startDate && endDate) {
-        expenseDateFilter = sql`expense_date >= ${startDate} AND expense_date <= ${endDate}`;
-      }
-
-      // Build date filter for bookings (revenue)
-      let bookingDateFilter = sql`1=1`;
-      if (startDate && endDate) {
-        bookingDateFilter = sql`created_at >= ${startDate} AND created_at <= ${endDate}`;
-      }
-
-      // Fetch expenses grouped by month
-      const expensesByMonth = await sql`
-        SELECT 
-          TO_CHAR(expense_date, 'YYYY-MM') as month,
-          SUM(amount) as total_expenses
-        FROM expenses
-        WHERE tenant_id = ${tenantId} AND ${expenseDateFilter}
-        GROUP BY TO_CHAR(expense_date, 'YYYY-MM')
-        ORDER BY month ASC
-      `;
-
-      // Fetch revenue grouped by month
-      const revenueByMonth = await sql`
-        SELECT 
-          TO_CHAR(created_at, 'YYYY-MM') as month,
-          SUM(total_amount) as total_revenue
-        FROM bookings
-        WHERE tenant_id = ${tenantId} AND ${bookingDateFilter}
-        GROUP BY TO_CHAR(created_at, 'YYYY-MM')
-        ORDER BY month ASC
-      `;
-
-      // Generate all months in the date range
-      const allMonths: string[] = [];
-      if (startDate && endDate) {
-        const start = new Date(startDate as string);
-        const end = new Date(endDate as string);
-
-        const current = new Date(start.getFullYear(), start.getMonth(), 1);
-        const endMonth = new Date(end.getFullYear(), end.getMonth(), 1);
-
-        while (current <= endMonth) {
-          const year = current.getFullYear();
-          const month = String(current.getMonth() + 1).padStart(2, "0");
-          allMonths.push(`${year}-${month}`);
-          current.setMonth(current.getMonth() + 1);
-        }
-      }
-
-      // Combine expenses and revenue by month
-      const monthsMap = new Map();
-
-      // Initialize all months with zero values
-      allMonths.forEach((month) => {
-        monthsMap.set(month, {
-          month: month,
-          expenses: 0,
-          revenue: 0,
-        });
-      });
-
-      // Add expenses
-      expensesByMonth.forEach((row: any) => {
-        if (monthsMap.has(row.month)) {
-          monthsMap.get(row.month).expenses =
-            parseFloat(row.total_expenses) || 0;
-        } else {
-          monthsMap.set(row.month, {
-            month: row.month,
-            expenses: parseFloat(row.total_expenses) || 0,
-            revenue: 0,
-          });
-        }
-      });
-
-      // Add revenue
-      revenueByMonth.forEach((row: any) => {
-        if (monthsMap.has(row.month)) {
-          monthsMap.get(row.month).revenue = parseFloat(row.total_revenue) || 0;
-        } else {
-          monthsMap.set(row.month, {
-            month: row.month,
-            expenses: 0,
-            revenue: parseFloat(row.total_revenue) || 0,
-          });
-        }
-      });
-
-      // Convert map to array and calculate profit, sorted by month
-      const profitLossData = Array.from(monthsMap.values())
-        .sort((a, b) => a.month.localeCompare(b.month))
-        .map((item) => ({
-          ...item,
-          profit: item.revenue - item.expenses,
-        }));
-
-      res.json(profitLossData || []);
-    } catch (error: any) {
-      console.error("❌ Profit/Loss API error:", error);
-      res.status(500).json({ error: error.message });
+ 
+app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
+  try {
+    const tenantId = req.user.tenantId;
+    if (!tenantId) {
+      return res.status(400).json({ error: "Tenant ID not found" });
     }
-  });
+
+    let { startDate = "", endDate = "" } = req.query;
+
+
+    const normalize = (v) =>
+      typeof v === "string" ? v.slice(0, 10) : v;
+
+    startDate = normalize(startDate);
+    endDate = normalize(endDate);
+
+    const getYearMonthFromString = (dateStr) => {
+      if (!dateStr) return null;
+      const [year, month] = dateStr.split('-').map(Number);
+      return { year, month: month - 1 }; 
+    };
+
+    const startInfo = getYearMonthFromString(startDate);
+    const endInfo = getYearMonthFromString(endDate);
+
+
+    let invoiceDateFilter = sql`1=1`;
+    if (startDate && endDate) {
+      invoiceDateFilter = sql`
+        issue_date >= ${startDate}::date
+        AND issue_date < (${endDate}::date + INTERVAL '1 day')
+      `;
+    }
+
+    const invoices = await sql`
+      SELECT 
+        id,
+        issue_date AS "issueDate",
+        total_amount AS "totalAmount",
+        TO_CHAR(issue_date, 'YYYY-MM') AS "month"
+      FROM invoices
+      WHERE tenant_id = ${tenantId}
+        AND status NOT IN ('void', 'cancelled')
+        AND ${invoiceDateFilter}
+      ORDER BY issue_date ASC
+    `;
+
+    const invoiceMonthData = {};
+
+    invoices.forEach((inv) => {
+      const month = inv.month;
+      const revenue = Number(inv.totalAmount || 0);
+
+      if (!invoiceMonthData[month]) {
+        invoiceMonthData[month] = { revenue: 0 };
+      }
+
+      invoiceMonthData[month].revenue += revenue;
+    });
+
+
+    let expenseDateFilter = sql`1=1`;
+    if (startDate && endDate) {
+      expenseDateFilter = sql`
+        expense_date >= ${startDate}::date
+        AND expense_date < (${endDate}::date + INTERVAL '1 day')
+      `;
+    }
+
+    const expensesByMonth = await sql`
+      SELECT 
+        TO_CHAR(expense_date, 'YYYY-MM') AS month,
+        SUM(amount)::numeric AS total
+      FROM expenses
+      WHERE tenant_id = ${tenantId}
+        AND ${expenseDateFilter}
+      GROUP BY 1
+      ORDER BY 1 ASC
+    `;
+
+
+    const allMonths = [];
+
+    if (startInfo && endInfo) {
+      let currentYear = startInfo.year;
+      let currentMonth = startInfo.month;
+      
+      const targetYear = endInfo.year;
+      const targetMonth = endInfo.month;
+      
+      while (
+        currentYear < targetYear || 
+        (currentYear === targetYear && currentMonth <= targetMonth)
+      ) {
+        const monthStr = `${currentYear}-${(currentMonth + 1).toString().padStart(2, '0')}`;
+        allMonths.push(monthStr);
+        
+      
+        currentMonth++;
+        if (currentMonth > 11) {
+          currentMonth = 0;
+          currentYear++;
+        }
+      }
+    }
+
+    const monthsMap = new Map();
+
+    allMonths.forEach((m) => {
+      monthsMap.set(m, { month: m, revenue: 0, expenses: 0, profit: 0 });
+    });
+
+    expensesByMonth.forEach((row) => {
+      if (!monthsMap.has(row.month)) {
+        monthsMap.set(row.month, {
+          month: row.month,
+          revenue: 0,
+          expenses: Number(row.total),
+          profit: 0,
+        });
+      } else {
+        monthsMap.get(row.month).expenses += Number(row.total);
+      }
+    });
+
+  
+    Object.entries(invoiceMonthData).forEach(([month, data]) => {
+      if (!monthsMap.has(month)) {
+        monthsMap.set(month, {
+          month,
+          revenue: data.revenue,
+          expenses: 0,
+          profit: 0,
+        });
+      } else {
+        monthsMap.get(month).revenue += data.revenue;
+      }
+    });
+
+
+    const monthly = Array.from(monthsMap.values()).map((m) => ({
+      ...m,
+      profit: m.revenue - m.expenses,
+    }));
+
+
+    res.json({
+      monthly,
+    });
+
+  } catch (error) {
+    console.error("❌ Profit & Loss Error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 
   app.get("/api/gst-settings", authenticateVendor, async (req, res) => {
     try {
@@ -20603,21 +22037,20 @@ Please improve this email.`;
       const tenantId = req.user.tenantId;
       const { gstSettingId } = req.query;
 
-      let query = db
-        .select()
-        .from(gstRates)
-        .where(eq(gstRates.tenantId, tenantId));
-
+      const conditions = [eq(gstRates.tenantId, tenantId)];
+      
       if (gstSettingId) {
-        query = query.where(
-          eq(gstRates.gstSettingId, parseInt(gstSettingId as string)),
-        );
+        conditions.push(eq(gstRates.gstSettingId, parseInt(gstSettingId as string)));
       }
 
-      const rates = await query.orderBy(
-        asc(gstRates.displayOrder),
-        asc(gstRates.rateName),
-      );
+      const rates = await db
+        .select()
+        .from(gstRates)
+        .where(and(...conditions))
+        .orderBy(
+          asc(gstRates.displayOrder),
+          asc(gstRates.rateName),
+        );
 
       res.json(rates);
     } catch (error: any) {

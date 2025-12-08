@@ -38,14 +38,6 @@ export function getDateRange(filterType: string): { start: Date; end: Date } {
   }
 }
 
-// Helper function to format date in local timezone (YYYY-MM-DD)
-function formatLocalDate(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
 export function buildDateFilters(
   dateFilter: string,
   customDateFrom: Date | null,
@@ -55,8 +47,8 @@ export function buildDateFilters(
   
   if (dateFilter === "custom" && customDateFrom && customDateTo) {
     return {
-      startDate: formatLocalDate(customDateFrom),
-      endDate: formatLocalDate(customDateTo),
+      startDate: customDateFrom.toISOString().split('T')[0],
+      endDate: customDateTo.toISOString().split('T')[0],
       filterType: dateFilter
     };
   }
@@ -64,8 +56,8 @@ export function buildDateFilters(
   if (dateFilter !== "custom") {
     const dateRange = getDateRange(dateFilter);
     return {
-      startDate: formatLocalDate(dateRange.start),
-      endDate: formatLocalDate(dateRange.end),
+      startDate: dateRange.start.toISOString().split('T')[0],
+      endDate: dateRange.end.toISOString().split('T')[0],
       filterType: dateFilter
     };
   }

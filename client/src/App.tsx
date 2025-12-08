@@ -12,7 +12,6 @@ import NotFound from "@/pages/not-found";
 // Temporarily using a simple login component
 import Login from "@/pages/auth/login";
 import Register from "@/pages/auth/register";
-import Activate from "@/pages/auth/activate";
 
 // Core page imports
 import Welcome from "@/pages/welcome";
@@ -47,6 +46,9 @@ import Subscription from "@/pages/tenant/subscription";
 import Bookings from "@/pages/tenant/bookings";
 import BookingCreate from "@/pages/tenant/booking-create";
 import TravelPackages from "@/pages/tenant/packages";
+import PackageCreate from "@/pages/tenant/package-create";
+import PackageEdit from "@/pages/tenant/package-edit";
+import PackagePreview from "@/pages/tenant/package-preview";
 import PackageTypes from "@/pages/tenant/package-types";
 import Invoices from "@/pages/tenant/invoices";
 import InvoiceCreate from "@/pages/tenant/invoice-create";
@@ -151,12 +153,6 @@ function Router() {
         <Route path="/register">
           <PublicRoute>
             <Register />
-          </PublicRoute>
-        </Route>
-
-        <Route path="/activate">
-          <PublicRoute>
-            <Activate />
           </PublicRoute>
         </Route>
 
@@ -406,6 +402,24 @@ function Router() {
           </ProtectedRoute>
         </Route>
 
+        <Route path="/packages/create">
+          <ProtectedRoute>
+            <PackageCreate />
+          </ProtectedRoute>
+        </Route>
+
+        <Route path="/packages/edit/:id">
+          <ProtectedRoute>
+            <PackageEdit />
+          </ProtectedRoute>
+        </Route>
+
+        <Route path="/packages/preview/:id">
+          <ProtectedRoute>
+            <PackagePreview />
+          </ProtectedRoute>
+        </Route>
+
         <Route path="/packages">
           <ProtectedRoute>
             <TravelPackages />
@@ -424,7 +438,7 @@ function Router() {
           </ProtectedRoute>
         </Route>
 
-        <Route path="/invoice-create">
+        <Route path="/invoice-create/:id?">
           <ProtectedRoute>
             <InvoiceCreate />
           </ProtectedRoute>
@@ -538,6 +552,12 @@ function Router() {
           </ProtectedRoute>
         </Route>
 
+        <Route path="/estimates/edit/:id">
+          <ProtectedRoute>
+            <EstimateCreate />
+          </ProtectedRoute>
+        </Route>
+
         <Route path="/estimates">
           <ProtectedRoute>
             <Estimates />
@@ -556,7 +576,7 @@ function Router() {
           </ProtectedRoute>
         </Route>
 
-        <Route path="/expenses/create">
+        <Route path="/expenses/create/:id?">
           <ProtectedRoute>
             <ExpenseCreate />
           </ProtectedRoute>

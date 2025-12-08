@@ -4,100 +4,29 @@ dotenv.config();
 
 import nodemailer from "nodemailer";
 
-// Helper function to get correct base URL
-function getBaseUrl(): string {
-  try {
-    let baseUrl = process.env.APP_URL || process.env.FRONTEND_URL || "https://crm.ratehonk.com";
-    
-    // Remove trailing slash if present
-    baseUrl = baseUrl.replace(/\/$/, "");
-    
-    // Check if we're in development mode
-    const isDevelopment = process.env.NODE_ENV !== "production";
-    
-    // In development, allow localhost and 127.0.0.1
-    if (isDevelopment) {
-      // Allow localhost URLs in development
-      if (baseUrl.includes("localhost") || baseUrl.includes("127.0.0.1") || baseUrl.includes("0.0.0.0")) {
-        if (!baseUrl.startsWith("http")) {
-          baseUrl = `http://${baseUrl}`;
-        }
-        console.log("🔧 Development mode - Using local URL:", baseUrl);
-        return baseUrl;
-      }
-    }
-    
-    // Force correct domain in production - reject any wrong domains
-    if (baseUrl.includes("your-app-url.com") || baseUrl.includes("ww25")) {
-      console.log("⚠️ Detected wrong domain in env, overriding to crm.ratehonk.com");
-      baseUrl = "https://crm.ratehonk.com";
-    }
-    
-    // Ensure URL is absolute
-    if (!baseUrl.startsWith("http")) {
-      // Use https for production, http for development
-      const protocol = isDevelopment ? "http" : "https";
-      baseUrl = `${protocol}://${baseUrl}`;
-    }
-    
-    // In production, ensure it ends with the correct domain
-    if (!isDevelopment && !baseUrl.includes("crm.ratehonk.com")) {
-      console.log("⚠️ Production mode - Base URL doesn't contain crm.ratehonk.com, forcing correct domain");
-      baseUrl = "https://crm.ratehonk.com";
-    }
-    
-    return baseUrl;
-  } catch (error) {
-    console.error("❌ Error in getBaseUrl():", error);
-    // Fallback to localhost in development, production URL otherwise
-    const isDevelopment = process.env.NODE_ENV !== "production";
-    return isDevelopment ? "http://localhost:5000" : "https://crm.ratehonk.com";
-  }
-}
-
 class EmailService {
   private transporter: nodemailer.Transporter;
 
   constructor() {
     // Create transporter with a common email service (you can configure this with real SMTP)
-    const smtpHost = process.env.SMTP_HOST || "mail.vanitechnologies.in";
-    const smtpPort = parseInt(process.env.SMTP_PORT || "587");
-    const smtpUser = process.env.EMAIL_USER || process.env.SMTP_USER || "support@vanitechnologies.in";
-    const smtpPass = process.env.EMAIL_PASS || process.env.SMTP_PASS || "Support@2025";
-    const smtpSecure = process.env.SMTP_SECURE === "true" || false;
-    const fromEmail = process.env.EMAIL_FROM || smtpUser; // Use SMTP user as default "from"
-    
-    console.log("📧 SMTP Configuration:", {
-      host: smtpHost,
-      port: smtpPort,
-      secure: smtpSecure,
-      user: smtpUser,
-      from: fromEmail,
-      hasPassword: !!smtpPass,
-    });
-    
-    this.transporter = nodemailer.createTransport({
-      host: smtpHost,
-      port: smtpPort,
-      secure: smtpSecure,
+    console.log("SMTP Credential", {
+      host: "mail.vanitechnologies.in", // Replace with your SMTP host
+      port: 587,
+      secure: false,
       auth: {
-        user: smtpUser,
-        pass: smtpPass,
-      },
-      tls: {
-        rejectUnauthorized: false, // Allow self-signed certificates
+        user: process.env.EMAIL_USER || "support@vanitechnologies.in",
+        pass: process.env.EMAIL_PASS || "Support@2025",
       },
     });
-
-    // Verify SMTP connection on initialization
-    this.transporter.verify()
-      .then(() => {
-        console.log("✅ SMTP connection verified successfully");
-      })
-      .catch((error) => {
-        console.error("❌ SMTP connection verification failed:", error);
-        console.error("❌ This may cause email sending to fail");
-      });
+    this.transporter = nodemailer.createTransport({
+      host: "mail.vanitechnologies.in", // Replace with your SMTP host
+      port: 587,
+      secure: false,
+      auth: {
+        user: process.env.EMAIL_USER || "support@vanitechnologies.in",
+        pass: process.env.EMAIL_PASS || "Support@2025",
+      },
+    });
   }
 
   async sendWelcomeEmail(data: {
@@ -108,15 +37,10 @@ class EmailService {
     email: string;
     temporaryPassword: string;
   }) {
-      // IMPORTANT: Use SMTP user email as "from" to avoid SPF/DKIM failures
-      // Many SMTP servers reject emails when "from" doesn't match authenticated user
-      const smtpUser = process.env.EMAIL_USER || process.env.SMTP_USER || "support@vanitechnologies.in";
-      const fromEmail = smtpUser; // Force use of SMTP user email for better deliverability
-      
-      const mailOptions = {
-        from: fromEmail,
-        to: data.to,
-        subject: `Welcome to ${data.companyName} - Your Account Details`,
+    const mailOptions = {
+      from: process.env.EMAIL_FROM || "noreply@ratehonk.com",
+      to: data.to,
+      subject: `Welcome to ${data.companyName} - Your Account Details`,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h2 style="color: #333;">Welcome to ${data.companyName}!</h2>
@@ -124,7 +48,7 @@ class EmailService {
           <p>Hello ${data.firstName} ${data.lastName},</p>
           
           <p>Your account has been created in our RateHonk CRM system.</p>
-          <p>You can access the system at: <a href="${getBaseUrl()}">Login Here</a></p>
+          <p>You can access the system at: <a href="${process.env.APP_URL || "https://your-app-url.com"}">Login Here</a></p>
           
           <p>If you have any questions, please contact your system administrator.</p>
           
@@ -155,79 +79,34 @@ class EmailService {
     resetToken: string;
     companyName: string;
   }) {
-    console.log("📧 ===== sendPasswordResetEmail CALLED =====");
-    console.log("📧 Data received:", {
+    const resetUrl = `${process.env.APP_URL || "https://your-app-url.com"}/reset-password?token=${data.resetToken}`;
+
+    const mailOptions = {
+      from: process.env.EMAIL_FROM || "noreply@ratehonk.com",
       to: data.to,
-      displayName: data.displayName,
-      companyName: data.companyName,
-      tokenLength: data.resetToken.length,
-    });
+      subject: "Password Reset Request",
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #333;">Password Reset Request</h2>
+          <p>Hello ${data.displayName},</p>
+          <p>We received a request to reset your password for your ${data.companyName} account.</p>
+          <p>Click the link below to reset your password:</p>
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${resetUrl}" style="background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">Reset Password</a>
+          </div>
+          <p>This link will expire in 1 hour for security purposes.</p>
+          <p>If you didn't request this password reset, please ignore this email.</p>
+          <p>Best regards,<br>The ${data.companyName} Team</p>
+        </div>
+      `,
+    };
 
     try {
-      // Get correct base URL using helper function
-      const baseUrl = getBaseUrl();
-      const resetUrl = `${baseUrl}/reset-password?token=${data.resetToken}`;
-      console.log("📧 Base URL:", baseUrl);
-      console.log("📧 Reset URL:", resetUrl);
-
-      // Check if transporter exists
-      if (!this.transporter) {
-        console.error("❌ CRITICAL: Email transporter is not initialized!");
-        throw new Error("Email transporter is not initialized");
-      }
-      console.log("✅ Transporter exists and is ready");
-
-      // IMPORTANT: Use SMTP user email as "from" to avoid SPF/DKIM failures
-      // Many SMTP servers reject emails when "from" doesn't match authenticated user
-      const smtpUser = process.env.EMAIL_USER || process.env.SMTP_USER || "support@vanitechnologies.in";
-      const fromEmail = smtpUser; // Force use of SMTP user email for better deliverability
-      
-      const mailOptions = {
-        from: fromEmail,
-        to: data.to,
-        subject: "Password Reset Request",
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #333;">Password Reset Request</h2>
-            <p>Hello ${data.displayName},</p>
-            <p>We received a request to reset your password for your ${data.companyName} account.</p>
-            <p>Click the link below to reset your password:</p>
-            <div style="text-align: center; margin: 30px 0;">
-              <a href="${resetUrl}" style="background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">Reset Password</a>
-            </div>
-            <p>This link will expire in 1 hour for security purposes.</p>
-            <p>If you didn't request this password reset, please ignore this email.</p>
-            <p>Best regards,<br>The ${data.companyName} Team</p>
-          </div>
-        `,
-      };
-
-      console.log("📧 Mail options prepared:");
-      console.log("📧   From:", mailOptions.from);
-      console.log("📧   To:", mailOptions.to);
-      console.log("📧   Subject:", mailOptions.subject);
-      console.log("📧 Attempting to send email via transporter...");
-
-      const result = await this.transporter.sendMail(mailOptions);
-      
-      console.log("✅ ===== EMAIL SENT SUCCESSFULLY =====");
-      console.log(`✅ Password reset email sent successfully to ${data.to}`);
-      console.log("📧 Message ID:", result.messageId);
-      console.log("📧 Response:", result.response);
-      console.log("📧 Accepted:", result.accepted);
-      console.log("📧 Rejected:", result.rejected);
-      
+      await this.transporter.sendMail(mailOptions);
+      console.log(`Password reset email sent to ${data.to}`);
       return true; // ✅ Return success
-    } catch (error: any) {
-      console.error("❌ ===== ERROR SENDING PASSWORD RESET EMAIL =====");
-      console.error("❌ Error type:", error?.constructor?.name);
-      console.error("❌ Error message:", error?.message);
-      console.error("❌ Error code:", error?.code);
-      console.error("❌ Error command:", error?.command);
-      console.error("❌ Error response:", error?.response);
-      console.error("❌ Error responseCode:", error?.responseCode);
-      console.error("❌ Error stack:", error?.stack);
-      console.error("❌ Full error object:", JSON.stringify(error, Object.getOwnPropertyNames(error)));
+    } catch (error) {
+      console.error("Error sending password reset email:", error);
       return false; // ✅ Explicit failure
     }
   }
