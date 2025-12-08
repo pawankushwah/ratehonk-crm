@@ -234,7 +234,7 @@ export function ServiceProviderChart() {
                   ></div>
                   <div>
                     <p className="font-medium">{item.name}</p>
-                    <p className="text-gray-500">{item.value}%</p>
+                   <p className="text-gray-500">{usingDummy ? "0%" : `${item.value}%`}</p>
                   </div>
                 </div>
               ))}

@@ -135,59 +135,65 @@ export function InvoiceStatusBar() {
 
       <CardContent>
         <div className="flex h-8 sm:h-12 overflow-hidden text-white text-sm sm:text-base font-medium mt-12 rounded">
-          {displayMetrics.paid > 0 && (
+          {(usingDummy || displayMetrics.paid > 0) && (
             <div
               className="flex items-center justify-center"
               style={{
                 backgroundColor: C.paid,
-                width: `${displayMetrics.paidPercentage}%`,
+                width: usingDummy ? "25%" : `${displayMetrics.paidPercentage}%`,
                 transition: "width 0.8s ease",
                 color: usingDummy ? "#555" : "#FFF",
               }}
             >
-              {displayMetrics.paid}
+              {usingDummy ? 0 : displayMetrics.paid}
             </div>
           )}
 
-          {displayMetrics.overdue > 0 && (
+          {(usingDummy || displayMetrics.overdue > 0) && (
             <div
               className="flex items-center justify-center"
               style={{
                 backgroundColor: C.overdue,
-                width: `${displayMetrics.overduePercentage}%`,
+                width: usingDummy
+                  ? "25%"
+                  : `${displayMetrics.overduePercentage}%`,
                 transition: "width 0.8s ease",
                 color: usingDummy ? "#555" : "#FFF",
               }}
             >
-              {displayMetrics.overdue}
+              {usingDummy ? 0 : displayMetrics.overdue}
             </div>
           )}
 
-          {displayMetrics.partialPaid > 0 && (
+          {(usingDummy || displayMetrics.partialPaid > 0) && (
             <div
               className="flex items-center justify-center"
               style={{
                 backgroundColor: C.partial,
-                width: `${displayMetrics.partialPercentage}%`,
+                width: usingDummy
+                  ? "25%"
+                  : `${displayMetrics.partialPercentage}%`,
                 transition: "width 0.8s ease",
                 color: usingDummy ? "#555" : "#FFF",
               }}
             >
-              {displayMetrics.partialPaid}
+              {usingDummy ? 0 : displayMetrics.partialPaid}
             </div>
           )}
 
-          {displayMetrics.pending > 0 && (
+          {(usingDummy || displayMetrics.pending > 0) && (
             <div
               className="flex items-center justify-center"
               style={{
                 backgroundColor: C.pending,
-                width: `${displayMetrics.pendingPercentage}%`,
+                width: usingDummy
+                  ? "25%"
+                  : `${displayMetrics.pendingPercentage}%`,
                 transition: "width 0.8s ease",
                 color: usingDummy ? "#555" : "#FFF",
               }}
             >
-              {displayMetrics.pending}
+              {usingDummy ? 0 : displayMetrics.pending}
             </div>
           )}
         </div>
@@ -198,7 +204,9 @@ export function InvoiceStatusBar() {
               className="w-3 h-3 rounded-full"
               style={{ backgroundColor: C.paid }}
             ></div>
-            <span className="text-gray-600">Paid {displayMetrics.paid}</span>
+            <span className="text-gray-600">
+              Paid {usingDummy ? 0 : displayMetrics.paid}
+            </span>
           </div>
 
           <div className="flex items-center gap-2">
@@ -207,7 +215,7 @@ export function InvoiceStatusBar() {
               style={{ backgroundColor: C.partial }}
             ></div>
             <span className="text-gray-600">
-              Partial Paid {displayMetrics.partialPaid}
+              Partial Paid {usingDummy ? 0 : displayMetrics.partialPaid}
             </span>
           </div>
 
@@ -217,7 +225,7 @@ export function InvoiceStatusBar() {
               style={{ backgroundColor: C.pending }}
             ></div>
             <span className="text-gray-600">
-              Pending {displayMetrics.pending}
+              Pending {usingDummy ? 0 : displayMetrics.pending}
             </span>
           </div>
 
@@ -227,7 +235,7 @@ export function InvoiceStatusBar() {
               style={{ backgroundColor: C.overdue }}
             ></div>
             <span className="text-gray-600">
-              Overdue {displayMetrics.overdue}
+              Overdue {usingDummy ? 0 : displayMetrics.overdue}
             </span>
           </div>
         </div>

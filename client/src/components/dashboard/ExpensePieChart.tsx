@@ -85,7 +85,7 @@ export function ExpensePieChart() {
       return (
         <div className="bg-white shadow-lg rounded-md p-2 border text-xs text-black">
           <p className="font-semibold">{item.name}</p>
-          <p>{item.value}%</p>
+          <span>{usingDummy ? "0%" : `${item.value}%`}</span>
         </div>
       );
     }
@@ -191,7 +191,7 @@ export function ExpensePieChart() {
                   {usingDummy ? item.name : item.name}
                 </div>
 
-                <span>{item.value}%</span>
+               <span>{usingDummy ? "0%" : `${item.value}%`}</span>
               </div>
             ))}
           </div>

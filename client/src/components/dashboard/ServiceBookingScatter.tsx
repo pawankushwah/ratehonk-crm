@@ -165,7 +165,7 @@ export function ServiceBookingScatter() {
                 >
                   <div className="text-center px-2">
                     <div className="text-xl font-semibold">
-                      {item.percentage}%
+                     {usingDummy ? "0%" : `${item.percentage}%`}
                     </div>
                     <div className="text-xs opacity-90">{item.name}</div>
                   </div>

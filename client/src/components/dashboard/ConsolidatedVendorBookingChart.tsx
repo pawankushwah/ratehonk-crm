@@ -204,7 +204,7 @@ export function ConsolidatedVendorBookingChart() {
 
                   <div>
                     <p className="font-medium">{v.name}</p>
-                    <p className="text-gray-500 text-[11px]">{v.percentage}%</p>
+                    <p className="text-gray-500 text-[11px]"> {usingDummy ? "0" : `${v.percentage}%`}%</p>
                   </div>
                 </div>
               ))}
