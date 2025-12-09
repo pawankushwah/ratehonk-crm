@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { flushSync } from "react-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useParams, Link, useLocation } from "wouter";
 import { Layout } from "@/components/layout/layout";
@@ -14,6 +15,16 @@ import {
   DialogTrigger,
   DialogDescription,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Collapsible,
   CollapsibleContent,
@@ -21,6 +32,7 @@ import {
 } from "@/components/ui/collapsible";
 import {
   ChevronRight,
+  ChevronLeft,
   ChevronDown,
   ChevronUp,
   Star,
@@ -62,6 +74,11 @@ import {
   Package,
   UserCheck,
   Target,
+  ClipboardList,
+  Loader2,
+  GripVertical,
+  Trash2,
+  X,
 } from "lucide-react";
 import {
   BarChart,
@@ -96,6 +113,68 @@ import { WhatsAppMessageDialog } from "@/components/customer/whatsapp-message-di
 import { ModernTemplate, InvoiceData } from "@/components/invoices/invoice-templates";
 import { CustomerEditForm } from "@/components/forms/customer-edit-form";
 
+// Consulation Form Types and Constants
+type ConsulationFieldType =
+  | "title"
+  | "text"
+  | "price"
+  | "textarea"
+  | "phone"
+  | "image"
+  | "file"
+  | "image-or-text"
+  | "authorization-form";
+
+interface ConsulationField {
+  id: string;
+  label: string;
+  type: ConsulationFieldType;
+  required?: boolean;
+  defaultValue?: string; // Default value for the field
+}
+
+const DEFAULT_CONSULATION_FIELDS: ConsulationField[] = [
+  {
+    id: "consulation-title",
+    label: "Consulation Title",
+    type: "title",
+    required: true,
+  },
+  {
+    id: "consulation-price",
+    label: "Consulation Price",
+    type: "price",
+  },
+  {
+    id: "consulation-phone",
+    label: "Phone Number",
+    type: "phone",
+  },
+  {
+    id: "consulation-description",
+    label: "Additional Notes",
+    type: "textarea",
+  },
+];
+
+const FIELD_TYPE_LABELS: Record<ConsulationFieldType, string> = {
+  title: "Title (Large Text)",
+  text: "Short Text",
+  price: "Price",
+  textarea: "Text Area",
+  phone: "Phone Number",
+  image: "Image Upload",
+  file: "File Upload (PDF & Images)",
+  "image-or-text": "Image or Text (Upload images or enter text)",
+  "authorization-form": "Authorization Form (Credit Card Authorization)",
+};
+
+const createDefaultConsulationFields = (): ConsulationField[] =>
+  DEFAULT_CONSULATION_FIELDS.map((field) => ({ ...field }));
+
+const generateFieldId = () =>
+  `consulation-${Math.random().toString(36).substring(2, 10)}`;
+
 export default function CustomerDetail() {
   const { customerId } = useParams();
   const { tenant, user } = useAuth();
@@ -120,6 +199,35 @@ export default function CustomerDetail() {
   const [editableItem, setEditableItem] = useState(null);
   const [isZoomPhoneOpen, setIsZoomPhoneOpen] = useState(false);
   const [isWhatsAppDialogOpen, setIsWhatsAppDialogOpen] = useState(false);
+  const [isSendingConsulationForm, setIsSendingConsulationForm] =
+    useState(false);
+  const [showSendFormOptions, setShowSendFormOptions] = useState(false);
+  const [selectedFormType, setSelectedFormType] = useState<'consulation' | 'payment' | 'both' | null>(null);
+  const [showDeliveryMethodOptions, setShowDeliveryMethodOptions] = useState(false);
+  const [isConsulationFormOpen, setIsConsulationFormOpen] = useState(false);
+  const [isPaymentFormOpen, setIsPaymentFormOpen] = useState(false);
+  const [consulationDefaultValues, setConsulationDefaultValues] = useState<Record<string, string>>({});
+  const [paymentDefaultValues, setPaymentDefaultValues] = useState<Record<string, string>>({});
+  const [consulationFields, setConsulationFields] = useState<
+    ConsulationField[]
+  >(() => createDefaultConsulationFields());
+  const [paymentFields, setPaymentFields] = useState<
+    ConsulationField[]
+  >(() => createDefaultConsulationFields());
+  const [hasLoadedConsulationTemplate, setHasLoadedConsulationTemplate] =
+    useState(false);
+  const [hasLoadedPaymentTemplate, setHasLoadedPaymentTemplate] =
+    useState(false);
+  const consulationStorageKey = tenant?.id
+    ? `consulation-form-template-${tenant.id}`
+    : null;
+  const paymentStorageKey = tenant?.id
+    ? `payment-form-template-${tenant.id}`
+    : null;
+  const [selectedConsulationSubmissionId, setSelectedConsulationSubmissionId] = useState<number | null>(null);
+  const [selectedPaymentSubmissionId, setSelectedPaymentSubmissionId] = useState<number | null>(null);
+  const [viewingSubmissionImage, setViewingSubmissionImage] = useState<{ images: Array<{ url: string; name: string }>; currentIndex: number } | null>(null);
+  const [isNavigatingToConsulationForm, setIsNavigatingToConsulationForm] = useState(false);
   const [isViewInvoiceOpen, setIsViewInvoiceOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
   const [isEditCustomerOpen, setIsEditCustomerOpen] = useState(false);
@@ -156,7 +264,7 @@ export default function CustomerDetail() {
       9: "Project Completed",
       10: "Other",
       11: "Booking Created",
-      12: "Invoice Created",
+      12: "Consulation Form Submitted",
     };
     return labelMap[activityType as keyof typeof labelMap] || "Unknown";
   };
@@ -540,6 +648,45 @@ export default function CustomerDetail() {
     },
   });
 
+  // Prefetch consulation form submissions immediately when customer loads
+  useEffect(() => {
+    if (customerId && tenant?.id && !isLoading) {
+      // Prefetch both consulation and payment form submissions in the background for instant navigation
+      queryClient.prefetchQuery({
+        queryKey: ["consulation-form-submissions", customerId, tenant.id, "consulation"],
+        queryFn: async () => {
+          const token = auth.getToken();
+          const response = await fetch(
+            `/api/tenants/${tenant.id}/customers/${customerId}/consulation-form-submissions?formType=consulation`,
+            {
+              headers: { Authorization: `Bearer ${token}` },
+            },
+          );
+          if (!response.ok) throw new Error("Failed to fetch consulation form submissions");
+          const data = await response.json();
+          return data.submissions || [];
+        },
+        staleTime: 5 * 60 * 1000, // Cache for 5 minutes
+      });
+      queryClient.prefetchQuery({
+        queryKey: ["consulation-form-submissions", customerId, tenant.id, "payment"],
+        queryFn: async () => {
+          const token = auth.getToken();
+          const response = await fetch(
+            `/api/tenants/${tenant.id}/customers/${customerId}/consulation-form-submissions?formType=payment`,
+            {
+              headers: { Authorization: `Bearer ${token}` },
+            },
+          );
+          if (!response.ok) throw new Error("Failed to fetch payment form submissions");
+          const data = await response.json();
+          return data.submissions || [];
+        },
+        staleTime: 5 * 60 * 1000, // Cache for 5 minutes
+      });
+    }
+  }, [customerId, tenant?.id, isLoading, queryClient]);
+
   // Fetch customer notes from API
   const {
     data: notesData,
@@ -595,7 +742,57 @@ export default function CustomerDetail() {
     staleTime: 0,
   });
 
-  // Fetch customer invoices from API
+  // Fetch consulation form submissions from API
+  // Always enabled to pre-load data for instant navigation
+  const {
+    data: consulationSubmissions = [],
+    isLoading: isLoadingConsulationSubmissions,
+    refetch: refetchConsulationSubmissions,
+  } = useQuery({
+    queryKey: ["consulation-form-submissions", customerId, tenant?.id, "consulation"],
+    queryFn: async () => {
+      const token = auth.getToken();
+      const response = await fetch(
+        `/api/tenants/${tenant?.id}/customers/${customerId}/consulation-form-submissions?formType=consulation`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+      if (!response.ok) throw new Error("Failed to fetch consulation form submissions");
+      const data = await response.json();
+      return data.submissions || [];
+    },
+    // Always enabled when we have customerId and tenantId for instant navigation
+    enabled: !!customerId && !!tenant?.id,
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes for better performance
+  });
+
+  // Fetch payment form submissions from API
+  // Always enabled to pre-load data for instant navigation
+  const {
+    data: paymentSubmissions = [],
+    isLoading: isLoadingPaymentSubmissions,
+    refetch: refetchPaymentSubmissions,
+  } = useQuery({
+    queryKey: ["consulation-form-submissions", customerId, tenant?.id, "payment"],
+    queryFn: async () => {
+      const token = auth.getToken();
+      const response = await fetch(
+        `/api/tenants/${tenant?.id}/customers/${customerId}/consulation-form-submissions?formType=payment`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+      if (!response.ok) throw new Error("Failed to fetch payment form submissions");
+      const data = await response.json();
+      return data.submissions || [];
+    },
+    // Always enabled when we have customerId and tenantId for instant navigation
+    enabled: !!customerId && !!tenant?.id,
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes for better performance
+  });
+
+  // Fetch invoices from API
   const {
     data: invoicesData,
     isLoading: invoicesLoading,
@@ -619,7 +816,31 @@ export default function CustomerDetail() {
           headers: { Authorization: `Bearer ${token}` },
         },
       );
-      if (!response.ok) throw new Error("Failed to fetch invoices");
+      if (!response.ok) return [];
+      const data = await response.json();
+      const allInvoices = Array.isArray(data) ? data : (data.invoices || data.data || []);
+      return allInvoices;
+    },
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes for better performance
+  });
+
+  // Fetch customer bookings from API
+  const {
+    data: bookingsData,
+    isLoading: bookingsLoading,
+    refetch: refetchBookings,
+  } = useQuery<Booking[]>({
+    queryKey: [`/api/tenants/${tenant?.id}/bookings`],
+    enabled:
+      !!customerId &&
+      !!tenant?.id &&
+      (activeTab === "bookings" || activeTab === "analytics"),
+    queryFn: async () => {
+      const token = auth.getToken();
+      const response = await fetch(`/api/tenants/${tenant?.id}/bookings`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error("Failed to fetch bookings");
       const result = await response.json();
       // Handle both old format (array) and new format (object with data)
       const invoices = Array.isArray(result)
@@ -679,6 +900,168 @@ export default function CustomerDetail() {
     ? messagesData
     : (messagesData as any)?.messages || [];
   const invoices = invoicesData || [];
+
+  // Load consulation form template
+  useEffect(() => {
+    if (
+      !tenant?.id ||
+      hasLoadedConsulationTemplate ||
+      typeof window === "undefined"
+    ) {
+      return;
+    }
+
+    const loadConsulationFields = async () => {
+      try {
+        // First, try to load from database
+        try {
+          const response = await apiRequest(
+            "GET",
+            `/api/tenants/${tenant.id}/consulation-form?formType=consulation`,
+            {}
+          );
+          const data = await response.json();
+          if (data?.fields && Array.isArray(data.fields) && data.fields.length > 0) {
+            setConsulationFields(data.fields);
+            // Load default values if available
+            if (data?.defaultValues && typeof data.defaultValues === 'object') {
+              setConsulationDefaultValues(data.defaultValues);
+              console.log("📋 Loaded default values:", data.defaultValues);
+            } else {
+              setConsulationDefaultValues({});
+            }
+            // Also save to localStorage as backup
+            if (consulationStorageKey) {
+              localStorage.setItem(
+                consulationStorageKey,
+                JSON.stringify(data.fields)
+              );
+            }
+            setHasLoadedConsulationTemplate(true);
+            return;
+          }
+        } catch (dbError) {
+          console.log("No form template in database, checking localStorage");
+        }
+
+        // Fallback to localStorage
+        if (consulationStorageKey) {
+          const stored = localStorage.getItem(consulationStorageKey);
+          if (stored) {
+            setConsulationFields(JSON.parse(stored) as ConsulationField[]);
+          } else {
+            setConsulationFields(createDefaultConsulationFields());
+          }
+        } else {
+          setConsulationFields(createDefaultConsulationFields());
+        }
+      } catch (error) {
+        console.warn("Failed to load consulation form template:", error);
+        setConsulationFields(createDefaultConsulationFields());
+      } finally {
+        setHasLoadedConsulationTemplate(true);
+      }
+    };
+
+    loadConsulationFields();
+  }, [tenant?.id, hasLoadedConsulationTemplate, consulationStorageKey]);
+
+  // Load payment form template
+  useEffect(() => {
+    if (
+      !tenant?.id ||
+      hasLoadedPaymentTemplate ||
+      typeof window === "undefined"
+    ) {
+      return;
+    }
+
+    const loadPaymentFields = async () => {
+      try {
+        // First, try to load from database
+        try {
+          const response = await apiRequest(
+            "GET",
+            `/api/tenants/${tenant.id}/consulation-form?formType=payment`,
+            {}
+          );
+          const data = await response.json();
+          if (data?.fields && Array.isArray(data.fields) && data.fields.length > 0) {
+            setPaymentFields(data.fields);
+            // Load default values if available
+            if (data?.defaultValues && typeof data.defaultValues === 'object') {
+              setPaymentDefaultValues(data.defaultValues);
+              console.log("📋 Loaded payment form default values:", data.defaultValues);
+            } else {
+              setPaymentDefaultValues({});
+            }
+            // Also save to localStorage as backup
+            if (paymentStorageKey) {
+              localStorage.setItem(
+                paymentStorageKey,
+                JSON.stringify(data.fields)
+              );
+            }
+            setHasLoadedPaymentTemplate(true);
+            return;
+          }
+        } catch (dbError) {
+          console.log("No payment form template in database, checking localStorage");
+        }
+
+        // Fallback to localStorage
+        if (paymentStorageKey) {
+          const stored = localStorage.getItem(paymentStorageKey);
+          if (stored) {
+            setPaymentFields(JSON.parse(stored) as ConsulationField[]);
+          } else {
+            setPaymentFields(createDefaultConsulationFields());
+          }
+        } else {
+          setPaymentFields(createDefaultConsulationFields());
+        }
+      } catch (error) {
+        console.warn("Failed to load payment form template:", error);
+        setPaymentFields(createDefaultConsulationFields());
+      } finally {
+        setHasLoadedPaymentTemplate(true);
+      }
+    };
+
+    loadPaymentFields();
+  }, [tenant?.id, hasLoadedPaymentTemplate, paymentStorageKey]);
+
+  // Save consulation fields to localStorage when they change
+  useEffect(() => {
+    if (
+      !consulationStorageKey ||
+      !hasLoadedConsulationTemplate ||
+      typeof window === "undefined"
+    ) {
+      return;
+    }
+
+    localStorage.setItem(
+      consulationStorageKey,
+      JSON.stringify(consulationFields),
+    );
+  }, [consulationFields, consulationStorageKey, hasLoadedConsulationTemplate]);
+
+  // Save payment fields to localStorage when they change
+  useEffect(() => {
+    if (
+      !paymentStorageKey ||
+      !hasLoadedPaymentTemplate ||
+      typeof window === "undefined"
+    ) {
+      return;
+    }
+
+    localStorage.setItem(
+      paymentStorageKey,
+      JSON.stringify(paymentFields),
+    );
+  }, [paymentFields, paymentStorageKey, hasLoadedPaymentTemplate]);
 
   // Create note mutation
   const createNoteMutation = useMutation({
@@ -1199,8 +1582,119 @@ export default function CustomerDetail() {
                   )}
                 </div>
 
-                <div className="flex-1 bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
-                  <div className="flex items-start justify-between mb-3">
+                <div 
+                  className={`flex-1 bg-white rounded-lg border border-gray-200 p-4 shadow-sm ${
+                    (activity.activityTableId && activity.activityTableName) ||
+                    activity.activityType === 12
+                      ? "cursor-pointer hover:border-blue-300 hover:shadow-md transition-all"
+                      : ""
+                  }`}
+                  style={{
+                    cursor: (activity.activityTableId && activity.activityTableName) ||
+                      activity.activityType === 12
+                      ? "pointer"
+                      : "default"
+                  }}
+                  onClick={(e) => {
+                    // Prevent default and stop propagation
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    // Guard against rapid clicks
+                    if (isNavigatingToConsulationForm) {
+                      return;
+                    }
+                    
+                    // Ensure activityTableId is a number for proper comparison
+                    const activityTableId = activity.activityTableId 
+                      ? (typeof activity.activityTableId === 'string' 
+                          ? parseInt(activity.activityTableId, 10) 
+                          : activity.activityTableId)
+                      : null;
+                    
+                    // Check if this is a form submission activity (consulation or payment)
+                    const isFormSubmissionActivity = 
+                      activity.activityType === 12 ||
+                      (activity.activityTableName === "consulation_form_submissions" && activityTableId);
+                    
+                    if (isFormSubmissionActivity) {
+                      setIsNavigatingToConsulationForm(true);
+                      
+                      // Get submission ID - use activityTableId if available
+                      let submissionId = activityTableId;
+                      let isPaymentForm = false;
+                      
+                      // If no submission ID, try to find the most recent submission matching the activity date
+                      if (!submissionId) {
+                        // Check both consulation and payment submissions
+                        const allConsulationSubs = consulationSubmissions.length > 0 
+                          ? consulationSubmissions 
+                          : (queryClient.getQueryData(["consulation-form-submissions", customerId, tenant?.id, "consulation"]) as any[]) || [];
+                        const allPaymentSubs = paymentSubmissions.length > 0 
+                          ? paymentSubmissions 
+                          : (queryClient.getQueryData(["consulation-form-submissions", customerId, tenant?.id, "payment"]) as any[]) || [];
+                        const allSubmissions = [...allConsulationSubs, ...allPaymentSubs];
+                        
+                        if (allSubmissions.length > 0) {
+                          const activityDate = new Date(activity.activityDate);
+                          const closestSubmission = allSubmissions.reduce((closest: any, current: any) => {
+                            const currentDate = new Date(current.createdAt);
+                            const closestDate = closest ? new Date(closest.createdAt) : null;
+                            const currentDiff = Math.abs(currentDate.getTime() - activityDate.getTime());
+                            const closestDiff = closestDate ? Math.abs(closestDate.getTime() - activityDate.getTime()) : Infinity;
+                            return currentDiff < closestDiff ? current : closest;
+                          });
+                          if (closestSubmission) {
+                            submissionId = closestSubmission.id;
+                            // Check if it's a payment form by checking formType or by checking which array it came from
+                            isPaymentForm = closestSubmission.formType === 'payment' || 
+                                           allPaymentSubs.some((s: any) => s.id === closestSubmission.id);
+                          }
+                        }
+                      } else {
+                        // Check if the submission with this ID is a payment form
+                        const paymentSub = paymentSubmissions.find((s: any) => s.id === submissionId);
+                        const consulationSub = consulationSubmissions.find((s: any) => s.id === submissionId);
+                        if (paymentSub && !consulationSub) {
+                          isPaymentForm = true;
+                        } else if (paymentSub || consulationSub) {
+                          // If found in both or need to check formType
+                          isPaymentForm = (paymentSub || consulationSub)?.formType === 'payment';
+                        }
+                      }
+                      
+                      // Use flushSync to force immediate DOM update for instant navigation
+                      flushSync(() => {
+                        if (isPaymentForm) {
+                          // Set the selected payment submission ID FIRST
+                          setSelectedPaymentSubmissionId(submissionId);
+                          // Then switch to payment-form tab
+                          setActiveTab("payment-form");
+                        } else {
+                          // Set the selected consulation submission ID FIRST
+                          setSelectedConsulationSubmissionId(submissionId);
+                          // Then switch to consulation-form tab
+                          setActiveTab("consulation-form");
+                        }
+                      });
+                      
+                      // Reset navigation guard after a short delay
+                      setTimeout(() => {
+                        setIsNavigatingToConsulationForm(false);
+                      }, 300);
+                    } else if (activityTableId && activity.activityTableName) {
+                      // For other activities, open the popup as before
+                      setSelectedActivityTable({
+                        tableName: activity.activityTableName,
+                        tableId: activityTableId,
+                      });
+                      setActivityPopupOpen(true);
+                    }
+                  }}
+                >
+                  <div 
+                    className="flex items-start justify-between mb-3"
+                  >
                     <div className="flex items-center gap-3">
                       <div
                         className={`px-2 py-1 rounded-full text-xs font-medium border ${getActivityStatusColor(activity.activityStatus)}`}
@@ -1210,6 +1704,14 @@ export default function CustomerDetail() {
                       <span className="text-xs text-gray-500">
                         {getActivityTypeLabel(activity.activityType)}
                       </span>
+                      {((activity.activityTableId && activity.activityTableName) ||
+                        activity.activityType === 12) && (
+                        <span className="text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
+                          {activity.activityTableName === "consulation_form_submissions" || activity.activityType === 12
+                            ? "View Submission" 
+                            : "View Details"}
+                        </span>
+                      )}
                     </div>
                     <div className="text-right">
                       <span className="text-sm text-gray-500">
@@ -1698,7 +2200,878 @@ export default function CustomerDetail() {
         </div>
       );
     } else if (activeTab === "files") {
-      return <FilesDocumentsTable customerId={customerId} />;
+      return <FilesDocumentsTable customerId={safeCustomerId} />;
+    } else if (activeTab === "consulation-form") {
+      if (isLoadingConsulationSubmissions) {
+        return (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+          </div>
+        );
+      }
+
+      // Filter submissions if a specific one is selected
+      const displayedSubmissions = selectedConsulationSubmissionId
+        ? consulationSubmissions.filter((sub: any) => {
+            // Ensure both values are numbers for comparison
+            const subId = typeof sub.id === 'string' ? parseInt(sub.id, 10) : sub.id;
+            const selectedId = typeof selectedConsulationSubmissionId === 'string' 
+              ? parseInt(selectedConsulationSubmissionId, 10) 
+              : selectedConsulationSubmissionId;
+            const matches = subId === selectedId;
+            if (!matches && selectedConsulationSubmissionId) {
+              console.log("🔍 Submission filter mismatch:", {
+                subId,
+                subIdType: typeof subId,
+                selectedId,
+                selectedIdType: typeof selectedId,
+                allSubIds: consulationSubmissions.map((s: any) => s.id),
+              });
+            }
+            return matches;
+          })
+        : consulationSubmissions;
+
+      if (displayedSubmissions.length === 0) {
+        return (
+          <div className="text-center py-8 text-gray-500">
+            <ClipboardList className="w-8 h-8 mx-auto mb-2 opacity-50" />
+            <p>
+              {selectedConsulationSubmissionId
+                ? "Consulation form submission not found"
+                : "No consulation form submissions found for this customer"}
+            </p>
+            {selectedConsulationSubmissionId && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-4"
+                onClick={() => setSelectedConsulationSubmissionId(null)}
+              >
+                Show All Submissions
+              </Button>
+            )}
+          </div>
+        );
+      }
+
+      return (
+        <div className="space-y-6">
+          {selectedConsulationSubmissionId && (
+            <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+              <div className="flex items-center gap-2">
+                <Badge variant="default" className="bg-blue-600">
+                  Showing specific submission
+                </Badge>
+                <span className="text-sm text-gray-600">
+                  Submission ID: {selectedConsulationSubmissionId}
+                </span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setSelectedConsulationSubmissionId(null)}
+              >
+                Show All Submissions
+              </Button>
+            </div>
+          )}
+          {displayedSubmissions.map((submission: any) => {
+            const formFields = submission.formFields || [];
+            const responses = submission.responses || {};
+
+            return (
+              <Card key={submission.id} className="border border-gray-200">
+                <CardHeader className="bg-gray-50 border-b border-gray-200">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-lg font-semibold text-gray-900">
+                      Consulation Form Submission
+                    </CardTitle>
+                    <div className="text-sm text-gray-500">
+                      <CalendarDays className="w-4 h-4 inline mr-1" />
+                      {new Date(submission.createdAt).toLocaleDateString("en-US", {
+                        year: "numeric",
+                        month: "long",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-6">
+                  <div className="space-y-4">
+                    {formFields.map((field: any) => {
+                      const responseValue = responses[field.id] || "";
+                      if (!responseValue) return null;
+
+                      return (
+                        <div key={field.id} className="border-b border-gray-100 pb-4 last:border-0">
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            {field.label}
+                            {field.required && <span className="text-red-500 ml-1">*</span>}
+                          </label>
+                          <div className="mt-1">
+                            {field.type === "textarea" ? (
+                              <p className="text-sm text-gray-900 bg-gray-50 p-3 rounded-md whitespace-pre-wrap">
+                                {responseValue}
+                              </p>
+                            ) : field.type === "image" ? (
+                              <div className="mt-2">
+                                {(() => {
+                                  // Parse comma-separated image URLs
+                                  const imageUrls = responseValue
+                                    .split(",")
+                                    .map((url: string) => url.trim())
+                                    .filter((url: string) => url && url.length > 0);
+                                  
+                                  if (imageUrls.length === 0) {
+                                    return (
+                                      <p className="text-sm text-gray-500 italic">No images uploaded</p>
+                                    );
+                                  }
+
+                                  return (
+                                    <div className="space-y-3">
+                                      <div className="text-sm text-gray-600 font-medium">
+                                        {imageUrls.length} {imageUrls.length === 1 ? "Image" : "Images"}:
+                                      </div>
+                                      <div className="flex flex-wrap gap-3">
+                                        {imageUrls.map((imageUrl: string, index: number) => {
+                                          // Extract filename from URL
+                                          const urlParts = imageUrl.split("/");
+                                          const filename = urlParts[urlParts.length - 1] || `Image ${index + 1}`;
+                                          
+                                          // Normalize URL for display
+                                          const normalizedUrl = imageUrl.startsWith('http') || imageUrl.startsWith('https')
+                                            ? imageUrl
+                                            : imageUrl.startsWith('/')
+                                              ? imageUrl
+                                              : `/${imageUrl}`;
+
+                                          return (
+                                            <div
+                                              key={index}
+                                              className="relative group cursor-pointer"
+                                              onClick={() => {
+                                                const allImages = imageUrls.map((url: string, idx: number) => {
+                                                  const urlParts = url.split("/");
+                                                  const name = urlParts[urlParts.length - 1] || `Image ${idx + 1}`;
+                                                  const normalized = url.startsWith('http') || url.startsWith('https')
+                                                    ? url
+                                                    : url.startsWith('/')
+                                                    ? url
+                                                    : `/${url}`;
+                                                  return { url: normalized, name };
+                                                });
+                                                setViewingSubmissionImage({ images: allImages, currentIndex: index });
+                                              }}
+                                            >
+                                              <div className="relative">
+                                                <img
+                                                  src={normalizedUrl}
+                                                  alt={`${field.label} - Image ${index + 1}`}
+                                                  className="w-32 h-32 object-cover rounded-md border-2 border-gray-200 hover:border-blue-400 transition-all shadow-sm hover:shadow-md"
+                                                  onError={(e) => {
+                                                    (e.target as HTMLImageElement).src = "/placeholder-image.png";
+                                                  }}
+                                                />
+                                                <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-10 transition-all rounded-md flex items-center justify-center">
+                                                  <Eye className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                                                </div>
+                                              </div>
+                                              <p className="text-xs text-gray-600 mt-1 text-center max-w-[128px] truncate">
+                                                Image {index + 1}: {filename.length > 20 ? filename.substring(0, 20) + "..." : filename}
+                                              </p>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                            ) : field.type === "image-or-text" ? (
+                              <div className="mt-2">
+                                {(() => {
+                                  // Check if responseValue contains image URLs (contains "/" or starts with "http")
+                                  const isImageUrls = responseValue.includes("/") || responseValue.startsWith("http");
+                                  
+                                  if (isImageUrls) {
+                                    // Parse comma-separated file URLs
+                                    const fileUrls = responseValue
+                                      .split(",")
+                                      .map((url: string) => url.trim())
+                                      .filter((url: string) => url && url.length > 0);
+                                    
+                                    if (fileUrls.length === 0) {
+                                      return (
+                                        <p className="text-sm text-gray-500 italic">No files uploaded</p>
+                                      );
+                                    }
+
+                                    return (
+                                      <div className="space-y-3">
+                                        <div className="text-sm text-gray-600 font-medium">
+                                          {fileUrls.length} {fileUrls.length === 1 ? "File" : "Files"}:
+                                        </div>
+                                        <div className="flex flex-wrap gap-3">
+                                          {fileUrls.map((fileUrl: string, index: number) => {
+                                            // Extract filename from URL
+                                            const urlParts = fileUrl.split("/");
+                                            const filename = urlParts[urlParts.length - 1] || `File ${index + 1}`;
+                                            const isPdf = filename.toLowerCase().endsWith('.pdf');
+                                            
+                                            // Normalize URL for display
+                                            const normalizedUrl = fileUrl.startsWith('http') || fileUrl.startsWith('https')
+                                              ? fileUrl
+                                              : fileUrl.startsWith('/')
+                                                ? fileUrl
+                                                : `/${fileUrl}`;
+
+                                            return (
+                                              <div
+                                                key={index}
+                                                className="relative group cursor-pointer"
+                                                onClick={() => {
+                                                  const allImages = fileUrls.map((url: string, idx: number) => {
+                                                    const urlParts = url.split("/");
+                                                    const name = urlParts[urlParts.length - 1] || `File ${idx + 1}`;
+                                                    const normalized = url.startsWith('http') || url.startsWith('https')
+                                                      ? url
+                                                      : url.startsWith('/')
+                                                      ? url
+                                                      : `/${url}`;
+                                                    return { url: normalized, name };
+                                                  });
+                                                  setViewingSubmissionImage({ images: allImages, currentIndex: index });
+                                                }}
+                                              >
+                                                <div className="relative">
+                                                  {isPdf ? (
+                                                    <div className="w-32 h-32 bg-red-50 border-2 border-red-200 rounded-md hover:border-red-400 transition-all shadow-sm hover:shadow-md flex items-center justify-center">
+                                                      <div className="text-center p-2">
+                                                        <FileText className="h-12 w-12 text-red-600 mx-auto mb-1" />
+                                                        <p className="text-xs text-red-700 font-medium">PDF</p>
+                                                      </div>
+                                                    </div>
+                                                  ) : (
+                                                    <img
+                                                      src={normalizedUrl}
+                                                      alt={`${field.label} - ${isPdf ? 'PDF' : 'Image'} ${index + 1}`}
+                                                      className="w-32 h-32 object-cover rounded-md border-2 border-gray-200 hover:border-blue-400 transition-all shadow-sm hover:shadow-md"
+                                                      onError={(e) => {
+                                                        (e.target as HTMLImageElement).src = "/placeholder-image.png";
+                                                      }}
+                                                    />
+                                                  )}
+                                                  <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-10 transition-all rounded-md flex items-center justify-center">
+                                                    <Eye className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                                                  </div>
+                                                </div>
+                                                <p className="text-xs text-gray-600 mt-1 text-center max-w-[128px] truncate">
+                                                  {isPdf ? 'PDF' : 'Image'} {index + 1}: {filename.length > 20 ? filename.substring(0, 20) + "..." : filename}
+                                                </p>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    );
+                                  } else {
+                                    // It's text, display as textarea
+                                    return (
+                                      <p className="text-sm text-gray-900 bg-gray-50 p-3 rounded-md whitespace-pre-wrap">
+                                        {responseValue}
+                                      </p>
+                                    );
+                                  }
+                                })()}
+                              </div>
+                            ) : field.type === "file" ? (
+                              <div className="mt-2">
+                                {(() => {
+                                  // Parse comma-separated file URLs
+                                  const fileUrls = responseValue
+                                    .split(",")
+                                    .map((url: string) => url.trim())
+                                    .filter((url: string) => url && url.length > 0);
+                                  
+                                  if (fileUrls.length === 0) {
+                                    return (
+                                      <p className="text-sm text-gray-500 italic">No files uploaded</p>
+                                    );
+                                  }
+
+                                  return (
+                                    <div className="space-y-3">
+                                      <div className="text-sm text-gray-600 font-medium">
+                                        {fileUrls.length} {fileUrls.length === 1 ? "File" : "Files"}:
+                                      </div>
+                                      <div className="flex flex-wrap gap-3">
+                                        {fileUrls.map((fileUrl: string, index: number) => {
+                                          // Extract filename from URL
+                                          const urlParts = fileUrl.split("/");
+                                          const filename = urlParts[urlParts.length - 1] || `File ${index + 1}`;
+                                          const isPdf = filename.toLowerCase().endsWith('.pdf');
+                                          
+                                          // Normalize URL for display
+                                          const normalizedUrl = fileUrl.startsWith('http') || fileUrl.startsWith('https')
+                                            ? fileUrl
+                                            : fileUrl.startsWith('/')
+                                              ? fileUrl
+                                              : `/${fileUrl}`;
+
+                                          return (
+                                            <div
+                                              key={index}
+                                              className="relative group cursor-pointer"
+                                              onClick={() => {
+                                                const allImages = fileUrls.map((url: string, idx: number) => {
+                                                  const urlParts = url.split("/");
+                                                  const name = urlParts[urlParts.length - 1] || `File ${idx + 1}`;
+                                                  const normalized = url.startsWith('http') || url.startsWith('https')
+                                                    ? url
+                                                    : url.startsWith('/')
+                                                    ? url
+                                                    : `/${url}`;
+                                                  return { url: normalized, name };
+                                                });
+                                                setViewingSubmissionImage({ images: allImages, currentIndex: index });
+                                              }}
+                                            >
+                                              <div className="relative">
+                                                {isPdf ? (
+                                                  <div className="w-32 h-32 bg-red-50 border-2 border-red-200 rounded-md hover:border-red-400 transition-all shadow-sm hover:shadow-md flex items-center justify-center">
+                                                    <div className="text-center p-2">
+                                                      <FileText className="h-12 w-12 text-red-600 mx-auto mb-1" />
+                                                      <p className="text-xs text-red-700 font-medium">PDF</p>
+                                                    </div>
+                                                  </div>
+                                                ) : (
+                                                  <img
+                                                    src={normalizedUrl}
+                                                    alt={`${field.label} - ${isPdf ? 'PDF' : 'Image'} ${index + 1}`}
+                                                    className="w-32 h-32 object-cover rounded-md border-2 border-gray-200 hover:border-blue-400 transition-all shadow-sm hover:shadow-md"
+                                                    onError={(e) => {
+                                                      (e.target as HTMLImageElement).src = "/placeholder-image.png";
+                                                    }}
+                                                  />
+                                                )}
+                                                <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-10 transition-all rounded-md flex items-center justify-center">
+                                                  <Eye className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                                                </div>
+                                              </div>
+                                              <p className="text-xs text-gray-600 mt-1 text-center max-w-[128px] truncate">
+                                                {isPdf ? 'PDF' : 'Image'} {index + 1}: {filename.length > 20 ? filename.substring(0, 20) + "..." : filename}
+                                              </p>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                            ) : (
+                              <p className="text-sm text-gray-900 bg-gray-50 p-3 rounded-md">
+                                {responseValue}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      );
+    } else if (activeTab === "payment-form") {
+      if (isLoadingPaymentSubmissions) {
+        return (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+          </div>
+        );
+      }
+
+      // Filter submissions if a specific one is selected
+      const displayedSubmissions = selectedPaymentSubmissionId
+        ? paymentSubmissions.filter((sub: any) => {
+            // Ensure both values are numbers for comparison
+            const subId = typeof sub.id === 'string' ? parseInt(sub.id, 10) : sub.id;
+            const selectedId = typeof selectedPaymentSubmissionId === 'string' 
+              ? parseInt(selectedPaymentSubmissionId, 10) 
+              : selectedPaymentSubmissionId;
+            const matches = subId === selectedId;
+            if (!matches && selectedPaymentSubmissionId) {
+              console.log("🔍 Payment submission filter mismatch:", {
+                subId,
+                subIdType: typeof subId,
+                selectedId,
+                selectedIdType: typeof selectedId,
+                allSubIds: paymentSubmissions.map((s: any) => s.id),
+              });
+            }
+            return matches;
+          })
+        : paymentSubmissions;
+
+      if (displayedSubmissions.length === 0) {
+        return (
+          <div className="text-center py-8 text-gray-500">
+            <CreditCard className="w-8 h-8 mx-auto mb-2 opacity-50" />
+            <p>
+              {selectedPaymentSubmissionId
+                ? "Payment form submission not found"
+                : "No payment form submissions found for this customer"}
+            </p>
+            {selectedPaymentSubmissionId && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-4"
+                onClick={() => setSelectedPaymentSubmissionId(null)}
+              >
+                Show All Submissions
+              </Button>
+            )}
+          </div>
+        );
+      }
+
+      return (
+        <div className="space-y-6">
+          {selectedPaymentSubmissionId && (
+            <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+              <div className="flex items-center gap-2">
+                <Badge variant="default" className="bg-blue-600">
+                  Showing specific submission
+                </Badge>
+                <span className="text-sm text-gray-600">
+                  Submission ID: {selectedPaymentSubmissionId}
+                </span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setSelectedPaymentSubmissionId(null)}
+              >
+                Show All Submissions
+              </Button>
+            </div>
+          )}
+          {displayedSubmissions.map((submission: any) => {
+            const formFields = submission.formFields || [];
+            const responses = submission.responses || {};
+
+            return (
+              <Card key={submission.id} className="border border-gray-200">
+                <CardHeader className="bg-gray-50 border-b border-gray-200">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-lg font-semibold text-gray-900">
+                      Payment Form Submission
+                    </CardTitle>
+                    <div className="text-sm text-gray-500">
+                      <CalendarDays className="w-4 h-4 inline mr-1" />
+                      {new Date(submission.createdAt).toLocaleDateString("en-US", {
+                        year: "numeric",
+                        month: "long",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-6">
+                  <div className="space-y-4">
+                    {formFields.map((field: any) => {
+                      const responseValue = responses[field.id] || "";
+                      if (!responseValue) return null;
+
+                      return (
+                        <div key={field.id} className="border-b border-gray-100 pb-4 last:border-0">
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            {field.label}
+                            {field.required && <span className="text-red-500 ml-1">*</span>}
+                          </label>
+                          <div className="mt-1">
+                            {field.type === "textarea" ? (
+                              <p className="text-sm text-gray-900 bg-gray-50 p-3 rounded-md whitespace-pre-wrap">
+                                {responseValue}
+                              </p>
+                            ) : field.type === "authorization-form" ? (
+                              <div className="mt-2">
+                                {(() => {
+                                  // Check if responseValue contains file URLs (contains "/" or starts with "http")
+                                  const isFileUrls = responseValue.includes("/") || responseValue.startsWith("http");
+                                  
+                                  if (isFileUrls) {
+                                    // Parse comma-separated file URLs
+                                    const fileUrls = responseValue
+                                      .split(",")
+                                      .map((url: string) => url.trim())
+                                      .filter((url: string) => url && url.length > 0);
+                                    
+                                    if (fileUrls.length === 0) {
+                                      return (
+                                        <p className="text-sm text-gray-500 italic">No authorization form files uploaded</p>
+                                      );
+                                    }
+
+                                    return (
+                                      <div className="space-y-3">
+                                        <div className="text-sm text-gray-600 font-medium">
+                                          {fileUrls.length} {fileUrls.length === 1 ? "Authorization Form File" : "Authorization Form Files"}:
+                                        </div>
+                                        <div className="flex flex-wrap gap-3">
+                                          {fileUrls.map((fileUrl: string, index: number) => {
+                                            // Extract filename from URL
+                                            const urlParts = fileUrl.split("/");
+                                            const filename = urlParts[urlParts.length - 1] || `File ${index + 1}`;
+                                            const isPdf = filename.toLowerCase().endsWith('.pdf');
+                                            
+                                            // Normalize URL for display
+                                            const normalizedUrl = fileUrl.startsWith('http') || fileUrl.startsWith('https')
+                                              ? fileUrl
+                                              : fileUrl.startsWith('/')
+                                                ? fileUrl
+                                                : `/${fileUrl}`;
+
+                                            return (
+                                              <div
+                                                key={index}
+                                                className="relative group cursor-pointer"
+                                                onClick={() => {
+                                                  const allImages = fileUrls.map((url: string, idx: number) => {
+                                                    const urlParts = url.split("/");
+                                                    const name = urlParts[urlParts.length - 1] || `File ${idx + 1}`;
+                                                    const normalized = url.startsWith('http') || url.startsWith('https')
+                                                      ? url
+                                                      : url.startsWith('/')
+                                                      ? url
+                                                      : `/${url}`;
+                                                    return { url: normalized, name };
+                                                  });
+                                                  setViewingSubmissionImage({ images: allImages, currentIndex: index });
+                                                }}
+                                              >
+                                                <div className="relative">
+                                                  {isPdf ? (
+                                                    <div className="w-32 h-32 bg-red-50 border-2 border-red-200 rounded-md hover:border-red-400 transition-all shadow-sm hover:shadow-md flex items-center justify-center">
+                                                      <div className="text-center p-2">
+                                                        <FileText className="h-12 w-12 text-red-600 mx-auto mb-1" />
+                                                        <p className="text-xs text-red-700 font-medium">PDF</p>
+                                                      </div>
+                                                    </div>
+                                                  ) : (
+                                                    <img
+                                                      src={normalizedUrl}
+                                                      alt={`${field.label} - ${isPdf ? 'PDF' : 'Image'} ${index + 1}`}
+                                                      className="w-32 h-32 object-cover rounded-md border-2 border-gray-200 hover:border-blue-400 transition-all shadow-sm hover:shadow-md"
+                                                      onError={(e) => {
+                                                        (e.target as HTMLImageElement).src = "/placeholder-image.png";
+                                                      }}
+                                                    />
+                                                  )}
+                                                  <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-10 transition-all rounded-md flex items-center justify-center">
+                                                    <Eye className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                                                  </div>
+                                                </div>
+                                                <p className="text-xs text-gray-600 mt-1 text-center max-w-[128px] truncate">
+                                                  {isPdf ? 'PDF' : 'Image'} {index + 1}: {filename.length > 20 ? filename.substring(0, 20) + "..." : filename}
+                                                </p>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    );
+                                  } else {
+                                    // It's not file URLs, show "not filled" message
+                                    return (
+                                      <p className="text-sm text-gray-500 italic">Authorization form not filled</p>
+                                    );
+                                  }
+                                })()}
+                              </div>
+                            ) : field.type === "image" ? (
+                              <div className="mt-2">
+                                {(() => {
+                                  // Parse comma-separated image URLs
+                                  const imageUrls = responseValue
+                                    .split(",")
+                                    .map((url: string) => url.trim())
+                                    .filter((url: string) => url && url.length > 0);
+                                  
+                                  if (imageUrls.length === 0) {
+                                    return (
+                                      <p className="text-sm text-gray-500 italic">No images uploaded</p>
+                                    );
+                                  }
+
+                                  return (
+                                    <div className="space-y-3">
+                                      <div className="text-sm text-gray-600 font-medium">
+                                        {imageUrls.length} {imageUrls.length === 1 ? "Image" : "Images"}:
+                                      </div>
+                                      <div className="flex flex-wrap gap-3">
+                                        {imageUrls.map((imageUrl: string, index: number) => {
+                                          // Extract filename from URL
+                                          const urlParts = imageUrl.split("/");
+                                          const filename = urlParts[urlParts.length - 1] || `Image ${index + 1}`;
+                                          
+                                          // Normalize URL for display
+                                          const normalizedUrl = imageUrl.startsWith('http') || imageUrl.startsWith('https')
+                                            ? imageUrl
+                                            : imageUrl.startsWith('/')
+                                              ? imageUrl
+                                              : `/${imageUrl}`;
+
+                                          return (
+                                            <div
+                                              key={index}
+                                              className="relative group cursor-pointer"
+                                              onClick={() => {
+                                                const allImages = imageUrls.map((url: string, idx: number) => {
+                                                  const urlParts = url.split("/");
+                                                  const name = urlParts[urlParts.length - 1] || `Image ${idx + 1}`;
+                                                  const normalized = url.startsWith('http') || url.startsWith('https')
+                                                    ? url
+                                                    : url.startsWith('/')
+                                                    ? url
+                                                    : `/${url}`;
+                                                  return { url: normalized, name };
+                                                });
+                                                setViewingSubmissionImage({ images: allImages, currentIndex: index });
+                                              }}
+                                            >
+                                              <div className="relative">
+                                                <img
+                                                  src={normalizedUrl}
+                                                  alt={`${field.label} - Image ${index + 1}`}
+                                                  className="w-32 h-32 object-cover rounded-md border-2 border-gray-200 hover:border-blue-400 transition-all shadow-sm hover:shadow-md"
+                                                  onError={(e) => {
+                                                    (e.target as HTMLImageElement).src = "/placeholder-image.png";
+                                                  }}
+                                                />
+                                                <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-10 transition-all rounded-md flex items-center justify-center">
+                                                  <Eye className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                                                </div>
+                                              </div>
+                                              <p className="text-xs text-gray-600 mt-1 text-center max-w-[128px] truncate">
+                                                Image {index + 1}: {filename.length > 20 ? filename.substring(0, 20) + "..." : filename}
+                                              </p>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                            ) : field.type === "image-or-text" ? (
+                              <div className="mt-2">
+                                {(() => {
+                                  // Check if responseValue contains image URLs (contains "/" or starts with "http")
+                                  const isImageUrls = responseValue.includes("/") || responseValue.startsWith("http");
+                                  
+                                  if (isImageUrls) {
+                                    // Parse comma-separated file URLs
+                                    const fileUrls = responseValue
+                                      .split(",")
+                                      .map((url: string) => url.trim())
+                                      .filter((url: string) => url && url.length > 0);
+                                    
+                                    if (fileUrls.length === 0) {
+                                      return (
+                                        <p className="text-sm text-gray-500 italic">No files uploaded</p>
+                                      );
+                                    }
+
+                                    return (
+                                      <div className="space-y-3">
+                                        <div className="text-sm text-gray-600 font-medium">
+                                          {fileUrls.length} {fileUrls.length === 1 ? "File" : "Files"}:
+                                        </div>
+                                        <div className="flex flex-wrap gap-3">
+                                          {fileUrls.map((fileUrl: string, index: number) => {
+                                            // Extract filename from URL
+                                            const urlParts = fileUrl.split("/");
+                                            const filename = urlParts[urlParts.length - 1] || `File ${index + 1}`;
+                                            const isPdf = filename.toLowerCase().endsWith('.pdf');
+                                            
+                                            // Normalize URL for display
+                                            const normalizedUrl = fileUrl.startsWith('http') || fileUrl.startsWith('https')
+                                              ? fileUrl
+                                              : fileUrl.startsWith('/')
+                                                ? fileUrl
+                                                : `/${fileUrl}`;
+
+                                            return (
+                                              <div
+                                                key={index}
+                                                className="relative group cursor-pointer"
+                                                onClick={() => {
+                                                  const allImages = fileUrls.map((url: string, idx: number) => {
+                                                    const urlParts = url.split("/");
+                                                    const name = urlParts[urlParts.length - 1] || `File ${idx + 1}`;
+                                                    const normalized = url.startsWith('http') || url.startsWith('https')
+                                                      ? url
+                                                      : url.startsWith('/')
+                                                      ? url
+                                                      : `/${url}`;
+                                                    return { url: normalized, name };
+                                                  });
+                                                  setViewingSubmissionImage({ images: allImages, currentIndex: index });
+                                                }}
+                                              >
+                                                <div className="relative">
+                                                  {isPdf ? (
+                                                    <div className="w-32 h-32 bg-red-50 border-2 border-red-200 rounded-md hover:border-red-400 transition-all shadow-sm hover:shadow-md flex items-center justify-center">
+                                                      <div className="text-center p-2">
+                                                        <FileText className="h-12 w-12 text-red-600 mx-auto mb-1" />
+                                                        <p className="text-xs text-red-700 font-medium">PDF</p>
+                                                      </div>
+                                                    </div>
+                                                  ) : (
+                                                    <img
+                                                      src={normalizedUrl}
+                                                      alt={`${field.label} - ${isPdf ? 'PDF' : 'Image'} ${index + 1}`}
+                                                      className="w-32 h-32 object-cover rounded-md border-2 border-gray-200 hover:border-blue-400 transition-all shadow-sm hover:shadow-md"
+                                                      onError={(e) => {
+                                                        (e.target as HTMLImageElement).src = "/placeholder-image.png";
+                                                      }}
+                                                    />
+                                                  )}
+                                                  <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-10 transition-all rounded-md flex items-center justify-center">
+                                                    <Eye className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                                                  </div>
+                                                </div>
+                                                <p className="text-xs text-gray-600 mt-1 text-center max-w-[128px] truncate">
+                                                  {isPdf ? 'PDF' : 'Image'} {index + 1}: {filename.length > 20 ? filename.substring(0, 20) + "..." : filename}
+                                                </p>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    );
+                                  } else {
+                                    // It's text, display as textarea
+                                    return (
+                                      <p className="text-sm text-gray-900 bg-gray-50 p-3 rounded-md whitespace-pre-wrap">
+                                        {responseValue}
+                                      </p>
+                                    );
+                                  }
+                                })()}
+                              </div>
+                            ) : field.type === "file" ? (
+                              <div className="mt-2">
+                                {(() => {
+                                  // Parse comma-separated file URLs
+                                  const fileUrls = responseValue
+                                    .split(",")
+                                    .map((url: string) => url.trim())
+                                    .filter((url: string) => url && url.length > 0);
+                                  
+                                  if (fileUrls.length === 0) {
+                                    return (
+                                      <p className="text-sm text-gray-500 italic">No files uploaded</p>
+                                    );
+                                  }
+
+                                  return (
+                                    <div className="space-y-3">
+                                      <div className="text-sm text-gray-600 font-medium">
+                                        {fileUrls.length} {fileUrls.length === 1 ? "File" : "Files"}:
+                                      </div>
+                                      <div className="flex flex-wrap gap-3">
+                                        {fileUrls.map((fileUrl: string, index: number) => {
+                                          // Extract filename from URL
+                                          const urlParts = fileUrl.split("/");
+                                          const filename = urlParts[urlParts.length - 1] || `File ${index + 1}`;
+                                          const isPdf = filename.toLowerCase().endsWith('.pdf');
+                                          
+                                          // Normalize URL for display
+                                          const normalizedUrl = fileUrl.startsWith('http') || fileUrl.startsWith('https')
+                                            ? fileUrl
+                                            : fileUrl.startsWith('/')
+                                              ? fileUrl
+                                              : `/${fileUrl}`;
+
+                                          return (
+                                            <div
+                                              key={index}
+                                              className="relative group cursor-pointer"
+                                              onClick={() => {
+                                                const allImages = fileUrls.map((url: string, idx: number) => {
+                                                  const urlParts = url.split("/");
+                                                  const name = urlParts[urlParts.length - 1] || `File ${idx + 1}`;
+                                                  const normalized = url.startsWith('http') || url.startsWith('https')
+                                                    ? url
+                                                    : url.startsWith('/')
+                                                    ? url
+                                                    : `/${url}`;
+                                                  return { url: normalized, name };
+                                                });
+                                                setViewingSubmissionImage({ images: allImages, currentIndex: index });
+                                              }}
+                                            >
+                                              <div className="relative">
+                                                {isPdf ? (
+                                                  <div className="w-32 h-32 bg-red-50 border-2 border-red-200 rounded-md hover:border-red-400 transition-all shadow-sm hover:shadow-md flex items-center justify-center">
+                                                    <div className="text-center p-2">
+                                                      <FileText className="h-12 w-12 text-red-600 mx-auto mb-1" />
+                                                      <p className="text-xs text-red-700 font-medium">PDF</p>
+                                                    </div>
+                                                  </div>
+                                                ) : (
+                                                  <img
+                                                    src={normalizedUrl}
+                                                    alt={`${field.label} - ${isPdf ? 'PDF' : 'Image'} ${index + 1}`}
+                                                    className="w-32 h-32 object-cover rounded-md border-2 border-gray-200 hover:border-blue-400 transition-all shadow-sm hover:shadow-md"
+                                                    onError={(e) => {
+                                                      (e.target as HTMLImageElement).src = "/placeholder-image.png";
+                                                    }}
+                                                  />
+                                                )}
+                                                <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-10 transition-all rounded-md flex items-center justify-center">
+                                                  <Eye className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                                                </div>
+                                              </div>
+                                              <p className="text-xs text-gray-600 mt-1 text-center max-w-[128px] truncate">
+                                                {isPdf ? 'PDF' : 'Image'} {index + 1}: {filename.length > 20 ? filename.substring(0, 20) + "..." : filename}
+                                              </p>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                            ) : (
+                              <p className="text-sm text-gray-900 bg-gray-50 p-3 rounded-md">
+                                {responseValue}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      );
     }
     // else if (activeTab === "calls") {
     //   return <CallLogsSection customerId={parseInt(customerId)} />;
@@ -1751,7 +3124,86 @@ export default function CustomerDetail() {
   }
 
   const displayName =
-    `${customer.firstName} ${customer.lastName}`.trim() || customer.email;
+    `${customer.firstName} ${customer.lastName}`.trim() || customer.email || customer.name || "Customer";
+  const safeCustomerId = customerId ?? "";
+  // Check for email and phone, handling empty strings, null, and undefined
+  const customerEmail = customer.email?.trim() || "";
+  const customerPhone = customer.phone?.trim() || "";
+  const canSendConsulationForm = Boolean(customerEmail || customerPhone);
+  const canSendEmail = Boolean(customerEmail);
+  const canSendWhatsApp = Boolean(customerPhone);
+  
+  const handleSendForm = async (formType: 'consulation' | 'payment' | 'both', method: 'email' | 'whatsapp' | 'both') => {
+    if (!tenant?.id || !customerId) {
+      toast({
+        title: "Unable to send form",
+        description: "Missing tenant or customer information.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Validate method availability
+    if (method === 'email' && !canSendEmail) {
+      toast({
+        title: "Cannot send email",
+        description: "Customer does not have an email address.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (method === 'whatsapp' && !canSendWhatsApp) {
+      toast({
+        title: "Cannot send WhatsApp",
+        description: "Customer does not have a phone number.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Close dialogs immediately for instant UI feedback
+    setIsSendingConsulationForm(true);
+    setShowDeliveryMethodOptions(false);
+    setShowSendFormOptions(false);
+    setSelectedFormType(null);
+    
+    // Send forms based on formType
+    const formsToSend: ('consulation' | 'payment')[] = 
+      formType === 'both' ? ['consulation', 'payment'] : [formType];
+    
+    const formNames = formsToSend.map(f => f === 'consulation' ? 'Consulation' : 'Payment').join(' & ');
+    const methodText = method === 'both' ? 'Email & WhatsApp' : method === 'email' ? 'Email' : 'WhatsApp';
+    
+    // Show success toast immediately (optimistic UI) for instant feedback
+    toast({
+      title: `${formNames} form${formsToSend.length > 1 ? 's' : ''} sent`,
+      description: `Form link sent via ${methodText}.`,
+    });
+    
+    // Reset loading state immediately after showing toast
+    setIsSendingConsulationForm(false);
+    
+    // Send forms in background (fire and forget) - don't wait for response
+    // The server already handles sending asynchronously, so we don't need to wait
+    Promise.all(
+      formsToSend.map(async (form) => {
+        try {
+          await apiRequest(
+            "POST",
+            `/api/tenants/${tenant.id}/customers/${customerId}/send-consulation-form`,
+            { method, formType: form },
+          );
+        } catch (error: any) {
+          // Log error but don't show toast (already showed success)
+          // Only show error if it's critical
+          console.error(`Failed to send ${form} form:`, error);
+        }
+      })
+    ).catch((error) => {
+      // Only show error toast if all requests failed
+      console.error("Error sending forms:", error);
+    });
+  };
 
   return (
     <Layout>
@@ -1830,8 +3282,41 @@ export default function CustomerDetail() {
                 <Button 
                   variant="outline" 
                   size="sm"
-                  onClick={() => setIsEditCustomerOpen(true)}
+                  onClick={() => setIsConsulationFormOpen(true)}
+                  className="bg-white"
                 >
+                  <ClipboardList className="h-4 w-4 mr-2" />
+                  Set Consulation Form
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsPaymentFormOpen(true)}
+                  className="bg-white"
+                >
+                  <CreditCard className="h-4 w-4 mr-2" />
+                  Set Payment Form
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex items-center"
+                  onClick={() => setShowSendFormOptions(true)}
+                  disabled={isSendingConsulationForm || !canSendConsulationForm}
+                  title={
+                    canSendConsulationForm
+                      ? "Send form via email, WhatsApp, or both"
+                      : "Customer needs an email or phone number"
+                  }
+                >
+                  {isSendingConsulationForm ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <ClipboardList className="h-4 w-4 mr-2" />
+                  )}
+                  Send Form
+                </Button>
+                <Button variant="outline" size="sm">
                   <Settings className="h-4 w-4 mr-2" />
                   Edit
                 </Button>
@@ -1953,6 +3438,8 @@ export default function CustomerDetail() {
                       // "calls",
                       "analytics",
                       "files",
+                      "consulation-form",
+                      "payment-form",
                     ].map((item) => (
                       <button
                         key={item}
@@ -1964,8 +3451,20 @@ export default function CustomerDetail() {
                           if (item === "email") refetchEmails();
                           if (item === "call") refetchCalls();
                           if (item === "messages") refetchMessages();
-                          if (item === "invoice" || item === "analytics")
-                            refetchInvoices();
+                          if (item === "bookings" || item === "invoice"  || item === "analytics")
+                            refetchBookings();
+                          refetchInvoices();
+                          if (item === "consulation-form") {
+                            // Clear selected submission when manually switching to consulation-form tab
+                            setSelectedConsulationSubmissionId(null);
+                            refetchConsulationSubmissions();
+                          }
+                          if (item === "payment-form") {
+                            // Clear selected submission when manually switching to payment-form tab
+                            setSelectedPaymentSubmissionId(null);
+                            refetchPaymentSubmissions();
+                          }
+
                         }}
                         className={`px-4 py-2 capitalize whitespace-nowrap text-sm md:text-base ${
                           activeTab === item
@@ -1973,7 +3472,7 @@ export default function CustomerDetail() {
                             : "text-gray-600 hover:text-gray-900"
                         }`}
                       >
-                        {item}
+                        {item.replace("-", " ")}
                       </button>
                     ))}
                   </div>
@@ -2401,6 +3900,292 @@ export default function CustomerDetail() {
         </DialogContent>
       </Dialog>
 
+      {/* Send Form Options Dialog - Step 1: Choose Form Type */}
+      <Dialog open={showSendFormOptions} onOpenChange={(open) => {
+        setShowSendFormOptions(open);
+        if (!open) {
+          setSelectedFormType(null);
+          setShowDeliveryMethodOptions(false);
+        }
+      }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Send Form</DialogTitle>
+            <DialogDescription>
+              Choose which form(s) you want to send
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-3 mt-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setSelectedFormType('consulation');
+                setShowSendFormOptions(false);
+                setShowDeliveryMethodOptions(true);
+              }}
+              className="w-full justify-start h-auto py-4"
+              disabled={isSendingConsulationForm}
+            >
+              <ClipboardList className="h-5 w-5 mr-3" />
+              <div className="text-left">
+                <div className="font-medium">Send Consulation Form</div>
+                <div className="text-xs text-gray-500">Send consulation form to customer</div>
+              </div>
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setSelectedFormType('payment');
+                setShowSendFormOptions(false);
+                setShowDeliveryMethodOptions(true);
+              }}
+              className="w-full justify-start h-auto py-4"
+              disabled={isSendingConsulationForm}
+            >
+              <CreditCard className="h-5 w-5 mr-3" />
+              <div className="text-left">
+                <div className="font-medium">Send Payment Form</div>
+                <div className="text-xs text-gray-500">Send payment form to customer</div>
+              </div>
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setSelectedFormType('both');
+                setShowSendFormOptions(false);
+                setShowDeliveryMethodOptions(true);
+              }}
+              className="w-full justify-start h-auto py-4"
+              disabled={isSendingConsulationForm}
+            >
+              <ClipboardList className="h-5 w-5 mr-3" />
+              <CreditCard className="h-5 w-5 mr-3" />
+              <div className="text-left">
+                <div className="font-medium">Send Both Forms</div>
+                <div className="text-xs text-gray-500">Send both consulation and payment forms</div>
+              </div>
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Send Form Options Dialog - Step 2: Choose Delivery Method */}
+      <Dialog open={showDeliveryMethodOptions} onOpenChange={(open) => {
+        setShowDeliveryMethodOptions(open);
+        if (!open && !showSendFormOptions) {
+          setSelectedFormType(null);
+        }
+      }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>
+              Send {selectedFormType === 'both' ? 'Both Forms' : selectedFormType === 'payment' ? 'Payment Form' : 'Consulation Form'}
+            </DialogTitle>
+            <DialogDescription>
+              Choose how you want to send the form
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-3 mt-4">
+            {canSendEmail && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => handleSendForm(selectedFormType!, 'email')}
+                className="w-full justify-start h-auto py-4"
+                disabled={isSendingConsulationForm}
+              >
+                <Mail className="h-5 w-5 mr-3" />
+                <div className="text-left">
+                  <div className="font-medium">Send via Email</div>
+                  <div className="text-xs text-gray-500">Send form link to {customer.email}</div>
+                </div>
+              </Button>
+            )}
+            {canSendWhatsApp && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => handleSendForm(selectedFormType!, 'whatsapp')}
+                className="w-full justify-start h-auto py-4"
+                disabled={isSendingConsulationForm}
+              >
+                <MessageCircle className="h-5 w-5 mr-3" />
+                <div className="text-left">
+                  <div className="font-medium">Send via WhatsApp</div>
+                  <div className="text-xs text-gray-500">Send form link to {customer.phone}</div>
+                </div>
+              </Button>
+            )}
+            {canSendEmail && canSendWhatsApp && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => handleSendForm(selectedFormType!, 'both')}
+                className="w-full justify-start h-auto py-4"
+                disabled={isSendingConsulationForm}
+              >
+                <Mail className="h-5 w-5 mr-3" />
+                <MessageCircle className="h-5 w-5 mr-3" />
+                <div className="text-left">
+                  <div className="font-medium">Send via Both</div>
+                  <div className="text-xs text-gray-500">Send form link to email and WhatsApp</div>
+                </div>
+              </Button>
+            )}
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                setShowDeliveryMethodOptions(false);
+                setShowSendFormOptions(true);
+              }}
+              className="w-full mt-2"
+            >
+              ← Back
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Consulation Form Dialog */}
+      <ConsulationFormDialog
+        isOpen={isConsulationFormOpen}
+        onOpenChange={setIsConsulationFormOpen}
+        fields={consulationFields}
+        onFieldsChange={setConsulationFields}
+        defaultValues={consulationDefaultValues}
+        tenantId={tenant?.id}
+        customerId={customerId ? parseInt(customerId) : undefined}
+        consulationStorageKey={consulationStorageKey}
+        onDefaultValuesChange={setConsulationDefaultValues}
+        formType="consulation"
+      />
+
+      {/* Payment Form Dialog */}
+      <ConsulationFormDialog
+        isOpen={isPaymentFormOpen}
+        onOpenChange={setIsPaymentFormOpen}
+        fields={paymentFields}
+        onFieldsChange={setPaymentFields}
+        defaultValues={paymentDefaultValues}
+        tenantId={tenant?.id}
+        customerId={customerId ? parseInt(customerId) : undefined}
+        consulationStorageKey={paymentStorageKey}
+        onDefaultValuesChange={setPaymentDefaultValues}
+        formType="payment"
+      />
+
+      {/* Image Viewing Dialog for Submission Images */}
+      <Dialog open={!!viewingSubmissionImage} onOpenChange={() => setViewingSubmissionImage(null)}>
+        <DialogContent className="max-w-4xl max-h-[90vh]">
+          <DialogHeader>
+            <DialogTitle>
+              {viewingSubmissionImage ? `${viewingSubmissionImage.images[viewingSubmissionImage.currentIndex]?.name || "File Preview"} (${viewingSubmissionImage.currentIndex + 1} of ${viewingSubmissionImage.images.length})` : "File Preview"}
+            </DialogTitle>
+          </DialogHeader>
+          {viewingSubmissionImage && (() => {
+            const currentImage = viewingSubmissionImage.images[viewingSubmissionImage.currentIndex];
+            if (!currentImage) return null;
+            
+            const isPdf = currentImage.name.toLowerCase().endsWith('.pdf') || 
+                         currentImage.url.toLowerCase().endsWith('.pdf') ||
+                         currentImage.url.toLowerCase().includes('.pdf');
+            const normalizedUrl = currentImage.url.startsWith('blob:')
+              ? currentImage.url
+              : currentImage.url.startsWith('http') || currentImage.url.startsWith('https')
+                ? currentImage.url
+                : currentImage.url.startsWith('/')
+                  ? currentImage.url
+                  : `/${currentImage.url}`;
+            
+            const hasNext = viewingSubmissionImage.currentIndex < viewingSubmissionImage.images.length - 1;
+            const hasPrevious = viewingSubmissionImage.currentIndex > 0;
+            
+            const handleNext = () => {
+              if (hasNext) {
+                setViewingSubmissionImage({
+                  ...viewingSubmissionImage,
+                  currentIndex: viewingSubmissionImage.currentIndex + 1
+                });
+              }
+            };
+            
+            const handlePrevious = () => {
+              if (hasPrevious) {
+                setViewingSubmissionImage({
+                  ...viewingSubmissionImage,
+                  currentIndex: viewingSubmissionImage.currentIndex - 1
+                });
+              }
+            };
+            
+            return (
+              <div className="relative flex items-center justify-center p-4">
+                {viewingSubmissionImage.images.length > 1 && (
+                  <>
+                    {hasPrevious && (
+                      <button
+                        onClick={handlePrevious}
+                        className="absolute left-4 z-10 bg-black/50 hover:bg-black/70 text-white rounded-full p-2 transition-colors"
+                        aria-label="Previous image"
+                      >
+                        <ChevronLeft className="h-6 w-6" />
+                      </button>
+                    )}
+                    {hasNext && (
+                      <button
+                        onClick={handleNext}
+                        className="absolute right-4 z-10 bg-black/50 hover:bg-black/70 text-white rounded-full p-2 transition-colors"
+                        aria-label="Next image"
+                      >
+                        <ChevronRight className="h-6 w-6" />
+                      </button>
+                    )}
+                  </>
+                )}
+                {isPdf ? (
+                  <div className="w-full h-[70vh] flex flex-col items-center justify-center">
+                    <iframe
+                      src={normalizedUrl}
+                      className="w-full h-full border rounded-md"
+                      title={currentImage.name}
+                      onError={() => {
+                        console.error("PDF load error:", normalizedUrl);
+                      }}
+                    />
+                    <div className="mt-4">
+                      <Button
+                        variant="outline"
+                        onClick={() => window.open(normalizedUrl, '_blank')}
+                      >
+                        <FileText className="h-4 w-4 mr-2" />
+                        Open PDF in New Tab
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <img
+                    src={normalizedUrl}
+                    alt={currentImage.name}
+                    className="max-w-full max-h-[70vh] object-contain rounded-md"
+                    onError={(e) => {
+                      console.error("Image load error:", normalizedUrl);
+                      (e.target as HTMLImageElement).src = "/placeholder-image.png";
+                    }}
+                    onLoad={() => {
+                      console.log("Image loaded successfully:", normalizedUrl);
+                    }}
+                  />
+                )}
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
       {/* Customer Edit Dialog */}
       <Dialog open={isEditCustomerOpen} onOpenChange={setIsEditCustomerOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -2428,5 +4213,2415 @@ export default function CustomerDetail() {
         </DialogContent>
       </Dialog>
     </Layout>
+  );
+}
+
+// Consulation Form Dialog Component
+interface ConsulationFormDialogProps {
+  isOpen: boolean;
+  onOpenChange: (open: boolean) => void;
+  fields: ConsulationField[];
+  onFieldsChange: (next: ConsulationField[]) => void;
+  defaultValues?: Record<string, string>;
+  tenantId?: number;
+  customerId?: number;
+  consulationStorageKey?: string | null;
+  onDefaultValuesChange?: (values: Record<string, string>) => void;
+  formType?: "consulation" | "payment";
+}
+
+function ConsulationFormDialog({
+  isOpen,
+  onOpenChange,
+  fields,
+  onFieldsChange,
+  defaultValues = {},
+  tenantId,
+  customerId,
+  consulationStorageKey,
+  onDefaultValuesChange,
+  formType = "consulation",
+}: ConsulationFormDialogProps) {
+  const { toast } = useToast();
+  const [newFieldLabel, setNewFieldLabel] = useState("");
+  const [newFieldType, setNewFieldType] =
+    useState<ConsulationFieldType>("text");
+  const [formValues, setFormValues] = useState<Record<string, string>>({});
+  const [defaultImageFiles, setDefaultImageFiles] = useState<Record<string, File[]>>({});
+  const [defaultImagePreviews, setDefaultImagePreviews] = useState<Record<string, string[]>>({});
+  const [defaultImageUrls, setDefaultImageUrls] = useState<Record<string, string[]>>({});
+  const [defaultFileFiles, setDefaultFileFiles] = useState<Record<string, File[]>>({});
+  const [defaultFilePreviews, setDefaultFilePreviews] = useState<Record<string, string[]>>({});
+  const [defaultFileUrls, setDefaultFileUrls] = useState<Record<string, string[]>>({});
+  const [imageOrTextModes, setImageOrTextModes] = useState<Record<string, "image" | "text">>({});
+  const [viewingImage, setViewingImage] = useState<{ images: Array<{ url: string; name: string }>; currentIndex: number } | null>(null);
+  const [draggedFieldId, setDraggedFieldId] = useState<string | null>(null);
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState<string>("");
+
+  // Fetch invoices for the customer
+  const { data: invoices = [] } = useQuery({
+    queryKey: ["customer-invoices", customerId, tenantId],
+    queryFn: async () => {
+      if (!tenantId || !customerId) return [];
+      const token = auth.getToken();
+      const params = new URLSearchParams();
+      params.append("customerId", customerId.toString());
+      params.append("page", "1");
+      params.append("pageSize", "100");
+      
+      const response = await fetch(
+        `/api/tenants/${tenantId}/invoices?${params.toString()}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+      if (!response.ok) {
+        console.error("Failed to fetch invoices:", response.status);
+        return [];
+      }
+      const data = await response.json();
+      // Handle both array and paginated response formats
+      const allInvoices = Array.isArray(data) 
+        ? data 
+        : (data.data || data.invoices || []);
+      
+      // Additional client-side filter as backup
+      return allInvoices.filter((inv: any) => 
+        (inv.customerId === customerId) || 
+        (inv.customer_id === customerId) ||
+        (inv.customerId?.toString() === customerId.toString()) ||
+        (inv.customer_id?.toString() === customerId.toString())
+      );
+    },
+    enabled: !!tenantId && !!customerId && isOpen && formType === "payment",
+  });
+
+  // Load default values when dialog opens (only once per open)
+  const [hasInitialized, setHasInitialized] = useState(false);
+  
+  // Reset initialization when defaultValues change (so we can reload with new values)
+  useEffect(() => {
+    if (isOpen) {
+      setHasInitialized(false);
+    }
+  }, [defaultValues, isOpen]);
+  
+  useEffect(() => {
+    if (!isOpen) {
+      // Reset initialization flag when dialog closes
+      setHasInitialized(false);
+      return;
+    }
+    
+    // Only initialize once when dialog opens
+    if (hasInitialized) return;
+    
+    setFormValues((prev) => {
+      const nextValues: Record<string, string> = {};
+      const nextImageFiles: Record<string, File[]> = {};
+      const nextImagePreviews: Record<string, string[]> = {};
+      const nextImageUrls: Record<string, string[]> = {};
+      const nextFileFiles: Record<string, File[]> = {};
+      const nextFilePreviews: Record<string, string[]> = {};
+      const nextFileUrls: Record<string, string[]> = {};
+      
+      fields.forEach((field) => {
+        // Get default value from props (loaded from database) or from field.defaultValue
+        // Check if the key exists in defaultValues (even if value is empty string)
+        const defaultValue = field.id in defaultValues 
+          ? defaultValues[field.id] 
+          : (field.defaultValue || "");
+        
+        if (field.type === "image") {
+          // For image fields, initialize with default URLs if available
+          // Check if defaultValue exists and is not empty (empty string means cleared)
+          if (defaultValue && defaultValue.trim().length > 0) {
+            // Split and filter URLs, removing duplicates
+            const urls = defaultValue.split(",")
+              .map((url: string) => url.trim())
+              .filter((url: string) => url && url.length > 0)
+              .filter((url: string, index: number, self: string[]) => self.indexOf(url) === index); // Remove duplicates
+            nextImageUrls[field.id] = urls;
+            // Show image names from URLs
+            const imageNames = urls.map((url: string, index: number) => {
+              const urlParts = url.split("/");
+              const filename = urlParts[urlParts.length - 1] || `Image ${index + 1}`;
+              return `Image ${index + 1} ${filename}`;
+            }).join(", ");
+            nextValues[field.id] = imageNames;
+            // Ensure defaultImageFiles is empty for database-loaded images
+            nextImageFiles[field.id] = [];
+            nextImagePreviews[field.id] = [];
+          } else {
+            // Empty string or no value - field was cleared
+            nextImageFiles[field.id] = [];
+            nextImagePreviews[field.id] = [];
+            nextImageUrls[field.id] = [];
+            nextValues[field.id] = "";
+          }
+        } else if (field.type === "image-or-text") {
+          // For image-or-text fields, check if defaultValue contains URLs (images) or text
+          // URLs typically contain "/" or start with "http"
+          if (defaultValue && defaultValue.trim().length > 0) {
+            const isImageUrls = defaultValue.includes("/") || defaultValue.startsWith("http");
+            
+            if (isImageUrls) {
+              // Parse comma-separated image URLs
+              const urls = defaultValue.split(",")
+                .map((url: string) => url.trim())
+                .filter((url: string) => url && url.length > 0)
+                .filter((url: string, index: number, self: string[]) => self.indexOf(url) === index);
+              nextImageUrls[field.id] = urls;
+              // Don't set text value when images are present
+              nextValues[field.id] = "";
+              nextImageFiles[field.id] = [];
+              nextImagePreviews[field.id] = [];
+            } else {
+              // It's text, not image URLs
+              nextValues[field.id] = defaultValue;
+              nextImageUrls[field.id] = [];
+              nextImageFiles[field.id] = [];
+              nextImagePreviews[field.id] = [];
+            }
+          } else {
+            // Empty string or no value - field was cleared
+            nextImageFiles[field.id] = [];
+            nextImagePreviews[field.id] = [];
+            nextImageUrls[field.id] = [];
+            nextValues[field.id] = "";
+          }
+        } else if (field.type === "authorization-form") {
+          // For authorization-form fields, initialize with default URLs if available (same as image fields)
+          if (defaultValue && defaultValue.trim().length > 0) {
+            // Split and filter URLs, removing duplicates
+            const urls = defaultValue.split(",")
+              .map((url: string) => url.trim())
+              .filter((url: string) => url && url.length > 0)
+              .filter((url: string, index: number, self: string[]) => self.indexOf(url) === index); // Remove duplicates
+            nextImageUrls[field.id] = urls;
+            // Show image names from URLs
+            const imageNames = urls.map((url: string, index: number) => {
+              const urlParts = url.split("/");
+              const filename = urlParts[urlParts.length - 1] || `Image ${index + 1}`;
+              return `Image ${index + 1} ${filename}`;
+            }).join(", ");
+            nextValues[field.id] = imageNames;
+            // Ensure defaultImageFiles is empty for database-loaded images
+            nextImageFiles[field.id] = [];
+            nextImagePreviews[field.id] = [];
+          } else {
+            // Empty string or no value - field was cleared
+            nextImageFiles[field.id] = [];
+            nextImagePreviews[field.id] = [];
+            nextImageUrls[field.id] = [];
+            nextValues[field.id] = "";
+          }
+        } else if (field.type === "file") {
+          // For file fields, initialize with default URLs if available
+          if (defaultValue && defaultValue.trim().length > 0) {
+            const urls = defaultValue.split(",")
+              .map((url: string) => url.trim())
+              .filter((url: string) => url && url.length > 0)
+              .filter((url: string, index: number, self: string[]) => self.indexOf(url) === index);
+            nextFileUrls[field.id] = urls;
+            // Show file names from URLs
+            const fileNames = urls.map((url: string, index: number) => {
+              const urlParts = url.split("/");
+              const filename = urlParts[urlParts.length - 1] || `File ${index + 1}`;
+              const isPdf = filename.toLowerCase().endsWith('.pdf');
+              return `${isPdf ? 'PDF' : 'Image'} ${index + 1} ${filename}`;
+            }).join(", ");
+            nextValues[field.id] = fileNames;
+            nextFileFiles[field.id] = [];
+            nextFilePreviews[field.id] = [];
+          } else {
+            nextFileFiles[field.id] = [];
+            nextFilePreviews[field.id] = [];
+            nextFileUrls[field.id] = [];
+            nextValues[field.id] = "";
+          }
+        } else {
+          // For other fields, use default value from database
+          // Use defaultValue if it exists (even if empty string), otherwise use prev value
+          nextValues[field.id] = defaultValue !== undefined && defaultValue !== null ? defaultValue : (prev[field.id] || "");
+        }
+      });
+      
+      setDefaultImageFiles(nextImageFiles);
+      setDefaultImagePreviews(nextImagePreviews);
+      setDefaultImageUrls(nextImageUrls);
+      setDefaultFileFiles(nextFileFiles);
+      setDefaultFilePreviews(nextFilePreviews);
+      setDefaultFileUrls(nextFileUrls);
+      setHasInitialized(true);
+      
+      console.log("📋 Initialized form values from defaults:", nextValues);
+      return nextValues;
+    });
+  }, [fields, defaultValues, isOpen, hasInitialized]);
+
+  // Reload default values when dialog opens to ensure we have latest data
+  useEffect(() => {
+    if (!isOpen || !tenantId) return;
+    
+    const reloadDefaultValues = async () => {
+      try {
+        const response = await apiRequest(
+          "GET",
+          `/api/tenants/${tenantId}/consulation-form?formType=${formType || "consulation"}`,
+          {}
+        );
+        const data = await response.json();
+        if (data?.defaultValues && typeof data.defaultValues === 'object' && onDefaultValuesChange) {
+          onDefaultValuesChange(data.defaultValues);
+        }
+      } catch (error) {
+        console.warn("Failed to reload default values when opening dialog:", error);
+      }
+    };
+    
+    reloadDefaultValues();
+  }, [isOpen, tenantId, formType, onDefaultValuesChange]);
+
+  // Keep image/text modes in sync with fields/defaults
+  useEffect(() => {
+    if (!isOpen) return;
+    setImageOrTextModes((prev) => {
+      const next: Record<string, "image" | "text"> = {};
+      fields.forEach((field) => {
+        if (field.type === "image-or-text") {
+          const hasImages =
+            (defaultImageUrls[field.id]?.length || 0) > 0 ||
+            (defaultImageFiles[field.id]?.length || 0) > 0;
+          next[field.id] = prev[field.id] || (hasImages ? "image" : "text");
+        }
+      });
+      return next;
+    });
+  }, [fields, defaultImageUrls, defaultImageFiles, isOpen]);
+
+  // Reset selected invoice when dialog closes
+  useEffect(() => {
+    if (!isOpen) {
+      setSelectedInvoiceId("");
+    }
+  }, [isOpen]);
+
+  // Handle invoice selection and auto-fill form
+  const handleInvoiceSelect = (invoiceId: string) => {
+    setSelectedInvoiceId(invoiceId);
+    
+    if (!invoiceId || invoiceId === "" || invoiceId === "none") {
+      // Clear form if "None" is selected
+      setFormValues({});
+      // Clear default values from fields
+      onFieldsChange(
+        fields.map((field) => ({
+          ...field,
+          defaultValue: "",
+        }))
+      );
+      return;
+    }
+
+    const invoice = invoices.find((inv: any) => 
+      (inv.id?.toString() === invoiceId) || 
+      (inv.invoiceNumber === invoiceId) ||
+      (inv.invoice_number === invoiceId)
+    );
+
+    if (!invoice) {
+      toast({
+        title: "Invoice not found",
+        description: "Selected invoice could not be found.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Auto-fill form fields based on invoice data
+    const autoFilledValues: Record<string, string> = {};
+    
+    // Find title and price fields by type
+    const titleField = fields.find((f) => f.type === "title");
+    const priceField = fields.find((f) => f.type === "price");
+    
+    // Auto-fill title field with invoice number
+    if (titleField) {
+      const invoiceNumber = invoice.invoiceNumber || invoice.invoice_number || `INV-${invoice.id}` || "";
+      autoFilledValues[titleField.id] = invoiceNumber;
+    }
+    
+    // Auto-fill price field with invoice total amount
+    if (priceField) {
+      const totalAmount = invoice.totalAmount || invoice.total_amount || invoice.amount || 0;
+      autoFilledValues[priceField.id] = totalAmount.toString();
+    }
+    
+    // Also try to match other fields by label (for backward compatibility)
+    fields.forEach((field) => {
+      // Skip if already filled by type matching
+      if (autoFilledValues[field.id]) return;
+      
+      const fieldLabel = field.label.toLowerCase();
+      
+      // Match field labels to invoice data
+      if (fieldLabel.includes("phone") || fieldLabel.includes("mobile") || fieldLabel.includes("contact")) {
+        // Try to get phone from invoice or customer
+        autoFilledValues[field.id] = invoice.customerPhone || invoice.phone || invoice.customer_phone || "";
+      } else if (fieldLabel.includes("description") || fieldLabel.includes("notes") || fieldLabel.includes("details") || fieldLabel.includes("note")) {
+        autoFilledValues[field.id] = invoice.notes || invoice.description || invoice.note || "";
+      } else if (fieldLabel.includes("date") && !fieldLabel.includes("due")) {
+        const date = invoice.issueDate || invoice.issue_date || invoice.createdAt || invoice.created_at;
+        if (date) {
+          autoFilledValues[field.id] = new Date(date).toLocaleDateString();
+        }
+      } else if (fieldLabel.includes("due") && fieldLabel.includes("date")) {
+        const dueDate = invoice.dueDate || invoice.due_date;
+        if (dueDate) {
+          autoFilledValues[field.id] = new Date(dueDate).toLocaleDateString();
+        }
+      } else if (fieldLabel.includes("subtotal") || fieldLabel.includes("sub-total")) {
+        const subtotal = invoice.subtotal || invoice.sub_total || 0;
+        autoFilledValues[field.id] = subtotal.toString();
+      } else if (fieldLabel.includes("tax") || fieldLabel.includes("vat")) {
+        const tax = invoice.taxAmount || invoice.tax_amount || invoice.tax || 0;
+        autoFilledValues[field.id] = tax.toString();
+      } else if (fieldLabel.includes("discount")) {
+        const discount = invoice.discountAmount || invoice.discount_amount || invoice.discount || 0;
+        autoFilledValues[field.id] = discount.toString();
+      } else if (fieldLabel.includes("status") || fieldLabel.includes("state")) {
+        autoFilledValues[field.id] = invoice.status || invoice.paymentStatus || "";
+      } else if (fieldLabel.includes("currency")) {
+        autoFilledValues[field.id] = invoice.currency || "INR";
+      }
+    });
+
+    // Update form values with auto-filled data
+    setFormValues((prev) => ({
+      ...prev,
+      ...autoFilledValues,
+    }));
+
+    // Also update field defaultValues
+    onFieldsChange(
+      fields.map((field) => ({
+        ...field,
+        defaultValue: autoFilledValues[field.id] || field.defaultValue || "",
+      }))
+    );
+
+    toast({
+      title: "Invoice data loaded",
+      description: "Form fields have been auto-filled with invoice data.",
+    });
+  };
+
+  const handleAddField = () => {
+    if (!newFieldLabel.trim()) {
+      toast({
+        title: "Field label required",
+        description: "Please provide a label for the new field.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const newField: ConsulationField = {
+      id: generateFieldId(),
+      label: newFieldLabel.trim(),
+      type: newFieldType,
+      required: false,
+    };
+
+    onFieldsChange([...fields, newField]);
+    setNewFieldLabel("");
+    setNewFieldType("text");
+  };
+
+  const handleFieldChange = (
+    fieldId: string,
+    key: keyof ConsulationField,
+    value: ConsulationField[keyof ConsulationField],
+  ) => {
+    const updated = fields.map((field) =>
+      field.id === fieldId ? { ...field, [key]: value } : field,
+    );
+    onFieldsChange(updated);
+  };
+
+  const handleRemoveField = (fieldId: string) => {
+    onFieldsChange(fields.filter((field) => field.id !== fieldId));
+    setFormValues((prev) => {
+      const { [fieldId]: _, ...rest } = prev;
+      return rest;
+    });
+  };
+
+  const handleValueChange = (fieldId: string, value: string) => {
+    setFormValues((prev) => ({ ...prev, [fieldId]: value }));
+    // Update the field's defaultValue
+    onFieldsChange(
+      fields.map((field) =>
+        field.id === fieldId ? { ...field, defaultValue: value } : field
+      )
+    );
+  };
+
+  const handleImageChange = async (fieldId: string, files: FileList | null) => {
+    if (!files || files.length === 0) return;
+
+    const fileArray = Array.from(files);
+    console.log("📸 handleImageChange called:", {
+      fieldId,
+      selectedFilesCount: fileArray.length,
+      existingFilesCount: (defaultImageFiles[fieldId] || []).length,
+      existingUrlsCount: (defaultImageUrls[fieldId] || []).length,
+    });
+    
+    const newFiles = [...(defaultImageFiles[fieldId] || []), ...fileArray];
+    setDefaultImageFiles((prev) => ({ ...prev, [fieldId]: newFiles }));
+
+    // Create preview URLs - for images create blob URL, for PDFs create blob URL
+    const newPreviews = fileArray.map((file) => {
+      if (file.type.startsWith('image/')) {
+        return URL.createObjectURL(file);
+      } else if (file.name.toLowerCase().endsWith('.pdf')) {
+        // For PDFs, create blob URL for preview
+        return URL.createObjectURL(file);
+      } else {
+        return '';
+      }
+    });
+    setDefaultImagePreviews((prev) => ({
+      ...prev,
+      [fieldId]: [...(prev[fieldId] || []), ...newPreviews],
+    }));
+
+    // Upload images and get URLs
+    try {
+      const formData = new FormData();
+      fileArray.forEach((file) => {
+        formData.append('attachments', file);
+      });
+
+      const token = auth.getToken();
+      if (!token) {
+        throw new Error("Authentication token not found");
+      }
+
+      const uploadResponse = await fetch('/api/consulation-form/upload-images', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!uploadResponse.ok) {
+        const errorData = await uploadResponse.json().catch(() => ({ message: 'Failed to upload files' }));
+        throw new Error(errorData.message || 'Failed to upload files');
+      }
+
+      const uploadResult = await uploadResponse.json();
+      const uploadedFiles = uploadResult.files || [];
+      const uploadedUrls = uploadedFiles
+        .filter((f: any) => f.path)
+        .map((f: any) => f.path);
+
+      // Only add URLs that don't already exist to prevent duplicates
+      const existingUrls = defaultImageUrls[fieldId] || [];
+      const uniqueNewUrls = uploadedUrls.filter((url: string) => !existingUrls.includes(url));
+      const newUrls = [...existingUrls, ...uniqueNewUrls];
+      setDefaultImageUrls((prev) => ({ ...prev, [fieldId]: newUrls }));
+
+      // Remove uploaded files from defaultImageFiles since they're now represented by URLs
+      // Use functional updates to ensure we're working with the latest state
+      setDefaultImageFiles((prev) => {
+        const currentFiles = prev[fieldId] || [];
+        const filesToKeep = currentFiles.slice(0, currentFiles.length - fileArray.length);
+        console.log("📸 After upload - removing files:", {
+          fieldId,
+          currentFilesCount: currentFiles.length,
+          uploadedFilesCount: fileArray.length,
+          filesToKeepCount: filesToKeep.length,
+          newUrlsCount: newUrls.length,
+        });
+        return { ...prev, [fieldId]: filesToKeep };
+      });
+      
+      // Also remove their preview URLs
+      setDefaultImagePreviews((prev) => {
+        const currentPreviews = prev[fieldId] || [];
+        const previewsToKeep = currentPreviews.slice(0, currentPreviews.length - newPreviews.length);
+        // Revoke the preview URLs for uploaded files
+        newPreviews.forEach((previewUrl) => {
+          URL.revokeObjectURL(previewUrl);
+        });
+        return { ...prev, [fieldId]: previewsToKeep };
+      });
+
+      // Check if this is an "image-or-text" field - if so, clear text value and switch to image mode
+      const field = fields.find(f => f.id === fieldId);
+      if (field?.type === "image-or-text") {
+        // Clear text value when images are uploaded
+        setImageOrTextModes((prev) => ({ ...prev, [fieldId]: "image" }));
+        setFormValues((prev) => ({ ...prev, [fieldId]: "" }));
+      } else {
+        // Update form value - only show URL names (since files are now uploaded)
+        const urlNames = newUrls.map((url, index) => {
+          const urlParts = url.split("/");
+          const filename = urlParts[urlParts.length - 1] || `File ${index + 1}`;
+          const isPdf = filename.toLowerCase().endsWith('.pdf');
+          return `${isPdf ? 'PDF' : 'Image'} ${index + 1}: ${filename}`;
+        });
+        const allNames = urlNames.join(", ");
+        setFormValues((prev) => ({ ...prev, [fieldId]: allNames }));
+      }
+      
+      // Update field defaultValue with URLs
+      const allUrls = newUrls.join(", ");
+      onFieldsChange(
+        fields.map((field) =>
+          field.id === fieldId ? { ...field, defaultValue: allUrls } : field
+        )
+      );
+    } catch (error: any) {
+      console.error(`Error uploading image for field ${fieldId}:`, error);
+      toast({
+        title: "Upload Error",
+        description: `Failed to upload images: ${error.message}`,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleFileChange = async (fieldId: string, files: FileList | null) => {
+    if (!files || files.length === 0) return;
+
+    const fileArray = Array.from(files);
+    console.log("📄 handleFileChange called:", {
+      fieldId,
+      selectedFilesCount: fileArray.length,
+      existingFilesCount: (defaultFileFiles[fieldId] || []).length,
+      existingUrlsCount: (defaultFileUrls[fieldId] || []).length,
+    });
+    
+    const newFiles = [...(defaultFileFiles[fieldId] || []), ...fileArray];
+    setDefaultFileFiles((prev) => ({ ...prev, [fieldId]: newFiles }));
+
+    // Create preview URLs for images only (PDFs will use a placeholder)
+    const newPreviews = fileArray.map((file) => {
+      if (file.type.startsWith('image/')) {
+        return URL.createObjectURL(file);
+      } else {
+        // For PDFs, we'll use a placeholder or the file icon
+        return '';
+      }
+    });
+    setDefaultFilePreviews((prev) => ({
+      ...prev,
+      [fieldId]: [...(prev[fieldId] || []), ...newPreviews],
+    }));
+
+    // Upload files and get URLs
+    try {
+      const formData = new FormData();
+      fileArray.forEach((file) => {
+        formData.append('attachments', file);
+      });
+
+      const token = auth.getToken();
+      if (!token) {
+        throw new Error("Authentication token not found");
+      }
+
+      const uploadResponse = await fetch('/api/consulation-form/upload-images', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!uploadResponse.ok) {
+        const errorData = await uploadResponse.json().catch(() => ({ message: 'Failed to upload files' }));
+        throw new Error(errorData.message || 'Failed to upload files');
+      }
+
+      const uploadResult = await uploadResponse.json();
+      const uploadedFiles = uploadResult.files || [];
+      const uploadedUrls = uploadedFiles
+        .filter((f: any) => f.path)
+        .map((f: any) => f.path);
+
+      // Only add URLs that don't already exist to prevent duplicates
+      const existingUrls = defaultFileUrls[fieldId] || [];
+      const uniqueNewUrls = uploadedUrls.filter((url: string) => !existingUrls.includes(url));
+      const newUrls = [...existingUrls, ...uniqueNewUrls];
+      setDefaultFileUrls((prev) => ({ ...prev, [fieldId]: newUrls }));
+
+      // Remove uploaded files from defaultFileFiles since they're now represented by URLs
+      setDefaultFileFiles((prev) => {
+        const currentFiles = prev[fieldId] || [];
+        const filesToKeep = currentFiles.slice(0, currentFiles.length - fileArray.length);
+        return { ...prev, [fieldId]: filesToKeep };
+      });
+      
+      // Also remove their preview URLs
+      setDefaultFilePreviews((prev) => {
+        const currentPreviews = prev[fieldId] || [];
+        const previewsToKeep = currentPreviews.slice(0, currentPreviews.length - newPreviews.length);
+        // Revoke the preview URLs for uploaded files
+        newPreviews.forEach((previewUrl) => {
+          if (previewUrl) {
+            URL.revokeObjectURL(previewUrl);
+          }
+        });
+        return { ...prev, [fieldId]: previewsToKeep };
+      });
+
+      // Update form value - show file names
+      const urlNames = newUrls.map((url, index) => {
+        const urlParts = url.split("/");
+        const filename = urlParts[urlParts.length - 1] || `File ${index + 1}`;
+        const isPdf = filename.toLowerCase().endsWith('.pdf');
+        return `${isPdf ? 'PDF' : 'Image'} ${index + 1}: ${filename}`;
+      });
+      const allNames = urlNames.join(", ");
+      setFormValues((prev) => ({ ...prev, [fieldId]: allNames }));
+      
+      // Update field defaultValue with URLs
+      const allUrls = newUrls.join(", ");
+      onFieldsChange(
+        fields.map((field) =>
+          field.id === fieldId ? { ...field, defaultValue: allUrls } : field
+        )
+      );
+    } catch (error: any) {
+      console.error(`Error uploading file for field ${fieldId}:`, error);
+      toast({
+        title: "Upload Error",
+        description: `Failed to upload files: ${error.message}`,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const removeDefaultFile = (fieldId: string, index: number) => {
+    const currentFiles = defaultFileFiles[fieldId] || [];
+    const currentPreviews = defaultFilePreviews[fieldId] || [];
+    const currentUrls = defaultFileUrls[fieldId] || [];
+    
+    // Determine if we're removing a file or a URL
+    if (index < currentFiles.length) {
+      // Removing a file
+      const newFiles = [...currentFiles];
+      const newPreviews = [...currentPreviews];
+      
+      // Revoke preview URL
+      if (newPreviews[index]) {
+        URL.revokeObjectURL(newPreviews[index]);
+      }
+      
+      newFiles.splice(index, 1);
+      newPreviews.splice(index, 1);
+      
+      setDefaultFileFiles((prev) => ({ ...prev, [fieldId]: newFiles }));
+      setDefaultFilePreviews((prev) => ({ ...prev, [fieldId]: newPreviews }));
+      
+      // Update form value
+      const fileNames = newFiles.map((file, idx) => {
+        const isPdf = file.name.toLowerCase().endsWith('.pdf');
+        return `${isPdf ? 'PDF' : 'Image'} ${idx + 1} ${file.name}`;
+      });
+      const urlNames = currentUrls.map((url, idx) => {
+        const urlParts = url.split("/");
+        const filename = urlParts[urlParts.length - 1] || `File ${newFiles.length + idx + 1}`;
+        const isPdf = filename.toLowerCase().endsWith('.pdf');
+        return `${isPdf ? 'PDF' : 'Image'} ${newFiles.length + idx + 1} ${filename}`;
+      });
+      const allNames = [...fileNames, ...urlNames].join(", ");
+      setFormValues((prev) => ({ ...prev, [fieldId]: allNames || "" }));
+      
+      // Update field defaultValue
+      const allUrls = currentUrls.join(", ");
+      onFieldsChange(
+        fields.map((field) =>
+          field.id === fieldId ? { ...field, defaultValue: allUrls || "" } : field
+        )
+      );
+    } else {
+      // Removing a URL
+      const urlIndex = index - currentFiles.length;
+      const newUrls = [...currentUrls];
+      newUrls.splice(urlIndex, 1);
+      
+      setDefaultFileUrls((prev) => ({ ...prev, [fieldId]: newUrls }));
+      
+      // Update form value
+      const fileNames = currentFiles.map((file, idx) => {
+        const isPdf = file.name.toLowerCase().endsWith('.pdf');
+        return `${isPdf ? 'PDF' : 'Image'} ${idx + 1} ${file.name}`;
+      });
+      const urlNames = newUrls.map((url, idx) => {
+        const urlParts = url.split("/");
+        const filename = urlParts[urlParts.length - 1] || `File ${currentFiles.length + idx + 1}`;
+        const isPdf = filename.toLowerCase().endsWith('.pdf');
+        return `${isPdf ? 'PDF' : 'Image'} ${currentFiles.length + idx + 1} ${filename}`;
+      });
+      const allNames = [...fileNames, ...urlNames].join(", ");
+      setFormValues((prev) => ({ ...prev, [fieldId]: allNames || "" }));
+      
+      // Update field defaultValue
+      const allUrls = newUrls.join(", ");
+      onFieldsChange(
+        fields.map((field) =>
+          field.id === fieldId ? { ...field, defaultValue: allUrls || "" } : field
+        )
+      );
+    }
+  };
+
+  const removeDefaultImage = (fieldId: string, index: number) => {
+    const currentFiles = defaultImageFiles[fieldId] || [];
+    const currentPreviews = defaultImagePreviews[fieldId] || [];
+    const currentUrls = defaultImageUrls[fieldId] || [];
+    const field = fields.find(f => f.id === fieldId);
+    const isImageOrText = field?.type === "image-or-text";
+    
+    // Determine if we're removing a file or a URL
+    // Files come first, then URLs
+    if (index < currentFiles.length) {
+      // Removing a file
+      const newFiles = [...currentFiles];
+      const newPreviews = [...currentPreviews];
+      
+      // Revoke preview URL
+      if (newPreviews[index]) {
+        URL.revokeObjectURL(newPreviews[index]);
+      }
+      
+      newFiles.splice(index, 1);
+      newPreviews.splice(index, 1);
+      
+      setDefaultImageFiles((prev) => ({ ...prev, [fieldId]: newFiles }));
+      setDefaultImagePreviews((prev) => ({ ...prev, [fieldId]: newPreviews }));
+      
+      // For image-or-text fields, clear text value when all images are removed
+      if (isImageOrText && newFiles.length === 0 && currentUrls.length === 0) {
+        setFormValues((prev) => ({ ...prev, [fieldId]: "" }));
+        setImageOrTextModes((prev) => ({ ...prev, [fieldId]: "text" }));
+      } else if (!isImageOrText) {
+        // Update form value with remaining files and URLs
+        const fileNames = newFiles.map((file, idx) => `Image ${idx + 1} ${file.name}`);
+        const urlNames = currentUrls.map((url, idx) => {
+          const urlParts = url.split("/");
+          const filename = urlParts[urlParts.length - 1] || `Image ${newFiles.length + idx + 1}`;
+          return `Image ${newFiles.length + idx + 1} ${filename}`;
+        });
+        const allNames = [...fileNames, ...urlNames].join(", ");
+        setFormValues((prev) => ({ ...prev, [fieldId]: allNames || "" }));
+      }
+      
+      // Update field defaultValue (URLs only, files are uploaded on save)
+      const allUrls = currentUrls.join(", ");
+      onFieldsChange(
+        fields.map((field) =>
+          field.id === fieldId ? { ...field, defaultValue: allUrls || "" } : field
+        )
+      );
+    } else {
+      // Removing a URL
+      const urlIndex = index - currentFiles.length;
+      const newUrls = [...currentUrls];
+      newUrls.splice(urlIndex, 1);
+      
+      setDefaultImageUrls((prev) => ({ ...prev, [fieldId]: newUrls }));
+      
+      // For image-or-text fields, clear text value when all images are removed
+      if (isImageOrText && currentFiles.length === 0 && newUrls.length === 0) {
+        setFormValues((prev) => ({ ...prev, [fieldId]: "" }));
+        setImageOrTextModes((prev) => ({ ...prev, [fieldId]: "text" }));
+      } else if (!isImageOrText) {
+        // Update form value
+        const fileNames = currentFiles.map((file, idx) => `Image ${idx + 1} ${file.name}`);
+        const urlNames = newUrls.map((url, idx) => {
+          const urlParts = url.split("/");
+          const filename = urlParts[urlParts.length - 1] || `Image ${currentFiles.length + idx + 1}`;
+          return `Image ${currentFiles.length + idx + 1} ${filename}`;
+        });
+        const allNames = [...fileNames, ...urlNames].join(", ");
+        setFormValues((prev) => ({ ...prev, [fieldId]: allNames || "" }));
+      }
+      
+      // Update field defaultValue
+      const allUrls = newUrls.join(", ");
+      onFieldsChange(
+        fields.map((field) =>
+          field.id === fieldId ? { ...field, defaultValue: allUrls || "" } : field
+        )
+      );
+    }
+  };
+
+  const handleImageOrTextModeChange = (
+    fieldId: string,
+    mode: "image" | "text",
+  ) => {
+    setImageOrTextModes((prev) => ({ ...prev, [fieldId]: mode }));
+    if (mode === "image") {
+      setFormValues((prev) => ({ ...prev, [fieldId]: "" }));
+    } else {
+      // Clear any stored images when switching to text
+      setDefaultImageFiles((prev) => ({ ...prev, [fieldId]: [] }));
+      setDefaultImagePreviews((prev) => {
+        const currentPreviews = prev[fieldId] || [];
+        currentPreviews.forEach((previewUrl) => {
+          URL.revokeObjectURL(previewUrl);
+        });
+        return { ...prev, [fieldId]: [] };
+      });
+      setDefaultImageUrls((prev) => ({ ...prev, [fieldId]: [] }));
+      // Update field defaultValue
+      onFieldsChange(
+        fields.map((field) =>
+          field.id === fieldId ? { ...field, defaultValue: "" } : field
+        )
+      );
+    }
+  };
+
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (fields.length === 0) {
+      toast({
+        title: "No fields configured",
+        description:
+          `Please add at least one field before saving the ${formType === "payment" ? "payment" : "consulation"} form.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!tenantId) {
+      toast({
+        title: "Error",
+        description: "Tenant information not available.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Show success immediately for instant feedback (optimistic UI)
+    toast({
+      title: `${formType === "payment" ? "Payment" : "Consulation"} form saved`,
+      description:
+        `Your ${formType === "payment" ? "payment" : "consulation"} form layout has been saved successfully.`,
+    });
+    onOpenChange(false);
+
+    // Process save in background (fire and forget)
+    (async () => {
+      try {
+        // Collect all files from all fields for a single batch upload
+        const uploadedImageUrls: Record<string, string[]> = {};
+        const uploadedFileUrls: Record<string, string[]> = {};
+        
+        // Track which files belong to which field
+        const fileMapping: Array<{ fieldId: string; fieldType: 'image' | 'file'; fileCount: number }> = [];
+        const allFiles: File[] = [];
+
+        // Collect all files and track their mapping
+        for (const field of fields) {
+          if ((field.type === "image" || field.type === "image-or-text" || field.type === "authorization-form") && defaultImageFiles[field.id] && defaultImageFiles[field.id].length > 0) {
+            const files = defaultImageFiles[field.id];
+            fileMapping.push({ fieldId: field.id, fieldType: 'image', fileCount: files.length });
+            allFiles.push(...files);
+          } else if (field.type === "file" && defaultFileFiles[field.id] && defaultFileFiles[field.id].length > 0) {
+            const files = defaultFileFiles[field.id];
+            fileMapping.push({ fieldId: field.id, fieldType: 'file', fileCount: files.length });
+            allFiles.push(...files);
+          }
+        }
+
+        // Upload all files in a single batch request if there are any
+        if (allFiles.length > 0) {
+          try {
+            const formData = new FormData();
+            allFiles.forEach((file) => {
+              formData.append('attachments', file);
+            });
+
+            const uploadResponse = await fetch('/api/consulation-form/upload-images', {
+              method: 'POST',
+              body: formData,
+            });
+
+            if (!uploadResponse.ok) {
+              const errorData = await uploadResponse.json().catch(() => ({ message: 'Failed to upload files' }));
+              throw new Error(errorData.message || 'Failed to upload files');
+            }
+
+            const uploadResult = await uploadResponse.json();
+            const uploadedFiles = (uploadResult.files || [])
+              .filter((f: any) => f.path)
+              .map((f: any) => f.path);
+
+            // Map uploaded URLs back to their respective fields
+            let urlIndex = 0;
+            for (const mapping of fileMapping) {
+              const urls = uploadedFiles.slice(urlIndex, urlIndex + mapping.fileCount);
+              urlIndex += mapping.fileCount;
+              
+              if (mapping.fieldType === 'image') {
+                uploadedImageUrls[mapping.fieldId] = urls;
+              } else {
+                uploadedFileUrls[mapping.fieldId] = urls;
+              }
+            }
+          } catch (error: any) {
+            console.error('Error uploading files in background:', error);
+            // Don't show error toast - already showed success
+            // Files will be missing but form can still be saved
+          }
+        }
+
+        // Extract default values from formValues and combine with uploaded image URLs
+        // Always include all fields, even if empty (to allow clearing defaults)
+        const defaultValues: Record<string, string> = {};
+        fields.forEach((field) => {
+          if (field.type === "image" || field.type === "authorization-form") {
+            // For image and authorization-form fields, combine existing URLs with newly uploaded URLs
+            const existingUrls = defaultImageUrls[field.id] || [];
+            const newUrls = uploadedImageUrls[field.id] || [];
+            const allUrls = [...existingUrls, ...newUrls].filter((url, index, self) => self.indexOf(url) === index); // Remove duplicates
+            // Always save image URLs, even if empty (to allow clearing)
+            defaultValues[field.id] = allUrls.join(", ");
+          } else if (field.type === "image-or-text") {
+            // For image-or-text fields, save images if uploaded, otherwise save text
+            const existingUrls = defaultImageUrls[field.id] || [];
+            const newUrls = uploadedImageUrls[field.id] || [];
+            const allUrls = [...existingUrls, ...newUrls].filter((url, index, self) => self.indexOf(url) === index);
+            
+            if (allUrls.length > 0) {
+              // If images are uploaded, save image URLs (text will be ignored)
+              defaultValues[field.id] = allUrls.join(", ");
+            } else {
+              // If no images, save text value
+              const currentValue = formValues[field.id] || "";
+              defaultValues[field.id] = currentValue;
+            }
+          } else if (field.type === "file") {
+            // For file fields, combine existing URLs with newly uploaded URLs
+            const existingUrls = defaultFileUrls[field.id] || [];
+            const newUrls = uploadedFileUrls[field.id] || [];
+            const allUrls = [...existingUrls, ...newUrls].filter((url, index, self) => self.indexOf(url) === index); // Remove duplicates
+            // Always save file URLs, even if empty (to allow clearing)
+            defaultValues[field.id] = allUrls.join(", ");
+          } else {
+            // For other fields, use the value from formValues (always save, even if empty)
+            const currentValue = formValues[field.id] || "";
+            defaultValues[field.id] = currentValue;
+          }
+        });
+        
+        // Clean fields - remove defaultValue from field objects (store separately)
+        const cleanFields = fields.map((field) => {
+          const { defaultValue, ...cleanField } = field;
+          return cleanField;
+        });
+        
+        // Save to database
+        const response = await apiRequest(
+          "POST",
+          `/api/tenants/${tenantId}/consulation-form/template`,
+          { 
+            fields: cleanFields,
+            defaultValues: defaultValues,
+            formType: formType || "consulation"
+          }
+        );
+        const data = await response.json();
+
+        if (data?.success) {
+          // Also save to localStorage as backup
+          if (consulationStorageKey) {
+            localStorage.setItem(
+              consulationStorageKey,
+              JSON.stringify(fields)
+            );
+          }
+
+          // Update parent component's default values state with the saved values
+          if (onDefaultValuesChange) {
+            onDefaultValuesChange(defaultValues);
+          }
+
+          // Reload from database in background to ensure we have the latest data
+          try {
+            const reloadResponse = await apiRequest(
+              "GET",
+              `/api/tenants/${tenantId}/consulation-form?formType=${formType || "consulation"}`,
+              {}
+            );
+            const reloadData = await reloadResponse.json();
+            if (reloadData?.defaultValues && typeof reloadData.defaultValues === 'object') {
+              if (onDefaultValuesChange) {
+                onDefaultValuesChange(reloadData.defaultValues);
+              }
+            }
+          } catch (reloadError) {
+            console.warn("Failed to reload default values after save:", reloadError);
+            // Continue anyway - we've already updated the state with what we saved
+          }
+        } else {
+          throw new Error(data?.message || "Failed to save form");
+        }
+      } catch (error: any) {
+        console.error("Error saving consulation form in background:", error);
+        // Only show error if it's critical - user already saw success
+        // Could optionally show a subtle error notification here
+      }
+    })();
+  };
+
+  const reorderFields = (
+    list: ConsulationField[],
+    sourceId: string,
+    targetId: string,
+  ) => {
+    const updated = [...list];
+    const fromIndex = updated.findIndex((field) => field.id === sourceId);
+    const toIndex = updated.findIndex((field) => field.id === targetId);
+    if (fromIndex === -1 || toIndex === -1) {
+      return list;
+    }
+    const [moved] = updated.splice(fromIndex, 1);
+    updated.splice(toIndex, 0, moved);
+    return updated;
+  };
+
+  const handleDragStart = (fieldId: string) => {
+    setDraggedFieldId(fieldId);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedFieldId(null);
+  };
+
+  const handleDragOver = (
+    event: React.DragEvent<HTMLDivElement>,
+    targetFieldId: string,
+  ) => {
+    event.preventDefault();
+    if (!draggedFieldId || draggedFieldId === targetFieldId) {
+      return;
+    }
+    const reordered = reorderFields(fields, draggedFieldId, targetFieldId);
+    onFieldsChange(reordered);
+    setDraggedFieldId(targetFieldId);
+  };
+
+  const renderFieldInput = (field: ConsulationField) => {
+    const commonProps = {
+      id: field.id,
+      value: formValues[field.id] || "",
+      onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+        handleValueChange(field.id, e.target.value),
+    };
+
+    switch (field.type) {
+      case "title":
+        return <Input placeholder="Title" {...commonProps} />;
+      case "price":
+        return (
+          <Input
+            type="number"
+            min="0"
+            step="0.01"
+            placeholder="0.00"
+            {...commonProps}
+          />
+        );
+
+      case "textarea":
+        return (
+          <Textarea
+            placeholder="Enter details"
+            value={formValues[field.id] || ""}
+            onChange={(e) => handleValueChange(field.id, e.target.value)}
+            className="min-h-[100px]"
+          />
+        );
+      case "phone":
+        return (
+          <Input
+            type="tel"
+            placeholder="+1 (555) 123-4567"
+            {...commonProps}
+          />
+        );
+      case "image":
+        const imageUrls = defaultImageUrls[field.id] || [];
+        const imagePreviews = defaultImagePreviews[field.id] || [];
+        const imageFiles = defaultImageFiles[field.id] || [];
+        return (
+          <div className="space-y-3">
+            <Input
+              type="file"
+              accept="image/*,.pdf"
+              multiple
+              onChange={(e) => handleImageChange(field.id, e.target.files)}
+            />
+            <p className="text-xs text-gray-500">
+              You can select multiple images and PDFs
+            </p>
+            {(imageUrls.length > 0 || imageFiles.length > 0) && (
+              <div className="space-y-2">
+                <div className="text-sm text-gray-600 font-medium">
+                  Default Images ({imageUrls.length + imageFiles.length}):
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {imageFiles.map((file, index) => (
+                    <div
+                      key={`file-${index}`}
+                      className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const previewUrl = imagePreviews[index];
+                          if (previewUrl) {
+                            const fileImages = imageFiles.map((f, idx) => ({
+                              url: imagePreviews[idx] || '',
+                              name: f.name
+                            }));
+                            const urlImages = imageUrls.map((url, idx) => {
+                              const urlParts = url.split("/");
+                              const name = urlParts[urlParts.length - 1] || `Image ${imageFiles.length + idx + 1}`;
+                              const normalized = url.startsWith('http') || url.startsWith('https')
+                                ? url
+                                : url.startsWith('/')
+                                ? url
+                                : `/${url}`;
+                              return { url: normalized, name };
+                            });
+                            const allImages = [...fileImages, ...urlImages];
+                            setViewingImage({ images: allImages, currentIndex: index });
+                          }
+                        }}
+                        className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                      >
+                        Image {index + 1}: {file.name}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removeDefaultImage(field.id, index)}
+                        className="text-red-500 hover:text-red-700"
+                        aria-label={`Remove ${file.name}`}
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                  {imageUrls.map((url, index) => {
+                    const urlParts = url.split("/");
+                    const filename = urlParts[urlParts.length - 1] || `Image ${imageFiles.length + index + 1}`;
+                    const normalizedUrl = url.startsWith('http') || url.startsWith('https')
+                      ? url
+                      : url.startsWith('/')
+                        ? url
+                        : `/${url}`;
+                    return (
+                      <div
+                        key={`url-${index}`}
+                        className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const fileImages = imageFiles.map((f, idx) => ({
+                              url: imagePreviews[idx] || '',
+                              name: f.name
+                            }));
+                            const urlImages = imageUrls.map((url, idx) => {
+                              const urlParts = url.split("/");
+                              const name = urlParts[urlParts.length - 1] || `Image ${imageFiles.length + idx + 1}`;
+                              const normalized = url.startsWith('http') || url.startsWith('https')
+                                ? url
+                                : url.startsWith('/')
+                                ? url
+                                : `/${url}`;
+                              return { url: normalized, name };
+                            });
+                            const allImages = [...fileImages, ...urlImages];
+                            setViewingImage({ images: allImages, currentIndex: imageFiles.length + index });
+                          }}
+                          className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                        >
+                          Image {imageFiles.length + index + 1}: {filename.length > 30 ? filename.substring(0, 30) + "..." : filename}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeDefaultImage(field.id, imageFiles.length + index)}
+                          className="text-red-500 hover:text-red-700"
+                          aria-label={`Remove ${filename}`}
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      case "image-or-text":
+        const imageOrTextUrls = defaultImageUrls[field.id] || [];
+        const imageOrTextPreviews = defaultImagePreviews[field.id] || [];
+        const imageOrTextFiles = defaultImageFiles[field.id] || [];
+        const hasUploadedImages =
+          imageOrTextUrls.length > 0 || imageOrTextFiles.length > 0;
+        const mode =
+          imageOrTextModes[field.id] ||
+          (hasUploadedImages ? "image" : "text");
+
+        const toggle = (
+          <button
+            type="button"
+            className={`relative h-6 w-12 flex-shrink-0 rounded-full transition-colors ${
+              mode === "image" ? "bg-green-600" : "bg-blue-600"
+            }`}
+            onClick={() =>
+              handleImageOrTextModeChange(
+                field.id,
+                mode === "image" ? "text" : "image",
+              )
+            }
+          >
+            <span
+              className={`absolute top-1 left-1 h-4 w-4 rounded-full bg-white transition-transform ${
+                mode === "text" ? "translate-x-6" : "translate-x-0"
+              }`}
+            />
+          </button>
+        );
+
+        return (
+          <div className="space-y-3">
+            <div className="flex items-center gap-3 text-sm font-medium">
+              <span
+                className={
+                  mode === "image" ? "text-green-700" : "text-gray-500"
+                }
+              >
+                Upload Files
+              </span>
+              {toggle}
+              <span
+                className={
+                  mode === "text" ? "text-green-700" : "text-gray-500"
+                }
+              >
+                Enter Text
+              </span>
+            </div>
+
+            {mode === "image" && (
+              <div className="space-y-3">
+                <Input
+                  type="file"
+                  accept="image/*,.pdf"
+                  multiple
+                  onChange={(e) => handleImageChange(field.id, e.target.files)}
+                />
+                <p className="text-xs text-gray-500">
+                  You can select multiple images and PDFs.
+                </p>
+
+                {(imageOrTextUrls.length > 0 || imageOrTextFiles.length > 0) && (
+                  <div className="space-y-2">
+                    <div className="text-sm text-gray-600 font-medium">
+                      Uploaded Files (
+                      {imageOrTextUrls.length + imageOrTextFiles.length}):
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {imageOrTextFiles.map((file, index) => {
+                        const isPdf = file.name.toLowerCase().endsWith('.pdf');
+                        return (
+                          <div
+                            key={`file-${index}`}
+                            className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const previewUrl = imageOrTextPreviews[index];
+                                if (previewUrl) {
+                                  const fileImages = imageOrTextFiles.map(
+                                    (f, idx) => ({
+                                      url: imageOrTextPreviews[idx] || "",
+                                      name: f.name,
+                                    }),
+                                  );
+                                  const urlImages = imageOrTextUrls.map(
+                                    (url, idx) => {
+                                      const urlParts = url.split("/");
+                                      const name =
+                                        urlParts[urlParts.length - 1] ||
+                                        `File ${
+                                          imageOrTextFiles.length + idx + 1
+                                        }`;
+                                      const normalized =
+                                        url.startsWith("http") ||
+                                        url.startsWith("https")
+                                          ? url
+                                          : url.startsWith("/")
+                                            ? url
+                                            : `/${url}`;
+                                      return { url: normalized, name };
+                                    },
+                                  );
+                                  const allImages = [...fileImages, ...urlImages];
+                                  setViewingImage({
+                                    images: allImages,
+                                    currentIndex: index,
+                                  });
+                                } else if (file.name.toLowerCase().endsWith('.pdf')) {
+                                  // For PDFs without preview, create blob URL
+                                  const fileImages = imageOrTextFiles.map(
+                                    (f, idx) => {
+                                      if (f.name.toLowerCase().endsWith('.pdf')) {
+                                        return { url: URL.createObjectURL(f), name: f.name };
+                                      }
+                                      return { url: imageOrTextPreviews[idx] || "", name: f.name };
+                                    },
+                                  );
+                                  const urlImages = imageOrTextUrls.map(
+                                    (url, idx) => {
+                                      const urlParts = url.split("/");
+                                      const name =
+                                        urlParts[urlParts.length - 1] ||
+                                        `File ${
+                                          imageOrTextFiles.length + idx + 1
+                                        }`;
+                                      const normalized =
+                                        url.startsWith("http") ||
+                                        url.startsWith("https")
+                                          ? url
+                                          : url.startsWith("/")
+                                            ? url
+                                            : `/${url}`;
+                                      return { url: normalized, name };
+                                    },
+                                  );
+                                  const allImages = [...fileImages, ...urlImages];
+                                  setViewingImage({
+                                    images: allImages,
+                                    currentIndex: index,
+                                  });
+                                }
+                              }}
+                              className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                            >
+                              {isPdf ? 'PDF' : 'Image'} {index + 1}: {file.name}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => removeDefaultImage(field.id, index)}
+                              className="text-red-500 hover:text-red-700"
+                              aria-label={`Remove ${file.name}`}
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
+                        );
+                      })}
+                      {imageOrTextUrls.map((url, index) => {
+                        const urlParts = url.split("/");
+                        const filename =
+                          urlParts[urlParts.length - 1] ||
+                          `File ${imageOrTextFiles.length + index + 1}`;
+                        const isPdf = filename.toLowerCase().endsWith('.pdf');
+                        const normalizedUrl =
+                          url.startsWith("http") || url.startsWith("https")
+                            ? url
+                            : url.startsWith("/")
+                              ? url
+                              : `/${url}`;
+                        return (
+                          <div
+                            key={`url-${index}`}
+                            className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const fileImages = imageOrTextFiles.map(
+                                  (f, idx) => {
+                                    if (f.name.toLowerCase().endsWith('.pdf')) {
+                                      return { url: URL.createObjectURL(f), name: f.name };
+                                    }
+                                    return { url: imageOrTextPreviews[idx] || "", name: f.name };
+                                  },
+                                );
+                                const urlImages = imageOrTextUrls.map(
+                                  (url, idx) => {
+                                    const urlParts = url.split("/");
+                                    const name =
+                                      urlParts[urlParts.length - 1] ||
+                                      `File ${
+                                        imageOrTextFiles.length + idx + 1
+                                      }`;
+                                    const normalized =
+                                      url.startsWith("http") ||
+                                      url.startsWith("https")
+                                        ? url
+                                        : url.startsWith("/")
+                                          ? url
+                                          : `/${url}`;
+                                    return { url: normalized, name };
+                                  },
+                                );
+                                const allImages = [...fileImages, ...urlImages];
+                                setViewingImage({
+                                  images: allImages,
+                                  currentIndex:
+                                    imageOrTextFiles.length + index,
+                                });
+                              }}
+                              className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                            >
+                              {isPdf ? 'PDF' : 'Image'} {imageOrTextFiles.length + index + 1}:{" "}
+                              {filename.length > 30
+                                ? filename.substring(0, 30) + "..."
+                                : filename}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                removeDefaultImage(
+                                  field.id,
+                                  imageOrTextFiles.length + index,
+                                )
+                              }
+                              className="text-red-500 hover:text-red-700"
+                              aria-label={`Remove ${filename}`}
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {mode === "text" && (
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-2 block">
+                  Enter Text
+                </label>
+                <Textarea
+                  placeholder="Enter text if you don't want to upload images"
+                  value={formValues[field.id] || ""}
+                  onChange={(e) => handleValueChange(field.id, e.target.value)}
+                  className="min-h-[100px]"
+                />
+              </div>
+            )}
+          </div>
+        );
+      case "file":
+        const fileUrls = defaultFileUrls[field.id] || [];
+        const filePreviews = defaultFilePreviews[field.id] || [];
+        const fileFiles = defaultFileFiles[field.id] || [];
+        return (
+          <div className="space-y-3">
+            <Input
+              type="file"
+              accept="image/*,.pdf"
+              multiple
+              onChange={(e) => handleFileChange(field.id, e.target.files)}
+            />
+            <p className="text-xs text-gray-500">
+              You can select multiple images and PDFs
+            </p>
+            {(fileUrls.length > 0 || fileFiles.length > 0) && (
+              <div className="space-y-2">
+                <div className="text-sm text-gray-600 font-medium">
+                  Default Files ({fileUrls.length + fileFiles.length}):
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {fileFiles.map((file, index) => {
+                    const isPdf = file.name.toLowerCase().endsWith('.pdf');
+                    const previewUrl = filePreviews[index];
+                    return (
+                      <div
+                        key={`file-${index}`}
+                        className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const fileImages = fileFiles.map((f, idx) => {
+                              const preview = filePreviews[idx];
+                              if (preview) {
+                                return { url: preview, name: f.name };
+                              } else if (f.name.toLowerCase().endsWith('.pdf')) {
+                                return { url: URL.createObjectURL(f), name: f.name };
+                              }
+                              return { url: '', name: f.name };
+                            });
+                            const urlImages = fileUrls.map((url, idx) => {
+                              const urlParts = url.split("/");
+                              const name = urlParts[urlParts.length - 1] || `File ${fileFiles.length + idx + 1}`;
+                              const normalized = url.startsWith('http') || url.startsWith('https')
+                                ? url
+                                : url.startsWith('/')
+                                ? url
+                                : `/${url}`;
+                              return { url: normalized, name };
+                            });
+                            const allImages = [...fileImages, ...urlImages];
+                            setViewingImage({ images: allImages, currentIndex: index });
+                          }}
+                          className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                        >
+                          {isPdf ? 'PDF' : 'Image'} {index + 1}: {file.name}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeDefaultFile(field.id, index)}
+                          className="text-red-500 hover:text-red-700"
+                          aria-label={`Remove ${file.name}`}
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                  {fileUrls.map((url, index) => {
+                    const urlParts = url.split("/");
+                    const filename = urlParts[urlParts.length - 1] || `File ${fileFiles.length + index + 1}`;
+                    const isPdf = filename.toLowerCase().endsWith('.pdf');
+                    const normalizedUrl = url.startsWith('http') || url.startsWith('https')
+                      ? url
+                      : url.startsWith('/')
+                        ? url
+                        : `/${url}`;
+                    return (
+                      <div
+                        key={`url-${index}`}
+                        className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const fileImages = fileFiles.map((f, idx) => {
+                              const preview = filePreviews[idx];
+                              if (preview) {
+                                return { url: preview, name: f.name };
+                              } else if (f.name.toLowerCase().endsWith('.pdf')) {
+                                return { url: URL.createObjectURL(f), name: f.name };
+                              }
+                              return { url: '', name: f.name };
+                            });
+                            const urlImages = fileUrls.map((url, idx) => {
+                              const urlParts = url.split("/");
+                              const name = urlParts[urlParts.length - 1] || `File ${fileFiles.length + idx + 1}`;
+                              const normalized = url.startsWith('http') || url.startsWith('https')
+                                ? url
+                                : url.startsWith('/')
+                                ? url
+                                : `/${url}`;
+                              return { url: normalized, name };
+                            });
+                            const allImages = [...fileImages, ...urlImages];
+                            setViewingImage({ images: allImages, currentIndex: fileFiles.length + index });
+                          }}
+                          className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                        >
+                          {isPdf ? 'PDF' : 'Image'} {fileFiles.length + index + 1}: {filename.length > 30 ? filename.substring(0, 30) + "..." : filename}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeDefaultFile(field.id, fileFiles.length + index)}
+                          className="text-red-500 hover:text-red-700"
+                          aria-label={`Remove ${filename}`}
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      case "authorization-form":
+        const authFormUrls = defaultImageUrls[field.id] || [];
+        const authFormPreviews = defaultImagePreviews[field.id] || [];
+        const authFormFiles = defaultImageFiles[field.id] || [];
+        return (
+          <div className="space-y-3">
+            <div className="border border-gray-300 rounded-lg p-4 bg-gray-50">
+              <p className="text-sm text-gray-600 italic mb-3">
+                Authorization Form - This field will display a credit card authorization form when customers fill out the payment form.
+              </p>
+              {(authFormUrls.length > 0 || authFormFiles.length > 0) && (
+                <div className="space-y-2 mt-3">
+                  <div className="text-sm text-gray-600 font-medium">
+                    Authorization Form Files ({authFormUrls.length + authFormFiles.length}):
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {authFormFiles.map((file, index) => {
+                      const isPdf = file.name.toLowerCase().endsWith('.pdf');
+                      return (
+                        <div
+                          key={`auth-file-${index}`}
+                          className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const previewUrl = authFormPreviews[index];
+                              if (previewUrl) {
+                                const fileImages = authFormFiles.map((f, idx) => {
+                                  const preview = authFormPreviews[idx];
+                                  if (preview) {
+                                    return { url: preview, name: f.name };
+                                  } else if (f.name.toLowerCase().endsWith('.pdf')) {
+                                    return { url: URL.createObjectURL(f), name: f.name };
+                                  }
+                                  return { url: '', name: f.name };
+                                });
+                                const urlImages = authFormUrls.map((url, idx) => {
+                                  const urlParts = url.split("/");
+                                  const name = urlParts[urlParts.length - 1] || `File ${authFormFiles.length + idx + 1}`;
+                                  const normalized = url.startsWith('http') || url.startsWith('https')
+                                    ? url
+                                    : url.startsWith('/')
+                                    ? url
+                                    : `/${url}`;
+                                  return { url: normalized, name };
+                                });
+                                const allImages = [...fileImages, ...urlImages];
+                                setViewingImage({ images: allImages, currentIndex: index });
+                              } else if (file.name.toLowerCase().endsWith('.pdf')) {
+                                // For PDFs without preview, create blob URL
+                                const fileImages = authFormFiles.map((f, idx) => {
+                                  if (f.name.toLowerCase().endsWith('.pdf')) {
+                                    return { url: URL.createObjectURL(f), name: f.name };
+                                  }
+                                  return { url: authFormPreviews[idx] || '', name: f.name };
+                                });
+                                const urlImages = authFormUrls.map((url, idx) => {
+                                  const urlParts = url.split("/");
+                                  const name = urlParts[urlParts.length - 1] || `File ${authFormFiles.length + idx + 1}`;
+                                  const normalized = url.startsWith('http') || url.startsWith('https')
+                                    ? url
+                                    : url.startsWith('/')
+                                    ? url
+                                    : `/${url}`;
+                                  return { url: normalized, name };
+                                });
+                                const allImages = [...fileImages, ...urlImages];
+                                setViewingImage({ images: allImages, currentIndex: index });
+                              }
+                            }}
+                            className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                          >
+                            {isPdf ? 'PDF' : 'Image'} {index + 1}: {file.name}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeDefaultImage(field.id, index)}
+                            className="text-red-500 hover:text-red-700"
+                            aria-label={`Remove ${file.name}`}
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                    {authFormUrls.map((url, index) => {
+                      const urlParts = url.split("/");
+                      const filename = urlParts[urlParts.length - 1] || `File ${authFormFiles.length + index + 1}`;
+                      const isPdf = filename.toLowerCase().endsWith('.pdf');
+                      const normalizedUrl = url.startsWith('http') || url.startsWith('https')
+                        ? url
+                        : url.startsWith('/')
+                          ? url
+                          : `/${url}`;
+                      return (
+                        <div
+                          key={`auth-url-${index}`}
+                          className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const fileImages = authFormFiles.map((f, idx) => {
+                                if (f.name.toLowerCase().endsWith('.pdf')) {
+                                  return { url: URL.createObjectURL(f), name: f.name };
+                                }
+                                return { url: authFormPreviews[idx] || '', name: f.name };
+                              });
+                              const urlImages = authFormUrls.map((url, idx) => {
+                                const urlParts = url.split("/");
+                                const name = urlParts[urlParts.length - 1] || `File ${authFormFiles.length + idx + 1}`;
+                                const normalized = url.startsWith('http') || url.startsWith('https')
+                                  ? url
+                                  : url.startsWith('/')
+                                  ? url
+                                  : `/${url}`;
+                                return { url: normalized, name };
+                              });
+                              const allImages = [...fileImages, ...urlImages];
+                              setViewingImage({ images: allImages, currentIndex: authFormFiles.length + index });
+                            }}
+                            className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                          >
+                            {isPdf ? 'PDF' : 'Image'} {authFormFiles.length + index + 1}: {filename.length > 30 ? filename.substring(0, 30) + "..." : filename}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeDefaultImage(field.id, authFormFiles.length + index)}
+                            className="text-red-500 hover:text-red-700"
+                            aria-label={`Remove ${filename}`}
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      default:
+        return <Input placeholder="Enter value" {...commonProps} />;
+    }
+  };
+
+  return (
+    <Dialog open={isOpen} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-5xl">
+        <DialogHeader>
+          <DialogTitle>{formType === "payment" ? "Set Payment Form" : "Set Consulation Form"}</DialogTitle>
+          <DialogDescription>
+            Build a custom {formType === "payment" ? "payment" : "consulation"} form with dynamic fields. These fields
+            are stored locally for your tenant.
+          </DialogDescription>
+        </DialogHeader>
+
+        {/* Invoice Selection (Optional) */}
+        {formType === "payment" && customerId && (
+          <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            <label className="text-sm font-medium text-gray-700 mb-2 block">
+              Select Invoice (Optional)
+            </label>
+           
+            {invoices.length > 0 ? (
+              <Select value={selectedInvoiceId} onValueChange={handleInvoiceSelect}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select an invoice to auto-fill form..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  {invoices.map((invoice: any) => {
+                    const invoiceId = invoice.id?.toString() || invoice.invoiceId?.toString() || "";
+                    const invoiceNumber = invoice.invoiceNumber || invoice.invoice_number || `INV-${invoice.id}`;
+                    const invoiceAmount = invoice.totalAmount || invoice.total_amount || invoice.amount || 0;
+                    const invoiceDate = invoice.issueDate || invoice.issue_date || invoice.createdAt;
+                    const dateStr = invoiceDate ? new Date(invoiceDate).toLocaleDateString() : "";
+                    return (
+                      <SelectItem key={invoiceId} value={invoiceId || invoiceNumber}>
+                        {invoiceNumber} {dateStr ? `(${dateStr})` : ""} - ₹{invoiceAmount.toLocaleString()}
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
+            ) : (
+              <div className="text-sm text-gray-500 italic">
+                No invoices found for this customer. The invoice dropdown will appear when invoices are available.
+              </div>
+            )}
+            <p className="text-xs text-gray-500 mt-2">
+              Selecting an invoice will automatically fill the title field with invoice number and price field with invoice amount.
+            </p>
+          </div>
+        )}
+
+        <div className="grid gap-6 md:grid-cols-2">
+          <div className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Form Layout Builder</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex flex-col gap-3">
+                  <Input
+                    placeholder="Field label (e.g., Session Title)"
+                    value={newFieldLabel}
+                    onChange={(e) => setNewFieldLabel(e.target.value)}
+                  />
+                  <div className="flex gap-2">
+                    <Select
+                      value={newFieldType}
+                      onValueChange={(value) =>
+                        setNewFieldType(value as ConsulationFieldType)
+                      }
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Choose field type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {Object.entries(FIELD_TYPE_LABELS).map(
+                          ([value, label]) => (
+                            <SelectItem key={value} value={value}>
+                              {label}
+                            </SelectItem>
+                          ),
+                        )}
+                      </SelectContent>
+                    </Select>
+                    <Button onClick={handleAddField}>
+                      <Plus className="h-4 w-4 mr-1" />
+                      Add
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-3 max-h-72 overflow-y-auto pr-2">
+                  {fields.length === 0 ? (
+                    <div className="border border-dashed border-gray-300 rounded-lg p-6 text-center text-sm text-gray-500">
+                      No fields yet. Add one to start building your form.
+                    </div>
+                  ) : (
+                    fields.map((field) => (
+                      <div
+                        key={field.id}
+                        className={`border rounded-lg p-4 space-y-3 bg-white ${draggedFieldId === field.id
+                            ? "border-blue-400 bg-blue-50"
+                            : "border-gray-200"
+                          }`}
+                        draggable
+                        onDragStart={() => handleDragStart(field.id)}
+                        onDragOver={(event) => handleDragOver(event, field.id)}
+                        onDragEnd={handleDragEnd}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 text-gray-500">
+                            <GripVertical className="h-4 w-4" />
+                            <span className="text-xs uppercase tracking-wide">
+                              Drag
+                            </span>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleRemoveField(field.id)}
+                          >
+                            <Trash2 className="h-4 w-4 text-red-500" />
+                          </Button>
+                        </div>
+
+                        <Input
+                          value={field.label}
+                          onChange={(e) =>
+                            handleFieldChange(
+                              field.id,
+                              "label",
+                              e.target.value,
+                            )
+                          }
+                        />
+
+                        <div className="flex items-center justify-between gap-3">
+                          <Select
+                            value={field.type}
+                            onValueChange={(value) =>
+                              handleFieldChange(
+                                field.id,
+                                "type",
+                                value as ConsulationFieldType,
+                              )
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {Object.entries(FIELD_TYPE_LABELS).map(
+                                ([value, label]) => (
+                                  <SelectItem key={value} value={value}>
+                                    {label}
+                                  </SelectItem>
+                                ),
+                              )}
+                            </SelectContent>
+                          </Select>
+                          <div className="flex items-center gap-2">
+                            <Switch
+                              checked={!!field.required}
+                              onCheckedChange={(checked) =>
+                                handleFieldChange(field.id, "required", checked)
+                              }
+                            />
+                            <span className="text-sm text-gray-600">
+                              Required
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <div>
+            <Card className="h-full">
+              <CardHeader>
+                  <CardTitle className="text-base">
+                    {formType === "payment" ? "Payment" : "Consulation"} Form Preview
+                  </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <form className="grid grid-cols-1 md:grid-cols-2 gap-6" onSubmit={handleSubmit}>
+                  {fields.length === 0 ? (
+                    <p className="text-sm text-gray-500">
+                      Add fields on the left to preview the consulation form.
+                    </p>
+                  ) : (
+                    fields.map((field) => (
+                      <div
+                        key={field.id}
+                        className={`space-y-2 ${["title", "price"].includes(field.type) ? "" : "md:col-span-2"
+                          }`}
+                      >
+
+                        <label
+                          htmlFor={field.id}
+                          className="text-sm font-medium text-gray-700 flex items-center gap-1"
+                        >
+                          {field.label}
+                          {field.required && (
+                            <span className="text-red-500">*</span>
+                          )}
+                        </label>
+                        {(field.type === "image" || field.type === "authorization-form") && (defaultImageUrls[field.id]?.length > 0 || defaultImageFiles[field.id]?.length > 0) ? (
+                          <div className="space-y-2">
+                            <div className="text-sm text-gray-600 font-medium">
+                              {field.type === "authorization-form" ? "Authorization Form Images" : "Default Images"} ({(defaultImageUrls[field.id]?.length || 0) + (defaultImageFiles[field.id]?.length || 0)}):
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {/* Show files that haven't been uploaded yet */}
+                              {defaultImageFiles[field.id]?.map((file, index) => {
+                                const isPdf = file.name.toLowerCase().endsWith('.pdf');
+                                return (
+                                  <div
+                                    key={`preview-file-${index}`}
+                                    className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm"
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const previewUrl = defaultImagePreviews[field.id]?.[index];
+                                        if (previewUrl) {
+                                          const fileImages = (defaultImageFiles[field.id] || []).map((f, idx) => {
+                                            const preview = defaultImagePreviews[field.id]?.[idx];
+                                            if (preview) {
+                                              return { url: preview, name: f.name };
+                                            } else if (f.name.toLowerCase().endsWith('.pdf')) {
+                                              return { url: URL.createObjectURL(f), name: f.name };
+                                            }
+                                            return { url: '', name: f.name };
+                                          });
+                                          const urlImages = (defaultImageUrls[field.id] || []).map((url, idx) => {
+                                            const urlParts = url.split("/");
+                                            const name = urlParts[urlParts.length - 1] || `File ${(defaultImageFiles[field.id]?.length || 0) + idx + 1}`;
+                                            const normalized = url.startsWith('http') || url.startsWith('https')
+                                              ? url
+                                              : url.startsWith('/')
+                                              ? url
+                                              : `/${url}`;
+                                            return { url: normalized, name };
+                                          });
+                                          const allImages = [...fileImages, ...urlImages];
+                                          setViewingImage({ images: allImages, currentIndex: index });
+                                        } else if (file.name.toLowerCase().endsWith('.pdf')) {
+                                          // For PDFs without preview, create blob URL
+                                          const fileImages = (defaultImageFiles[field.id] || []).map((f, idx) => {
+                                            if (f.name.toLowerCase().endsWith('.pdf')) {
+                                              return { url: URL.createObjectURL(f), name: f.name };
+                                            }
+                                            return { url: defaultImagePreviews[field.id]?.[idx] || '', name: f.name };
+                                          });
+                                          const urlImages = (defaultImageUrls[field.id] || []).map((url, idx) => {
+                                            const urlParts = url.split("/");
+                                            const name = urlParts[urlParts.length - 1] || `File ${(defaultImageFiles[field.id]?.length || 0) + idx + 1}`;
+                                            const normalized = url.startsWith('http') || url.startsWith('https')
+                                              ? url
+                                              : url.startsWith('/')
+                                              ? url
+                                              : `/${url}`;
+                                            return { url: normalized, name };
+                                          });
+                                          const allImages = [...fileImages, ...urlImages];
+                                          setViewingImage({ images: allImages, currentIndex: index });
+                                        }
+                                      }}
+                                      className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                                    >
+                                      {isPdf ? 'PDF' : 'Image'} {index + 1}: {file.name}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        removeDefaultImage(field.id, index);
+                                      }}
+                                      className="text-red-500 hover:text-red-700 ml-1"
+                                      aria-label={`Remove ${file.name}`}
+                                    >
+                                      <X className="h-4 w-4" />
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                              {/* Show URLs (uploaded images) */}
+                              {defaultImageUrls[field.id]?.map((url, index) => {
+                                const urlParts = url.split("/");
+                                const filename = urlParts[urlParts.length - 1] || `File ${(defaultImageFiles[field.id]?.length || 0) + index + 1}`;
+                                const isPdf = filename.toLowerCase().endsWith('.pdf');
+                                const fileIndex = (defaultImageFiles[field.id]?.length || 0) + index + 1;
+                                return (
+                                  <div
+                                    key={`preview-url-${index}`}
+                                    className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm"
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const fileImages = (defaultImageFiles[field.id] || []).map((f, idx) => {
+                                          if (f.name.toLowerCase().endsWith('.pdf')) {
+                                            return { url: URL.createObjectURL(f), name: f.name };
+                                          }
+                                          return { url: defaultImagePreviews[field.id]?.[idx] || '', name: f.name };
+                                        });
+                                        const urlImages = (defaultImageUrls[field.id] || []).map((url, idx) => {
+                                          const urlParts = url.split("/");
+                                          const name = urlParts[urlParts.length - 1] || `File ${(defaultImageFiles[field.id]?.length || 0) + idx + 1}`;
+                                          const normalized = url.startsWith('http') || url.startsWith('https')
+                                            ? url
+                                            : url.startsWith('/')
+                                            ? url
+                                            : `/${url}`;
+                                          return { url: normalized, name };
+                                        });
+                                        const allImages = [...fileImages, ...urlImages];
+                                        setViewingImage({ images: allImages, currentIndex: (defaultImageFiles[field.id]?.length || 0) + index });
+                                      }}
+                                      className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                                    >
+                                      {isPdf ? 'PDF' : 'Image'} {fileIndex}: {filename.length > 20 ? filename.substring(0, 20) + "..." : filename}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        removeDefaultImage(field.id, (defaultImageFiles[field.id]?.length || 0) + index);
+                                      }}
+                                      className="text-red-500 hover:text-red-700 ml-1"
+                                      aria-label={`Remove ${filename}`}
+                                    >
+                                      <X className="h-4 w-4" />
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            <p className="text-xs text-gray-500">
+                              Click image names to view. These are default values that will be pre-filled in the form.
+                            </p>
+                          </div>
+                        ) : field.type === "file" && (defaultFileUrls[field.id]?.length > 0 || defaultFileFiles[field.id]?.length > 0) ? (
+                          <div className="space-y-2">
+                            <div className="text-sm text-gray-600 font-medium">
+                              Default Files ({(defaultFileUrls[field.id]?.length || 0) + (defaultFileFiles[field.id]?.length || 0)}):
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {/* Show files that haven't been uploaded yet */}
+                              {defaultFileFiles[field.id]?.map((file, index) => {
+                                const isPdf = file.name.toLowerCase().endsWith('.pdf');
+                                return (
+                                  <div
+                                    key={`preview-file-file-${index}`}
+                                    className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm"
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const previewUrl = defaultFilePreviews[field.id]?.[index];
+                                        if (previewUrl) {
+                                          const fileImages = (defaultFileFiles[field.id] || []).map((f, idx) => ({
+                                            url: defaultFilePreviews[field.id]?.[idx] || '',
+                                            name: f.name
+                                          }));
+                                          const urlImages = (defaultFileUrls[field.id] || []).map((url, idx) => {
+                                            const urlParts = url.split("/");
+                                            const name = urlParts[urlParts.length - 1] || `File ${(defaultFileFiles[field.id]?.length || 0) + idx + 1}`;
+                                            const normalized = url.startsWith('http') || url.startsWith('https')
+                                              ? url
+                                              : url.startsWith('/')
+                                              ? url
+                                              : `/${url}`;
+                                            return { url: normalized, name };
+                                          });
+                                          const allFiles = [...fileImages, ...urlImages];
+                                          setViewingImage({ images: allFiles, currentIndex: index });
+                                        } else if (file.name.toLowerCase().endsWith('.pdf')) {
+                                          const fileImages = (defaultFileFiles[field.id] || []).map((f, idx) => {
+                                            if (f.name.toLowerCase().endsWith('.pdf')) {
+                                              return { url: URL.createObjectURL(f), name: f.name };
+                                            }
+                                            return { url: defaultFilePreviews[field.id]?.[idx] || '', name: f.name };
+                                          });
+                                          const urlImages = (defaultFileUrls[field.id] || []).map((url, idx) => {
+                                            const urlParts = url.split("/");
+                                            const name = urlParts[urlParts.length - 1] || `File ${(defaultFileFiles[field.id]?.length || 0) + idx + 1}`;
+                                            const normalized = url.startsWith('http') || url.startsWith('https')
+                                              ? url
+                                              : url.startsWith('/')
+                                              ? url
+                                              : `/${url}`;
+                                            return { url: normalized, name };
+                                          });
+                                          const allFiles = [...fileImages, ...urlImages];
+                                          setViewingImage({ images: allFiles, currentIndex: index });
+                                        }
+                                      }}
+                                      className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                                    >
+                                      {isPdf ? 'PDF' : 'Image'} {index + 1}: {file.name}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        removeDefaultFile(field.id, index);
+                                      }}
+                                      className="text-red-500 hover:text-red-700 ml-1"
+                                      aria-label={`Remove ${file.name}`}
+                                    >
+                                      <X className="h-4 w-4" />
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                              {/* Show URLs (uploaded files) */}
+                              {defaultFileUrls[field.id]?.map((url, index) => {
+                                const urlParts = url.split("/");
+                                const filename = urlParts[urlParts.length - 1] || `File ${(defaultFileFiles[field.id]?.length || 0) + index + 1}`;
+                                const fileIndex = (defaultFileFiles[field.id]?.length || 0) + index + 1;
+                                const isPdf = filename.toLowerCase().endsWith('.pdf');
+                                return (
+                                  <div
+                                    key={`preview-file-url-${index}`}
+                                    className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm"
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const fileImages = (defaultFileFiles[field.id] || []).map((f, idx) => {
+                                          if (f.name.toLowerCase().endsWith('.pdf')) {
+                                            return { url: URL.createObjectURL(f), name: f.name };
+                                          }
+                                          return { url: defaultFilePreviews[field.id]?.[idx] || '', name: f.name };
+                                        });
+                                        const urlImages = (defaultFileUrls[field.id] || []).map((url, idx) => {
+                                          const urlParts = url.split("/");
+                                          const name = urlParts[urlParts.length - 1] || `File ${(defaultFileFiles[field.id]?.length || 0) + idx + 1}`;
+                                          const normalized = url.startsWith('http') || url.startsWith('https')
+                                            ? url
+                                            : url.startsWith('/')
+                                            ? url
+                                            : `/${url}`;
+                                          return { url: normalized, name };
+                                        });
+                                        const allFiles = [...fileImages, ...urlImages];
+                                        setViewingImage({ images: allFiles, currentIndex: (defaultFileFiles[field.id]?.length || 0) + index });
+                                      }}
+                                      className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                                    >
+                                      {isPdf ? 'PDF' : 'Image'} {fileIndex}: {filename.length > 20 ? filename.substring(0, 20) + "..." : filename}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        removeDefaultFile(field.id, (defaultFileFiles[field.id]?.length || 0) + index);
+                                      }}
+                                      className="text-red-500 hover:text-red-700 ml-1"
+                                      aria-label={`Remove ${filename}`}
+                                    >
+                                      <X className="h-4 w-4" />
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            <p className="text-xs text-gray-500">
+                              Click file names to view. These are default values that will be pre-filled in the form.
+                            </p>
+                          </div>
+                        ) : (
+                          renderFieldInput(field)
+                        )}
+                      </div>
+                    ))
+                  )}
+                  <Button
+                    type="submit"
+                    className="w-full"
+                    disabled={fields.length === 0}
+                  >
+                    Save {formType === "payment" ? "Payment" : "Consulation"} Form
+                  </Button>
+                </form>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      </DialogContent>
+      
+      {/* Image Viewing Dialog */}
+      <Dialog open={!!viewingImage} onOpenChange={() => setViewingImage(null)}>
+        <DialogContent className="max-w-4xl max-h-[90vh]">
+          <DialogHeader>
+            <DialogTitle>
+              {viewingImage ? `${viewingImage.images[viewingImage.currentIndex]?.name || "File Preview"} (${viewingImage.currentIndex + 1} of ${viewingImage.images.length})` : "File Preview"}
+            </DialogTitle>
+          </DialogHeader>
+          {viewingImage && (() => {
+            const currentImage = viewingImage.images[viewingImage.currentIndex];
+            if (!currentImage) return null;
+            
+            const isPdf = currentImage.name.toLowerCase().endsWith('.pdf') || 
+                         currentImage.url.toLowerCase().endsWith('.pdf') ||
+                         currentImage.url.toLowerCase().includes('.pdf');
+            const normalizedUrl = currentImage.url.startsWith('blob:')
+              ? currentImage.url
+              : currentImage.url.startsWith('http') || currentImage.url.startsWith('https')
+                ? currentImage.url
+                : currentImage.url.startsWith('/')
+                  ? currentImage.url
+                  : `/${currentImage.url}`;
+            
+            const hasNext = viewingImage.currentIndex < viewingImage.images.length - 1;
+            const hasPrevious = viewingImage.currentIndex > 0;
+            
+            const handleNext = () => {
+              if (hasNext) {
+                setViewingImage({
+                  ...viewingImage,
+                  currentIndex: viewingImage.currentIndex + 1
+                });
+              }
+            };
+            
+            const handlePrevious = () => {
+              if (hasPrevious) {
+                setViewingImage({
+                  ...viewingImage,
+                  currentIndex: viewingImage.currentIndex - 1
+                });
+              }
+            };
+            
+            return (
+              <div className="relative flex items-center justify-center p-4">
+                {viewingImage.images.length > 1 && (
+                  <>
+                    {hasPrevious && (
+                      <button
+                        onClick={handlePrevious}
+                        className="absolute left-4 z-10 bg-black/50 hover:bg-black/70 text-white rounded-full p-2 transition-colors"
+                        aria-label="Previous image"
+                      >
+                        <ChevronLeft className="h-6 w-6" />
+                      </button>
+                    )}
+                    {hasNext && (
+                      <button
+                        onClick={handleNext}
+                        className="absolute right-4 z-10 bg-black/50 hover:bg-black/70 text-white rounded-full p-2 transition-colors"
+                        aria-label="Next image"
+                      >
+                        <ChevronRight className="h-6 w-6" />
+                      </button>
+                    )}
+                  </>
+                )}
+                {isPdf ? (
+                  <div className="w-full h-[70vh] flex flex-col items-center justify-center">
+                    <iframe
+                      src={normalizedUrl}
+                      className="w-full h-full border rounded-md"
+                      title={currentImage.name}
+                      onError={() => {
+                        console.error("PDF load error:", normalizedUrl);
+                      }}
+                    />
+                    <div className="mt-4">
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          if (normalizedUrl.startsWith('blob:')) {
+                            const link = document.createElement('a');
+                            link.href = normalizedUrl;
+                            link.download = currentImage.name;
+                            link.click();
+                          } else {
+                            window.open(normalizedUrl, '_blank');
+                          }
+                        }}
+                      >
+                        <FileText className="h-4 w-4 mr-2" />
+                        Open PDF in New Tab
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <img
+                    src={normalizedUrl}
+                    alt={currentImage.name}
+                    className="max-w-full max-h-[70vh] object-contain rounded-md"
+                    onError={(e) => {
+                      console.error("Image load error:", normalizedUrl);
+                      (e.target as HTMLImageElement).src = "/placeholder-image.png";
+                    }}
+                    onLoad={() => {
+                      console.log("Image loaded successfully:", normalizedUrl);
+                    }}
+                  />
+                )}
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+    </Dialog>
   );
 }

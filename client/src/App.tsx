@@ -88,6 +88,8 @@ import WhatsAppSetup from "@/pages/tenant/whatsapp-setup";
 // Portfolio import
 import Portfolio from "@/pages/portfolio";
 import GstSettings from "@/pages/tenant/gst-settings";
+import ConsulationForm from "@/pages/consulation-form";
+import PaymentForm from "@/pages/payment-form";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, loading } = useAuth();
@@ -171,6 +173,13 @@ function Router() {
           <PublicRoute>
             <ResetPassword />
           </PublicRoute>
+        </Route>
+
+        <Route path="/consulation-form">
+          <ConsulationForm />
+        </Route>
+        <Route path="/payment-form">
+          <PaymentForm />
         </Route>
 
         {/* Protected routes */}

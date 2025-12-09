@@ -924,6 +924,31 @@ export const expenses = pgTable("expenses", {
 // Expense line items table for storing multiple items per expense
 export const expenseLineItems = pgTable("expense_line_items", {
   id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+  fields: json("fields").$type<Array<{
+    id: string;
+    label: string;
+    type: string;
+    required?: boolean;
+  }>>().notNull(),
+  defaultValues: json("default_values").$type<Record<string, string>>().default({}),
+  formType: varchar("form_type", { length: 50 }).default("consulation").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Consulation form submissions table
+export const consulationFormSubmissions = pgTable("consulation_form_submissions", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+  customerId: integer("customer_id").notNull().references(() => customers.id),
+  formFields: json("form_fields").$type<Array<{
+    id: string;
+    label: string;
+    type: string;
+  }>>().notNull(),
+  responses: json("responses").$type<Record<string, string>>().notNull(),
+  formType: varchar("form_type", { length: 50 }).default("consulation").notNull(),
   expenseId: integer("expense_id").notNull().references(() => expenses.id, { onDelete: "cascade" }),
   category: text("category").notNull(),
   title: text("title").notNull(),
