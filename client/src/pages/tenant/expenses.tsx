@@ -37,6 +37,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
+import ExpenseAnalytics from "./ExpenseAnalytics";
 
 interface ExpenseLineItem {
   id?: number;
@@ -833,116 +834,13 @@ export default function Expenses() {
           </div>
           <div className="flex gap-3">
             {/* Analytics Button */}
-            <Sheet open={showAnalyticsSheet} onOpenChange={setShowAnalyticsSheet}>
-              <SheetTrigger asChild>
-                <Button variant="outline" size="lg" className="gap-2">
-                  <BarChart3 className="w-4 h-4" />
-                  Analytics
-                </Button>
-              </SheetTrigger>
-              <SheetContent side="right" className="!w-1/2 !max-w-none overflow-y-auto">
-                <SheetHeader>
-                  <SheetTitle className="flex items-center gap-2">
-                    <BarChart3 className="w-5 h-5" />
-                    Expense Analytics
-                  </SheetTitle>
-                  <SheetDescription>
-                    Comprehensive overview of your expense performance and metrics
-                  </SheetDescription>
-                </SheetHeader>
-                
-                <div className="mt-6 space-y-6">
-                  {/* Statistics Cards */}
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-gradient-to-r from-blue-50 to-blue-100 p-4 rounded-lg">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm text-blue-600 font-medium">Total Expenses</p>
-                          <p className="text-xl font-bold text-blue-700">{formatCurrency(totalAmount.toString())}</p>
-                        </div>
-                        <DollarSign className="h-6 w-6 text-blue-500" />
-                      </div>
-                    </div>
-                    <div className="bg-gradient-to-r from-yellow-50 to-yellow-100 p-4 rounded-lg">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm text-yellow-600 font-medium">Pending</p>
-                          <p className="text-xl font-bold text-yellow-700">{pendingCount}</p>
-                        </div>
-                        <Clock className="h-6 w-6 text-yellow-500" />
-                      </div>
-                    </div>
-                    <div className="bg-gradient-to-r from-green-50 to-green-100 p-4 rounded-lg">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm text-green-600 font-medium">Approved</p>
-                          <p className="text-xl font-bold text-green-700">{approvedCount}</p>
-                        </div>
-                        <CheckCircle className="h-6 w-6 text-green-500" />
-                      </div>
-                    </div>
-                    <div className="bg-gradient-to-r from-purple-50 to-purple-100 p-4 rounded-lg">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm text-purple-600 font-medium">Reimbursable</p>
-                          <p className="text-xl font-bold text-purple-700">{formatCurrency(reimbursableAmount.toString())}</p>
-                        </div>
-                        <Receipt className="h-6 w-6 text-purple-500" />
-                      </div>
-                    </div>
-                  </div>
+            <ExpenseAnalytics
+  show={showAnalyticsSheet}
+  setShow={setShowAnalyticsSheet}
+  expenses={expenses}
+  EXPENSE_CATEGORIES={EXPENSE_CATEGORIES}
 
-                  {/* Status Distribution Chart */}
-                  <div className="bg-white p-4 rounded-lg border">
-                    <h3 className="text-lg font-semibold mb-4">Status Distribution</h3>
-                    <div className="h-64">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <Pie
-                            data={[
-                              { name: 'Pending', value: pendingCount, fill: '#EAB308' },
-                              { name: 'Approved', value: approvedCount, fill: '#22C55E' },
-                              { name: 'Rejected', value: expenses.filter(exp => exp.status === 'rejected').length, fill: '#EF4444' },
-                              { name: 'Paid', value: expenses.filter(exp => exp.status === 'paid').length, fill: '#3B82F6' }
-                            ]}
-                            cx="50%"
-                            cy="50%"
-                            labelLine={false}
-                            label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                            outerRadius={80}
-                            fill="#8884d8"
-                            dataKey="value"
-                          />
-                          <Tooltip />
-                        </PieChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
-
-                  {/* Category Distribution Chart */}
-                  <div className="bg-white p-4 rounded-lg border">
-                    <h3 className="text-lg font-semibold mb-4">Expenses by Category</h3>
-                    <div className="h-64">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart
-                          data={EXPENSE_CATEGORIES.map(category => ({
-                            name: category.label.split(' & ')[0],
-                            value: expenses.filter(exp => exp.category === category.value).length,
-                            amount: expenses.filter(exp => exp.category === category.value).reduce((sum, exp) => sum + parseFloat(exp.amount), 0)
-                          })).filter(item => item.value > 0)}
-                        >
-                          <CartesianGrid strokeDasharray="3 3" />
-                          <XAxis dataKey="name" angle={-45} textAnchor="end" height={80} />
-                          <YAxis />
-                          <Tooltip formatter={(value, name) => [name === 'value' ? `${value} expenses` : `$${value}`, name === 'value' ? 'Count' : 'Amount']} />
-                          <Bar dataKey="value" fill="#3B82F6" />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
-                </div>
-              </SheetContent>
-            </Sheet>
+/>
             
             <Link href="/expenses/create">
               <Button 
