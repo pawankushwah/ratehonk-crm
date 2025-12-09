@@ -1,4 +1,4 @@
-// src/components/ExpenseAnalytics.tsx
+
 
 import {
   Sheet,
@@ -15,7 +15,6 @@ import {
   Pie,
   Tooltip,
   BarChart,
-  CartesianGrid,
   XAxis,
   YAxis,
   Bar,
@@ -54,51 +53,51 @@ export default function ExpenseAnalytics({ show, setShow }: Props) {
       label: "Travel & Transportation",
       icon: "🚗",
       color: "#3B82F6",
-    }, // blue
+    },
     { value: "office", label: "Office Supplies", icon: "🏢", color: "#6B7280" }, // gray
     {
       value: "marketing",
       label: "Marketing & Advertising",
       icon: "📢",
       color: "#22C55E",
-    }, // green
+    }, 
     {
       value: "software",
       label: "Software & Tools",
       icon: "💻",
       color: "#8B5CF6",
-    }, // purple
+    }, 
     {
       value: "meals",
       label: "Meals & Entertainment",
       icon: "🍽️",
       color: "#F97316",
-    }, // orange
+    },
     {
       value: "training",
       label: "Training & Education",
       icon: "📚",
       color: "#6366F1",
-    }, // indigo
+    },
     {
       value: "equipment",
       label: "Equipment & Hardware",
       icon: "⚙️",
       color: "#EF4444",
-    }, // red
+    }, 
     {
       value: "communication",
       label: "Communication",
       icon: "📞",
       color: "#06B6D4",
-    }, // cyan
-    { value: "utilities", label: "Utilities", icon: "⚡", color: "#EAB308" }, // yellow
-    { value: "other", label: "Other", icon: "📦", color: "#94A3B8" }, // slate
+    }, 
+    { value: "utilities", label: "Utilities", icon: "⚡", color: "#EAB308" }, 
+    { value: "other", label: "Other", icon: "📦", color: "#94A3B8" }, 
   ];
 
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
-  const [dateFilter, setDateFilter] = useState("this_quarter");
+  const [dateFilter, setDateFilter] = useState("this_year");
   const [customDateFrom, setCustomDateFrom] = useState<Date | null>(null);
   const [customDateTo, setCustomDateTo] = useState<Date | null>(null);
 
@@ -116,10 +115,10 @@ export default function ExpenseAnalytics({ show, setShow }: Props) {
     paid: "#3B82F6",
   };
 
-  // Always defined fields
+
   const baseStatuses = ["pending", "approved", "rejected", "paid"];
 
-  // Count from data
+ 
   const counts: Record<string, number> = {};
 
   expensesData.forEach((exp) => {
@@ -127,7 +126,7 @@ export default function ExpenseAnalytics({ show, setShow }: Props) {
     counts[status] = (counts[status] || 0) + 1;
   });
 
-  // Build final chart rows
+  
   const data = baseStatuses.map((status) => ({
     label: status.charAt(0).toUpperCase() + status.slice(1),
     value: counts[status] || 0,
@@ -299,11 +298,11 @@ export default function ExpenseAnalytics({ show, setShow }: Props) {
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
-                  layout="vertical"
-                  data={data}
-                  margin={{ left: 70, right: 20 }}
-                  barCategoryGap={20}
-                >
+  layout="vertical"
+  data={data}
+  margin={{ left: 70, right: 50 }}
+  barCategoryGap={20}
+>
                   <YAxis
                     dataKey="label"
                     type="category"
@@ -330,13 +329,14 @@ export default function ExpenseAnalytics({ show, setShow }: Props) {
                   <XAxis type="number" hide />
 
                   <Bar dataKey="value" fill="#1E40AF" radius={0}>
-                    <LabelList
-                      dataKey="value"
-                      position="right"
-                      offset={10}
-                      style={{ fill: "black", fontSize: 15, fontWeight: 600 }}
-                    />
-                  </Bar>
+  <LabelList
+    dataKey="value"
+    position="right"
+    offset={10}
+    allowOverflow={true}
+    style={{ fill: "black", fontSize: 15, fontWeight: 600 }}
+  />
+</Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -347,13 +347,13 @@ export default function ExpenseAnalytics({ show, setShow }: Props) {
             <h3 className="text-lg font-semibold mb-4">Expenses by Category</h3>
 
             <div className="flex flex-col sm:flex-row items-center justify-between gap-6">
-              {/* Donut */}
+             
               <div className="relative w-full h-72 flex items-center justify-center">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Tooltip content={<CustomTooltip />} />
 
-                    {/* INNER — solid pie */}
+                   
                     <Pie
                       data={finalCategoryData}
                       dataKey="percentage"
@@ -389,7 +389,7 @@ export default function ExpenseAnalytics({ show, setShow }: Props) {
                       ))}
                     </Pie>
 
-                    {/* OUTER — segmented ring */}
+                   
                     <Pie
                       data={finalCategoryData}
                       dataKey="percentage"
@@ -429,7 +429,7 @@ export default function ExpenseAnalytics({ show, setShow }: Props) {
                 </ResponsiveContainer>
               </div>
 
-              {/* Right Side Legend */}
+              
               <div className="space-y-3 text-xs w-full sm:w-1/3">
                 {finalCategoryData.map((item, idx) => (
                   <div className="flex items-center gap-3" key={idx}>
