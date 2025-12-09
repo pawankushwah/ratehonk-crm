@@ -426,6 +426,59 @@ export const useProfitLossData = (
 };
 
 
+export const useCustomersForGraph = (
+  tenantId: number | undefined,
+  dateFilter: string,
+  customFrom: Date | null,
+  customTo: Date | null,
+  extraFilters: Record<string, any> = {}
+) => {
+
+  const { startDate, endDate } = buildFilterParamsFromDateFilter(
+    dateFilter,
+    customFrom,
+    customTo
+  );
+
+  const params: Record<string, any> = {
+    ...extraFilters,
+    ...(startDate ? { dateFrom: startDate } : {}),
+    ...(endDate ? { dateTo: endDate } : {}),
+  };
+
+  return useQuery({
+    queryKey: ["customers-graph", tenantId, params],
+
+    queryFn: async () => {
+      const searchParams = new URLSearchParams(
+        Object.entries(params)
+          .filter(([_, v]) => v !== undefined && v !== null && v !== "")
+          .map(([k, v]) => [k, String(v)])
+      ).toString();
+
+      const url = `/api/tenants/${tenantId}/all-customers-graph${searchParams ? `?${searchParams}` : ""}`;
+
+      const res = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("auth_token")}`,
+        },
+        credentials: "include",
+      });
+
+      if (!res.ok) return [];
+
+      const json = await res.json();
+      return Array.isArray(json) ? json : [];
+    },
+
+    enabled: !!tenantId,
+    staleTime: 1000 * 60 * 5,
+    refetchInterval: 30000,
+  });
+};
+
+
+
 
 export const useInvoicesForGraph = (
   tenantId: number | undefined,

@@ -2247,6 +2247,43 @@ app.get("/api/All-leads", authenticateToken, async (req, res) => {
     }
   });
 
+  // get all customer for graph
+
+app.get("/api/tenants/:tenantId/all-customers-graph", authenticateToken, async (req, res) => {
+  try {
+    const tenantIdFromUrl = Number(req.params.tenantId);
+    const tenantIdFromToken = req.user?.tenantId;
+
+    // Security check: prevent cross-tenant access
+    if (tenantIdFromUrl !== tenantIdFromToken) {
+      return res.status(403).json({ error: "Unauthorized tenant access" });
+    }
+
+    const {
+      search = "",
+      status = "",
+      dateFrom = "",
+      dateTo = "",
+    } = req.query;
+
+    const customers = await simpleStorage.getAllCustomersForGraph(
+      tenantIdFromUrl,
+      {
+        search: String(search),
+        status: String(status),
+        dateFrom: String(dateFrom),
+        dateTo: String(dateTo),
+      }
+    );
+
+    return res.json(customers);
+
+  } catch (err: any) {
+    console.error("❌ all-customers-graph error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
   app.post("/api/tenants/:tenantId/customers", authenticateToken, async (req, res) => {
     try {
       const tenantId = parseInt(req.params.tenantId);
