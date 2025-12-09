@@ -497,6 +497,84 @@ export class SimpleStorage {
     }
   }
 
+  async getAllCustomersForGraph(
+  tenantId: number,
+  {
+    search = "",
+    status = "",
+    dateFrom = "",
+    dateTo = "",
+  }: {
+    search?: string;
+    status?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  }
+) {
+  try {
+    let where = sql`tenant_id = ${tenantId}`;
+
+
+    if (search) {
+      const term = `%${search.toLowerCase()}%`;
+      where = sql`${where} AND (
+        LOWER(name) LIKE ${term}
+        OR LOWER(email) LIKE ${term}
+        OR phone LIKE ${term}
+      )`;
+    }
+    if (status) {
+      where = sql`${where} AND crm_status = ${status}`;
+    }
+    if (dateFrom && dateTo) {
+      where = sql`${where} AND created_at BETWEEN ${dateFrom} AND ${dateTo}`;
+    }
+
+    const rows = await sql`
+      SELECT 
+        id,
+        tenant_id,
+        name,
+        email,
+        phone,
+        crm_status,
+        created_at,
+        updated_at
+      FROM customers
+      WHERE ${where}
+      ORDER BY created_at DESC
+    `;
+
+
+    const customers = rows.map((customer: any) => ({
+      ...customer,
+      status: customer.crm_status || customer.status || "active",
+      crmStatus: customer.crm_status || customer.crmStatus || "active",
+
+      firstName:
+        customer.first_name ||
+        customer.firstName ||
+        customer.name?.split(" ")[0] ||
+        "",
+
+      lastName:
+        customer.last_name ||
+        customer.lastName ||
+        customer.name?.split(" ").slice(1).join(" ") ||
+        "",
+
+      createdAt: customer.created_at,
+      updatedAt: customer.updated_at,
+    }));
+
+    return customers;
+
+  } catch (error) {
+    console.error("❌ getAllCustomersForGraph error:", error);
+    throw error;
+  }
+}
+
   async createCustomer(customerData: any) {
     try {
       console.log(
