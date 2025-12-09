@@ -494,6 +494,62 @@ export const useChartData = (
   });
 };
 
+
+
+export const useAllLeadsForGraph = (
+  tenantId: number | undefined,
+  dateFilter: string,
+  customFrom: Date | null,
+  customTo: Date | null,
+  extraFilters: Record<string, any> = {}
+) => {
+ 
+  const { startDate, endDate } = buildFilterParamsFromDateFilter(
+    dateFilter,
+    customFrom,
+    customTo
+  );
+
+
+  const params: Record<string, any> = {
+    ...extraFilters,
+    ...(startDate ? { dateFrom: startDate } : {}),
+    ...(endDate ? { dateTo: endDate } : {}),
+  };
+
+  return useQuery({
+    queryKey: ["all-leads-graph", tenantId, params],
+
+    queryFn: async () => {
+      const token = localStorage.getItem("auth_token");
+
+      const searchParams = new URLSearchParams(
+        Object.entries(params)
+          .filter(([_, v]) => v !== undefined && v !== null && v !== "")
+          .map(([k, v]) => [k, String(v)])
+      ).toString();
+
+      const url = `/api/All-leads${searchParams ? `?${searchParams}` : ""}`;
+
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+        credentials: "include",
+      });
+
+      if (!res.ok) return [];
+
+      const json = await res.json();
+
+      return Array.isArray(json)
+        ? json
+        : json?.data || json?.rows || json?.leads || [];
+    },
+
+    enabled: !!tenantId,
+    refetchInterval: 30000,
+  });
+};
+
 const getQueryParams = (dateFilter: DateFilterState) => {
   if (dateFilter.period !== "custom") {
     return { period: dateFilter.period };
