@@ -18,6 +18,7 @@ import { registerZoomRoutes } from "./zoom-routes";
 import {
   registerWhatsAppRoutes,
   sendWhatsAppWelcomeMessage,
+  sendWhatsAppCustomMessage,
 } from "./whatsapp-routes";
 import { registerMeetingRoutes } from "./meeting-routes";
 
@@ -28,6 +29,51 @@ import bcrypt from "bcrypt";
 // import { google } from 'googleapis';
 import jwt from "jsonwebtoken";
 import multer from "multer";
+import path from "path";
+
+function getBaseUrl(): string {
+  let baseUrl = process.env.APP_URL || process.env.FRONTEND_URL || "http://localhost:5000";
+  
+  // Remove trailing slash if present
+  baseUrl = baseUrl.replace(/\/$/, "");
+  
+  // Check if we're in development mode
+  const isDevelopment = process.env.NODE_ENV !== "production";
+  
+  // In development, allow localhost and 127.0.0.1
+  if (isDevelopment) {
+    // Allow localhost URLs in development
+    if (baseUrl.includes("localhost") || baseUrl.includes("127.0.0.1") || baseUrl.includes("0.0.0.0")) {
+      if (!baseUrl.startsWith("http")) {
+        baseUrl = `http://${baseUrl}`;
+      }
+      console.log("🔧 Development mode - Using local URL:", baseUrl);
+      return baseUrl;
+    }
+  }
+  
+  // Force correct domain in production - reject any wrong domains
+  if (baseUrl.includes("your-app-url.com") || baseUrl.includes("ww25")) {
+    console.log("⚠️ Detected wrong domain in env, overriding to crm.ratehonk.com");
+    baseUrl = "https://crm.ratehonk.com";
+  }
+  
+  // Ensure URL is absolute
+  if (!baseUrl.startsWith("http")) {
+    // Use https for production, http for development
+    const protocol = isDevelopment ? "http" : "https";
+    baseUrl = `${protocol}://${baseUrl}`;
+  }
+  
+  // In production, ensure it ends with the correct domain
+  if (!isDevelopment && !baseUrl.includes("crm.ratehonk.com")) {
+    console.log("⚠️ Production mode - Base URL doesn't contain crm.ratehonk.com, forcing correct domain");
+    baseUrl = "https://crm.ratehonk.com";
+  }
+  
+  return baseUrl;
+}
+
 import nodemailer from "nodemailer";
 import * as XLSX from "xlsx";
 // import pdfParse from "pdf-parse"; // Temporarily disabled
@@ -756,6 +802,8 @@ const authenticateToken = async (req: any, res: any, next: any) => {
     return res.status(403).json({ message: "Invalid or expired token" });
   }
 };
+
+
 
 export async function registerSimpleRoutes(app: Express): Promise<Server> {
   console.log("🔧 Starting registerSimpleRoutes function...");
@@ -2485,11 +2533,28 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
 
         // Get formType from query parameter, default to 'consulation'
         const formType = req.query?.formType || "consulation";
+        
+        console.log("🔍 GET consulation-form - Query parameters:", {
+          tenantId: tenantId,
+          formType: formType,
+          queryFormType: req.query?.formType,
+          allQueryParams: req.query,
+        });
 
         // Try to get form fields from database
         try {
+          // First, check what form types exist for this tenant
+          const allTemplates = await sql`
+            SELECT form_type, COUNT(*) as count
+            FROM consulation_form_templates
+            WHERE tenant_id = ${tenantId}
+            GROUP BY form_type
+          `;
+          console.log("📋 Available form types for tenant:", allTemplates);
+          
           // Query JSONB field - explicitly cast to ensure proper retrieval
-          const result = await sql`
+          // Also try without explicit casting as fallback
+          let result = await sql`
             SELECT 
               id,
               tenant_id,
@@ -2505,6 +2570,33 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
             ORDER BY created_at DESC
             LIMIT 1
           `;
+          
+          // If no result, try querying without form_type filter (fallback)
+          if (!result || result.length === 0) {
+            console.log("⚠️ No template found with formType filter, trying without formType...");
+            result = await sql`
+              SELECT 
+                id,
+                tenant_id,
+                fields::text as fields_text,
+                fields as fields_jsonb,
+                default_values::text as default_values_text,
+                default_values as default_values_jsonb,
+                form_type,
+                created_at,
+                updated_at
+              FROM consulation_form_templates
+              WHERE tenant_id = ${tenantId}
+              ORDER BY created_at DESC
+              LIMIT 1
+            `;
+            if (result && result.length > 0) {
+              console.log("⚠️ Found template but form_type mismatch:", {
+                requested: formType,
+                found: result[0].form_type
+              });
+            }
+          }
 
           console.log("📋 Form template query result:", {
             resultLength: result?.length,
@@ -2531,65 +2623,46 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
               isArray: Array.isArray(formTemplate?.fields_jsonb),
             });
 
-            // Parse the fields - try both jsonb and text versions
-            // Prefer fields_jsonb if it's already parsed, otherwise parse fields_text
-            let parsedFields = formTemplate.fields_jsonb;
+            // Parse the fields - try multiple approaches to handle different JSONB formats
+            let parsedFields: any = null;
             
-            // If jsonb is not an array, try parsing the text version
-            if (!Array.isArray(parsedFields)) {
-              const textToParse = formTemplate.fields_text || formTemplate.fields_jsonb;
-              if (textToParse && typeof textToParse === 'string') {
-                parsedFields = textToParse;
-              }
+            // Strategy 1: Try fields_jsonb directly if it's already an array
+            if (Array.isArray(formTemplate.fields_jsonb)) {
+              parsedFields = formTemplate.fields_jsonb;
+              console.log("✅ Fields is already an array from fields_jsonb");
             }
-            
-            console.log("🔍 Raw fields from DB:", {
-              type: typeof parsedFields,
-              isString: typeof parsedFields === 'string',
-              isArray: Array.isArray(parsedFields),
-              preview: typeof parsedFields === 'string' 
-                ? parsedFields.substring(0, 200) 
-                : JSON.stringify(parsedFields).substring(0, 200),
-            });
-            
-            // JSONB is often returned as a string, so we need to parse it
-            // If it's already an array, use it directly
-            if (Array.isArray(parsedFields)) {
-              console.log("✅ Fields is already an array, using directly");
-            } else if (typeof parsedFields === 'string') {
+            // Strategy 2: Try parsing fields_text (most reliable)
+            else if (formTemplate.fields_text && typeof formTemplate.fields_text === 'string') {
               try {
-                parsedFields = JSON.parse(parsedFields);
-                console.log("✅ Parsed fields from JSON string, result type:", typeof parsedFields, "isArray:", Array.isArray(parsedFields));
+                parsedFields = JSON.parse(formTemplate.fields_text);
+                console.log("✅ Parsed fields from fields_text");
               } catch (parseError: any) {
-                console.error("❌ Failed to parse fields JSON string:", parseError?.message);
-                // Try parsing the text version as fallback
-                if (formTemplate.fields_text && typeof formTemplate.fields_text === 'string') {
-                  try {
-                    parsedFields = JSON.parse(formTemplate.fields_text);
-                    console.log("✅ Parsed fields from fields_text as fallback");
-                  } catch (fallbackError: any) {
-                    console.error("❌ Fallback parse also failed:", fallbackError?.message);
-                    parsedFields = null;
-                  }
-                } else {
-                  parsedFields = null;
-                }
-              }
-            } else if (parsedFields && typeof parsedFields === 'object') {
-              // It's already an object, might be parsed JSONB
-              console.log("✅ Fields is already an object, checking if it's an array...");
-            } else {
-              // Try parsing the text version
-              if (formTemplate.fields_text && typeof formTemplate.fields_text === 'string') {
-                try {
-                  parsedFields = JSON.parse(formTemplate.fields_text);
-                  console.log("✅ Parsed fields from fields_text");
-                } catch (parseError: any) {
-                  console.error("❌ Failed to parse fields_text:", parseError?.message);
-                  parsedFields = null;
-                }
+                console.error("❌ Failed to parse fields_text:", parseError?.message);
               }
             }
+            // Strategy 3: Try parsing fields_jsonb as string
+            else if (formTemplate.fields_jsonb && typeof formTemplate.fields_jsonb === 'string') {
+              try {
+                parsedFields = JSON.parse(formTemplate.fields_jsonb);
+                console.log("✅ Parsed fields from fields_jsonb string");
+              } catch (parseError: any) {
+                console.error("❌ Failed to parse fields_jsonb string:", parseError?.message);
+              }
+            }
+            // Strategy 4: Try using fields_jsonb as object (if already parsed by driver)
+            else if (formTemplate.fields_jsonb && typeof formTemplate.fields_jsonb === 'object') {
+              parsedFields = formTemplate.fields_jsonb;
+              console.log("✅ Using fields_jsonb as object");
+            }
+            
+            console.log("🔍 After parsing attempt:", {
+              parsedFieldsType: typeof parsedFields,
+              isArray: Array.isArray(parsedFields),
+              length: Array.isArray(parsedFields) ? parsedFields.length : 'N/A',
+              preview: parsedFields ? (typeof parsedFields === 'string' 
+                ? parsedFields.substring(0, 200) 
+                : JSON.stringify(parsedFields).substring(0, 200)) : 'null',
+            });
             
             // If it's still an object but not an array, check if it needs unwrapping
             if (parsedFields && typeof parsedFields === 'object' && !Array.isArray(parsedFields)) {
@@ -2605,6 +2678,16 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
                 parsedFields = [parsedFields];
                 console.log("⚠️ Converted single object to array");
               }
+            }
+            
+            // Final validation - ensure it's an array
+            if (!parsedFields || !Array.isArray(parsedFields)) {
+              console.error("❌ Failed to parse fields into array. Final state:", {
+                parsedFields,
+                type: typeof parsedFields,
+                isArray: Array.isArray(parsedFields),
+              });
+              parsedFields = null;
             }
 
             // Parse default_values similar to fields

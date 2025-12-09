@@ -54,12 +54,20 @@ export async function apiRequest(
   console.log("🔍 API Request - Full URL:", fullUrl);
   console.log("🔍 API Request - Headers:", headers);
 
-  const res = await fetch(fullUrl, {
+  // GET and HEAD requests cannot have a body
+  const isGetOrHead = method.toUpperCase() === 'GET' || method.toUpperCase() === 'HEAD';
+  const fetchOptions: RequestInit = {
     method,
     headers,
-    body: data ? JSON.stringify(data) : undefined,
     credentials: "include",
-  });
+  };
+  
+  // Only add body for non-GET/HEAD requests and when data is provided
+  if (!isGetOrHead && data) {
+    fetchOptions.body = JSON.stringify(data);
+  }
+
+  const res = await fetch(fullUrl, fetchOptions);
 
   console.log("🔍 API Request - Response status:", res.status);
   console.log("🔍 API Request - Response headers:", Object.fromEntries(res.headers.entries()));

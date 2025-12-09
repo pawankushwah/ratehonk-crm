@@ -4264,22 +4264,36 @@ function ConsulationFormDialog({
     queryFn: async () => {
       if (!tenantId || !customerId) return [];
       const token = auth.getToken();
+      const params = new URLSearchParams();
+      params.append("customerId", customerId.toString());
+      params.append("page", "1");
+      params.append("pageSize", "100");
+      
       const response = await fetch(
-        `/api/tenants/${tenantId}/invoices`,
+        `/api/tenants/${tenantId}/invoices?${params.toString()}`,
         {
           headers: { Authorization: `Bearer ${token}` },
         },
       );
-      if (!response.ok) return [];
+      if (!response.ok) {
+        console.error("Failed to fetch invoices:", response.status);
+        return [];
+      }
       const data = await response.json();
-      const allInvoices = Array.isArray(data) ? data : (data.invoices || []);
-      // Filter invoices for this customer
+      // Handle both array and paginated response formats
+      const allInvoices = Array.isArray(data) 
+        ? data 
+        : (data.data || data.invoices || []);
+      
+      // Additional client-side filter as backup
       return allInvoices.filter((inv: any) => 
         (inv.customerId === customerId) || 
-        (inv.customer_id === customerId)
+        (inv.customer_id === customerId) ||
+        (inv.customerId?.toString() === customerId.toString()) ||
+        (inv.customer_id?.toString() === customerId.toString())
       );
     },
-    enabled: !!tenantId && !!customerId && isOpen,
+    enabled: !!tenantId && !!customerId && isOpen && formType === "payment",
   });
 
   // Load default values when dialog opens (only once per open)
@@ -4528,16 +4542,31 @@ function ConsulationFormDialog({
     // Auto-fill form fields based on invoice data
     const autoFilledValues: Record<string, string> = {};
     
+    // Find title and price fields by type
+    const titleField = fields.find((f) => f.type === "title");
+    const priceField = fields.find((f) => f.type === "price");
+    
+    // Auto-fill title field with invoice number
+    if (titleField) {
+      const invoiceNumber = invoice.invoiceNumber || invoice.invoice_number || `INV-${invoice.id}` || "";
+      autoFilledValues[titleField.id] = invoiceNumber;
+    }
+    
+    // Auto-fill price field with invoice total amount
+    if (priceField) {
+      const totalAmount = invoice.totalAmount || invoice.total_amount || invoice.amount || 0;
+      autoFilledValues[priceField.id] = totalAmount.toString();
+    }
+    
+    // Also try to match other fields by label (for backward compatibility)
     fields.forEach((field) => {
+      // Skip if already filled by type matching
+      if (autoFilledValues[field.id]) return;
+      
       const fieldLabel = field.label.toLowerCase();
       
       // Match field labels to invoice data
-      if (fieldLabel.includes("title") || fieldLabel.includes("name") || fieldLabel.includes("invoice")) {
-        autoFilledValues[field.id] = invoice.invoiceNumber || invoice.invoice_number || `INV-${invoice.id}` || "";
-      } else if (fieldLabel.includes("price") || fieldLabel.includes("amount") || fieldLabel.includes("total") || fieldLabel.includes("cost")) {
-        const amount = invoice.totalAmount || invoice.total_amount || invoice.amount || 0;
-        autoFilledValues[field.id] = amount.toString();
-      } else if (fieldLabel.includes("phone") || fieldLabel.includes("mobile") || fieldLabel.includes("contact")) {
+      if (fieldLabel.includes("phone") || fieldLabel.includes("mobile") || fieldLabel.includes("contact")) {
         // Try to get phone from invoice or customer
         autoFilledValues[field.id] = invoice.customerPhone || invoice.phone || invoice.customer_phone || "";
       } else if (fieldLabel.includes("description") || fieldLabel.includes("notes") || fieldLabel.includes("details") || fieldLabel.includes("note")) {
@@ -5989,32 +6018,41 @@ function ConsulationFormDialog({
         </DialogHeader>
 
         {/* Invoice Selection (Optional) */}
-        {/* {customerId && invoices.length > 0 && ( */}
-        {formType === "payment" && customerId && invoices.length > 0 && (
+        {formType === "payment" && customerId && (
           <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
             <label className="text-sm font-medium text-gray-700 mb-2 block">
               Select Invoice (Optional)
             </label>
            
-            <Select value={selectedInvoiceId} onValueChange={handleInvoiceSelect}>
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Select an invoice to auto-fill form..." />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">None</SelectItem>
-                {invoices.map((invoice: any) => {
-                  const invoiceNumber = invoice.invoiceNumber || invoice.invoice_number || `INV-${invoice.id}`;
-                  const invoiceAmount = invoice.totalAmount || invoice.total_amount || invoice.amount || 0;
-                  const invoiceDate = invoice.issueDate || invoice.issue_date || invoice.createdAt;
-                  const dateStr = invoiceDate ? new Date(invoiceDate).toLocaleDateString() : "";
-                  return (
-                    <SelectItem key={invoice.id} value={invoice.id?.toString() || invoiceNumber}>
-                      {invoiceNumber} {dateStr ? `(${dateStr})` : ""} - ₹{invoiceAmount.toLocaleString()}
-                    </SelectItem>
-                  );
-                })}
-              </SelectContent>
-            </Select>
+            {invoices.length > 0 ? (
+              <Select value={selectedInvoiceId} onValueChange={handleInvoiceSelect}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select an invoice to auto-fill form..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  {invoices.map((invoice: any) => {
+                    const invoiceId = invoice.id?.toString() || invoice.invoiceId?.toString() || "";
+                    const invoiceNumber = invoice.invoiceNumber || invoice.invoice_number || `INV-${invoice.id}`;
+                    const invoiceAmount = invoice.totalAmount || invoice.total_amount || invoice.amount || 0;
+                    const invoiceDate = invoice.issueDate || invoice.issue_date || invoice.createdAt;
+                    const dateStr = invoiceDate ? new Date(invoiceDate).toLocaleDateString() : "";
+                    return (
+                      <SelectItem key={invoiceId} value={invoiceId || invoiceNumber}>
+                        {invoiceNumber} {dateStr ? `(${dateStr})` : ""} - ₹{invoiceAmount.toLocaleString()}
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
+            ) : (
+              <div className="text-sm text-gray-500 italic">
+                No invoices found for this customer. The invoice dropdown will appear when invoices are available.
+              </div>
+            )}
+            <p className="text-xs text-gray-500 mt-2">
+              Selecting an invoice will automatically fill the title field with invoice number and price field with invoice amount.
+            </p>
           </div>
         )}
 

@@ -4,6 +4,56 @@ dotenv.config();
 
 import nodemailer from "nodemailer";
 
+function getBaseUrl(): string {
+  try {
+    let baseUrl = process.env.APP_URL || process.env.FRONTEND_URL || "https://crm.ratehonk.com";
+    
+    // Remove trailing slash if present
+    baseUrl = baseUrl.replace(/\/$/, "");
+    
+    // Check if we're in development mode
+    const isDevelopment = process.env.NODE_ENV !== "production";
+    
+    // In development, allow localhost and 127.0.0.1
+    if (isDevelopment) {
+      // Allow localhost URLs in development
+      if (baseUrl.includes("localhost") || baseUrl.includes("127.0.0.1") || baseUrl.includes("0.0.0.0")) {
+        if (!baseUrl.startsWith("http")) {
+          baseUrl = `http://${baseUrl}`;
+        }
+        console.log("🔧 Development mode - Using local URL:", baseUrl);
+        return baseUrl;
+      }
+    }
+    
+    // Force correct domain in production - reject any wrong domains
+    if (baseUrl.includes("your-app-url.com") || baseUrl.includes("ww25")) {
+      console.log("⚠️ Detected wrong domain in env, overriding to crm.ratehonk.com");
+      baseUrl = "https://crm.ratehonk.com";
+    }
+    
+    // Ensure URL is absolute
+    if (!baseUrl.startsWith("http")) {
+      // Use https for production, http for development
+      const protocol = isDevelopment ? "http" : "https";
+      baseUrl = `${protocol}://${baseUrl}`;
+    }
+    
+    // In production, ensure it ends with the correct domain
+    if (!isDevelopment && !baseUrl.includes("crm.ratehonk.com")) {
+      console.log("⚠️ Production mode - Base URL doesn't contain crm.ratehonk.com, forcing correct domain");
+      baseUrl = "https://crm.ratehonk.com";
+    }
+    
+    return baseUrl;
+  } catch (error) {
+    console.error("❌ Error in getBaseUrl():", error);
+    // Fallback to localhost in development, production URL otherwise
+    const isDevelopment = process.env.NODE_ENV !== "production";
+    return isDevelopment ? "http://localhost:5000" : "https://crm.ratehonk.com";
+  }
+}
+
 class EmailService {
   private transporter: nodemailer.Transporter;
 
@@ -305,7 +355,8 @@ class EmailService {
         process.env.EMAIL_USER ||
         process.env.SMTP_USER ||
         "support@vanitechnologies.in";
-      const fromEmail = process.env.EMAIL_FROM || smtpUser;
+      // const fromEmail = process.env.EMAIL_FROM || smtpUser;
+      const fromEmail = "support@vanitechnologies.in";
       const formUrl = data.formUrl || `${getBaseUrl()}/consulation-form`;
       const formType = data.formType || 'consulation';
       const formName = formType === 'payment' ? 'Payment' : 'Consulation';
