@@ -136,6 +136,7 @@ export function FlexibleLeadForm({
   const [selectedLead, setSelectedLead] = useState<any | null>(null);
   const [customerInput, setCustomerInput] = useState("");
   const [leadInput, setLeadInput] = useState("");
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
   const {
     data: leadTypes = [],
@@ -813,84 +814,89 @@ export function FlexibleLeadForm({
     })),
   ];
 
-  const handleLeadSelectionChange = (value: string) => {
-    if (value === "create_new_lead") {
-      setIsLeadPanelOpen(true);
-      return;
-    }
+const handleLeadSelectionChange = (value: string) => {
+  if (value === "create_new_lead") {
+    setIsLeadPanelOpen(true);
+    return;
+  }
 
+  // Clear customer selection (good!)
+  setCustomerInput("");
+  form.setValue("customerId", "");
+  setSelectedCustomer(null);
+
+  const selectedLead = leads.find((l: any) => l.id.toString() === value);
+
+  if (!selectedLead) {
+    form.setValue("leadId", "");
+    setLeadInput("");
+    setSelectedLead(null);
+    return;
+  }
+
+  // THIS IS THE FIX: Build the display text properly!
+  const displayName = `${selectedLead.first_name || ""} ${selectedLead.last_name || ""}`.trim();
+  const fullDisplay = [displayName, selectedLead.phone, selectedLead.email]
+    .filter(Boolean)
+    .join(" | ");
+
+  // Set the ID in the hidden form field
+  form.setValue("leadId", selectedLead.id.toString());
+
+  // Set the BEAUTIFUL display text in the input
+  setLeadInput(fullDisplay || "Unknown Lead");
+
+  // Store the selected lead
+  setSelectedLead(selectedLead);
+
+  // Prefill all form fields
+  form.setValue("firstName", selectedLead.first_name || "");
+  form.setValue("lastName", selectedLead.last_name || "");
+  form.setValue("email", selectedLead.email || "");
+  form.setValue("phone", selectedLead.phone || "");
+  form.setValue("country", selectedLead.country || "");
+  form.setValue("state", selectedLead.state || "");
+  form.setValue("city", selectedLead.city || "");
+};
+
+  const handlePrefillFromLead = (leadData: any) => {
+    console.log("Prefilling from popup lead →", leadData);
+
+    // Build display text EXACTLY like your existing leads
+    const fullName =
+      `${leadData.firstName || ""} ${leadData.lastName || ""}`.trim();
+    const phone = leadData.phone || "";
+    const email = leadData.email || "";
+
+    const displayText = [fullName, phone, email].filter(Boolean).join(" | ");
+
+    // This is the KEY: Update the Search Lead input visually
+    setLeadInput(displayText);
+
+    // Also clear customer selection (important!)
     setCustomerInput("");
     form.setValue("customerId", "");
     setSelectedCustomer(null);
 
-    const selectedLead = leads.find((l: any) => l.id.toString() === value);
+    // Prefill all fields
+    form.setValue("firstName", leadData.firstName || "");
+    form.setValue("lastName", leadData.lastName || "");
+    form.setValue("email", leadData.email || "");
+    form.setValue("phone", leadData.phone || "");
+    form.setValue("country", leadData.country || "");
+    form.setValue("state", leadData.state || "");
+    form.setValue("city", leadData.city || "");
+    form.setValue("budgetRange", leadData.budgetRange || "");
+    form.setValue("priority", leadData.priority || "medium");
+    form.setValue("source", leadData.source || "");
+    form.setValue("notes", leadData.notes || "");
 
-    if (!selectedLead) {
-      form.setValue("leadId", "");
-      setLeadInput("");
-      return;
-    }
+    // Optional: keep track of the source lead
+    setSelectedLead(leadData);
 
-    setSelectedLead(selectedLead);
-
-    form.setValue("leadId", selectedLead.id.toString());
-    setLeadInput(selectedLead.id.toString());
-
-    form.setValue("firstName", selectedLead.first_name || "");
-    form.setValue("lastName", selectedLead.last_name || "");
-    form.setValue("email", selectedLead.email || "");
-    form.setValue("phone", selectedLead.phone || "");
-    form.setValue("country", selectedLead.country || "");
-    form.setValue("state", selectedLead.state || "");
-    form.setValue("city", selectedLead.city || "");
+    // Trigger form dirty state
+    form.trigger();
   };
-
-const handlePrefillFromLead = (leadData: any) => {
-  console.log("Received lead data →", leadData);
-
-  // -------------------------
-  // Lead Autocomplete
-  // -------------------------
-  form.setValue("leadId", leadData.id?.toString() || "");
-
-  // Your Autocomplete input
-  setLeadInput(leadData.firstName + " " + leadData.lastName + "  " + leadData.phone + " " + leadData.email );
-
-  // -------------------------
-  // Basic Lead Info
-  // -------------------------
-  form.setValue("firstName", leadData.firstName || "");
-  form.setValue("lastName", leadData.lastName || "");
-  form.setValue("email", leadData.email || "");
-  form.setValue("phone", leadData.phone || "");
-
-  // -------------------------
-  // Address Info
-  // -------------------------
-  form.setValue("country", leadData.country || "");
-  form.setValue("state", leadData.state || "");
-  form.setValue("city", leadData.city || "");
-
-  // -------------------------
-  // Budget / Priority / Source
-  // -------------------------
-  form.setValue("budgetRange", leadData.budgetRange || "");
-  form.setValue("priority", leadData.priority || "");
-  form.setValue("source", leadData.source || "");
-
-  // -------------------------
-  // Status → Not in leadData!
-  // -------------------------
-  // If you expect "status", ensure LeadCreateForm returns it.
-  form.setValue("status", leadData.status || "");
-
-  // -------------------------
-  // Notes
-  // -------------------------
-  form.setValue("notes", leadData.notes || "");
-};
-
-
 
   return (
     <Form {...form}>
@@ -941,18 +947,145 @@ const handlePrefillFromLead = (leadData: any) => {
                       <FormLabel>Search Lead</FormLabel>
 
                       <FormControl>
-                        <AutocompleteInput
-                          suggestions={leadOptions}
-                          value={leadInput}
-                          onValueChange={(val) => {
-                            setLeadInput(val);
-                            field.onChange(val);
-                            handleLeadSelectionChange(val);
-                          }}
-                          placeholder="Search lead"
-                          emptyText="No leads found"
-                          className="h-10 rounded-md border-gray-300 focus:ring-2 focus:ring-cyan-500"
-                        />
+                        <div className="relative">
+                          {/* Input – controlled only by our own state */}
+                          <Input
+                            value={leadInput}
+                            onChange={(e) => {
+                              setLeadInput(e.target.value);
+                              setIsDropdownOpen(true);
+                            }}
+                            onFocus={() => setIsDropdownOpen(true)}
+                            onClick={() => setIsDropdownOpen(true)}
+                            placeholder="Search or create new lead"
+                            className="h-10 rounded-md border-gray-300 focus:ring-2 focus:ring-cyan-500 pr-10 cursor-pointer"
+                          />
+
+                          {/* Clear button */}
+                          {leadInput && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setLeadInput("");
+                                field.onChange(""); // clear hidden leadId
+                                setSelectedLead(null);
+                                setIsDropdownOpen(false);
+                              }}
+                              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-red-600 text-xl"
+                            >
+                              ×
+                            </button>
+                          )}
+
+                          {/* Dropdown – only when open */}
+                          {isDropdownOpen && (
+                            <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded-md shadow-lg z-50 max-h-60 overflow-y-auto">
+                              {/* Create New Lead */}
+                              <div
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  setIsLeadPanelOpen(true);
+                                  setIsDropdownOpen(false);
+                                }}
+                                className="px-4 py-2.5 flex items-center gap-2 hover:bg-cyan-50 cursor-pointer text-cyan-600 font-medium border-b"
+                              >
+                                <Plus className="h-4 w-4" />
+                                Create New Lead
+                              </div>
+
+                              {/* Filtered Leads */}
+                              {leads
+                                .filter((lead: any) => {
+                                  const search = (
+                                    leadInput || ""
+                                  ).toLowerCase();
+                                  const name =
+                                    `${lead.first_name || ""} ${lead.last_name || ""}`.toLowerCase();
+                                  const phone = (
+                                    lead.phone || ""
+                                  ).toLowerCase();
+                                  const email = (
+                                    lead.email || ""
+                                  ).toLowerCase();
+                                  return (
+                                    search === "" ||
+                                    name.includes(search) ||
+                                    phone.includes(search) ||
+                                    email.includes(search)
+                                  );
+                                })
+                                .map((lead: any) => {
+                                  const displayName =
+                                    `${lead.first_name || ""} ${lead.last_name || ""}`.trim();
+                                  const fullDisplay = [
+                                    displayName,
+                                    lead.phone,
+                                    lead.email,
+                                  ]
+                                    .filter(Boolean)
+                                    .join(" | ");
+
+                                  return (
+                                    <div
+                                      key={lead.id}
+                                      onMouseDown={(e) => {
+                                        e.preventDefault();
+                                        setLeadInput(
+                                          fullDisplay || "Unknown Lead"
+                                        );
+                                        field.onChange(lead.id.toString()); 
+                                        handleLeadSelectionChange(
+                                          lead.id.toString()
+                                        );
+                                        setIsDropdownOpen(false);
+                                      }}
+                                      className="px-4 py-2 hover:bg-gray-100 cursor-pointer text-sm border-b last:border-b-0"
+                                    >
+                                      <div className="font-medium text-gray-900">
+                                        {displayName || "No Name"}
+                                      </div>
+                                      <div className="text-xs text-gray-500">
+                                        {lead.phone}{" "}
+                                        {lead.phone && lead.email && "•"}{" "}
+                                        {lead.email}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              {leads.length > 0 &&
+                                leads.filter((lead: any) => {
+                                  const search = (
+                                    leadInput || ""
+                                  ).toLowerCase();
+                                  const name =
+                                    `${lead.first_name || ""} ${lead.last_name || ""}`.toLowerCase();
+                                  const phone = (
+                                    lead.phone || ""
+                                  ).toLowerCase();
+                                  const email = (
+                                    lead.email || ""
+                                  ).toLowerCase();
+                                  return (
+                                    name.includes(search) ||
+                                    phone.includes(search) ||
+                                    email.includes(search)
+                                  );
+                                }).length === 0 && (
+                                  <div className="px-4 py-3 text-center text-gray-500 text-sm">
+                                    No leads found
+                                  </div>
+                                )}
+                            </div>
+                          )}
+
+                          {/* Click outside to close */}
+                          {isDropdownOpen && (
+                            <div
+                              className="fixed inset-0 z-40"
+                              onMouseDown={() => setIsDropdownOpen(false)}
+                            />
+                          )}
+                        </div>
                       </FormControl>
 
                       <FormMessage />
@@ -1187,30 +1320,26 @@ const handlePrefillFromLead = (leadData: any) => {
         </div>
       </form>
 
-  <SlidePanel
-  isOpen={isLeadPanelOpen}
-  onClose={() => setIsLeadPanelOpen(false)}
-  title="Create New Lead"
->
-  <LeadCreateForm
-    tenantId={tenantId}
-
-    onSuccess={(lead) => {
-      setSelectedLead(lead.id.toString());
-      setIsLeadPanelOpen(false);
-      queryClient.invalidateQueries({
-        queryKey: [`leads-tenant-${tenantId}-won`],
-      });
-    }}
-    onFillOnly={(data) => {
-      handlePrefillFromLead(data);
-      setIsLeadPanelOpen(false);
-    }}
-    enableFillOnlyButton={true}
-
-    onCancel={() => setIsLeadPanelOpen(false)}
-  />
-</SlidePanel>
+      <SlidePanel
+        isOpen={isLeadPanelOpen}
+        onClose={() => setIsLeadPanelOpen(false)}
+        title="Create New Lead"
+      >
+        <LeadCreateForm
+          tenantId={tenantId}
+          enableFillOnlyButton={true}
+          onFillOnly={(data) => {
+            handlePrefillFromLead(data);
+            setIsLeadPanelOpen(false); // This closes the panel!
+          }}
+          onSuccess={(lead) => {
+            // Optional: refetch leads
+            queryClient.invalidateQueries({ queryKey: ["/api/leads"] });
+            setIsLeadPanelOpen(false);
+          }}
+          onCancel={() => setIsLeadPanelOpen(false)}
+        />
+      </SlidePanel>
     </Form>
   );
 }

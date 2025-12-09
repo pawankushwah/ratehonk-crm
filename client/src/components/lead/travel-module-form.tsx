@@ -454,22 +454,10 @@ export function TravelModuleForm({
       <div
         className="
       border border-[#E3E8EF] rounded-lg bg-white
-      grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3
+      grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2
       w-full lg:h-[90px]
     "
       >
-        <div className="border-b md:border-b-0 md:border-r border-[#E3E8EF] p-4 flex flex-col justify-center">
-          <FormLabel className="text-xs font-semibold text-gray-700 mb-1">
-            Going To
-          </FormLabel>
-          <Input
-            placeholder="Enter City"
-            className="
-          h-10 bg-transparent border-none p-0 focus:ring-0 shadow-none
-        "
-            {...form.register("typeSpecificData.destination")}
-          />
-        </div>
 
         <div className="border-b lg:border-b-0 lg:border-r border-[#E3E8EF] p-4 flex flex-col justify-center">
           <FormLabel className="text-xs font-semibold text-gray-700 mb-1">
@@ -481,7 +469,7 @@ export function TravelModuleForm({
             className="
           h-10 bg-transparent border-none p-0  shadow-none
         "
-            {...form.register("typeSpecificData.destination")}
+            {...form.register("typeSpecificData.journeyFrom")}
           />
         </div>
 
@@ -1539,22 +1527,10 @@ export function TravelModuleForm({
       <div
         className="
       border border-[#E3E8EF] rounded-lg bg-white
-      grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3
+      grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2
       w-full lg:h-[90px]
     "
       >
-        <div className="border-b md:border-b-0 md:border-r border-[#E3E8EF] p-4 flex flex-col justify-center">
-          <FormLabel className="text-xs font-semibold text-gray-700 mb-1">
-            Going To
-          </FormLabel>
-          <Input
-            placeholder="Enter City"
-            className="
-          h-10 bg-transparent border-none p-0 focus:ring-0 shadow-none
-        "
-            {...form.register("typeSpecificData.destination")}
-          />
-        </div>
 
         <div className="border-b lg:border-b-0 lg:border-r border-[#E3E8EF] p-4 flex flex-col justify-center">
           <FormLabel className="text-xs font-semibold text-gray-700 mb-1">
@@ -1566,7 +1542,7 @@ export function TravelModuleForm({
             className="
           h-10 bg-transparent border-none p-0  shadow-none
         "
-            {...form.register("typeSpecificData.destination")}
+            {...form.register("typeSpecificData.journeyFrom")}
           />
         </div>
 
