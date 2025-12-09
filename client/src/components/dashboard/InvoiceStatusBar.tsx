@@ -8,7 +8,6 @@ import {
 } from "@/components/ui/card";
 
 import { DateFilter } from "@/components/ui/date-filter";
-
 import { useAuth } from "@/components/auth/auth-provider";
 import { useInvoicesForGraph } from "@/hooks/useDashboardData";
 
@@ -19,28 +18,23 @@ export function InvoiceStatusBar() {
   const [customDateFrom, setCustomDateFrom] = useState<Date | null>(null);
   const [customDateTo, setCustomDateTo] = useState<Date | null>(null);
 
- 
   const [localLoading, setLocalLoading] = useState(false);
 
-  const {
-    data: invoiceGraphData = [],
-    isLoading,
-  } = useInvoicesForGraph(
+  const { data: invoiceGraphData = [], isLoading } = useInvoicesForGraph(
     tenant?.id,
     dateFilter,
     customDateFrom,
     customDateTo
   );
 
- 
   useEffect(() => {
     setLocalLoading(true);
     const timer = setTimeout(() => setLocalLoading(false), 500);
     return () => clearTimeout(timer);
   }, [dateFilter, customDateFrom, customDateTo]);
 
-
-  const paid = invoiceGraphData.filter((inv) => inv.status === "paid")?.length || 0;
+  const paid =
+    invoiceGraphData.filter((inv) => inv.status === "paid")?.length || 0;
   const partialPaid =
     invoiceGraphData.filter((inv) => inv.status === "partial")?.length || 0;
   const pending =
@@ -48,45 +42,71 @@ export function InvoiceStatusBar() {
   const overdue =
     invoiceGraphData.filter((inv) => inv.status === "overdue")?.length || 0;
 
-  const finalPaid = paid  
-  const finalPartial =  partialPaid 
-  const finalPending =  pending 
-  const finalOverdue =  overdue 
-
-  const total = finalPaid + finalPartial + finalPending + finalOverdue;
+  const total = paid + partialPaid + pending + overdue;
 
   const invoiceMetrics = {
     total,
-    paid: finalPaid,
-    partialPaid: finalPartial,
-    pending: finalPending,
-    overdue: finalOverdue,
-    paidPercentage: (finalPaid / total) * 100,
-    partialPercentage: (finalPartial / total) * 100,
-    pendingPercentage: (finalPending / total) * 100,
-    overduePercentage: (finalOverdue / total) * 100,
+    paid,
+    partialPaid,
+    pending,
+    overdue,
+    paidPercentage: total ? (paid / total) * 100 : 0,
+    partialPercentage: total ? (partialPaid / total) * 100 : 0,
+    pendingPercentage: total ? (pending / total) * 100 : 0,
+    overduePercentage: total ? (overdue / total) * 100 : 0,
   };
 
+  const usingDummy = invoiceMetrics.total === 0;
+
+  const dummyMetrics = {
+    total: 10,
+    paid: 4,
+    partialPaid: 2,
+    pending: 3,
+    overdue: 1,
+    paidPercentage: 40,
+    partialPercentage: 20,
+    pendingPercentage: 30,
+    overduePercentage: 10,
+  };
+
+  const displayMetrics = usingDummy ? dummyMetrics : invoiceMetrics;
+
+  const COLORS_REAL = {
+    paid: "#2374A9",
+    overdue: "#FE1F02",
+    partial: "#787EDA",
+    pending: "#FE4F02",
+  };
+
+  const COLORS_DUMMY = {
+    paid: "#CFCFCF",
+    overdue: "#D9D9D9",
+    partial: "#E5E5E5",
+    pending: "#BFBFBF",
+  };
+
+  const C = usingDummy ? COLORS_DUMMY : COLORS_REAL;
 
   if (isLoading || localLoading) {
-  return (
-    <Card className="lg:col-span-12 bg-white shadow-md rounded-xl">
-      <CardHeader>
-        <CardTitle className="text-[#000000] text-base sm:text-lg">
-          Invoice Status
-        </CardTitle>
-      </CardHeader>
+    return (
+      <Card className="lg:col-span-12 bg-white shadow-md rounded-xl">
+        <CardHeader>
+          <CardTitle className="text-[#000000] text-base sm:text-lg">
+            Invoice Status
+          </CardTitle>
+        </CardHeader>
 
-      <CardContent>
-        <div className="flex items-center justify-center h-40 sm:h-52 w-full rounded-lg bg-gray-100 animate-pulse">
-          <p className="text-gray-500 text-base sm:text-lg">
-            Loading invoices...
-          </p>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
+        <CardContent>
+          <div className="flex items-center justify-center h-40 sm:h-52 w-full rounded-lg bg-gray-100 animate-pulse">
+            <p className="text-gray-500 text-base sm:text-lg">
+              Loading invoices...
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card className="lg:col-span-12 bg-white shadow-md rounded-xl">
@@ -96,86 +116,126 @@ export function InvoiceStatusBar() {
             Invoice Status
           </CardTitle>
 
-          <DateFilter
-            dateFilter={dateFilter}
-            setDateFilter={setDateFilter}
-            customDateFrom={customDateFrom}
-            setCustomDateFrom={setCustomDateFrom}
-            customDateTo={customDateTo}
-            setCustomDateTo={setCustomDateTo}
-          />
+          <div className="flex gap-2">
+            <DateFilter
+              dateFilter={dateFilter}
+              setDateFilter={setDateFilter}
+              customDateFrom={customDateFrom}
+              setCustomDateFrom={setCustomDateFrom}
+              customDateTo={customDateTo}
+              setCustomDateTo={setCustomDateTo}
+            />
+          </div>
         </div>
 
         <CardDescription className="text-lg sm:text-2xl font-semibold text-[#000000] mt-4">
-          {invoiceMetrics.total} Total Invoices
+          {!usingDummy && <span>{displayMetrics.total} Total Invoices</span>}
         </CardDescription>
       </CardHeader>
 
       <CardContent>
         <div className="flex h-8 sm:h-12 overflow-hidden text-white text-sm sm:text-base font-medium mt-12 rounded">
-
-          {invoiceMetrics.paid > 0 && (
+          {(usingDummy || displayMetrics.paid > 0) && (
             <div
-              className="bg-[#2374A9] flex items-center justify-center text-[#FFFFFF]"
-              style={{ width: `${invoiceMetrics.paidPercentage}%` }}
+              className="flex items-center justify-center"
+              style={{
+                backgroundColor: C.paid,
+                width: usingDummy ? "25%" : `${displayMetrics.paidPercentage}%`,
+                transition: "width 0.8s ease",
+                color: usingDummy ? "#555" : "#FFF",
+              }}
             >
-              {invoiceMetrics.paid}
+              {usingDummy ? 0 : displayMetrics.paid}
             </div>
           )}
 
-          {invoiceMetrics.overdue > 0 && (
+          {(usingDummy || displayMetrics.overdue > 0) && (
             <div
-              className="bg-[#FE1F02] flex items-center justify-center text-[#FFFFFF]"
-              style={{ width: `${invoiceMetrics.overduePercentage}%` }}
+              className="flex items-center justify-center"
+              style={{
+                backgroundColor: C.overdue,
+                width: usingDummy
+                  ? "25%"
+                  : `${displayMetrics.overduePercentage}%`,
+                transition: "width 0.8s ease",
+                color: usingDummy ? "#555" : "#FFF",
+              }}
             >
-              {invoiceMetrics.overdue}
+              {usingDummy ? 0 : displayMetrics.overdue}
             </div>
           )}
 
-          {invoiceMetrics.partialPaid > 0 && (
+          {(usingDummy || displayMetrics.partialPaid > 0) && (
             <div
-              className="bg-[#787EDA] flex items-center justify-center text-[#FFFFFF]"
-              style={{ width: `${invoiceMetrics.partialPercentage}%` }}
+              className="flex items-center justify-center"
+              style={{
+                backgroundColor: C.partial,
+                width: usingDummy
+                  ? "25%"
+                  : `${displayMetrics.partialPercentage}%`,
+                transition: "width 0.8s ease",
+                color: usingDummy ? "#555" : "#FFF",
+              }}
             >
-              {invoiceMetrics.partialPaid}
+              {usingDummy ? 0 : displayMetrics.partialPaid}
             </div>
           )}
 
-          {invoiceMetrics.pending > 0 && (
+          {(usingDummy || displayMetrics.pending > 0) && (
             <div
-              className="bg-[#FE4F02] flex items-center justify-center text-[#FFFFFF]"
-              style={{ width: `${invoiceMetrics.pendingPercentage}%` }}
+              className="flex items-center justify-center"
+              style={{
+                backgroundColor: C.pending,
+                width: usingDummy
+                  ? "25%"
+                  : `${displayMetrics.pendingPercentage}%`,
+                transition: "width 0.8s ease",
+                color: usingDummy ? "#555" : "#FFF",
+              }}
             >
-              {invoiceMetrics.pending}
+              {usingDummy ? 0 : displayMetrics.pending}
             </div>
           )}
         </div>
 
-       
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-6 text-xs sm:text-sm mt-20">
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-[#2374A9]"></div>
-            <span className="text-gray-600">Paid {invoiceMetrics.paid}</span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-[#787EDA]"></div>
+            <div
+              className="w-3 h-3 rounded-full"
+              style={{ backgroundColor: C.paid }}
+            ></div>
             <span className="text-gray-600">
-              Partial Paid {invoiceMetrics.partialPaid}
+              Paid {usingDummy ? 0 : displayMetrics.paid}
             </span>
           </div>
 
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-[#FE4F02]"></div>
+            <div
+              className="w-3 h-3 rounded-full"
+              style={{ backgroundColor: C.partial }}
+            ></div>
             <span className="text-gray-600">
-              Pending {invoiceMetrics.pending}
+              Partial Paid {usingDummy ? 0 : displayMetrics.partialPaid}
             </span>
           </div>
 
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-[#FE1F02]"></div>
+            <div
+              className="w-3 h-3 rounded-full"
+              style={{ backgroundColor: C.pending }}
+            ></div>
             <span className="text-gray-600">
-              Overdue {invoiceMetrics.overdue}
+              Pending {usingDummy ? 0 : displayMetrics.pending}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <div
+              className="w-3 h-3 rounded-full"
+              style={{ backgroundColor: C.overdue }}
+            ></div>
+            <span className="text-gray-600">
+              Overdue {usingDummy ? 0 : displayMetrics.overdue}
             </span>
           </div>
         </div>

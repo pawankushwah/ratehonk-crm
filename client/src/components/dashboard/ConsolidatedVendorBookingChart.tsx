@@ -19,7 +19,6 @@ export function ConsolidatedVendorBookingChart() {
     customDateTo
   );
 
- 
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
   const vendorData = useMemo(() => {
@@ -28,9 +27,7 @@ export function ConsolidatedVendorBookingChart() {
     invoices.forEach((inv) => {
       (inv.lineItems || []).forEach((li) => {
         if (!li.vendorName) return;
-
-        countMap[li.vendorName] =
-          (countMap[li.vendorName] || 0) + 1;
+        countMap[li.vendorName] = (countMap[li.vendorName] || 0) + 1;
       });
     });
 
@@ -57,8 +54,29 @@ export function ConsolidatedVendorBookingChart() {
     }));
   }, [invoices]);
 
-  const finalVendorData =  vendorData ;
 
+  const dummyColorPalette = ["#A5A5A5", "#B0B0B0", "#C0C0C0"];
+  const dummyHoverPalette = ["#2F80ED", "#F66D44", "#219653"]; 
+
+  const dummyData = [
+    { name: "Category 0", percentage: 40 },
+    { name: "Category 1", percentage: 30 },
+    { name: "Category 2", percentage: 30 },
+  ];
+
+  const usingDummy = vendorData.length === 0;
+
+  const displayData = usingDummy
+    ? dummyData.map((d, i) => ({
+        ...d,
+        color:
+          activeIndex === i
+            ? dummyHoverPalette[i % dummyHoverPalette.length] 
+            : dummyColorPalette[i % dummyColorPalette.length], 
+      }))
+    : vendorData;
+
+  
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
       const item = payload[0].payload;
@@ -71,6 +89,7 @@ export function ConsolidatedVendorBookingChart() {
     }
     return null;
   };
+
   return (
     <Card className="col-span-12 lg:col-span-6 bg-white shadow-md rounded-xl p-4">
       <CardHeader className="pb-4">
@@ -79,40 +98,33 @@ export function ConsolidatedVendorBookingChart() {
             Consolidated Booking
           </CardTitle>
 
-         <div className="flex gap-2">
-          <DateFilter
-            dateFilter={dateFilter}
-            setDateFilter={setDateFilter}
-            customDateFrom={customDateFrom}
-            setCustomDateFrom={setCustomDateFrom}
-            customDateTo={customDateTo}
-            setCustomDateTo={setCustomDateTo}
-          />
-        </div>
+          <div className="flex gap-2">
+            <DateFilter
+              dateFilter={dateFilter}
+              setDateFilter={setDateFilter}
+              customDateFrom={customDateFrom}
+              setCustomDateFrom={setCustomDateFrom}
+              customDateTo={customDateTo}
+              setCustomDateTo={setCustomDateTo}
+            />
+          </div>
         </div>
       </CardHeader>
 
       <CardContent>
         {isLoading ? (
           <p className="text-center text-gray-500">Loading...</p>
-        ) : finalVendorData.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center text-center px-6">
-                <div className="w-16 h-16 bg-gray-200 border-2 border-dashed rounded-xl mb-4" />
-                <p className="text-gray-600 font-medium">
-                  No Consolidated Booking Data found
-                </p>
-                <p className="text-xs text-gray-400 mt-2">
-                  Try selecting a different date
-                </p>
-              </div>
         ) : (
           <div className="flex flex-col sm:flex-row items-center justify-between gap-6">
+            
             <div className="relative w-full h-72 flex items-center justify-center">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Tooltip content={<CustomTooltip />} />
+
+                 
                   <Pie
-                    data={finalVendorData}
+                    data={displayData}
                     dataKey="percentage"
                     nameKey="name"
                     cx="50%"
@@ -125,7 +137,7 @@ export function ConsolidatedVendorBookingChart() {
                     onMouseEnter={(_, idx) => setActiveIndex(idx)}
                     onMouseLeave={() => setActiveIndex(null)}
                   >
-                    {finalVendorData.map((entry, index) => (
+                    {displayData.map((entry, index) => (
                       <Cell
                         key={`inner-${index}`}
                         fill={entry.color}
@@ -143,8 +155,10 @@ export function ConsolidatedVendorBookingChart() {
                       />
                     ))}
                   </Pie>
+
+                 
                   <Pie
-                    data={finalVendorData}
+                    data={displayData}
                     dataKey="percentage"
                     nameKey="name"
                     cx="50%"
@@ -158,7 +172,7 @@ export function ConsolidatedVendorBookingChart() {
                     onMouseEnter={(_, idx) => setActiveIndex(idx)}
                     onMouseLeave={() => setActiveIndex(null)}
                   >
-                    {finalVendorData.map((entry, index) => (
+                    {displayData.map((entry, index) => (
                       <Cell
                         key={`outer-${index}`}
                         fill={entry.color}
@@ -179,8 +193,9 @@ export function ConsolidatedVendorBookingChart() {
                 </PieChart>
               </ResponsiveContainer>
             </div>
+
             <div className="space-y-3 text-xs">
-              {finalVendorData.map((v, idx) => (
+              {displayData.map((v, idx) => (
                 <div className="flex items-center gap-2" key={idx}>
                   <div
                     className="w-3 h-3 rounded-full"
@@ -189,9 +204,7 @@ export function ConsolidatedVendorBookingChart() {
 
                   <div>
                     <p className="font-medium">{v.name}</p>
-                    <p className="text-gray-500 text-[11px]">
-                      {v.percentage}%
-                    </p>
+                    <p className="text-gray-500 text-[11px]"> {usingDummy ? "0" : `${v.percentage}%`}%</p>
                   </div>
                 </div>
               ))}

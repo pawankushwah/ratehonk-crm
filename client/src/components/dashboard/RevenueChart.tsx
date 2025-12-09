@@ -211,7 +211,7 @@ function buildChartDataFromInvoiceMap(
     cursor.setDate(cursor.getDate() + 1);
   }
 
-  // Add Previous Month comparison (month only)
+ 
   if (filter === "this_month") {
     const today = customTo ? new Date(customTo) : new Date();
     const y = today.getFullYear();
@@ -321,6 +321,24 @@ export function RevenueChart() {
     pdf.save("revenue-report.pdf");
   };
 
+
+
+
+const usingDummy = chartData.length === 0;
+
+const dummyData = [
+  { label: "Day 1", value: 40, fullDate: "0000-00-00" },
+  { label: "Day 2", value: 55, fullDate: "0000-00-00" },
+  { label: "Day 3", value: 30, fullDate: "0000-00-00" },
+  { label: "Day 4", value: 70, fullDate: "0000-00-00" },
+  { label: "Day 5", value: 45, fullDate: "0000-00-00" },
+];
+
+const displayData = usingDummy ? dummyData : chartData;
+
+const barColor = usingDummy ? "#D1D5DB" : "#0A64A0"; 
+
+
   return (
     <Card className="lg:col-span-7 bg-white rounded-xl shadow-sm">
       <CardHeader className="pb-0">
@@ -383,45 +401,66 @@ export function RevenueChart() {
             <div className="h-full flex items-center justify-center text-gray-500">
               Loading...
             </div>
-          ) : chartData.length === 0 ? (
-            <div className="h-full flex items-center justify-center text-gray-500">
-              No data available for selected period
-            </div>
-          ) : (
+          ) :  (
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData}>
-                <XAxis
-                  dataKey="label"
-                  tick={{ fontSize: 10, fill: "#9CA3AF" }}
-                  axisLine={false}
-                  tickLine={false}
-                />
+  <BarChart data={displayData}>
+    <XAxis
+      dataKey="label"
+      tick={{ fontSize: 10, fill: "#9CA3AF" }}
+      axisLine={false}
+      tickLine={false}
+    />
 
-                <YAxis hide />
-                <Tooltip content={<CustomTooltip />} />
+    <YAxis hide />
+    <Tooltip content={<CustomTooltip />} />
 
-                <Legend
-                  align="center"
-                  verticalAlign="bottom"
-                  formatter={(value) => {
-                    if (value === "current") return "Current";
-                    if (value === "previous") return "Previous";
-                    if (value === "value") return "Revenue";
-                    return value;
-                  }}
-                />
-                {chartData[0]?.value !== undefined ? (
-                  <Bar dataKey="value" fill="#0A64A0" barSize={7} />
-                ) : (
-                  <>
-                    <Bar dataKey="current" fill="#0A64A0" barSize={7} />
-                    {dateFilter === "this_month" && (
-                      <Bar dataKey="previous" fill="#7695C5" barSize={7} />
-                    )}
-                  </>
-                )}
-              </BarChart>
-            </ResponsiveContainer>
+    <Legend
+      align="center"
+      verticalAlign="bottom"
+      formatter={(value) => {
+        if (usingDummy) return "Sample";
+        if (value === "current") return "Current";
+        if (value === "previous") return "Previous";
+        if (value === "value") return "Revenue";
+        return value;
+      }}
+    />
+
+    
+    {displayData[0]?.value !== undefined ? (
+      <Bar
+        dataKey="value"
+        fill={barColor}
+        barSize={7}
+        isAnimationActive={true}
+        animationDuration={1100}
+        animationEasing="ease-out"
+      />
+    ) : (
+      <>
+        <Bar
+          dataKey="current"
+          fill={barColor}
+          barSize={7}
+          isAnimationActive={true}
+          animationDuration={1100}
+          animationEasing="ease-out"
+        />
+        {!usingDummy && dateFilter === "this_month" && (
+          <Bar
+            dataKey="previous"
+            fill="#7695C5"
+            barSize={7}
+            isAnimationActive={true}
+            animationDuration={1100}
+            animationEasing="ease-out"
+          />
+        )}
+      </>
+    )}
+  </BarChart>
+</ResponsiveContainer>
+
           )}
         </div>
       </CardContent>
