@@ -1814,6 +1814,67 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
     }
   });
 
+
+app.get("/api/All-leads", authenticateToken, async (req, res) => {
+  try {
+    const tenantId = req.user?.tenantId;
+    if (!tenantId) {
+      return res
+        .status(400)
+        .json({ error: "Tenant ID not found in user session" });
+    }
+
+    const {
+      limit = "",
+      page = "",
+      search = "",
+      status = "",
+      priority = "",
+      type = "",
+      source = "",
+      dateFrom = "",
+      dateTo = "",
+      sortBy = "created_at",
+      sortOrder = "desc",
+    } = req.query;
+
+    let finalLimit: number | null = null;
+    let finalOffset: number | null = null;
+
+    if (limit) {
+      const numLimit = Number(limit);
+      const numPage = Number(page || 1);
+      finalLimit = numLimit;
+      finalOffset = (numPage - 1) * numLimit;
+    }
+
+ 
+    const leads = await simpleStorage.getAllLeadsByTenant(
+      tenantId,
+      {
+        limit: finalLimit,
+        offset: finalOffset,
+        search: String(search),
+        status: String(status),
+        priority: String(priority),
+        type: String(type),
+        source: String(source),
+        dateFrom: String(dateFrom),
+        dateTo: String(dateTo),
+        sortBy: String(sortBy),
+        sortOrder: String(sortOrder),
+      }
+    );
+
+    return res.json(leads || []);
+
+  } catch (error: any) {
+    console.error("❌ Enhanced leads API error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
   app.get("/api/customers", authenticateToken, async (req, res) => {
     try {
       // Support both tenantId from token and from query parameter
@@ -2233,6 +2294,43 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
       });
     }
   });
+
+  // get all customer for graph
+
+app.get("/api/tenants/:tenantId/all-customers-graph", authenticateToken, async (req, res) => {
+  try {
+    const tenantIdFromUrl = Number(req.params.tenantId);
+    const tenantIdFromToken = req.user?.tenantId;
+
+    // Security check: prevent cross-tenant access
+    if (tenantIdFromUrl !== tenantIdFromToken) {
+      return res.status(403).json({ error: "Unauthorized tenant access" });
+    }
+
+    const {
+      search = "",
+      status = "",
+      dateFrom = "",
+      dateTo = "",
+    } = req.query;
+
+    const customers = await simpleStorage.getAllCustomersForGraph(
+      tenantIdFromUrl,
+      {
+        search: String(search),
+        status: String(status),
+        dateFrom: String(dateFrom),
+        dateTo: String(dateTo),
+      }
+    );
+
+    return res.json(customers);
+
+  } catch (err: any) {
+    console.error("❌ all-customers-graph error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
 
   app.post("/api/tenants/:tenantId/customers", authenticateToken, async (req, res) => {
     try {

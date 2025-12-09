@@ -62,25 +62,12 @@ import { directCustomersApi } from "@/lib/direct-customers-api";
 import type { Customer } from "@shared/schema";
 import { Link } from "wouter";
 import { ZoomPhoneEmbed } from "@/components/zoom/zoom-phone-embed";
-import { format } from "date-fns";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  LineChart,
-  Line,
-  Legend,
-} from "recharts";
+
 import image1 from "../../assets/Nav icon.png";
 import { DateFilter } from "@/components/ui/date-filter";
 import { buildDateFilters } from "@/lib/date-filter-helpers";
+import { useCustomersForGraph } from "@/hooks/useDashboardData";
+import { CustomerAnalyticsPanel } from "./CustomerAnalyticsPanel";
 
 const statusFilters = [
   { value: "all", label: "View all" },
@@ -89,6 +76,7 @@ const statusFilters = [
   { value: "previous", label: "Previous" },
   { value: "active", label: "Active" },
   { value: "inactive", label: "Inactive" },
+  { value: "closed-won", label: "closed-won" },
 ];
 
 const priorityFilters = [
@@ -129,14 +117,14 @@ export default function Customers() {
   const [searchTerm, setSearchTerm] = useState("");
   // Debounce search term to avoid multiple API calls while typing
   const debouncedSearchTerm = useDebounce(searchTerm, 500);
-  
+
   // Reset to page 1 when debounced search term changes
   useEffect(() => {
     setCurrentPage(1);
   }, [debouncedSearchTerm]);
-  
+
   const [selectedFilter, setSelectedFilter] = useState("all");
-  const [dateFilter, setDateFilter] = useState("all");
+  const [dateFilter, setDateFilter] = useState("this_year");
   const [customDateFrom, setCustomDateFrom] = useState<Date | null>(null);
   const [customDateTo, setCustomDateTo] = useState<Date | null>(null);
 
@@ -155,7 +143,7 @@ export default function Customers() {
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [customerToDelete, setCustomerToDelete] = useState<Customer | null>(
-    null,
+    null
   );
   const [isZoomDialogOpen, setIsZoomDialogOpen] = useState(false);
   const [customerToCall, setCustomerToCall] = useState<Customer | null>(null);
@@ -199,7 +187,7 @@ export default function Customers() {
       const dateFilters = buildDateFilters(
         dateFilter,
         customDateFrom,
-        customDateTo,
+        customDateTo
       );
       const offset = (currentPage - 1) * itemsPerPage;
 
@@ -217,11 +205,11 @@ export default function Customers() {
 
       console.log(
         "🔍 Fetching customers with ALL filters + pagination:",
-        filters,
+        filters
       );
       const result = await directCustomersApi.getCustomers(
         tenant?.id!,
-        filters,
+        filters
       );
 
       // Handle paginated response
@@ -245,7 +233,9 @@ export default function Customers() {
     refetchInterval: 30000,
   });
 
-  const [formValidationErrors, setFormValidationErrors] = useState<Record<string, string>>({});
+  const [formValidationErrors, setFormValidationErrors] = useState<
+    Record<string, string>
+  >({});
 
   const createCustomerMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -265,10 +255,13 @@ export default function Customers() {
     },
     onError: (error: any) => {
       // Check if this is a validation error
-      if (error.validationErrors && Object.keys(error.validationErrors).length > 0) {
+      if (
+        error.validationErrors &&
+        Object.keys(error.validationErrors).length > 0
+      ) {
         // Set validation errors to be passed to the form
         setFormValidationErrors(error.validationErrors);
-        
+
         // Show toast with validation message
         const errorMessages = Object.values(error.validationErrors).join(", ");
         toast({
@@ -484,54 +477,54 @@ export default function Customers() {
               </span>
               {/* <ChevronRight className="h-4 w-4" />
 
-              <div className="flex items-center gap-2 w-auto h-[36px] px-3 py-[6px] rounded-md border border-[rgba(36,99,235,0.6)] bg-[#EEF3FF]">
-                <svg
-                  width="20"
-                  height="20"
-                  viewBox="0 0 20 20"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  <g clipPath="url(#clip0_55_4802)">
-                    <path
-                      d="M12 1V5C12 5.26522 12.1054 5.51957 12.2929 5.70711C12.4804 5.89464 12.7348 6 13 6H17"
-                      stroke="#101828"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                    <path
-                      d="M15 19H5C4.46957 19 3.96086 18.7893 3.58579 18.4142C3.21071 18.0391 3 17.5304 3 17V3C3 2.46957 3.21071 1.96086 3.58579 1.58579C3.96086 1.21071 4.46957 1 5 1H12L17 6V17C17 17.5304 16.7893 18.0391 16.4142 18.4142C16.0391 18.7893 15.5304 19 15 19Z"
-                      stroke="#101828"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                    <path
-                      d="M10 9V15"
-                      stroke="#101828"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                    <path
-                      d="M7 12H13"
-                      stroke="#101828"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </g>
-                  <defs>
-                    <clipPath id="clip0_55_4802">
-                      <rect width="20" height="20" fill="white" />
-                    </clipPath>
-                  </defs>
-                </svg>
-                <span className="text-[#101828] text-sm font-medium">
-                  Customers
-                </span>
-              </div> */}
+                <div className="flex items-center gap-2 w-auto h-[36px] px-3 py-[6px] rounded-md border border-[rgba(36,99,235,0.6)] bg-[#EEF3FF]">
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 20 20"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                  >
+                    <g clipPath="url(#clip0_55_4802)">
+                      <path
+                        d="M12 1V5C12 5.26522 12.1054 5.51957 12.2929 5.70711C12.4804 5.89464 12.7348 6 13 6H17"
+                        stroke="#101828"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                      <path
+                        d="M15 19H5C4.46957 19 3.96086 18.7893 3.58579 18.4142C3.21071 18.0391 3 17.5304 3 17V3C3 2.46957 3.21071 1.96086 3.58579 1.58579C3.96086 1.21071 4.46957 1 5 1H12L17 6V17C17 17.5304 16.7893 18.0391 16.4142 18.4142C16.0391 18.7893 15.5304 19 15 19Z"
+                        stroke="#101828"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                      <path
+                        d="M10 9V15"
+                        stroke="#101828"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                      <path
+                        d="M7 12H13"
+                        stroke="#101828"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </g>
+                    <defs>
+                      <clipPath id="clip0_55_4802">
+                        <rect width="20" height="20" fill="white" />
+                      </clipPath>
+                    </defs>
+                  </svg>
+                  <span className="text-[#101828] text-sm font-medium">
+                    Customers
+                  </span>
+                </div> */}
             </div>
 
             {/* Right Side - Add Customer Button */}
@@ -546,14 +539,14 @@ export default function Customers() {
               </Button>
               <Button
                 className="
-    w-[166px] h-[36px] 
-    bg-[#0E76BC] hover:bg-[#0C5F96] 
-    text-white text-sm font-medium
-    rounded-md 
-    flex items-center gap-2
-    px-5 py-2
-    shadow-[0px_1px_2px_0px_rgba(16,24,40,0.05)]
-  "
+      w-[166px] h-[36px] 
+      bg-[#0E76BC] hover:bg-[#0C5F96] 
+      text-white text-sm font-medium
+      rounded-md 
+      flex items-center gap-2
+      px-5 py-2
+      shadow-[0px_1px_2px_0px_rgba(16,24,40,0.05)]
+    "
                 size="sm"
                 onClick={() => {
                   setEditingCustomer(null);
@@ -580,9 +573,9 @@ export default function Customers() {
                       setSearchTerm(e.target.value)
                     }
                     className="w-full h-full pl-10 pr-[14px] py-[4px] 
-               bg-white border border-[#E3E8EF] 
-               rounded-[6px] shadow-[0px_1px_2px_0px_rgba(16,24,40,0.05)] 
-               text-sm text-gray-700 placeholder-gray-400 focus:outline-none"
+                bg-white border border-[#E3E8EF] 
+                rounded-[6px] shadow-[0px_1px_2px_0px_rgba(16,24,40,0.05)] 
+                text-sm text-gray-700 placeholder-gray-400 focus:outline-none"
                     data-testid="input-search-customers"
                   />
                 </div>
@@ -621,54 +614,54 @@ export default function Customers() {
 
                   {/* Priority Filter */}
                   {/* <Select
-                    value={priorityFilter}
-                    onValueChange={setPriorityFilter}
-                  >
-                    <SelectTrigger
-                      className="w-32"
-                      data-testid="select-priority-filter"
+                      value={priorityFilter}
+                      onValueChange={setPriorityFilter}
                     >
-                      <SelectValue placeholder="Priority" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {priorityFilters.map((filter) => (
-                        <SelectItem key={filter.value} value={filter.value}>
-                          {filter.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select> */}
+                      <SelectTrigger
+                        className="w-32"
+                        data-testid="select-priority-filter"
+                      >
+                        <SelectValue placeholder="Priority" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {priorityFilters.map((filter) => (
+                          <SelectItem key={filter.value} value={filter.value}>
+                            {filter.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select> */}
 
                   {/* Type Filter */}
                   {/* <Select value={typeFilter} onValueChange={setTypeFilter}>
-                    <SelectTrigger
-                      className="w-32"
-                      data-testid="select-type-filter"
-                    >
-                      <SelectValue placeholder="Type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {typeFilters.map((filter) => (
-                        <SelectItem key={filter.value} value={filter.value}>
-                          {filter.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select> */}
+                      <SelectTrigger
+                        className="w-32"
+                        data-testid="select-type-filter"
+                      >
+                        <SelectValue placeholder="Type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {typeFilters.map((filter) => (
+                          <SelectItem key={filter.value} value={filter.value}>
+                            {filter.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select> */}
 
                   {/* Source Filter */}
                   {/* <Select value={sourceFilter} onValueChange={setSourceFilter}>
-                    <SelectTrigger className="w-32" data-testid="select-source-filter">
-                      <SelectValue placeholder="Source" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {sourceFilters.map((filter) => (
-                        <SelectItem key={filter.value} value={filter.value}>
-                          {filter.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select> */}
+                      <SelectTrigger className="w-32" data-testid="select-source-filter">
+                        <SelectValue placeholder="Source" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {sourceFilters.map((filter) => (
+                          <SelectItem key={filter.value} value={filter.value}>
+                            {filter.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select> */}
                 </div>
               </div>
             </div>
@@ -718,13 +711,13 @@ export default function Customers() {
                 ) : (
                   customers.map((customer) => {
                     const statusConfig = getStatusBadge(
-                      customer.crm_status || customer.status || "new",
+                      customer.crm_status || customer.status || "new"
                     );
                     console.log(
                       customer.crm_status,
                       customer.status,
                       statusConfig,
-                      "statusConfig",
+                      "statusConfig"
                     );
                     return (
                       <TableRow
@@ -808,7 +801,7 @@ export default function Customers() {
                                 >
                                   Edit Customer
                                 </DropdownMenuItem>
-                                <DropdownMenuItem 
+                                <DropdownMenuItem
                                   className="text-red-600"
                                   onClick={() => handleDelete(customer)}
                                 >
@@ -894,7 +887,7 @@ export default function Customers() {
                               data-testid={`button-page-${i}`}
                             >
                               {i}
-                            </Button>,
+                            </Button>
                           );
                         }
                         return pages;
@@ -983,398 +976,13 @@ export default function Customers() {
       </Dialog>
 
       {/* Analytics Sidebar */}
+
       {showAnalytics && (
-        <>
-          {/* Overlay */}
-          <div
-            className="fixed inset-0 bg-black bg-opacity-50 z-40"
-            onClick={() => setShowAnalytics(false)}
-          />
-
-          {/* Sidebar */}
-          <div className="fixed top-0 right-0 h-full bg-white shadow-2xl transform transition-transform duration-300 z-50 w-full sm:w-[700px] md:w-[850px] lg:w-[1000px]">
-            {/* Header */}
-            <div className="flex justify-between items-center p-6 border-b border-gray-200">
-              <h2 className="text-xl font-semibold text-gray-900">
-                Customer Analytics
-              </h2>
-              <button
-                onClick={() => setShowAnalytics(false)}
-                className="text-gray-500 hover:text-gray-800 p-2 rounded-full hover:bg-gray-100"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            {/* Content */}
-            <div className="p-6 overflow-y-auto h-full bg-gray-50">
-              {/* Summary Cards */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                {/* Total Customers Card */}
-                <div className="bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-xl p-6 shadow-lg">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-blue-100 text-sm font-medium">
-                        Total Customers
-                      </p>
-                      <p className="text-3xl font-bold mt-2">
-                        {customers.length}
-                      </p>
-                      <p className="text-blue-100 text-xs mt-1">All time</p>
-                    </div>
-                    <div className="p-3 bg-blue-400 bg-opacity-30 rounded-full">
-                      <Users className="h-8 w-8" />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Previous Month Card */}
-                <div className="bg-gradient-to-br from-green-500 to-green-600 text-white rounded-xl p-6 shadow-lg">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-green-100 text-sm font-medium">
-                        Previous Month
-                      </p>
-                      <p className="text-3xl font-bold mt-2">
-                        {
-                          customers.filter((customer) => {
-                            const dateStr =
-                              customer.createdAt || customer.created_at;
-                            if (!dateStr) return false;
-
-                            const customerDate = new Date(dateStr);
-                            const now = new Date();
-                            const lastMonthStart = new Date(
-                              now.getFullYear(),
-                              now.getMonth() - 1,
-                              1,
-                            );
-                            const currentMonthStart = new Date(
-                              now.getFullYear(),
-                              now.getMonth(),
-                              1,
-                            );
-
-                            return (
-                              customerDate >= lastMonthStart &&
-                              customerDate < currentMonthStart
-                            );
-                          }).length
-                        }
-                      </p>
-                      <p className="text-green-100 text-xs mt-1">
-                        Last 30 days
-                      </p>
-                    </div>
-                    <div className="p-3 bg-green-400 bg-opacity-30 rounded-full">
-                      <Globe className="h-8 w-8" />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Current Month Card */}
-                <div className="bg-gradient-to-br from-purple-500 to-purple-600 text-white rounded-xl p-6 shadow-lg">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-purple-100 text-sm font-medium">
-                        Current Month
-                      </p>
-                      <p className="text-3xl font-bold mt-2">
-                        {
-                          customers.filter((customer) => {
-                            const dateStr =
-                              customer.createdAt || customer.created_at;
-                            if (!dateStr) return false;
-
-                            const customerDate = new Date(dateStr);
-                            const now = new Date();
-                            const currentMonth = new Date(
-                              now.getFullYear(),
-                              now.getMonth(),
-                              1,
-                            );
-
-                            return customerDate >= currentMonth;
-                          }).length
-                        }
-                      </p>
-                      <p className="text-purple-100 text-xs mt-1">This month</p>
-                    </div>
-                    <div className="p-3 bg-purple-400 bg-opacity-30 rounded-full">
-                      <MapPin className="h-8 w-8" />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Monthly Growth Chart */}
-              <div className="bg-white rounded-xl p-6 shadow-lg border border-gray-100 mb-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-6">
-                  Monthly Customer Growth
-                </h3>
-                <div className="h-64">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart
-                      data={(() => {
-                        const months = [];
-                        for (let i = 11; i >= 0; i--) {
-                          const date = new Date();
-                          date.setMonth(date.getMonth() - i);
-                          const monthStart = new Date(
-                            date.getFullYear(),
-                            date.getMonth(),
-                            1,
-                          );
-                          const monthEnd = new Date(
-                            date.getFullYear(),
-                            date.getMonth() + 1,
-                            0,
-                          );
-
-                          const count = customers.filter((customer) => {
-                            const dateStr =
-                              customer.createdAt || customer.created_at;
-                            if (!dateStr) return false;
-                            const customerDate = new Date(dateStr);
-                            return (
-                              customerDate >= monthStart &&
-                              customerDate <= monthEnd
-                            );
-                          }).length;
-
-                          months.push({
-                            month: date.toLocaleDateString("en-US", {
-                              month: "short",
-                              year: "numeric",
-                            }),
-                            customers: count,
-                          });
-                        }
-                        return months;
-                      })()}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                      <XAxis
-                        dataKey="month"
-                        stroke="#6b7280"
-                        fontSize={12}
-                        tick={{ fill: "#6b7280" }}
-                      />
-                      <YAxis
-                        stroke="#6b7280"
-                        fontSize={12}
-                        tick={{ fill: "#6b7280" }}
-                      />
-                      <Tooltip
-                        contentStyle={{
-                          backgroundColor: "#1f2937",
-                          color: "#ffffff",
-                          border: "none",
-                          borderRadius: "8px",
-                          boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1)",
-                        }}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="customers"
-                        stroke="#3b82f6"
-                        strokeWidth={3}
-                        dot={{ fill: "#3b82f6", strokeWidth: 2, r: 4 }}
-                        activeDot={{ r: 6 }}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-
-              {/* Charts Section */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-                {/* Customer Status Distribution Bar Chart */}
-                <div className="bg-white rounded-xl p-6 shadow-lg border border-gray-100">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-6">
-                    Customer Status Distribution
-                  </h3>
-                  <div className="h-64">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart
-                        data={statusFilters.slice(1).map((filter) => {
-                          const count = customers.filter(
-                            (customer) =>
-                              (
-                                customer.crm_status || customer.status
-                              )?.toLowerCase() === filter.value,
-                          ).length;
-                          return {
-                            status: filter.label,
-                            count: count,
-                            percentage:
-                              customers.length > 0
-                                ? ((count / customers.length) * 100).toFixed(1)
-                                : 0,
-                          };
-                        })}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                        <XAxis
-                          dataKey="status"
-                          stroke="#6b7280"
-                          fontSize={12}
-                          tick={{ fill: "#6b7280" }}
-                        />
-                        <YAxis
-                          stroke="#6b7280"
-                          fontSize={12}
-                          tick={{ fill: "#6b7280" }}
-                        />
-                        <Tooltip
-                          contentStyle={{
-                            backgroundColor: "#1f2937",
-                            color: "#ffffff",
-                            border: "none",
-                            borderRadius: "8px",
-                            boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1)",
-                          }}
-                        />
-                        <Bar
-                          dataKey="count"
-                          fill="#3b82f6"
-                          radius={[4, 4, 0, 0]}
-                        />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-
-                {/* Customer Status Pie Chart */}
-                <div className="bg-white rounded-xl p-6 shadow-lg border border-gray-100">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-6">
-                    Status Breakdown
-                  </h3>
-                  <div className="h-64">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie
-                          data={statusFilters
-                            .slice(1)
-                            .map((filter, index) => {
-                              const count = customers.filter(
-                                (customer) =>
-                                  (
-                                    customer.crm_status || customer.status
-                                  )?.toLowerCase() === filter.value,
-                              ).length;
-                              const colors = [
-                                "#3b82f6",
-                                "#10b981",
-                                "#f59e0b",
-                                "#ef4444",
-                                "#8b5cf6",
-                              ];
-                              return {
-                                name: filter.label,
-                                value: count,
-                                color: colors[index % colors.length],
-                              };
-                            })
-                            .filter((item) => item.value > 0)}
-                          cx="50%"
-                          cy="50%"
-                          outerRadius={80}
-                          paddingAngle={2}
-                          dataKey="value"
-                        >
-                          {statusFilters.slice(1).map((filter, index) => {
-                            const colors = [
-                              "#3b82f6",
-                              "#10b981",
-                              "#f59e0b",
-                              "#ef4444",
-                              "#8b5cf6",
-                            ];
-                            return (
-                              <Cell
-                                key={`cell-${index}`}
-                                fill={colors[index % colors.length]}
-                              />
-                            );
-                          })}
-                        </Pie>
-                        <Tooltip
-                          contentStyle={{
-                            backgroundColor: "#1f2937",
-                            color: "#ffffff",
-                            border: "none",
-                            borderRadius: "8px",
-                            boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1)",
-                          }}
-                        />
-                        <Legend />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-              </div>
-
-              {/* Customer Details Section */}
-              {/* <div className="bg-white rounded-xl p-6 shadow-lg border border-gray-100">
-                <h3 className="text-lg font-semibold text-gray-900 mb-6">
-                  Customer Details
-                </h3>
-                <div className="space-y-4">
-                  {customers.slice(0, 5).map((customer) => (
-                    <div
-                      key={customer.id}
-                      className="flex items-center justify-between p-4 bg-gray-50 rounded-lg"
-                    >
-                      <div className="flex items-center space-x-3">
-                        <Avatar className="h-10 w-10">
-                          <AvatarImage
-                            src={`https://api.dicebear.com/7.x/initials/svg?seed=${getDisplayName(customer)}`}
-                            alt={getDisplayName(customer)}
-                          />
-                          <AvatarFallback className="bg-blue-100 text-blue-600">
-                            {getInitials(customer)}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div>
-                          <p className="font-medium text-gray-900">
-                            {getDisplayName(customer)}
-                          </p>
-                          <p className="text-sm text-gray-500">
-                            {customer.email}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <Badge
-                          variant="outline"
-                          className={
-                            getStatusBadge(
-                              customer.crm_status || customer.status || "new",
-                            ).color
-                          }
-                        >
-                          {
-                            getStatusBadge(
-                              customer.crm_status || customer.status || "new",
-                            ).label
-                          }
-                        </Badge>
-                        <p className="text-xs text-gray-500 mt-1">
-                          {customer.createdAt
-                            ? new Date(customer.createdAt).toLocaleDateString()
-                            : "N/A"}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div> */}
-            </div>
-          </div>
-        </>
+        <CustomerAnalyticsPanel
+          isOpen={showAnalytics}
+          onClose={() => setShowAnalytics(false)}
+        />
       )}
-
       {/* Zoom Phone Dialog */}
       <ZoomPhoneEmbed
         isOpen={isZoomDialogOpen}
@@ -1383,7 +991,7 @@ export default function Customers() {
           setCustomerToCall(null);
         }}
         customerPhone={customerToCall?.phone || undefined}
-        customerName={getDisplayName(customerToCall || {} as Customer)}
+        customerName={getDisplayName(customerToCall || ({} as Customer))}
       />
     </Layout>
   );

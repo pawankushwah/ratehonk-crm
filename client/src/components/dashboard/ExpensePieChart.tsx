@@ -27,14 +27,17 @@ export function ExpensePieChart() {
     (exp: any) => exp.status?.toLowerCase() === "approved"
   );
 
-  const expenseAmountByCategory = approvedExpenses.reduce((acc: any, exp: any) => {
-    const cat = exp.category || "Other";
-    const amt = safeParseNumber(exp?.amount);
+  const expenseAmountByCategory = approvedExpenses.reduce(
+    (acc: any, exp: any) => {
+      const cat = exp.category || "Other";
+      const amt = safeParseNumber(exp?.amount);
 
-    if (!acc[cat]) acc[cat] = 0;
-    acc[cat] += amt;
-    return acc;
-  }, {});
+      if (!acc[cat]) acc[cat] = 0;
+      acc[cat] += amt;
+      return acc;
+    },
+    {}
+  );
 
   const categoryArray = Object.entries(expenseAmountByCategory).map(
     ([category, amount]: any) => ({
@@ -52,7 +55,29 @@ export function ExpensePieChart() {
     fill: COLORS[i % COLORS.length],
   }));
 
-  const finalPieData = pieData;
+  const usingDummy = pieData.length === 0;
+
+
+
+  const dummyGray = ["#C4C4C4", "#D3D3D3", "#E1E1E1"];
+  const dummyHover = ["#0A64A0", "#3E85C5", "#6DA9DB"];
+
+  const dummyData = [
+    { name: "Category0", value: 10, amount: 0 },
+    { name: "Category1", value: 20, amount: 0 },
+    { name: "Category2", value: 30, amount: 0 },
+  ];
+
+  const displayData = usingDummy
+    ? dummyData.map((d, i) => ({
+        ...d,
+        fill:
+          activeIndex === i
+            ? dummyHover[i % dummyHover.length]
+            : dummyGray[i % dummyGray.length],
+      }))
+    : pieData;
+
 
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
@@ -60,7 +85,7 @@ export function ExpensePieChart() {
       return (
         <div className="bg-white shadow-lg rounded-md p-2 border text-xs text-black">
           <p className="font-semibold">{item.name}</p>
-          <p>{item.value}%</p>
+          <span>{usingDummy ? "0%" : `${item.value}%`}</span>
         </div>
       );
     }
@@ -74,6 +99,7 @@ export function ExpensePieChart() {
           <CardTitle className="text-[#000000] font-medium text-base sm:text-lg">
             Expense by Category
           </CardTitle>
+
           <p className="text-xl sm:text-2xl font-semibold text-[#000000] mt-1">
             C$ {(totalAmount / 1000).toFixed(1)}k
           </p>
@@ -99,20 +125,10 @@ export function ExpensePieChart() {
         <div className="flex justify-center items-center">
           <div className="relative w-36 h-36 sm:w-52 sm:h-52 mb-10">
             <ResponsiveContainer width="100%" height="100%">
-              
-             
               {isLoading ? (
                 <div className="flex h-full items-center justify-center">
                   <p className="text-gray-500 animate-pulse text-sm">
                     Loading expenses...
-                  </p>
-                </div>
-              ) : finalPieData.length === 0 ? (
-                <div className="flex h-full flex-col items-center justify-center text-center px-6">
-                  <div className="w-16 h-16 bg-gray-200 border-2 border-dashed rounded-xl mb-4" />
-                  <p className="text-gray-600 font-medium">No expense data found</p>
-                  <p className="text-xs text-gray-400 mt-2">
-                    Try selecting a different date
                   </p>
                 </div>
               ) : (
@@ -120,7 +136,7 @@ export function ExpensePieChart() {
                   <Tooltip content={<CustomTooltip />} />
 
                   <Pie
-                    data={finalPieData}
+                    data={displayData}
                     cx="50%"
                     cy="50%"
                     innerRadius="60%"
@@ -130,14 +146,19 @@ export function ExpensePieChart() {
                     dataKey="value"
                     onMouseEnter={(_, index) => setActiveIndex(index)}
                     onMouseLeave={() => setActiveIndex(null)}
+                    isAnimationActive={true}
+                    animationDuration={1200}
+                    animationBegin={0}
+                    animationEasing="ease-out"
                   >
-                    {finalPieData.map((entry, index) => (
+                    {displayData.map((entry, index) => (
                       <Cell
                         key={`cell-${index}`}
                         fill={entry.fill}
                         style={{
                           transition: "0.3s",
-                          transform: activeIndex === index ? "scale(1.08)" : "scale(1)",
+                          transform:
+                            activeIndex === index ? "scale(1.1)" : "scale(1)",
                           filter:
                             activeIndex === index
                               ? "drop-shadow(0px 0px 6px rgba(0,0,0,0.3))"
@@ -150,26 +171,27 @@ export function ExpensePieChart() {
                   </Pie>
                 </PieChart>
               )}
-             
             </ResponsiveContainer>
           </div>
         </div>
 
-        {finalPieData.length > 0 && (
+        {displayData.length > 0 && (
           <div className="flex flex-row flex-wrap gap-2 pt-4 text-xs sm:text-sm text-gray-700">
-            {finalPieData.map((item, i) => (
+            {displayData.map((item, i) => (
               <div
                 key={i}
-                className="flex items-center justify-between px-2 py-1 border-b"
+                className="flex items-center justify-between px-2 py-1 border-b min-w-[120px]"
               >
                 <div className="flex items-center gap-2">
                   <span
                     className="w-2.5 h-2.5 rounded-full"
                     style={{ backgroundColor: item.fill }}
                   ></span>
-                  {item.name}
+
+                  {usingDummy ? item.name : item.name}
                 </div>
-                <span>{item.value}%</span>
+
+               <span>{usingDummy ? "0%" : `${item.value}%`}</span>
               </div>
             ))}
           </div>

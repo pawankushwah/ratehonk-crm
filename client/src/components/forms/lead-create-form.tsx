@@ -10,7 +10,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Combobox } from "@/components/ui/combobox";
 import { SlidePanel } from "@/components/ui/slide-panel";
 import { LeadTypeCreateForm } from "@/components/forms/lead-type-create-form";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, Plus } from "lucide-react";
 
@@ -35,7 +42,7 @@ interface LeadCreateFormProps {
   tenantId: string;
   onSuccess?: (lead: any) => void;
   onCancel?: () => void;
-   onFillOnly?: (data: any) => void;  
+  onFillOnly?: (data: any) => void;
   enableFillOnlyButton?: boolean;
 }
 
@@ -66,7 +73,7 @@ export function LeadCreateForm({
   onSuccess,
   onCancel,
   enableFillOnlyButton,
-  onFillOnly
+  onFillOnly,
 }: LeadCreateFormProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -149,26 +156,30 @@ export function LeadCreateForm({
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
-        <FormField
-          control={form.control}
-          name="leadTypeId"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Lead Type *</FormLabel>
-              <FormControl>
-                <Combobox
-                  options={leadTypeOptions}
-                  value={field.value}
-                  onValueChange={(value) => handleLeadTypeChange(value, field)}
-                  placeholder="Select lead type"
-                  emptyText="No lead types found"
-                  data-testid="combobox-lead-type"
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
+        {!enableFillOnlyButton && (
+          <FormField
+            control={form.control}
+            name="leadTypeId"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Lead Type *</FormLabel>
+                <FormControl>
+                  <Combobox
+                    options={leadTypeOptions}
+                    value={field.value}
+                    onValueChange={(value) =>
+                      handleLeadTypeChange(value, field)
+                    }
+                    placeholder="Select lead type"
+                    emptyText="No lead types found"
+                    data-testid="combobox-lead-type"
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        )}
 
         <div className="grid grid-cols-2 gap-4">
           <FormField
@@ -208,7 +219,11 @@ export function LeadCreateForm({
               <FormItem>
                 <FormLabel>Email</FormLabel>
                 <FormControl>
-                  <Input {...field} type="email" placeholder="lead@example.com" />
+                  <Input
+                    {...field}
+                    type="email"
+                    placeholder="lead@example.com"
+                  />
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -274,86 +289,92 @@ export function LeadCreateForm({
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        {!enableFillOnlyButton && (
+          <div className="grid grid-cols-2 gap-4">
+            <FormField
+              control={form.control}
+              name="source"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Source</FormLabel>
+                  <FormControl>
+                    <Combobox
+                      options={sourceOptions}
+                      value={field.value || ""}
+                      onValueChange={field.onChange}
+                      placeholder="Select source"
+                      emptyText="No sources found"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="priority"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Priority</FormLabel>
+                  <FormControl>
+                    <Combobox
+                      options={priorityOptions}
+                      value={field.value}
+                      onValueChange={field.onChange}
+                      placeholder="Select priority"
+                      emptyText="No priorities found"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
+        )}
+
+        {!enableFillOnlyButton && (
           <FormField
             control={form.control}
-            name="source"
+            name="budgetRange"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Source</FormLabel>
+                <FormLabel>Budget Range</FormLabel>
                 <FormControl>
-                  <Combobox
-                    options={sourceOptions}
-                    value={field.value || ""}
-                    onValueChange={field.onChange}
-                    placeholder="Select source"
-                    emptyText="No sources found"
+                  <Input {...field} placeholder="e.g., $1000 - $5000" />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        )}
+
+        {!enableFillOnlyButton && (
+          <FormField
+            control={form.control}
+            name="notes"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Notes</FormLabel>
+                <FormControl>
+                  <Textarea
+                    {...field}
+                    rows={4}
+                    placeholder="Additional notes..."
                   />
                 </FormControl>
                 <FormMessage />
               </FormItem>
             )}
           />
-
-          <FormField
-            control={form.control}
-            name="priority"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Priority</FormLabel>
-                <FormControl>
-                  <Combobox
-                    options={priorityOptions}
-                    value={field.value}
-                    onValueChange={field.onChange}
-                    placeholder="Select priority"
-                    emptyText="No priorities found"
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        </div>
-
-        <FormField
-          control={form.control}
-          name="budgetRange"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Budget Range</FormLabel>
-              <FormControl>
-                <Input {...field} placeholder="e.g., $1000 - $5000" />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-        <FormField
-          control={form.control}
-          name="notes"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Notes</FormLabel>
-              <FormControl>
-                <Textarea {...field} rows={4} placeholder="Additional notes..." />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
+        )}
 
         <div className="flex justify-end gap-3 pt-4">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={onCancel}
-            disabled={createMutation.isPending}
-          >
+          <Button type="button" variant="outline" onClick={onCancel}>
             Cancel
           </Button>
- {enableFillOnlyButton ? (
+
+         {enableFillOnlyButton ? (
     <Button
       type="button"
       variant="secondary"
@@ -361,22 +382,25 @@ export function LeadCreateForm({
         const values = form.getValues();
         onFillOnly?.(values);
       }}
+      disabled={createMutation.isPending}
     >
       Use This Data
     </Button>
   ) : (
-    
     <Button type="submit" disabled={createMutation.isPending}>
-      {createMutation.isPending && (
-        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+      {createMutation.isPending ? (
+        <>
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          Creating...
+        </>
+      ) : (
+        "Create Lead"
       )}
-      Create Lead
     </Button>
   )}
         </div>
       </form>
 
-     
       <SlidePanel
         isOpen={isLeadTypePanelOpen}
         onClose={() => setIsLeadTypePanelOpen(false)}

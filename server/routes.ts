@@ -2977,7 +2977,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         );
         if (!integration || !integration.appId || !integration.appSecret) {
           return res.status(400).json({
-            message: "Facebook app credentials not configured for this tenant",
+            message: "Facebook app credentials not configured for this tenant. Please configure your Facebook App ID and App Secret in the Social Integrations settings before connecting.",
+            error: "CREDENTIALS_NOT_CONFIGURED"
+          });
+        }
+
+        // Validate App ID format
+        const appIdRegex = /^\d+$/;
+        if (!appIdRegex.test(integration.appId.trim())) {
+          return res.status(400).json({
+            message: `Invalid Facebook App ID format. App ID should be numeric (e.g., "123456789012345"). Please check your App ID in Social Integrations settings.`,
+            error: "INVALID_APP_ID_FORMAT",
+            appId: integration.appId
           });
         }
 
@@ -2988,11 +2999,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         const authUrl = tenantFacebookService.getAuthUrl(tenantId, redirectUri);
         res.json({ authUrl });
-      } catch (error) {
+      } catch (error: any) {
         console.error("Facebook auth URL error:", error);
         res
           .status(500)
-          .json({ message: "Failed to generate Facebook auth URL" });
+          .json({ 
+            message: error.message || "Failed to generate Facebook auth URL",
+            error: error.message?.includes("App ID") ? "INVALID_APP_ID" : "AUTH_URL_ERROR"
+          });
       }
     },
   );
@@ -3044,7 +3058,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         longLivedToken.access_token,
       );
 
-      // Update social integration with OAuth tokens
+      // Store temporary OAuth tokens (will be finalized after page selection)
       await storage.updateSocialIntegration(integration.id, {
         accessToken: longLivedToken.access_token,
         refreshToken: longLivedToken.refresh_token,
@@ -3054,7 +3068,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           "pages_read_engagement",
           "pages_show_list",
         ],
-        settings: { user, pages },
+        settings: { user, pages: pages.map((p: any) => ({ ...p, selected: false })) },
       });
 
       res.redirect("/social-integrations?facebook=connected");
@@ -3220,10 +3234,170 @@ export async function registerRoutes(app: Express): Promise<Server> {
           integration.accessToken,
         );
 
-        res.json(pages);
+        // Transform pages to include page access tokens and format for frontend
+        const formattedPages = pages.map((page: any) => ({
+          pageId: page.id,
+          pageName: page.name,
+          pageAccessToken: page.access_token,
+          followersCount: page.fan_count || 0,
+          category: page.category,
+          isInstagramConnected: false, // Will be checked separately if needed
+        }));
+
+        res.json(formattedPages);
       } catch (error) {
         console.error("Facebook pages error:", error);
         res.status(500).json({ message: "Failed to fetch Facebook pages" });
+      }
+    },
+  );
+
+  // Get lead forms for a specific Facebook page
+  app.get(
+    "/api/tenants/:tenantId/facebook/pages/:pageId/lead-forms",
+    authenticate,
+    checkTenantAccess,
+    async (req, res) => {
+      try {
+        const tenantId = parseInt(req.params.tenantId);
+        const pageId = req.params.pageId;
+
+        const integration = await storage.getSocialIntegration(
+          tenantId,
+          "facebook",
+        );
+        if (!integration || !integration.accessToken) {
+          return res
+            .status(400)
+            .json({ message: "Facebook integration not connected" });
+        }
+
+        // Get page access token from pages
+        let pages: any[] = [];
+        try {
+          pages = await storage.getFacebookPages(tenantId);
+        } catch (error) {
+          // If not found, will fetch from API
+        }
+        const page = pages.find((p: any) => p.pageId === pageId);
+        
+        if (!page) {
+          // Try to get from user pages if not saved yet
+          const tenantFacebookService =
+            await SocialServiceFactory.getFacebookService(tenantId);
+          const userPages = await tenantFacebookService.getUserPages(
+            integration.accessToken,
+          );
+          const userPage = userPages.find((p: any) => p.id === pageId);
+          
+          if (!userPage) {
+            return res.status(404).json({ message: "Page not found" });
+          }
+
+          // Get lead forms using page access token
+          const leadForms = await tenantFacebookService.getPageLeadForms(
+            userPage.access_token,
+            pageId,
+          );
+
+          const formattedForms = leadForms.map((form: any) => ({
+            formId: form.id,
+            formName: form.name,
+            status: form.status,
+            totalLeads: 0, // Can be fetched separately if needed
+          }));
+
+          return res.json(formattedForms);
+        }
+
+        // Create Facebook service using SocialServiceFactory
+        const tenantFacebookService =
+          await SocialServiceFactory.getFacebookService(tenantId);
+        const leadForms = await tenantFacebookService.getPageLeadForms(
+          page.pageAccessToken,
+          pageId,
+        );
+
+        const formattedForms = leadForms.map((form: any) => ({
+          formId: form.id,
+          formName: form.name,
+          status: form.status,
+          totalLeads: 0, // Can be fetched separately if needed
+        }));
+
+        res.json(formattedForms);
+      } catch (error) {
+        console.error("Facebook lead forms error:", error);
+        res.status(500).json({ message: "Failed to fetch lead forms" });
+      }
+    },
+  );
+
+  // Save selected Facebook pages and lead forms
+  app.post(
+    "/api/tenants/:tenantId/facebook/connect-pages",
+    authenticate,
+    checkTenantAccess,
+    async (req, res) => {
+      try {
+        const tenantId = parseInt(req.params.tenantId);
+        const { pageIds, leadFormIds } = req.body;
+
+        const integration = await storage.getSocialIntegration(
+          tenantId,
+          "facebook",
+        );
+        if (!integration || !integration.accessToken) {
+          return res
+            .status(400)
+            .json({ message: "Facebook integration not connected" });
+        }
+
+        // Create Facebook service using SocialServiceFactory
+        const tenantFacebookService =
+          await SocialServiceFactory.getFacebookService(tenantId);
+        const userPages = await tenantFacebookService.getUserPages(
+          integration.accessToken,
+        );
+
+        // Filter to only selected pages
+        const selectedPages = userPages.filter((page: any) =>
+          pageIds.includes(page.id),
+        );
+
+        // Save pages using FacebookService saveIntegration method
+        const result = await tenantFacebookService.saveIntegration(tenantId, {
+          user: integration.settings?.user || {},
+          longLivedToken: {
+            access_token: integration.accessToken,
+            expires_in: Math.floor(
+              (new Date(integration.tokenExpiresAt || new Date()).getTime() -
+                Date.now()) /
+                1000,
+            ),
+          },
+          pages: selectedPages,
+          permissions: integration.permissions || [],
+        });
+
+        // Update integration to mark as fully connected
+        await storage.updateSocialIntegration(integration.id, {
+          isActive: true,
+          settings: {
+            ...integration.settings,
+            selectedPageIds: pageIds,
+            selectedLeadFormIds: leadFormIds || [],
+          },
+        });
+
+        res.json({
+          success: true,
+          message: `Successfully connected ${selectedPages.length} page(s)`,
+          pages: result.pages,
+        });
+      } catch (error) {
+        console.error("Facebook connect pages error:", error);
+        res.status(500).json({ message: "Failed to connect pages" });
       }
     },
   );

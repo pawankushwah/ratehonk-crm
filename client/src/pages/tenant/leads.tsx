@@ -912,118 +912,119 @@ export default function Leads() {
 
           {/* Search and View Options */}
           <div className=" border-gray-200 mb-6 p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-4">
-                <div className="relative flex-1 max-w-md">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                  <Input
-                    placeholder="Search Leads"
-                    value={searchTerm}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                      setSearchTerm(e.target.value)
-                    }
-                    className="pl-10 bg-white border-gray-300"
-                  />
-                </div>
-                {/* Date Filter Controls */}
-                <div className="flex items-center space-x-2">
-                  <Select value={dateFilter} onValueChange={setDateFilter}>
-                    <SelectTrigger
-                      className="w-[160px]"
-                      data-testid="select-date-range"
-                    >
-                      <SelectValue placeholder="Date range" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All dates</SelectItem>
-                      <SelectItem value="today">Today</SelectItem>
-                      <SelectItem value="this_week">This week</SelectItem>
-                      <SelectItem value="this_month">This month</SelectItem>
-                      <SelectItem value="this_year">This year</SelectItem>
-                      <SelectItem value="custom">Custom</SelectItem>
-                    </SelectContent>
-                  </Select>
+            <div className="flex items-center justify-end">
+              {viewMode !== "timeline" && (
+                <div className="flex items-center space-x-4">
+                  <div className="relative flex-1 max-w-md">
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                    <Input
+                      placeholder="Search Leads"
+                      value={searchTerm}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                        setSearchTerm(e.target.value)
+                      }
+                      className="pl-10 bg-white border-gray-300"
+                    />
+                  </div>
+                  {/* Date Filter Controls */}
+                  <div className="flex items-center space-x-2">
+                    <Select value={dateFilter} onValueChange={setDateFilter}>
+                      <SelectTrigger
+                        className="w-[160px]"
+                        data-testid="select-date-range"
+                      >
+                        <SelectValue placeholder="Date range" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All dates</SelectItem>
+                        <SelectItem value="today">Today</SelectItem>
+                        <SelectItem value="this_week">This week</SelectItem>
+                        <SelectItem value="this_month">This month</SelectItem>
+                        <SelectItem value="this_year">This year</SelectItem>
+                        <SelectItem value="custom">Custom</SelectItem>
+                      </SelectContent>
+                    </Select>
 
-                  {dateFilter === "custom" && (
-                    <div className="flex items-center space-x-2">
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <Button
-                            variant="outline"
-                            className={cn(
-                              "w-[180px] justify-start text-left font-normal",
-                              !customDateFrom && "text-muted-foreground"
-                            )}
-                            data-testid="button-date-from"
-                          >
-                            <CalendarDays className="mr-2 h-4 w-4" />
-                            {customDateFrom
-                              ? format(customDateFrom, "LLL dd, y")
-                              : "From date"}
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0" align="start">
-                          <DatePickerCalendar
-                            mode="single"
-                            selected={customDateFrom ?? undefined}
-                            onSelect={(d) => {
-                              setCustomDateFrom(d ?? null);
-                              setDateFilter("custom");
-                            }}
-                            initialFocus
-                          />
-                        </PopoverContent>
-                      </Popover>
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <Button
-                            variant="outline"
-                            className={cn(
-                              "w-[180px] justify-start text-left font-normal",
-                              !customDateTo && "text-muted-foreground"
-                            )}
-                            data-testid="button-date-to"
-                          >
-                            <CalendarDays className="mr-2 h-4 w-4" />
-                            {customDateTo
-                              ? format(customDateTo, "LLL dd, y")
-                              : "To date"}
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0" align="start">
-                          <DatePickerCalendar
-                            mode="single"
-                            selected={customDateTo ?? undefined}
-                            onSelect={(d) => {
-                              setCustomDateTo(d ?? null);
-                              setDateFilter("custom");
-                            }}
-                            initialFocus
-                          />
-                        </PopoverContent>
-                      </Popover>
-                    </div>
-                  )}
+                    {dateFilter === "custom" && (
+                      <div className="flex items-center space-x-2">
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              className={cn(
+                                "w-[180px] justify-start text-left font-normal",
+                                !customDateFrom && "text-muted-foreground"
+                              )}
+                              data-testid="button-date-from"
+                            >
+                              <CalendarDays className="mr-2 h-4 w-4" />
+                              {customDateFrom
+                                ? format(customDateFrom, "LLL dd, y")
+                                : "From date"}
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto p-0" align="start">
+                            <DatePickerCalendar
+                              mode="single"
+                              selected={customDateFrom ?? undefined}
+                              onSelect={(d) => {
+                                setCustomDateFrom(d ?? null);
+                                setDateFilter("custom");
+                              }}
+                              initialFocus
+                            />
+                          </PopoverContent>
+                        </Popover>
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              className={cn(
+                                "w-[180px] justify-start text-left font-normal",
+                                !customDateTo && "text-muted-foreground"
+                              )}
+                              data-testid="button-date-to"
+                            >
+                              <CalendarDays className="mr-2 h-4 w-4" />
+                              {customDateTo
+                                ? format(customDateTo, "LLL dd, y")
+                                : "To date"}
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto p-0" align="start">
+                            <DatePickerCalendar
+                              mode="single"
+                              selected={customDateTo ?? undefined}
+                              onSelect={(d) => {
+                                setCustomDateTo(d ?? null);
+                                setDateFilter("custom");
+                              }}
+                              initialFocus
+                            />
+                          </PopoverContent>
+                        </Popover>
+                      </div>
+                    )}
 
-                  <Select value={typeFilter} onValueChange={setTypeFilter}>
-                    <SelectTrigger
-                      className="w-[160px] bg-transparent border-gray-300"
-                      data-testid="select-type-filter"
-                    >
-                      <SelectValue placeholder="Lead Category" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All categories</SelectItem>
-                      {leadTypes.map((type) => (
-                        <SelectItem key={type.id} value={String(type.id)}>
-                          {type.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    <Select value={typeFilter} onValueChange={setTypeFilter}>
+                      <SelectTrigger
+                        className="w-[160px] bg-transparent border-gray-300"
+                        data-testid="select-type-filter"
+                      >
+                        <SelectValue placeholder="Lead Category" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All categories</SelectItem>
+                        {leadTypes.map((type) => (
+                          <SelectItem key={type.id} value={String(type.id)}>
+                            {type.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
 
-                  {/* Lead Status Filter */}
-                  {/* <Select value={statusFilter} onValueChange={setStatusFilter}>
+                    {/* Lead Status Filter */}
+                    {/* <Select value={statusFilter} onValueChange={setStatusFilter}>
                     <SelectTrigger
                       className="w-[160px]"
                       data-testid="select-status-filter"
@@ -1040,8 +1041,8 @@ export default function Leads() {
                     </SelectContent>
                   </Select> */}
 
-                  {/* Priority Filter */}
-                  {/* <Select
+                    {/* Priority Filter */}
+                    {/* <Select
                     value={priorityFilter}
                     onValueChange={setPriorityFilter}
                   >
@@ -1060,8 +1061,8 @@ export default function Leads() {
                     </SelectContent>
                   </Select> */}
 
-                  {/* Type Filter */}
-                  {/* <Select value={typeFilter} onValueChange={setTypeFilter}>
+                    {/* Type Filter */}
+                    {/* <Select value={typeFilter} onValueChange={setTypeFilter}>
                     <SelectTrigger
                       className="w-[160px]"
                       data-testid="select-type-filter"
@@ -1077,8 +1078,8 @@ export default function Leads() {
                     </SelectContent>
                   </Select> */}
 
-                  {/* Source Filter */}
-                  {/* <Select value={sourceFilter} onValueChange={setSourceFilter}>
+                    {/* Source Filter */}
+                    {/* <Select value={sourceFilter} onValueChange={setSourceFilter}>
                     <SelectTrigger
                       className="w-[160px]"
                       data-testid="select-source-filter"
@@ -1103,23 +1104,27 @@ export default function Leads() {
                       <SelectItem value="other">Other</SelectItem>
                     </SelectContent>
                   </Select> */}
+                  </div>
                 </div>
-              </div>
-              <div className="flex items-center space-x-2 border rounded-full bg-white p-1">
-                {viewModes.map((mode) => {
-                  const Icon = mode.icon;
-                  return (
-                    <Button
-                      key={mode.key}
-                      variant={viewMode === mode.key ? "default" : "ghost"}
-                      size="icon"
-                      className="h-9 w-9"
-                      onClick={() => setViewMode(mode.key)}
-                    >
-                      <Icon className="h-4 w-4" />
-                    </Button>
-                  );
-                })}
+              )}
+
+             
+                <div className="flex items-center space-x-2 border rounded-full bg-white p-1">
+                  {viewModes.map((mode) => {
+                    const Icon = mode.icon;
+                    return (
+                      <Button
+                        key={mode.key}
+                        variant={viewMode === mode.key ? "default" : "ghost"}
+                        size="icon"
+                        className="h-9 w-9"
+                        onClick={() => setViewMode(mode.key)}
+                      >
+                        <Icon className="h-4 w-4" />
+                      </Button>
+                    );
+                  })}
+               
               </div>
             </div>
           </div>
@@ -1896,7 +1901,7 @@ export default function Leads() {
           )}
 
           {viewMode === "timeline" && (
-            <LeadsAnalytics leads={leads} onStatusChange={handleStatusChange} />
+            <LeadsAnalytics onStatusChange={handleStatusChange} />
           )}
         </div>
       </div>

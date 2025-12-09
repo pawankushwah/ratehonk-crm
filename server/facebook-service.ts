@@ -50,12 +50,23 @@ export class FacebookService {
   private readonly appSecret: string;
 
   constructor(appId: string, appSecret: string) {
-    this.appId = appId;
-    this.appSecret = appSecret;
-    
-    if (!this.appId || !this.appSecret) {
-      throw new Error('Facebook App ID and App Secret are required. Please configure them in the Social Integrations settings.');
+    // Validate App ID format (should be numeric)
+    if (!appId || typeof appId !== 'string') {
+      throw new Error('Facebook App ID is required. Please configure it in the Social Integrations settings.');
     }
+    
+    // Facebook App IDs are numeric strings (typically 15-16 digits)
+    const appIdRegex = /^\d+$/;
+    if (!appIdRegex.test(appId.trim())) {
+      throw new Error(`Invalid Facebook App ID format. App ID should be numeric (e.g., "123456789012345"). Received: "${appId}"`);
+    }
+    
+    if (!appSecret || typeof appSecret !== 'string' || appSecret.trim().length === 0) {
+      throw new Error('Facebook App Secret is required. Please configure it in the Social Integrations settings.');
+    }
+    
+    this.appId = appId.trim();
+    this.appSecret = appSecret.trim();
   }
 
   /**
@@ -392,6 +403,14 @@ export class FacebookService {
       throw new Error('No Facebook integration found');
     }
 
+    // Get default lead type for the tenant
+    const leadTypes = await simpleStorage.getLeadTypesByTenant(tenantId);
+    const defaultLeadType = leadTypes.find((lt: any) => lt.name === 'General Inquiry' || lt.name === 'General') || leadTypes[0];
+    
+    if (!defaultLeadType) {
+      throw new Error('No lead types configured for tenant. Please create at least one lead type.');
+    }
+
     const pages = await simpleStorage.getFacebookPages(tenantId);
     let totalImported = 0;
     let totalProcessed = 0;
@@ -408,16 +427,43 @@ export class FacebookService {
 
           for (const lead of leads) {
             try {
-              // Get detailed lead information
+              // Get lead details first
               const leadDetails = await this.getLeadDetails(page.pageAccessToken, lead.id);
               
+              // Check if lead already exists (by email or Facebook lead ID)
+              const existingLeads = await simpleStorage.getLeadsByTenant({ tenantId });
+              
+              // Extract email from lead details
+              let leadEmail = '';
+              if (leadDetails.field_data) {
+                const emailField = leadDetails.field_data.find((f: any) => 
+                  f.name.toLowerCase() === 'email'
+                );
+                if (emailField && emailField.values && emailField.values.length > 0) {
+                  leadEmail = emailField.values[0];
+                }
+              }
+
+              // Check for duplicates
+              const isDuplicate = existingLeads.some((l: any) => 
+                (l.email && leadEmail && l.email.toLowerCase() === leadEmail.toLowerCase()) ||
+                (l.typeSpecificData && typeof l.typeSpecificData === 'object' && 
+                 l.typeSpecificData.facebookLeadId === lead.id)
+              );
+
+              if (isDuplicate) {
+                console.log(`Skipping duplicate Facebook lead: ${lead.id}`);
+                continue;
+              }
+
               // Transform Facebook lead to CRM lead format
-              const crmLead = this.transformFacebookLead(leadDetails, page.pageName, form.name);
+              const crmLead = this.transformFacebookLead(leadDetails, page.pageName, form.name, defaultLeadType.id);
               
               // Create lead in CRM
               await simpleStorage.createLead({
                 ...crmLead,
-                tenantId
+                tenantId,
+                leadTypeId: defaultLeadType.id
               });
               
               totalImported++;
@@ -431,9 +477,10 @@ export class FacebookService {
       }
     }
 
-    // Update last sync time
+    // Update last sync time and total imported count
     await simpleStorage.updateFacebookIntegration(integration.id, {
-      lastSync: new Date()
+      lastSync: new Date(),
+      totalLeadsImported: (integration.totalLeadsImported || 0) + totalImported
     });
 
     return { imported: totalImported, total: totalProcessed };
@@ -442,20 +489,29 @@ export class FacebookService {
   /**
    * Transform Facebook lead to CRM lead format
    */
-  private transformFacebookLead(facebookLead: any, pageName: string, formName: string): any {
+  private transformFacebookLead(facebookLead: any, pageName: string, formName: string, leadTypeId?: number): any {
     const leadData: any = {
-      source: `Facebook - ${pageName}`,
+      source: `Facebook Lead Ads - ${pageName}`,
       status: 'new',
-      notes: `Lead from Facebook form: ${formName}`,
-      facebookLeadId: facebookLead.id,
+      notes: `Lead from Facebook Lead Ads form: ${formName}\nPage: ${pageName}`,
+      typeSpecificData: {
+        facebookLeadId: facebookLead.id,
+        facebookFormId: formName,
+        facebookPageName: pageName
+      },
       createdAt: new Date(facebookLead.created_time)
     };
+
+    // Set leadTypeId if provided
+    if (leadTypeId) {
+      leadData.leadTypeId = leadTypeId;
+    }
 
     // Parse field data
     if (facebookLead.field_data) {
       for (const field of facebookLead.field_data) {
         const fieldName = field.name.toLowerCase();
-        const fieldValue = field.values[0];
+        const fieldValue = field.values && field.values.length > 0 ? field.values[0] : '';
 
         switch (fieldName) {
           case 'first_name':
@@ -466,24 +522,63 @@ export class FacebookService {
             break;
           case 'full_name':
             const nameParts = fieldValue.split(' ');
-            leadData.firstName = nameParts[0];
-            leadData.lastName = nameParts.slice(1).join(' ');
+            leadData.firstName = nameParts[0] || '';
+            leadData.lastName = nameParts.slice(1).join(' ') || '';
             break;
           case 'email':
             leadData.email = fieldValue;
             break;
           case 'phone_number':
+          case 'phone':
             leadData.phone = fieldValue;
             break;
           case 'company_name':
+          case 'company':
             leadData.company = fieldValue;
+            // Store in typeSpecificData as well
+            if (!leadData.typeSpecificData) {
+              leadData.typeSpecificData = {};
+            }
+            leadData.typeSpecificData.company = fieldValue;
+            break;
+          case 'city':
+            leadData.city = fieldValue;
+            break;
+          case 'state':
+            leadData.state = fieldValue;
+            break;
+          case 'country':
+            leadData.country = fieldValue;
+            break;
+          case 'zip_code':
+          case 'postal_code':
+            if (!leadData.typeSpecificData) {
+              leadData.typeSpecificData = {};
+            }
+            leadData.typeSpecificData.zipCode = fieldValue;
             break;
           default:
-            // Store other fields in notes
+            // Store other fields in typeSpecificData
+            if (!leadData.typeSpecificData) {
+              leadData.typeSpecificData = {};
+            }
+            leadData.typeSpecificData[field.name] = fieldValue;
+            // Also add to notes for visibility
             leadData.notes += `\n${field.name}: ${fieldValue}`;
             break;
         }
       }
+    }
+
+    // Ensure name is set
+    if (!leadData.firstName && !leadData.lastName) {
+      leadData.firstName = 'Facebook';
+      leadData.lastName = 'Lead';
+    }
+
+    // Ensure email is set (required field)
+    if (!leadData.email) {
+      leadData.email = `facebook_lead_${facebookLead.id}@facebook.com`;
     }
 
     return leadData;
@@ -531,15 +626,25 @@ export class FacebookService {
         return;
       }
 
+      // Get default lead type for the tenant
+      const leadTypes = await simpleStorage.getLeadTypesByTenant(tenantId);
+      const defaultLeadType = leadTypes.find((lt: any) => lt.name === 'General Inquiry' || lt.name === 'General') || leadTypes[0];
+      
+      if (!defaultLeadType) {
+        console.error('No lead types configured for tenant');
+        return;
+      }
+
       // Get lead details
       const leadDetails = await this.getLeadDetails(page.pageAccessToken, leadgenData.leadgen_id);
       
       // Transform and create lead
-      const crmLead = this.transformFacebookLead(leadDetails, page.pageName, 'Webhook Lead');
+      const crmLead = this.transformFacebookLead(leadDetails, page.pageName, 'Webhook Lead', defaultLeadType.id);
       
       await simpleStorage.createLead({
         ...crmLead,
-        tenantId
+        tenantId,
+        leadTypeId: defaultLeadType.id
       });
 
       console.log(`Successfully imported webhook lead: ${leadgenData.leadgen_id}`);

@@ -113,6 +113,39 @@ export default function SocialIntegrations() {
     },
   });
 
+  const syncFacebookLeadsMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", `/api/tenants/${tenant?.id}/facebook/sync-leads`);
+      return response.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: [`/api/tenants/${tenant?.id}/social-integrations`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/tenants/${tenant?.id}/facebook/status`] });
+      toast({
+        title: "Facebook Leads Synced!",
+        description: `Successfully imported ${data.imported || data.importedCount || 0} new leads from Facebook Lead Ads.`,
+      });
+      
+      // Show mini celebration for successful sync
+      if ((data.imported || data.importedCount || 0) > 0) {
+        setTimeout(() => {
+          setCelebrationData({
+            platform: 'facebook',
+            stats: { leadsAvailable: data.imported || data.importedCount || 0 }
+          });
+          setShowCelebration(true);
+        }, 500);
+      }
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Sync Failed",
+        description: error.message || "Failed to sync Facebook leads",
+        variant: "destructive",
+      });
+    },
+  });
+
   // Facebook configuration state
   const [facebookConfig, setFacebookConfig] = useState({ appId: "", appSecret: "" });
   const [showFacebookConfig, setShowFacebookConfig] = useState(false);
@@ -193,12 +226,12 @@ export default function SocialIntegrations() {
   const platforms = [
     {
       id: "facebook",
-      name: "Facebook Business Suite",
+      name: "Facebook Lead Ads",
       icon: Facebook,
-      description: "Complete Facebook Business Suite integration with Pages, Instagram, lead forms, and insights",
+      description: "Automatically fetch and store leads from Facebook Lead Ads campaigns directly into your CRM",
       color: "bg-blue-100 text-blue-800",
       isOAuth: true,
-      features: ["Facebook Pages", "Instagram Business", "Lead Forms", "Ad Campaigns", "Business Insights", "Post Scheduling"],
+      features: ["Automatic Lead Import", "Facebook Lead Forms", "Real-time Sync", "Duplicate Detection", "Lead Source Tracking", "Campaign Analytics"],
       fields: [],
       status: facebookStatus as any,
       credentials: { appId: "App ID", appSecret: "App Secret" }
@@ -266,6 +299,32 @@ export default function SocialIntegrations() {
   // Universal platform configuration handler
   const handleConfigure = async (platform: string, credentials: Record<string, string>) => {
     try {
+      // Validate Facebook App ID format if it's Facebook
+      if (platform === 'facebook' && credentials.appId) {
+        const appIdRegex = /^\d+$/;
+        const trimmedAppId = credentials.appId.trim();
+        
+        if (!trimmedAppId) {
+          throw new Error("Facebook App ID is required");
+        }
+        
+        if (!appIdRegex.test(trimmedAppId)) {
+          throw new Error("Invalid Facebook App ID format. App ID must be numeric (e.g., 123456789012345). Please check your App ID from Facebook Developer Console.");
+        }
+        
+        // Ensure App ID is trimmed
+        credentials.appId = trimmedAppId;
+      }
+      
+      // Validate App Secret is not empty
+      if (platform === 'facebook' && credentials.appSecret) {
+        const trimmedSecret = credentials.appSecret.trim();
+        if (!trimmedSecret) {
+          throw new Error("Facebook App Secret is required");
+        }
+        credentials.appSecret = trimmedSecret;
+      }
+      
       const response = await apiRequest("POST", `/api/tenants/${tenant?.id}/${platform}/configure`, credentials);
       const result = await response.json();
 
@@ -279,8 +338,11 @@ export default function SocialIntegrations() {
         await queryClient.invalidateQueries({ 
           queryKey: [`/api/tenants/${tenant?.id}/${platform}/status`] 
         });
+        await queryClient.invalidateQueries({ 
+          queryKey: [`/api/tenants/${tenant?.id}/social-integrations`] 
+        });
       } else {
-        throw new Error(result.message || `Failed to configure ${platform}`);
+        throw new Error(result.message || result.error || `Failed to configure ${platform}`);
       }
     } catch (error: any) {
       toast({
@@ -351,15 +413,39 @@ export default function SocialIntegrations() {
                 <Label htmlFor={key}>{platform.credentials[key]}</Label>
                 <Input
                   id={key}
-                  type="password"
+                  type={key === 'appId' && platform.id === 'facebook' ? 'text' : 'password'}
                   placeholder={`Enter your ${platform.credentials[key].toLowerCase()}`}
                   value={formData[key] || ''}
-                  onChange={(e) => setFormData(prev => ({ ...prev, [key]: e.target.value }))}
+                  onChange={(e) => {
+                    let value = e.target.value;
+                    // For Facebook App ID, only allow numeric input
+                    if (key === 'appId' && platform.id === 'facebook') {
+                      value = value.replace(/\D/g, ''); // Remove non-numeric characters
+                    }
+                    setFormData(prev => ({ ...prev, [key]: value }));
+                  }}
                 />
+                {key === 'appId' && platform.id === 'facebook' && (
+                  <p className="text-xs text-muted-foreground">
+                    Facebook App ID must be numeric (e.g., 123456789012345). Find it in your Facebook App Settings → Basic.
+                  </p>
+                )}
               </div>
             ))}
-            <div className="text-xs text-muted-foreground">
-              <p>Get these credentials from your {platform.name} developer console.</p>
+            <div className="text-xs text-muted-foreground bg-blue-50 p-3 rounded-lg">
+              <p className="font-medium mb-1">Where to find these credentials:</p>
+              {platform.id === 'facebook' && (
+                <ol className="list-decimal list-inside space-y-1">
+                  <li>Go to <a href="https://developers.facebook.com/apps" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">developers.facebook.com/apps</a></li>
+                  <li>Select your app (or create a new one)</li>
+                  <li>Go to Settings → Basic</li>
+                  <li>Copy the App ID (numeric) and App Secret</li>
+                  <li>Make sure your app has "leads_retrieval" permission enabled</li>
+                </ol>
+              )}
+              {platform.id !== 'facebook' && (
+                <p>Get these credentials from your {platform.name} developer console.</p>
+              )}
             </div>
           </div>
 
@@ -380,7 +466,11 @@ export default function SocialIntegrations() {
   // Facebook OAuth integration mutation
   const connectFacebookMutation = useMutation({
     mutationFn: async () => {
-      const response = await apiRequest("GET", `/api/tenants/${tenant?.id}/facebook/auth`);
+      const response = await apiRequest("GET", `/api/auth/facebook/${tenant?.id}`);
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || "Failed to get Facebook auth URL");
+      }
       return response.json();
     },
     onSuccess: (data: any) => {
@@ -390,21 +480,43 @@ export default function SocialIntegrations() {
         timestamp: Date.now()
       }));
       // Redirect to Facebook OAuth
-      window.location.href = data.authUrl;
+      if (data.authUrl) {
+        window.location.href = data.authUrl;
+      } else {
+        throw new Error("No auth URL received from server");
+      }
     },
     onError: (error: any) => {
+      let errorMessage = error.message || "Failed to initiate Facebook connection";
+      
+      // Provide helpful error messages
+      if (errorMessage.includes("not configured") || errorMessage.includes("CREDENTIALS_NOT_CONFIGURED")) {
+        errorMessage = "Facebook App ID and App Secret are not configured. Please configure them in the Social Integrations settings first.";
+      } else if (errorMessage.includes("Invalid") || errorMessage.includes("INVALID_APP_ID")) {
+        errorMessage = "Invalid Facebook App ID format. Please check your App ID in Social Integrations settings. App ID should be numeric (e.g., 123456789012345).";
+      }
+      
       toast({
         title: "Facebook Connection Failed",
-        description: error.message || "Failed to initiate Facebook connection",
+        description: errorMessage,
         variant: "destructive",
       });
     },
   });
 
+  // Facebook page selection modal state
+  const [showPageSelectionModal, setShowPageSelectionModal] = useState(false);
+  const [availablePages, setAvailablePages] = useState<any[]>([]);
+  const [selectedPages, setSelectedPages] = useState<Set<string>>(new Set());
+  const [pageLeadForms, setPageLeadForms] = useState<Record<string, any[]>>({});
+  const [selectedLeadForms, setSelectedLeadForms] = useState<Set<string>>(new Set());
+  const [isLoadingPages, setIsLoadingPages] = useState(false);
+
   // Check for successful OAuth callback
   React.useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get('code');
+    const facebookConnected = urlParams.get('facebook');
     const pendingConnection = sessionStorage.getItem('pendingFacebookConnection');
     
     if (code && pendingConnection) {
@@ -412,23 +524,117 @@ export default function SocialIntegrations() {
       // Clear the pending connection
       sessionStorage.removeItem('pendingFacebookConnection');
       
-      // Trigger celebration after a short delay to ensure data is loaded
-      setTimeout(() => {
-        setCelebrationData({
-          platform: connectionData.platform,
-          stats: {
-            pagesConnected: 2,
-            leadsAvailable: 15,
-            instagramConnected: true
-          }
-        });
-        setShowCelebration(true);
-      }, 1000);
+      // If callback completed, fetch pages for selection
+      if (facebookConnected === 'connected') {
+        fetchFacebookPagesForSelection();
+      }
       
       // Clean up URL
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, []);
+
+  // Fetch Facebook pages after OAuth for user selection
+  const fetchFacebookPagesForSelection = async () => {
+    setIsLoadingPages(true);
+    try {
+      // First, refresh the Facebook status to get latest data
+      await queryClient.invalidateQueries({ queryKey: [`/api/tenants/${tenant?.id}/facebook/status`] });
+      
+      // Fetch pages from API
+      const response = await apiRequest("GET", `/api/tenants/${tenant?.id}/facebook/pages`);
+      const pages = await response.json();
+      
+      if (!pages || pages.length === 0) {
+        toast({
+          title: "No Pages Found",
+          description: "No Facebook Pages found. Please make sure you have pages associated with your Facebook account.",
+          variant: "destructive",
+        });
+        setIsLoadingPages(false);
+        return;
+      }
+      
+      setAvailablePages(pages || []);
+      setShowPageSelectionModal(true);
+      
+      // Pre-select all pages by default
+      const allPageIds = new Set((pages || []).map((p: any) => p.pageId || p.id));
+      setSelectedPages(allPageIds);
+      
+      // Fetch lead forms for each page
+      for (const page of pages || []) {
+        try {
+          const pageId = page.pageId || page.id;
+          const formsResponse = await apiRequest("GET", `/api/tenants/${tenant?.id}/facebook/pages/${pageId}/lead-forms`);
+          const forms = await formsResponse.json();
+          setPageLeadForms(prev => ({
+            ...prev,
+            [pageId]: forms || []
+          }));
+          
+          // Pre-select all lead forms
+          const formIds = (forms || []).map((f: any) => f.formId || f.id);
+          setSelectedLeadForms(prev => new Set([...prev, ...formIds]));
+        } catch (error) {
+          console.error(`Error fetching lead forms for page ${page.pageId || page.id}:`, error);
+          // Set empty array if error
+          setPageLeadForms(prev => ({
+            ...prev,
+            [page.pageId || page.id]: []
+          }));
+        }
+      }
+    } catch (error: any) {
+      console.error("Error fetching Facebook pages:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to fetch Facebook pages. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoadingPages(false);
+    }
+  };
+
+  // Save selected pages and lead forms
+  const saveFacebookConnection = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", `/api/tenants/${tenant?.id}/facebook/connect-pages`, {
+        pageIds: Array.from(selectedPages),
+        leadFormIds: Array.from(selectedLeadForms)
+      });
+      return response.json();
+    },
+    onSuccess: (data: any) => {
+      setShowPageSelectionModal(false);
+      queryClient.invalidateQueries({ queryKey: [`/api/tenants/${tenant?.id}/facebook/status`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/tenants/${tenant?.id}/facebook/pages`] });
+      toast({
+        title: "Facebook Connected!",
+        description: `Successfully connected ${selectedPages.size} page(s) with ${selectedLeadForms.size} lead form(s).`,
+      });
+      
+      // Show celebration
+      setTimeout(() => {
+        setCelebrationData({
+          platform: 'facebook',
+          stats: {
+            pagesConnected: selectedPages.size,
+            leadsAvailable: selectedLeadForms.size
+          }
+        });
+        setShowCelebration(true);
+      }, 500);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Connection Failed",
+        description: error.message || "Failed to save Facebook connection",
+        variant: "destructive",
+      });
+    },
+  });
 
   // Remove duplicate facebookStatus query - already declared above
 
@@ -985,36 +1191,6 @@ export default function SocialIntegrations() {
       enabled: !!tenant?.id,
     });
 
-    const syncFacebookLeadsMutation = useMutation({
-      mutationFn: async () => {
-        const response = await apiRequest("POST", `/api/tenants/${tenant?.id}/facebook/sync-leads`);
-        return response.json();
-      },
-      onSuccess: (data: any) => {
-        toast({
-          title: "Facebook Leads Synced!",
-          description: `Imported ${data.imported} new leads from Facebook Business Suite.`,
-        });
-        
-        // Show mini celebration for successful sync
-        if (data.imported > 0) {
-          setTimeout(() => {
-            setCelebrationData({
-              platform: 'facebook',
-              stats: { leadsAvailable: data.imported }
-            });
-            setShowCelebration(true);
-          }, 500);
-        }
-      },
-      onError: (error: any) => {
-        toast({
-          title: "Sync Failed",
-          description: error.message || "Failed to sync Facebook leads",
-          variant: "destructive",
-        });
-      },
-    });
 
     const disconnectFacebookMutation = useMutation({
       mutationFn: async () => {
@@ -1240,6 +1416,76 @@ export default function SocialIntegrations() {
           </TabsList>
 
           <TabsContent value="platforms">
+            {/* Facebook Lead Ads Highlight Section */}
+            <Card className="mb-6 border-2 border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50">
+              <CardContent className="p-6">
+                <div className="flex items-start justify-between">
+                  <div className="flex items-start gap-4">
+                    <div className="p-3 bg-blue-600 rounded-lg">
+                      <Facebook className="h-8 w-8 text-white" />
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="text-xl font-bold text-gray-900 mb-2">Facebook Lead Ads Integration</h3>
+                      <p className="text-gray-700 mb-4">
+                        Automatically fetch leads from your Facebook Lead Ads campaigns and store them directly in your CRM leads table. 
+                        No manual work required - leads are imported automatically when they submit your Facebook lead forms.
+                      </p>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle className="h-5 w-5 text-green-600" />
+                          <span className="text-sm font-medium">Automatic Lead Import</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <CheckCircle className="h-5 w-5 text-green-600" />
+                          <span className="text-sm font-medium">Duplicate Detection</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <CheckCircle className="h-5 w-5 text-green-600" />
+                          <span className="text-sm font-medium">Real-time Sync Available</span>
+                        </div>
+                      </div>
+                      {(facebookStatus as any)?.isConnected ? (
+                        <div className="flex gap-3">
+                          <Button 
+                            onClick={() => syncFacebookLeadsMutation.mutate()}
+                            disabled={syncFacebookLeadsMutation.isPending}
+                            className="bg-blue-600 hover:bg-blue-700"
+                          >
+                            {syncFacebookLeadsMutation.isPending ? (
+                              <>
+                                <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                                Syncing Leads...
+                              </>
+                            ) : (
+                              <>
+                                <RefreshCw className="h-4 w-4 mr-2" />
+                                Sync Facebook Leads Now
+                              </>
+                            )}
+                          </Button>
+                          <Button 
+                            variant="outline"
+                            onClick={() => setSelectedPlatform('facebook')}
+                          >
+                            <Settings className="h-4 w-4 mr-2" />
+                            Manage Integration
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button 
+                          onClick={() => setSelectedPlatform('facebook')}
+                          className="bg-blue-600 hover:bg-blue-700"
+                        >
+                          <Facebook className="h-4 w-4 mr-2" />
+                          Connect Facebook Lead Ads
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {platforms.map((platform) => {
                 const integration = getIntegrationForPlatform(platform.id);
@@ -1303,7 +1549,7 @@ export default function SocialIntegrations() {
                           </DialogContent>
                         </Dialog>
 
-                        {isConfigured && (
+                        {isConfigured && platform.id !== 'facebook' && (
                           <Button 
                             className="w-full"
                             onClick={() => syncLeadsMutation.mutate(platform.id)}
@@ -1498,6 +1744,185 @@ export default function SocialIntegrations() {
                 disabled={!facebookConfig.appId || !facebookConfig.appSecret || saveFacebookConfig.isPending}
               >
                 {saveFacebookConfig.isPending ? "Saving..." : "Save Configuration"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Facebook Page Selection Modal */}
+        <Dialog open={showPageSelectionModal} onOpenChange={setShowPageSelectionModal}>
+          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Connect Facebook Lead Ads</DialogTitle>
+              <DialogDescription>
+                Select the Facebook Pages and Lead Forms you want to connect. Leads from selected forms will be automatically imported into your CRM.
+              </DialogDescription>
+            </DialogHeader>
+            
+            {isLoadingPages ? (
+              <div className="flex items-center justify-center py-8">
+                <RefreshCw className="h-8 w-8 animate-spin text-blue-600" />
+                <span className="ml-3">Loading your Facebook Pages...</span>
+              </div>
+            ) : (
+              <div className="space-y-6 py-4">
+                {/* Pages Selection */}
+                <div>
+                  <h3 className="text-lg font-semibold mb-3">Select Facebook Pages</h3>
+                  <div className="space-y-2 max-h-60 overflow-y-auto">
+                    {availablePages.length === 0 ? (
+                      <p className="text-sm text-muted-foreground py-4 text-center">
+                        No Facebook Pages found. Please make sure you have pages associated with your Facebook account.
+                      </p>
+                    ) : (
+                      availablePages.map((page: any) => (
+                        <div
+                          key={page.pageId || page.id}
+                          className={`flex items-center justify-between p-3 border rounded-lg cursor-pointer transition-colors ${
+                            selectedPages.has(page.pageId || page.id)
+                              ? 'border-blue-500 bg-blue-50'
+                              : 'border-gray-200 hover:border-gray-300'
+                          }`}
+                          onClick={() => {
+                            const pageId = page.pageId || page.id;
+                            setSelectedPages(prev => {
+                              const newSet = new Set(prev);
+                              if (newSet.has(pageId)) {
+                                newSet.delete(pageId);
+                                // Also remove lead forms for this page
+                                const forms = pageLeadForms[pageId] || [];
+                                forms.forEach((f: any) => {
+                                  selectedLeadForms.delete(f.formId || f.id);
+                                });
+                                setSelectedLeadForms(new Set(selectedLeadForms));
+                              } else {
+                                newSet.add(pageId);
+                              }
+                              return newSet;
+                            });
+                          }}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className={`h-5 w-5 rounded border-2 flex items-center justify-center ${
+                              selectedPages.has(page.pageId || page.id)
+                                ? 'border-blue-500 bg-blue-500'
+                                : 'border-gray-300'
+                            }`}>
+                              {selectedPages.has(page.pageId || page.id) && (
+                                <CheckCircle className="h-4 w-4 text-white" />
+                              )}
+                            </div>
+                            <div>
+                              <p className="font-medium">{page.pageName || page.name}</p>
+                              <p className="text-sm text-muted-foreground">
+                                {page.followersCount || page.fan_count || 0} followers
+                                {page.isInstagramConnected && (
+                                  <span className="ml-2 text-pink-600">• Instagram Connected</span>
+                                )}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                {/* Lead Forms Selection */}
+                {selectedPages.size > 0 && (
+                  <div>
+                    <h3 className="text-lg font-semibold mb-3">Select Lead Forms</h3>
+                    <div className="space-y-4 max-h-60 overflow-y-auto">
+                      {Array.from(selectedPages).map((pageId: string) => {
+                        const page = availablePages.find((p: any) => (p.pageId || p.id) === pageId);
+                        const forms = pageLeadForms[pageId] || [];
+                        
+                        return (
+                          <div key={pageId} className="border rounded-lg p-3">
+                            <p className="font-medium text-sm mb-2 text-gray-700">
+                              {page?.pageName || page?.name} Lead Forms:
+                            </p>
+                            {forms.length === 0 ? (
+                              <p className="text-sm text-muted-foreground py-2">
+                                No lead forms found for this page.
+                              </p>
+                            ) : (
+                              <div className="space-y-2">
+                                {forms.map((form: any) => (
+                                  <div
+                                    key={form.formId || form.id}
+                                    className={`flex items-center justify-between p-2 border rounded cursor-pointer transition-colors ${
+                                      selectedLeadForms.has(form.formId || form.id)
+                                        ? 'border-blue-500 bg-blue-50'
+                                        : 'border-gray-200 hover:border-gray-300'
+                                    }`}
+                                    onClick={() => {
+                                      const formId = form.formId || form.id;
+                                      setSelectedLeadForms(prev => {
+                                        const newSet = new Set(prev);
+                                        if (newSet.has(formId)) {
+                                          newSet.delete(formId);
+                                        } else {
+                                          newSet.add(formId);
+                                        }
+                                        return newSet;
+                                      });
+                                    }}
+                                  >
+                                    <div className="flex items-center gap-2">
+                                      <div className={`h-4 w-4 rounded border-2 flex items-center justify-center ${
+                                        selectedLeadForms.has(form.formId || form.id)
+                                          ? 'border-blue-500 bg-blue-500'
+                                          : 'border-gray-300'
+                                      }`}>
+                                        {selectedLeadForms.has(form.formId || form.id) && (
+                                          <CheckCircle className="h-3 w-3 text-white" />
+                                        )}
+                                      </div>
+                                      <span className="text-sm">{form.formName || form.name}</span>
+                                    </div>
+                                    {form.totalLeads !== undefined && (
+                                      <span className="text-xs text-muted-foreground">
+                                        {form.totalLeads} leads
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setShowPageSelectionModal(false)}
+                disabled={saveFacebookConnection.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() => saveFacebookConnection.mutate()}
+                disabled={selectedPages.size === 0 || saveFacebookConnection.isPending}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                {saveFacebookConnection.isPending ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                    Connecting...
+                  </>
+                ) : (
+                  <>
+                    <Save className="h-4 w-4 mr-2" />
+                    Save Connection ({selectedPages.size} page{selectedPages.size !== 1 ? 's' : ''}, {selectedLeadForms.size} form{selectedLeadForms.size !== 1 ? 's' : ''})
+                  </>
+                )}
               </Button>
             </DialogFooter>
           </DialogContent>
