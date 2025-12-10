@@ -750,7 +750,7 @@ export default function LeadTypeManagement() {
                           >
                             <Edit className="h-4 w-4" />
                           </Button>
-                          <Button
+                          {/* <Button
                             variant="ghost"
                             size="sm"
                             onClick={() => {
@@ -760,7 +760,7 @@ export default function LeadTypeManagement() {
                             title="Manage custom fields"
                           >
                             <Settings2 className="h-4 w-4 text-blue-600" />
-                          </Button>
+                          </Button> */}
                           <AlertDialog>
                             <AlertDialogTrigger asChild>
                               <Button variant="ghost" size="sm">
