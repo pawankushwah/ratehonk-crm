@@ -1,8 +1,7 @@
 import { useLocation } from "wouter";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Layout } from "@/components/layout/layout";
-import { Button } from "@/components/ui/button";
-import { ArrowLeft, Settings, HelpCircle, Bell } from "lucide-react";
+import { Settings, HelpCircle, Bell } from "lucide-react";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useToast } from "@/hooks/use-toast";
 import { FlexibleLeadForm } from "@/components/lead/flexible-lead-form";
@@ -16,6 +15,12 @@ export default function LeadCreate() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
+  const refreshParent = () => {
+    queryClient.invalidateQueries({
+      predicate: (query) => query.queryKey[0] === "leads",
+    });
+  };
+
   const createLeadMutation = useMutation({
     mutationFn: async (data: any) => {
       const requestData = {
@@ -26,22 +31,16 @@ export default function LeadCreate() {
       };
       return directLeadsApi.createLead(tenant?.id!, requestData);
     },
-    onSuccess: (newLead) => {
-      const currentLeads =
-        (queryClient.getQueryData([`leads-tenant-${tenant?.id}`]) as Lead[]) ||
-        [];
-      const updatedLeads = [...currentLeads, newLead];
-      queryClient.setQueryData([`leads-tenant-${tenant?.id}`], updatedLeads);
-      queryClient.invalidateQueries({
-        queryKey: [`leads-tenant-${tenant?.id}`],
-      });
 
+    onSuccess: () => {
       toast({
         title: "Success",
         description: "Lead created successfully",
       });
+      refreshParent();
       setLocation("/leads");
     },
+
     onError: (error: any) => {
       toast({
         title: "Error",
@@ -50,6 +49,7 @@ export default function LeadCreate() {
       });
     },
   });
+
 
   const onSubmit = (data: any) => {
     createLeadMutation.mutate(data);
@@ -61,12 +61,11 @@ export default function LeadCreate() {
 
   return (
     <Layout>
-      <div className="w-full  mt-[12px] rounded-[15px]">
-        
-        <div
-          className="w-full h-[72px] bg-white px-[18px] py-[16px] 
-                    border-b border-[#E3E8EF] rounded-[16px] flex items-center justify-between"
-        >
+      <div className="w-full mt-[12px] rounded-[15px]">
+
+        {/* HEADER */}
+        <div className="w-full h-[72px] bg-white px-[18px] py-[16px] 
+                        border-b border-[#E3E8EF] rounded-[16px] flex items-center justify-between">
           <h1 className="text-[18px] font-semibold">Lead Management</h1>
 
           <div className="flex gap-3 ml-auto">
@@ -86,7 +85,7 @@ export default function LeadCreate() {
           </div>
         </div>
 
-       
+        {/* BREADCRUMB */}
         <div className="w-full bg-[#F5F6FA] px-[18px] py-[14px] border-b border-gray-200 flex items-center gap-4">
           <div className="flex items-center gap-2 text-sm text-gray-600">
             <i className="ri-folder-line text-gray-600"></i>
@@ -100,17 +99,16 @@ export default function LeadCreate() {
           </div>
         </div>
 
-        
-        <div
-          className="w-[1027px] h-auto mx-auto mt-[25px] 
-                    bg-white rounded-[16px] shadow-sm border border-gray-200
-                    p-[20px] space-y-[12px]"
-        >
+        {/* FORM WRAPPER */}
+        <div className="w-[1027px] h-auto mx-auto mt-[25px] 
+                        bg-white rounded-[16px] shadow-sm border border-gray-200
+                        p-[20px] space-y-[12px]">
           <FlexibleLeadForm
             tenantId={String(tenant?.id!)}
             userId={String(user?.id!)}
             onSubmit={onSubmit}
             onCancel={onCancel}
+            refreshParent={refreshParent}
             isLoading={createLeadMutation.isPending}
           />
         </div>
