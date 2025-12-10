@@ -55,7 +55,7 @@ export function CustomerAnalyticsPanel({
   const { tenant } = useAuth();
 
   // Independent date filters
-  const [dateFilter, setDateFilter] = useState("this_year");
+  const [dateFilter, setDateFilter] = useState("this_quarter");
   const [customDateFrom, setCustomDateFrom] = useState<Date | null>(null);
   const [customDateTo, setCustomDateTo] = useState<Date | null>(null);
 
