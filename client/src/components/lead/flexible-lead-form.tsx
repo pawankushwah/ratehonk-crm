@@ -72,9 +72,10 @@ interface FlexibleLeadFormProps {
   lead?: any;
   tenantId: string;
   userId: string;
-  onSubmit: (data: LeadFormData) => void;
+  onSubmit: (data: any, refreshParent: () => void) => void;
   onCancel: () => void;
   isLoading?: boolean;
+  refreshParent: () => void;
 }
 
 interface LeadType {
@@ -94,6 +95,7 @@ export function FlexibleLeadForm({
   onSubmit,
   onCancel,
   isLoading = false,
+  refreshParent,
 }: FlexibleLeadFormProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -136,7 +138,6 @@ export function FlexibleLeadForm({
   const [selectedLead, setSelectedLead] = useState<any | null>(null);
   const [customerInput, setCustomerInput] = useState("");
   const [leadInput, setLeadInput] = useState("");
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
   const {
     data: leadTypes = [],
@@ -731,14 +732,12 @@ export function FlexibleLeadForm({
 
   console.log("customers :", customers);
 
-  const customerOptions: AutocompleteOption[] = [
-    ...customers.map((customer: any) => ({
+  const customerOptions: AutocompleteOption[] = customers.map(
+    (customer: any) => ({
       value: customer.id?.toString(),
-      label: `${customer.firstName || ""} ${customer.lastName || ""} | ${
-        customer.phone || ""
-      } | ${customer.email || ""}`,
-    })),
-  ];
+      label: `${customer.firstName || ""} ${customer.lastName || ""} | ${customer.phone || ""} | ${customer.email || ""}`,
+    })
+  );
 
   const handleCustomerSelectionChange = (value: string) => {
     if (value === "create_new_customer") {
@@ -801,106 +800,48 @@ export function FlexibleLeadForm({
 
   console.log("🚀 ~ FlexibleLeadForm ~ leads:", leads);
 
-  const leadOptions = [
-    {
-      value: "create_new_lead",
-      label: "+ Create New Lead",
-      icon: <Plus className="h-4 w-4 text-cyan-600" />,
-    },
+  const leadOptions: AutocompleteOption[] = leads.map((lead: any) => ({
+    value: lead.id?.toString(),
+    label: `${lead.first_name || ""} ${lead.last_name || ""} | ${lead.phone || ""} | ${lead.email || ""}`,
+  }));
 
-    ...leads.map((lead: any) => ({
-      value: lead.id.toString(),
-      label: `${lead.first_name} | ${lead.phone} | ${lead.email}`,
-    })),
-  ];
+  const handleLeadSelectionChange = (value: string) => {
+    if (value === "create_new_lead") {
+      setIsLeadPanelOpen(true);
+      return;
+    }
 
-const handleLeadSelectionChange = (value: string) => {
-  if (value === "create_new_lead") {
-    setIsLeadPanelOpen(true);
-    return;
-  }
-
-  // Clear customer selection (good!)
-  setCustomerInput("");
-  form.setValue("customerId", "");
-  setSelectedCustomer(null);
-
-  const selectedLead = leads.find((l: any) => l.id.toString() === value);
-
-  if (!selectedLead) {
-    form.setValue("leadId", "");
-    setLeadInput("");
-    setSelectedLead(null);
-    return;
-  }
-
-  // THIS IS THE FIX: Build the display text properly!
-  const displayName = `${selectedLead.first_name || ""} ${selectedLead.last_name || ""}`.trim();
-  const fullDisplay = [displayName, selectedLead.phone, selectedLead.email]
-    .filter(Boolean)
-    .join(" | ");
-
-  // Set the ID in the hidden form field
-  form.setValue("leadId", selectedLead.id.toString());
-
-  // Set the BEAUTIFUL display text in the input
-  setLeadInput(fullDisplay || "Unknown Lead");
-
-  // Store the selected lead
-  setSelectedLead(selectedLead);
-
-  // Prefill all form fields
-  form.setValue("firstName", selectedLead.first_name || "");
-  form.setValue("lastName", selectedLead.last_name || "");
-  form.setValue("email", selectedLead.email || "");
-  form.setValue("phone", selectedLead.phone || "");
-  form.setValue("country", selectedLead.country || "");
-  form.setValue("state", selectedLead.state || "");
-  form.setValue("city", selectedLead.city || "");
-};
-
-  const handlePrefillFromLead = (leadData: any) => {
-    console.log("Prefilling from popup lead →", leadData);
-
-    // Build display text EXACTLY like your existing leads
-    const fullName =
-      `${leadData.firstName || ""} ${leadData.lastName || ""}`.trim();
-    const phone = leadData.phone || "";
-    const email = leadData.email || "";
-
-    const displayText = [fullName, phone, email].filter(Boolean).join(" | ");
-
-    // This is the KEY: Update the Search Lead input visually
-    setLeadInput(displayText);
-
-    // Also clear customer selection (important!)
     setCustomerInput("");
     form.setValue("customerId", "");
     setSelectedCustomer(null);
 
-    // Prefill all fields
-    form.setValue("firstName", leadData.firstName || "");
-    form.setValue("lastName", leadData.lastName || "");
-    form.setValue("email", leadData.email || "");
-    form.setValue("phone", leadData.phone || "");
-    form.setValue("country", leadData.country || "");
-    form.setValue("state", leadData.state || "");
-    form.setValue("city", leadData.city || "");
-    form.setValue("budgetRange", leadData.budgetRange || "");
-    form.setValue("priority", leadData.priority || "medium");
-    form.setValue("source", leadData.source || "");
-    form.setValue("notes", leadData.notes || "");
+    const selectedLead = leads.find((l: any) => l.id.toString() === value);
 
-    // Optional: keep track of the source lead
-    setSelectedLead(leadData);
+    if (!selectedLead) {
+      form.setValue("leadId", "");
+      setLeadInput("");
+      return;
+    }
 
-    // Trigger form dirty state
-    form.trigger();
+    setSelectedLead(selectedLead);
+
+    form.setValue("leadId", selectedLead.id.toString());
+    setLeadInput(selectedLead.id.toString());
+
+    form.setValue("firstName", selectedLead.first_name || "");
+    form.setValue("lastName", selectedLead.last_name || "");
+    form.setValue("email", selectedLead.email || "");
+    form.setValue("phone", selectedLead.phone || "");
+    form.setValue("country", selectedLead.country || "");
+    form.setValue("state", selectedLead.state || "");
+    form.setValue("city", selectedLead.city || "");
   };
+
 
   return (
     <Form {...form}>
-      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-3">
+      <form   onSubmit={form.handleSubmit((data) => onSubmit(data, refreshParent))}
+  className="space-y-3">
         <div>
           <div className="w-full max-w-[987px] bg-white border border-[#E3E8EF] rounded-lg p-5 space-y-4">
             <h2 className="text-sm font-semibold text-gray-900">
@@ -916,7 +857,6 @@ const handleLeadSelectionChange = (value: string) => {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Search Customer</FormLabel>
-
                       <FormControl>
                         <AutocompleteInput
                           suggestions={customerOptions}
@@ -926,12 +866,10 @@ const handleLeadSelectionChange = (value: string) => {
                             field.onChange(val);
                             handleCustomerSelectionChange(val);
                           }}
-                          placeholder="Search customer"
+                          placeholder="Search customer by name, phone or email"
                           emptyText="No customers found"
-                          className="h-10 rounded-md border-gray-300 focus:ring-2 focus:ring-cyan-500"
                         />
                       </FormControl>
-
                       <FormMessage />
                     </FormItem>
                   )}
@@ -943,151 +881,21 @@ const handleLeadSelectionChange = (value: string) => {
                   control={form.control}
                   name="leadId"
                   render={({ field }) => (
-                    <FormItem className="col-span-12 md:col-span-6">
+                    <FormItem>
                       <FormLabel>Search Lead</FormLabel>
-
                       <FormControl>
-                        <div className="relative">
-                          {/* Input – controlled only by our own state */}
-                          <Input
-                            value={leadInput}
-                            onChange={(e) => {
-                              setLeadInput(e.target.value);
-                              setIsDropdownOpen(true);
-                            }}
-                            onFocus={() => setIsDropdownOpen(true)}
-                            onClick={() => setIsDropdownOpen(true)}
-                            placeholder="Search or create new lead"
-                            className="h-10 rounded-md border-gray-300 focus:ring-2 focus:ring-cyan-500 pr-10 cursor-pointer"
-                          />
-
-                          {/* Clear button */}
-                          {leadInput && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setLeadInput("");
-                                field.onChange(""); // clear hidden leadId
-                                setSelectedLead(null);
-                                setIsDropdownOpen(false);
-                              }}
-                              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-red-600 text-xl"
-                            >
-                              ×
-                            </button>
-                          )}
-
-                          {/* Dropdown – only when open */}
-                          {isDropdownOpen && (
-                            <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded-md shadow-lg z-50 max-h-60 overflow-y-auto">
-                              {/* Create New Lead */}
-                              <div
-                                onMouseDown={(e) => {
-                                  e.preventDefault();
-                                  setIsLeadPanelOpen(true);
-                                  setIsDropdownOpen(false);
-                                }}
-                                className="px-4 py-2.5 flex items-center gap-2 hover:bg-cyan-50 cursor-pointer text-cyan-600 font-medium border-b"
-                              >
-                                <Plus className="h-4 w-4" />
-                                Create New Lead
-                              </div>
-
-                              {/* Filtered Leads */}
-                              {leads
-                                .filter((lead: any) => {
-                                  const search = (
-                                    leadInput || ""
-                                  ).toLowerCase();
-                                  const name =
-                                    `${lead.first_name || ""} ${lead.last_name || ""}`.toLowerCase();
-                                  const phone = (
-                                    lead.phone || ""
-                                  ).toLowerCase();
-                                  const email = (
-                                    lead.email || ""
-                                  ).toLowerCase();
-                                  return (
-                                    search === "" ||
-                                    name.includes(search) ||
-                                    phone.includes(search) ||
-                                    email.includes(search)
-                                  );
-                                })
-                                .map((lead: any) => {
-                                  const displayName =
-                                    `${lead.first_name || ""} ${lead.last_name || ""}`.trim();
-                                  const fullDisplay = [
-                                    displayName,
-                                    lead.phone,
-                                    lead.email,
-                                  ]
-                                    .filter(Boolean)
-                                    .join(" | ");
-
-                                  return (
-                                    <div
-                                      key={lead.id}
-                                      onMouseDown={(e) => {
-                                        e.preventDefault();
-                                        setLeadInput(
-                                          fullDisplay || "Unknown Lead"
-                                        );
-                                        field.onChange(lead.id.toString()); 
-                                        handleLeadSelectionChange(
-                                          lead.id.toString()
-                                        );
-                                        setIsDropdownOpen(false);
-                                      }}
-                                      className="px-4 py-2 hover:bg-gray-100 cursor-pointer text-sm border-b last:border-b-0"
-                                    >
-                                      <div className="font-medium text-gray-900">
-                                        {displayName || "No Name"}
-                                      </div>
-                                      <div className="text-xs text-gray-500">
-                                        {lead.phone}{" "}
-                                        {lead.phone && lead.email && "•"}{" "}
-                                        {lead.email}
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                              {leads.length > 0 &&
-                                leads.filter((lead: any) => {
-                                  const search = (
-                                    leadInput || ""
-                                  ).toLowerCase();
-                                  const name =
-                                    `${lead.first_name || ""} ${lead.last_name || ""}`.toLowerCase();
-                                  const phone = (
-                                    lead.phone || ""
-                                  ).toLowerCase();
-                                  const email = (
-                                    lead.email || ""
-                                  ).toLowerCase();
-                                  return (
-                                    name.includes(search) ||
-                                    phone.includes(search) ||
-                                    email.includes(search)
-                                  );
-                                }).length === 0 && (
-                                  <div className="px-4 py-3 text-center text-gray-500 text-sm">
-                                    No leads found
-                                  </div>
-                                )}
-                            </div>
-                          )}
-
-                          {/* Click outside to close */}
-                          {isDropdownOpen && (
-                            <div
-                              className="fixed inset-0 z-40"
-                              onMouseDown={() => setIsDropdownOpen(false)}
-                            />
-                          )}
-                        </div>
+                        <AutocompleteInput
+                          suggestions={leadOptions}
+                          value={leadInput}
+                          onValueChange={(val) => {
+                            setLeadInput(val);
+                            field.onChange(val);
+                            handleLeadSelectionChange(val);
+                          }}
+                          placeholder="Search lead by name, phone or email"
+                          emptyText="No leads found"
+                        />
                       </FormControl>
-
                       <FormMessage />
                     </FormItem>
                   )}
@@ -1095,7 +903,110 @@ const handleLeadSelectionChange = (value: string) => {
               </div>
             </div>
 
-            <div className="grid grid-cols-12 gap-3"></div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <FormField
+                control={form.control}
+                name="firstName"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>First Name *</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="Enter first name" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="lastName"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Last Name</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="Enter last name" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <FormField
+                control={form.control}
+                name="email"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Email</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="email"
+                        {...field}
+                        placeholder="Enter email"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="phone"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Phone</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="Enter phone number" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <FormField
+                control={form.control}
+                name="country"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Country</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="Country" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="state"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>State</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="State" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="city"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>City</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="City" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
 
             <div className="grid grid-cols-12 gap-3">
               <div className="col-span-3 md:col-span-4">
@@ -1319,27 +1230,6 @@ const handleLeadSelectionChange = (value: string) => {
           </div>
         </div>
       </form>
-
-      <SlidePanel
-        isOpen={isLeadPanelOpen}
-        onClose={() => setIsLeadPanelOpen(false)}
-        title="Create New Lead"
-      >
-        <LeadCreateForm
-          tenantId={tenantId}
-          enableFillOnlyButton={true}
-          onFillOnly={(data) => {
-            handlePrefillFromLead(data);
-            setIsLeadPanelOpen(false); // This closes the panel!
-          }}
-          onSuccess={(lead) => {
-            // Optional: refetch leads
-            queryClient.invalidateQueries({ queryKey: ["/api/leads"] });
-            setIsLeadPanelOpen(false);
-          }}
-          onCancel={() => setIsLeadPanelOpen(false)}
-        />
-      </SlidePanel>
     </Form>
   );
 }
