@@ -73,7 +73,7 @@ export default function LeadsAnalytics({}: LeadsAnalyticsProps) {
   const { tenant } = useAuth();
   const [activeIndex, setActiveIndex] = useState(null);
 
-  const [dateFilter, setDateFilter] = useState("this_year");
+  const [dateFilter, setDateFilter] = useState("this_quarter");
 
   const [customDateFrom, setCustomDateFrom] = useState<Date | null>(null);
   const [customDateTo, setCustomDateTo] = useState<Date | null>(null);
