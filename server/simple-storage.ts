@@ -8663,6 +8663,76 @@ async getAllLeadsByTenant(
     };
   }
 
+  // get All-Estimates 
+
+  async getAllEstimatesByTenant({
+  tenantId,
+  search = "",
+  status = "",
+  startDate = "",
+  endDate = "",
+}: {
+  tenantId: number;
+  search?: string;
+  status?: string;
+  startDate?: string;
+  endDate?: string;
+}) {
+  console.log("Fetching ALL estimates (no pagination) for tenantId:", tenantId);
+
+  
+  let whereClauses = sql`e.tenant_id = ${tenantId}`;
+
+  // Search filter
+  if (search) {
+    whereClauses = sql`${whereClauses} AND (
+      LOWER(e.estimate_number::text) LIKE ${"%" + search.toLowerCase() + "%"}
+      OR LOWER(e.customer_name) LIKE ${"%" + search.toLowerCase() + "%"}
+    )`;
+  }
+
+  // Status filter
+  if (status && status !== "all") {
+    whereClauses = sql`${whereClauses} AND e.status = ${status}`;
+  }
+
+  // Date filter
+  if (startDate && endDate) {
+    whereClauses = sql`${whereClauses} AND e.created_at BETWEEN ${startDate} AND ${endDate}`;
+  }
+
+  
+  const estimates = await sql`
+    SELECT * 
+    FROM estimates e 
+    WHERE ${whereClauses}
+    ORDER BY e.created_at DESC
+  `;
+
+  console.log("Fetched (no pagination):", estimates.length);
+
+  const estimatesWithCombinedNumber = estimates.map((estimate: any) => {
+    const estPrefix = estimate.estimate_prefix || "EST";
+    const estNumber = estimate.estimate_number || "";
+
+    const fullEstimateNumber =
+      estPrefix && estNumber ? `${estPrefix}${estNumber}` : estNumber;
+
+    return {
+      ...estimate,
+      estimateNumber: fullEstimateNumber,
+      estimatePrefix: estPrefix,
+    };
+  });
+
+  return {
+    data: estimatesWithCombinedNumber,
+  };
+}
+
+
+
+
   async getEstimate(estimateId: number, tenantId: number) {
     try {
       console.log(`Getting estimate ${estimateId} for tenant ${tenantId}`);

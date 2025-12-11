@@ -270,12 +270,14 @@ export const useBookingsByVendor = (dateFilter: DateFilterState) => {
   });
 };
 
-export const useEstimates = (
+export const useAllEstimates = (
   dateFilter: string,
   customFrom: Date | null,
   customTo: Date | null
 ) => {
   const { tenant } = useAuth();
+
+  // Build startDate & endDate params
   const params = buildFilterParamsFromDateFilter(
     dateFilter,
     customFrom,
@@ -283,24 +285,32 @@ export const useEstimates = (
   );
 
   return useQuery<Estimate[]>({
-    queryKey: ["/api/estimates", params],
+    queryKey: ["/api/estimates/all", params],
     queryFn: async () => {
       const searchParams = new URLSearchParams(params as any).toString();
-      const url = `/api/estimates${searchParams ? `?${searchParams}` : ""}`;
+      const url = `/api/estimates/all${searchParams ? `?${searchParams}` : ""}`;
+
       const res = await fetch(url, {
         headers: {
           Authorization: `Bearer ${localStorage.getItem("auth_token")}`,
         },
         credentials: "include",
       });
-      if (!res.ok) throw new Error("Failed to fetch estimates data");
-      return res.json();
+
+      if (!res.ok) {
+        throw new Error("Failed to fetch all estimates");
+      }
+
+      // ⬇ Backend returns: { data: [...] }
+      const response = await res.json();
+      return response.data; // <-- IMPORTANT CHANGE
     },
     enabled: !!tenant?.id,
     refetchInterval: 30000,
     staleTime: 25000,
   });
 };
+
 
 export const useExpenses = (
   dateFilter: string,
@@ -327,13 +337,11 @@ export const useExpenses = (
       });
       if (!res.ok) throw new Error("Failed to fetch expenses data");
       const result = await res.json();
-      
-      // Handle paginated response structure
+     
       if (result && typeof result === "object" && "data" in result) {
         return result.data;
       }
       
-      // Fallback for old array response
       return Array.isArray(result) ? result : [];
     },
     enabled: !!tenant?.id,

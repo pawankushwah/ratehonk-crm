@@ -468,6 +468,58 @@ export function registerEstimatesRoutes(app: Express) {
     }
   });
 
+  app.get("/api/estimates/all", authenticate, async (req: any, res) => {
+  try {
+    const tenantId = Number(req.user?.tenantId);
+    console.log("📊 [API - ALL] tenantId:", tenantId);
+
+    if (isNaN(tenantId)) {
+      return res.status(400).json({ message: "Invalid tenant ID" });
+    }
+    const {
+      search = "",
+      status = "",
+      startDate = "",
+      endDate = "",
+      filterType = "",
+      sortBy = "created_at",
+      sortOrder = "desc",
+    } = req.query;
+
+    console.log("📊 [API - ALL] Query params:", {
+      search,
+      status,
+      startDate,
+      endDate,
+      filterType,
+      sortBy,
+      sortOrder,
+    });
+    const result = await simpleStorage.getAllEstimatesByTenant({
+      tenantId,
+      search: String(search),
+      status: String(status),
+      startDate: String(startDate),
+      endDate: String(endDate),
+    });
+
+    console.log("📊 [API - ALL] Total estimates fetched:", result.data.length);
+
+   
+    const transformedEstimates = result.data.map(transformEstimate);
+    res.json({
+      data: transformedEstimates,
+    });
+
+  } catch (error: any) {
+    console.error("❌ [API - ALL] Error:", error);
+    res.status(500).json({
+      message: "Failed to fetch all estimates",
+      error: error.message,
+    });
+  }
+});
+
   // Create new estimate
   app.post("/api/estimates", authenticate, async (req: any, res) => {
     try {

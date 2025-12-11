@@ -80,6 +80,7 @@ import {
   Pie,
   Cell,
 } from "recharts";
+import EstimateAnalytics from "./EstimateAnalytics";
 
 // Estimate interfaces
 interface LineItem {
@@ -140,7 +141,12 @@ interface FullEstimate extends Estimate {
   notes?: string;
   validUntil?: string;
   lineItems?: LineItem[];
-  attachments?: Array<{filename: string; path: string; size: number; mimetype: string}>;
+  attachments?: Array<{
+    filename: string;
+    path: string;
+    size: number;
+    mimetype: string;
+  }>;
 }
 
 export default function Estimates() {
@@ -151,18 +157,20 @@ export default function Estimates() {
   // State management
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [previewEstimate, setPreviewEstimate] = useState<FullEstimate | null>(
-    null,
+    null
   );
   const [emailEstimate, setEmailEstimate] = useState<Estimate | null>(null);
-  const [whatsappEstimate, setWhatsappEstimate] = useState<Estimate | null>(null);
+  const [whatsappEstimate, setWhatsappEstimate] = useState<Estimate | null>(
+    null
+  );
   const [showAnalyticsSheet, setShowAnalyticsSheet] = useState(false);
   const [viewMode, setViewMode] = useState<"card" | "list">("card");
   const previewRef = useRef<{ downloadPDF: () => void } | null>(null);
-  
+
   // Sorting state
   const [sortColumn, setSortColumn] = useState<string | null>(null);
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
-  
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -286,19 +294,24 @@ export default function Estimates() {
   const handleSort = (columnKey: string) => {
     if (sortColumn === columnKey) {
       // Toggle direction if same column
-      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
     } else {
       // New column, default to desc
       setSortColumn(columnKey);
-      setSortDirection('desc');
+      setSortDirection("desc");
     }
   };
 
   // Fetch estimates with search, status, date filters, sorting, and pagination
-  const { 
-    data: estimatesResponse, 
-    isLoading 
-  } = useQuery<{ data: Estimate[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }>({
+  const { data: estimatesResponse, isLoading } = useQuery<{
+    data: Estimate[];
+    pagination: {
+      page: number;
+      pageSize: number;
+      total: number;
+      totalPages: number;
+    };
+  }>({
     queryKey: [
       `/api/estimates`,
       searchTerm,
@@ -443,7 +456,7 @@ export default function Estimates() {
       return leadTypes
         .map(
           (lt: any) =>
-            lt.name || lt.type_name || lt.typeName || `Lead Type ${lt.id}`,
+            lt.name || lt.type_name || lt.typeName || `Lead Type ${lt.id}`
         )
         .filter(Boolean);
     }
@@ -576,18 +589,18 @@ export default function Estimates() {
   const totals = {
     subtotal: formData.lineItems.reduce(
       (sum, item) => sum + (item.totalPrice || 0),
-      0,
+      0
     ),
     discountAmount:
       formData.lineItems.reduce(
         (sum, item) => sum + (item.totalPrice || 0),
-        0,
+        0
       ) *
       (parseFloat(formData.discountPercentage) / 100),
     taxAmount:
       formData.lineItems.reduce(
         (sum, item) => sum + (item.totalPrice || 0),
-        0,
+        0
       ) *
       (parseFloat(formData.taxPercentage) / 100),
     get total() {
@@ -667,11 +680,11 @@ export default function Estimates() {
     try {
       // Fetch full estimate details for PDF generation
       const fullEstimate = await fetchFullEstimate(estimate.id);
-      
+
       // Dynamically import PDF libraries
       const [{ default: jsPDF }, { default: html2canvas }] = await Promise.all([
-        import('jspdf'),
-        import('html2canvas')
+        import("jspdf"),
+        import("html2canvas"),
       ]);
 
       toast({
@@ -680,28 +693,35 @@ export default function Estimates() {
       });
 
       // Create a hidden container for rendering the preview
-      const hiddenContainer = document.createElement('div');
-      hiddenContainer.style.position = 'absolute';
-      hiddenContainer.style.left = '-9999px';
-      hiddenContainer.style.top = '0';
-      hiddenContainer.style.width = '210mm'; // A4 width
-      hiddenContainer.style.backgroundColor = '#ffffff';
+      const hiddenContainer = document.createElement("div");
+      hiddenContainer.style.position = "absolute";
+      hiddenContainer.style.left = "-9999px";
+      hiddenContainer.style.top = "0";
+      hiddenContainer.style.width = "210mm"; // A4 width
+      hiddenContainer.style.backgroundColor = "#ffffff";
       document.body.appendChild(hiddenContainer);
 
       // Get tenant settings for company info
-      const companyInfo = tenantSettings ? {
-        name: (tenantSettings as any)?.companyName || (tenant as any)?.name || '',
-        address: (tenantSettings as any)?.companyAddress || '',
-        phone: (tenantSettings as any)?.companyPhone || '',
-        email: (tenantSettings as any)?.companyEmail || '',
-        logo: (tenantSettings as any)?.companyLogo || (fullEstimate as any)?.logoUrl,
-      } : undefined;
+      const companyInfo = tenantSettings
+        ? {
+            name:
+              (tenantSettings as any)?.companyName ||
+              (tenant as any)?.name ||
+              "",
+            address: (tenantSettings as any)?.companyAddress || "",
+            phone: (tenantSettings as any)?.companyPhone || "",
+            email: (tenantSettings as any)?.companyEmail || "",
+            logo:
+              (tenantSettings as any)?.companyLogo ||
+              (fullEstimate as any)?.logoUrl,
+          }
+        : undefined;
 
       // Render the preview component in the hidden container using React 18 createRoot
-      const React = await import('react');
-      const ReactDOM = await import('react-dom/client');
+      const React = await import("react");
+      const ReactDOM = await import("react-dom/client");
       const root = ReactDOM.createRoot(hiddenContainer);
-      
+
       root.render(
         React.createElement(EstimatePreview, {
           estimate: fullEstimate as any,
@@ -711,11 +731,13 @@ export default function Estimates() {
       );
 
       // Wait for the component to render and images to load
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      await new Promise((resolve) => setTimeout(resolve, 1500));
 
       // Find the preview content element
-      const previewElement = hiddenContainer.querySelector('[data-estimate-preview-content]') as HTMLElement;
-      
+      const previewElement = hiddenContainer.querySelector(
+        "[data-estimate-preview-content]"
+      ) as HTMLElement;
+
       if (!previewElement) {
         root.unmount();
         document.body.removeChild(hiddenContainer);
@@ -727,7 +749,7 @@ export default function Estimates() {
         scale: 2,
         useCORS: true,
         logging: false,
-        backgroundColor: '#ffffff',
+        backgroundColor: "#ffffff",
         allowTaint: false,
       });
 
@@ -752,7 +774,7 @@ export default function Estimates() {
       }
 
       pdf.save(`Estimate-${fullEstimate.estimateNumber || estimate.id}.pdf`);
-      
+
       // Clean up: unmount React component and remove container
       root.unmount();
       setTimeout(() => {
@@ -760,7 +782,7 @@ export default function Estimates() {
           document.body.removeChild(hiddenContainer);
         }
       }, 100);
-      
+
       toast({
         title: "Success",
         description: "PDF downloaded successfully",
@@ -769,7 +791,8 @@ export default function Estimates() {
       console.error("Error downloading PDF:", error);
       toast({
         title: "Error",
-        description: error.message || "Failed to download PDF. Please try again.",
+        description:
+          error.message || "Failed to download PDF. Please try again.",
         variant: "destructive",
       });
     }
@@ -777,14 +800,27 @@ export default function Estimates() {
 
   // Update estimate status mutation
   const updateStatusMutation = useMutation({
-    mutationFn: async ({ estimateId, status }: { estimateId: number; status: string }) => {
-      const response = await apiRequest("PATCH", `/api/estimates/${estimateId}/status`, { status });
+    mutationFn: async ({
+      estimateId,
+      status,
+    }: {
+      estimateId: number;
+      status: string;
+    }) => {
+      const response = await apiRequest(
+        "PATCH",
+        `/api/estimates/${estimateId}/status`,
+        { status }
+      );
       return response.json();
     },
     onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/estimates"] });
       // Update preview estimate if it's the same one
-      if (previewEstimate && Number(previewEstimate.id) === variables.estimateId) {
+      if (
+        previewEstimate &&
+        Number(previewEstimate.id) === variables.estimateId
+      ) {
         setPreviewEstimate({ ...previewEstimate, status: variables.status });
       }
       toast({
@@ -839,22 +875,23 @@ export default function Estimates() {
     }
 
     // Generate WhatsApp message
-    const message = `*Estimate ${estimate.estimateNumber}*\n\n` +
+    const message =
+      `*Estimate ${estimate.estimateNumber}*\n\n` +
       `Dear ${estimate.customerName},\n\n` +
       `Please find your estimate details:\n` +
       `- Estimate Number: ${estimate.estimateNumber}\n` +
       `- Total Amount: $${estimate.totalAmount}\n` +
-      `- Status: ${estimate.status || 'Draft'}\n\n` +
+      `- Status: ${estimate.status || "Draft"}\n\n` +
       `Please review the estimate and let us know if you have any questions.\n\n` +
       `Thank you for your business!`;
 
     // Create WhatsApp link
-    const phoneNumber = customerPhone.replace(/[^0-9]/g, '');
+    const phoneNumber = customerPhone.replace(/[^0-9]/g, "");
     const whatsappLink = `https://wa.me/${phoneNumber}?text=${encodeURIComponent(message)}`;
-    
+
     // Open WhatsApp in new tab
-    window.open(whatsappLink, '_blank');
-    
+    window.open(whatsappLink, "_blank");
+
     toast({
       title: "WhatsApp Opened",
       description: "WhatsApp chat opened in new window",
@@ -868,7 +905,9 @@ export default function Estimates() {
       label: "Estimate #",
       sortable: true,
       render: (value) => (
-        <div className="font-medium flex items-center">{value || `EST-${value}`}</div>
+        <div className="font-medium flex items-center">
+          {value || `EST-${value}`}
+        </div>
       ),
     },
     {
@@ -923,21 +962,25 @@ export default function Estimates() {
       render: (status, estimate) => {
         const statusConfig = estimateStatuses.find((s) => s.value === status);
         const currentStatus = status || "draft";
-        const badgeVariant = 
+        const badgeVariant =
           currentStatus === "rejected"
             ? "destructive"
             : currentStatus === "draft"
               ? "secondary"
               : "default";
         const badgeColor = statusConfig?.color || "bg-gray-100 text-gray-800";
-        
+
         return (
           <Select
             value={currentStatus}
-            onValueChange={(value) => handleStatusChange(Number(estimate.id), value)}
+            onValueChange={(value) =>
+              handleStatusChange(Number(estimate.id), value)
+            }
             disabled={updateStatusMutation.isPending}
           >
-            <SelectTrigger className={`w-auto h-7 px-2 border-0 ${badgeColor} hover:opacity-80 cursor-pointer`}>
+            <SelectTrigger
+              className={`w-auto h-7 px-2 border-0 ${badgeColor} hover:opacity-80 cursor-pointer`}
+            >
               <SelectValue>
                 <span className="text-xs font-medium">
                   {statusConfig?.label || currentStatus}
@@ -1041,19 +1084,19 @@ export default function Estimates() {
   const analytics = useMemo(() => {
     const totalValue = estimates.reduce(
       (sum, est) => sum + parseFloat(est.totalAmount?.toString() || "0"),
-      0,
+      0
     );
     const acceptedValue = estimates
       .filter((est) => est.status === "accepted")
       .reduce(
         (sum, est) => sum + parseFloat(est.totalAmount?.toString() || "0"),
-        0,
+        0
       );
     const pendingValue = estimates
       .filter((est) => ["draft", "sent", "viewed"].includes(est.status || ""))
       .reduce(
         (sum, est) => sum + parseFloat(est.totalAmount?.toString() || "0"),
-        0,
+        0
       );
     const conversionRate =
       pagination.total > 0
@@ -1113,7 +1156,7 @@ export default function Estimates() {
         }
         return acc;
       },
-      [] as Array<{ month: string; value: number; count: number }>,
+      [] as Array<{ month: string; value: number; count: number }>
     );
 
     return { statusData, monthlyData };
@@ -1151,12 +1194,14 @@ export default function Estimates() {
                     Analytics
                   </Button>
                 </SheetTrigger>
+
                 <SheetContent side="right" className="!w-1/2 !max-w-none">
                   <SheetHeader>
                     <SheetTitle className="flex items-center gap-2">
                       <BarChart3 className="w-5 h-5" />
                       Estimate Analytics
                     </SheetTitle>
+
                     <SheetDescription>
                       Comprehensive overview of your estimate performance and
                       metrics
@@ -1164,193 +1209,12 @@ export default function Estimates() {
                   </SheetHeader>
 
                   <div className="mt-6 space-y-6 overflow-y-auto h-[calc(100vh-120px)]">
-                    {/* Key Metrics Cards */}
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="bg-gradient-to-r from-blue-50 to-blue-100 p-4 rounded-lg">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="text-sm text-blue-600 font-medium">
-                              Total
-                            </p>
-                            <p className="text-xl font-bold text-blue-700">
-                              {analytics.totalEstimates}
-                            </p>
-                          </div>
-                          <FileText className="h-6 w-6 text-blue-500" />
-                        </div>
-                      </div>
-                      <div className="bg-gradient-to-r from-green-50 to-green-100 p-4 rounded-lg">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="text-sm text-green-600 font-medium">
-                              Accepted
-                            </p>
-                            <p className="text-xl font-bold text-green-700">
-                              ${analytics.acceptedValue.toLocaleString()}
-                            </p>
-                          </div>
-                          <CheckCircle className="h-6 w-6 text-green-500" />
-                        </div>
-                      </div>
-                      <div className="bg-gradient-to-r from-purple-50 to-purple-100 p-4 rounded-lg">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="text-sm text-purple-600 font-medium">
-                              Total Value
-                            </p>
-                            <p className="text-xl font-bold text-purple-700">
-                              ${analytics.totalValue.toLocaleString()}
-                            </p>
-                          </div>
-                          <DollarSign className="h-6 w-6 text-purple-500" />
-                        </div>
-                      </div>
-                      <div className="bg-gradient-to-r from-cyan-50 to-cyan-100 p-4 rounded-lg">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="text-sm text-cyan-600 font-medium">
-                              Conv. Rate
-                            </p>
-                            <p className="text-xl font-bold text-cyan-700">
-                              {analytics.conversionRate.toFixed(1)}%
-                            </p>
-                          </div>
-                          <AlertTriangle className="h-6 w-6 text-cyan-500" />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Status Distribution Pie Chart */}
-                    {chartData.statusData.length > 0 && (
-                      <Card>
-                        <CardHeader>
-                          <CardTitle className="text-lg">
-                            Status Distribution
-                          </CardTitle>
-                          <CardDescription>
-                            Breakdown of estimates by status
-                          </CardDescription>
-                        </CardHeader>
-                        <CardContent>
-                          <div className="h-64">
-                            <ResponsiveContainer width="100%" height="100%">
-                              <PieChart>
-                                <Pie
-                                  data={chartData.statusData}
-                                  cx="50%"
-                                  cy="50%"
-                                  labelLine={false}
-                                  label={({ name, percent }) =>
-                                    `${name} ${(percent * 100).toFixed(0)}%`
-                                  }
-                                  outerRadius={80}
-                                  fill="#8884d8"
-                                  dataKey="value"
-                                >
-                                  {chartData.statusData.map((entry, index) => (
-                                    <Cell
-                                      key={`cell-${index}`}
-                                      fill={entry.color}
-                                    />
-                                  ))}
-                                </Pie>
-                                <Tooltip />
-                              </PieChart>
-                            </ResponsiveContainer>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    )}
-
-                    {/* Monthly Value Trends Bar Chart */}
-                    {chartData.monthlyData.length > 0 && (
-                      <Card>
-                        <CardHeader>
-                          <CardTitle className="text-lg">
-                            Monthly Value Trends
-                          </CardTitle>
-                          <CardDescription>
-                            Estimate values by month
-                          </CardDescription>
-                        </CardHeader>
-                        <CardContent>
-                          <div className="h-64">
-                            <ResponsiveContainer width="100%" height="100%">
-                              <BarChart data={chartData.monthlyData}>
-                                <CartesianGrid strokeDasharray="3 3" />
-                                <XAxis dataKey="month" />
-                                <YAxis
-                                  tickFormatter={(value) =>
-                                    `$${value.toLocaleString()}`
-                                  }
-                                />
-                                <Tooltip
-                                  formatter={(value: any) => [
-                                    `$${Number(value).toLocaleString()}`,
-                                    "Value",
-                                  ]}
-                                  labelFormatter={(label) => `Month: ${label}`}
-                                />
-                                <Bar
-                                  dataKey="value"
-                                  fill="#3B82F6"
-                                  radius={[4, 4, 0, 0]}
-                                />
-                              </BarChart>
-                            </ResponsiveContainer>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    )}
-
-                    {/* Status Breakdown List */}
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="text-lg">
-                          Detailed Status Breakdown
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="space-y-3">
-                          {estimateStatuses.map((status) => {
-                            const count = estimates.filter(
-                              (est) => est.status === status.value,
-                            ).length;
-                            const value = estimates
-                              .filter((est) => est.status === status.value)
-                              .reduce(
-                                (sum, est) =>
-                                  sum +
-                                  parseFloat(
-                                    est.totalAmount?.toString() || "0",
-                                  ),
-                                0,
-                              );
-                            return (
-                              <div
-                                key={status.value}
-                                className="flex justify-between items-center p-3 bg-gray-50 rounded-lg"
-                              >
-                                <div className="flex items-center gap-3">
-                                  <Badge className={status.color}>
-                                    {status.label}
-                                  </Badge>
-                                  <span className="text-sm text-gray-600">
-                                    {count} estimates
-                                  </span>
-                                </div>
-                                <span className="font-semibold text-gray-900">
-                                  ${value.toLocaleString()}
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </CardContent>
-                    </Card>
+                    <EstimateAnalytics
+                    />
                   </div>
                 </SheetContent>
               </Sheet>
+
               {/* New Estimate Button */}
               <Link href="/estimates/create">
                 <Button
@@ -1635,7 +1499,7 @@ export default function Estimates() {
                                 updateLineItem(
                                   index,
                                   "quantity",
-                                  parseInt(e.target.value) || 1,
+                                  parseInt(e.target.value) || 1
                                 )
                               }
                             />
@@ -1649,7 +1513,7 @@ export default function Estimates() {
                                 updateLineItem(
                                   index,
                                   "unitPrice",
-                                  e.target.value,
+                                  e.target.value
                                 )
                               }
                             />
@@ -1677,7 +1541,7 @@ export default function Estimates() {
                                 updateLineItem(
                                   index,
                                   "discount",
-                                  e.target.value,
+                                  e.target.value
                                 )
                               }
                               placeholder="0.00"
@@ -1712,7 +1576,7 @@ export default function Estimates() {
                               updateLineItem(
                                 index,
                                 "description",
-                                e.target.value,
+                                e.target.value
                               )
                             }
                             placeholder="Optional details"
@@ -1909,7 +1773,10 @@ export default function Estimates() {
               <div className="flex items-center justify-between mt-3 pt-3 border-t">
                 <div className="text-xs text-gray-500">
                   {pagination.total > 0 ? (
-                    <>Total: {pagination.total} estimate{pagination.total !== 1 ? "s" : ""}</>
+                    <>
+                      Total: {pagination.total} estimate
+                      {pagination.total !== 1 ? "s" : ""}
+                    </>
                   ) : (
                     <>No estimates found</>
                   )}
@@ -1940,7 +1807,9 @@ export default function Estimates() {
               <div className="flex items-center justify-between mt-4 pt-4 border-t">
                 <div className="flex items-center gap-4">
                   <div className="text-sm text-gray-500">
-                    Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, pagination.total)} of {pagination.total} estimates
+                    Showing {(currentPage - 1) * pageSize + 1} to{" "}
+                    {Math.min(currentPage * pageSize, pagination.total)} of{" "}
+                    {pagination.total} estimates
                   </div>
                   <div className="flex items-center gap-2">
                     <Label htmlFor="pageSize" className="text-sm text-gray-500">
@@ -1974,39 +1843,44 @@ export default function Estimates() {
                     >
                       Previous
                     </Button>
-                    
+
                     {/* Page Numbers */}
                     <div className="flex items-center space-x-1">
-                      {Array.from({ length: Math.min(5, pagination.totalPages) }, (_, i) => {
-                        let pageNum;
-                        if (pagination.totalPages <= 5) {
-                          // Show all pages if 5 or fewer
-                          pageNum = i + 1;
-                        } else if (currentPage <= 3) {
-                          // Show first 5 pages
-                          pageNum = i + 1;
-                        } else if (currentPage >= pagination.totalPages - 2) {
-                          // Show last 5 pages
-                          pageNum = pagination.totalPages - 4 + i;
-                        } else {
-                          // Show pages around current page
-                          pageNum = currentPage - 2 + i;
+                      {Array.from(
+                        { length: Math.min(5, pagination.totalPages) },
+                        (_, i) => {
+                          let pageNum;
+                          if (pagination.totalPages <= 5) {
+                            // Show all pages if 5 or fewer
+                            pageNum = i + 1;
+                          } else if (currentPage <= 3) {
+                            // Show first 5 pages
+                            pageNum = i + 1;
+                          } else if (currentPage >= pagination.totalPages - 2) {
+                            // Show last 5 pages
+                            pageNum = pagination.totalPages - 4 + i;
+                          } else {
+                            // Show pages around current page
+                            pageNum = currentPage - 2 + i;
+                          }
+
+                          return (
+                            <Button
+                              key={pageNum}
+                              variant={
+                                currentPage === pageNum ? "default" : "outline"
+                              }
+                              size="sm"
+                              onClick={() => setCurrentPage(pageNum)}
+                              className="min-w-[2.5rem]"
+                            >
+                              {pageNum}
+                            </Button>
+                          );
                         }
-                        
-                        return (
-                          <Button
-                            key={pageNum}
-                            variant={currentPage === pageNum ? "default" : "outline"}
-                            size="sm"
-                            onClick={() => setCurrentPage(pageNum)}
-                            className="min-w-[2.5rem]"
-                          >
-                            {pageNum}
-                          </Button>
-                        );
-                      })}
+                      )}
                     </div>
-                    
+
                     <Button
                       variant="outline"
                       size="sm"
@@ -2046,7 +1920,9 @@ export default function Estimates() {
                       {/* Status Change Dropdown */}
                       <Select
                         value={previewEstimate.status || "draft"}
-                        onValueChange={(value) => handleStatusChange(Number(previewEstimate.id), value)}
+                        onValueChange={(value) =>
+                          handleStatusChange(Number(previewEstimate.id), value)
+                        }
                         disabled={updateStatusMutation.isPending}
                       >
                         <SelectTrigger className="w-32">
@@ -2099,13 +1975,18 @@ export default function Estimates() {
                   </div>
                 </DialogHeader>
                 <div className="flex-1 overflow-y-auto px-6 py-4">
-                  <EstimatePreview 
+                  <EstimatePreview
                     ref={previewRef as any}
-                    estimate={previewEstimate as any} 
+                    estimate={previewEstimate as any}
                     hideActions={true}
                     companyInfo={{
-                      name: (tenantSettings as any)?.companyName || (tenant as any)?.name || "Your Company Name",
-                      logo: (tenantSettings as any)?.companyLogo || (previewEstimate as any)?.logoUrl,
+                      name:
+                        (tenantSettings as any)?.companyName ||
+                        (tenant as any)?.name ||
+                        "Your Company Name",
+                      logo:
+                        (tenantSettings as any)?.companyLogo ||
+                        (previewEstimate as any)?.logoUrl,
                       address: (tenantSettings as any)?.companyAddress,
                       phone: (tenantSettings as any)?.companyPhone,
                       email: (tenantSettings as any)?.companyEmail,
