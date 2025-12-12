@@ -74,18 +74,29 @@ import { useToast } from "@/hooks/use-toast";
 import { EnhancedTable, TableColumn } from "@/components/ui/enhanced-table";
 import type { Invoice } from "@shared/schema";
 import { Link, useLocation } from "wouter";
-import { ModernTemplate, InvoiceData } from "@/components/invoices/invoice-templates";
+import {
+  ModernTemplate,
+  InvoiceData,
+} from "@/components/invoices/invoice-templates";
 import { Combobox } from "@/components/ui/combobox";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { Check, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DateFilter } from "@/components/ui/date-filter";
 import { buildDateFilters } from "@/lib/date-filter-helpers";
+import InvoiceAnalyticsSheet from "./InvoiceAnalyticsSheet";
 
 const invoiceStatuses = [
   { value: "draft", label: "Draft", color: "bg-gray-100 text-gray-800" },
@@ -95,7 +106,11 @@ const invoiceStatuses = [
     color: "bg-yellow-100 text-yellow-800",
   },
   { value: "paid", label: "Paid", color: "bg-green-100 text-green-800" },
-  { value: "partial", label: "Partially Paid", color: "bg-blue-100 text-blue-800" },
+  {
+    value: "partial",
+    label: "Partially Paid",
+    color: "bg-blue-100 text-blue-800",
+  },
   { value: "overdue", label: "Overdue", color: "bg-red-100 text-red-800" },
   {
     value: "cancelled",
@@ -122,9 +137,11 @@ export default function Invoices() {
   const [localProviderFilter, setLocalProviderFilter] = useState<string>("all");
   const [localLeadTypeFilter, setLocalLeadTypeFilter] = useState<string>("all");
   const [localDateFilter, setLocalDateFilter] = useState("all");
-  const [localCustomDateFrom, setLocalCustomDateFrom] = useState<Date | null>(null);
+  const [localCustomDateFrom, setLocalCustomDateFrom] = useState<Date | null>(
+    null
+  );
   const [localCustomDateTo, setLocalCustomDateTo] = useState<Date | null>(null);
-  
+
   // Applied filter states (used for API calls)
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -135,11 +152,11 @@ export default function Invoices() {
   const [dateFilter, setDateFilter] = useState("all");
   const [customDateFrom, setCustomDateFrom] = useState<Date | null>(null);
   const [customDateTo, setCustomDateTo] = useState<Date | null>(null);
-  
+
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [sortBy, setSortBy] = useState<string | null>(null);
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
@@ -224,7 +241,7 @@ export default function Invoices() {
     if (!lineItems || lineItems.length === 0) return 0;
     return lineItems.reduce(
       (total, item) => total + (item.totalAmount || 0),
-      0,
+      0
     );
   };
 
@@ -250,7 +267,7 @@ export default function Invoices() {
 
     if (bookingId && bookingId !== "none") {
       const selectedBooking = bookings.find(
-        (b) => b.id.toString() === bookingId,
+        (b) => b.id.toString() === bookingId
       );
       console.log("🎯 Selected booking data:", selectedBooking);
 
@@ -261,10 +278,10 @@ export default function Invoices() {
         // Auto-populate dates if available
         setTimeout(() => {
           const issueDateInput = document.querySelector(
-            'input[name="issueDate"]',
+            'input[name="issueDate"]'
           ) as HTMLInputElement;
           const dueDateInput = document.querySelector(
-            'input[name="dueDate"]',
+            'input[name="dueDate"]'
           ) as HTMLInputElement;
 
           if (issueDateInput) {
@@ -274,7 +291,7 @@ export default function Invoices() {
           if (selectedBooking.travelDate && dueDateInput) {
             const travelDate = new Date(selectedBooking.travelDate);
             const dueDate = new Date(
-              travelDate.getTime() - 7 * 24 * 60 * 60 * 1000,
+              travelDate.getTime() - 7 * 24 * 60 * 60 * 1000
             ); // 7 days before travel
             dueDateInput.value = dueDate.toISOString().split("T")[0];
           }
@@ -303,7 +320,7 @@ export default function Invoices() {
           "Passengers:",
           bookingPassengers,
           "Package:",
-          bookingPackage,
+          bookingPackage
         );
 
         // Calculate prices
@@ -356,7 +373,7 @@ export default function Invoices() {
           "Paid:",
           bookingPaidAmount,
           "Discount:",
-          bookingDiscount,
+          bookingDiscount
         );
 
         // Set payment status based on booking status
@@ -382,7 +399,7 @@ export default function Invoices() {
           "Amount Paid:",
           bookingPaidAmount,
           "Discount:",
-          bookingDiscount,
+          bookingDiscount
         );
       }
     } else {
@@ -461,7 +478,7 @@ export default function Invoices() {
       // Parse line items
       const invoiceData = invoice as any;
       let lineItems: any[] = [];
-      
+
       if (invoiceData.lineItems) {
         if (typeof invoiceData.lineItems === "string") {
           try {
@@ -473,7 +490,7 @@ export default function Invoices() {
           lineItems = invoiceData.lineItems;
         }
       }
-      
+
       if (lineItems.length === 0) {
         if (invoiceData.line_items) {
           if (typeof invoiceData.line_items === "string") {
@@ -491,9 +508,7 @@ export default function Invoices() {
       }
 
       // Get customer data
-      const customer = customers.find(
-        (c) => c.id === invoice.customerId,
-      );
+      const customer = customers.find((c) => c.id === invoice.customerId);
 
       // Get company info from tenant
       const companyName = tenant?.companyName || "Company Name";
@@ -517,61 +532,64 @@ export default function Invoices() {
         companyEmail: companyEmail,
         companyPhone: companyPhone,
         companyAddress: tenant?.address || "",
-        items: lineItems.length > 0
-          ? lineItems
-              .map((item, index) => {
-                const sellingPrice = parseFloat(
-                  item.sellingPrice?.toString() || 
-                  item.unitPrice?.toString() || 
-                  item.price?.toString() || 
-                  "0"
-                );
-                const quantity = parseInt(
-                  item.quantity?.toString() || 
-                  item.qty?.toString() || 
-                  "1"
-                );
-                const totalAmount = parseFloat(
-                  item.totalAmount?.toString() || 
-                  item.totalPrice?.toString() || 
-                  item.amount?.toString() || 
-                  "0"
-                );
-                
-                let description = item.itemTitle?.trim() || item.description?.trim();
-                if (!description && item.travelCategory) {
-                  description = item.travelCategory;
-                }
-                if (!description && item.name) {
-                  description = item.name;
-                }
-                if (!description) {
-                  description = `Item ${index + 1}`;
-                }
-                
-                const calculatedTotal = totalAmount > 0 
-                  ? totalAmount 
-                  : (sellingPrice * quantity);
-                
-                return {
-                  description: description,
-                  quantity: quantity || 1,
-                  unitPrice: sellingPrice || 0,
-                  totalPrice: calculatedTotal || 0,
-                };
-              })
-              .filter((item) => item !== null)
-          : [
-              {
-                description: "No line items available",
-                quantity: 1,
-                unitPrice: 0,
-                totalPrice: 0,
-              }
-            ],
-        subtotal: parseFloat((invoiceData.subtotal || invoiceData.totalAmount || 0).toString()),
+        items:
+          lineItems.length > 0
+            ? lineItems
+                .map((item, index) => {
+                  const sellingPrice = parseFloat(
+                    item.sellingPrice?.toString() ||
+                      item.unitPrice?.toString() ||
+                      item.price?.toString() ||
+                      "0"
+                  );
+                  const quantity = parseInt(
+                    item.quantity?.toString() || item.qty?.toString() || "1"
+                  );
+                  const totalAmount = parseFloat(
+                    item.totalAmount?.toString() ||
+                      item.totalPrice?.toString() ||
+                      item.amount?.toString() ||
+                      "0"
+                  );
+
+                  let description =
+                    item.itemTitle?.trim() || item.description?.trim();
+                  if (!description && item.travelCategory) {
+                    description = item.travelCategory;
+                  }
+                  if (!description && item.name) {
+                    description = item.name;
+                  }
+                  if (!description) {
+                    description = `Item ${index + 1}`;
+                  }
+
+                  const calculatedTotal =
+                    totalAmount > 0 ? totalAmount : sellingPrice * quantity;
+
+                  return {
+                    description: description,
+                    quantity: quantity || 1,
+                    unitPrice: sellingPrice || 0,
+                    totalPrice: calculatedTotal || 0,
+                  };
+                })
+                .filter((item) => item !== null)
+            : [
+                {
+                  description: "No line items available",
+                  quantity: 1,
+                  unitPrice: 0,
+                  totalPrice: 0,
+                },
+              ],
+        subtotal: parseFloat(
+          (invoiceData.subtotal || invoiceData.totalAmount || 0).toString()
+        ),
         taxAmount: parseFloat((invoiceData.taxAmount || 0).toString()),
-        discountAmount: parseFloat((invoiceData.discountAmount || 0).toString()),
+        discountAmount: parseFloat(
+          (invoiceData.discountAmount || 0).toString()
+        ),
         totalAmount: parseFloat(invoice.totalAmount || 0),
         currency: currencySymbol,
         notes: invoice.notes || undefined,
@@ -581,29 +599,29 @@ export default function Invoices() {
       };
 
       // Create a temporary div with the invoice HTML
-      const tempDiv = document.createElement('div');
-      tempDiv.style.position = 'absolute';
-      tempDiv.style.left = '-9999px';
-      tempDiv.style.width = '800px';
-      tempDiv.style.padding = '40px';
-      tempDiv.style.backgroundColor = '#ffffff';
+      const tempDiv = document.createElement("div");
+      tempDiv.style.position = "absolute";
+      tempDiv.style.left = "-9999px";
+      tempDiv.style.width = "800px";
+      tempDiv.style.padding = "40px";
+      tempDiv.style.backgroundColor = "#ffffff";
       tempDiv.innerHTML = `
         <div style="font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 40px; background: white;">
           <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 40px; padding-bottom: 20px; border-bottom: 2px solid #e5e7eb;">
             <div>
               <h1 style="font-size: 28px; font-weight: 700; color: #1f2937; margin-bottom: 8px;">${pdfData.companyName}</h1>
               <p style="color: #6b7280; margin-bottom: 4px;">${pdfData.companyEmail}</p>
-              ${pdfData.companyPhone ? `<p style="color: #6b7280; margin-bottom: 4px;">${pdfData.companyPhone}</p>` : ''}
-              ${pdfData.companyAddress ? `<p style="color: #6b7280; margin-bottom: 4px;">${pdfData.companyAddress}</p>` : ''}
+              ${pdfData.companyPhone ? `<p style="color: #6b7280; margin-bottom: 4px;">${pdfData.companyPhone}</p>` : ""}
+              ${pdfData.companyAddress ? `<p style="color: #6b7280; margin-bottom: 4px;">${pdfData.companyAddress}</p>` : ""}
             </div>
             <div style="text-align: right;">
               <div style="margin-bottom: 8px;">
                 <h2 style="font-size: 24px; font-weight: 600; color: #3b82f6; margin: 0 0 8px 0; display: inline-block;">INVOICE</h2>
-                ${pdfData.paymentStatus?.toLowerCase() === "paid" ? `<span style="display: inline-block; margin-left: 12px; padding: 6px 14px; border-radius: 4px; font-size: 11px; font-weight: 700; background-color: #10b981; color: #ffffff; text-transform: uppercase; letter-spacing: 0.5px; vertical-align: middle;">PAID</span>` : ''}
+                ${pdfData.paymentStatus?.toLowerCase() === "paid" ? `<span style="display: inline-block; margin-left: 12px; padding: 6px 14px; border-radius: 4px; font-size: 11px; font-weight: 700; background-color: #10b981; color: #ffffff; text-transform: uppercase; letter-spacing: 0.5px; vertical-align: middle;">PAID</span>` : ""}
               </div>
               <p style="font-size: 18px; font-weight: 600; margin-bottom: 4px;">#${pdfData.invoiceNumber}</p>
               <p style="color: #6b7280; margin-bottom: 4px;">Date: ${formatDate(pdfData.issueDate)}</p>
-              ${pdfData.paymentStatus?.toLowerCase() !== "paid" ? `<p style="color: #6b7280; margin-bottom: 4px;">Due: ${formatDate(pdfData.dueDate)}</p>` : ''}
+              ${pdfData.paymentStatus?.toLowerCase() !== "paid" ? `<p style="color: #6b7280; margin-bottom: 4px;">Due: ${formatDate(pdfData.dueDate)}</p>` : ""}
             </div>
           </div>
 
@@ -612,8 +630,8 @@ export default function Invoices() {
             <div style="background: #f9fafb; padding: 16px; border-radius: 8px;">
               <p style="font-weight: 600; margin-bottom: 4px;">${pdfData.customerName}</p>
               <p style="color: #6b7280; margin-bottom: 4px;">${pdfData.customerEmail}</p>
-              ${pdfData.customerPhone ? `<p style="color: #6b7280; margin-bottom: 4px;">${pdfData.customerPhone}</p>` : ''}
-              ${pdfData.customerAddress ? `<p style="color: #6b7280; margin-bottom: 4px;">${pdfData.customerAddress}</p>` : ''}
+              ${pdfData.customerPhone ? `<p style="color: #6b7280; margin-bottom: 4px;">${pdfData.customerPhone}</p>` : ""}
+              ${pdfData.customerAddress ? `<p style="color: #6b7280; margin-bottom: 4px;">${pdfData.customerAddress}</p>` : ""}
             </div>
           </div>
 
@@ -627,14 +645,18 @@ export default function Invoices() {
               </tr>
             </thead>
             <tbody>
-              ${pdfData.items.map((item: any) => `
+              ${pdfData.items
+                .map(
+                  (item: any) => `
                 <tr style="border-bottom: 1px solid #e5e7eb;">
                   <td style="padding: 12px;">${item.description}</td>
                   <td style="padding: 12px; text-align: center;">${item.quantity}</td>
                   <td style="padding: 12px; text-align: right;">${pdfData.currency} ${item.unitPrice.toFixed(2)}</td>
                   <td style="padding: 12px; text-align: right;">${pdfData.currency} ${item.totalPrice.toFixed(2)}</td>
                 </tr>
-              `).join('')}
+              `
+                )
+                .join("")}
             </tbody>
           </table>
 
@@ -644,12 +666,16 @@ export default function Invoices() {
                 <span>Subtotal:</span>
                 <span>${pdfData.currency} ${pdfData.subtotal.toFixed(2)}</span>
               </div>
-              ${pdfData.discountAmount > 0 ? `
+              ${
+                pdfData.discountAmount > 0
+                  ? `
                 <div style="display: flex; justify-content: space-between; padding: 8px 0; color: #059669;">
                   <span>Discount:</span>
                   <span>-${pdfData.currency} ${pdfData.discountAmount.toFixed(2)}</span>
                 </div>
-              ` : ''}
+              `
+                  : ""
+              }
               <div style="display: flex; justify-content: space-between; padding: 8px 0;">
                 <span>Tax:</span>
                 <span>${pdfData.currency} ${pdfData.taxAmount.toFixed(2)}</span>
@@ -661,59 +687,68 @@ export default function Invoices() {
             </div>
           </div>
 
-          ${pdfData.paymentStatus?.toLowerCase() !== "paid" && pdfData.paymentTerms ? `
+          ${
+            pdfData.paymentStatus?.toLowerCase() !== "paid" &&
+            pdfData.paymentTerms
+              ? `
             <div style="border-top: 1px solid #e5e7eb; padding-top: 24px; margin-top: 40px;">
               <h4 style="font-weight: 600; margin-bottom: 8px;">Payment Terms:</h4>
               <p style="color: #6b7280;">${pdfData.paymentTerms}</p>
             </div>
-          ` : ''}
+          `
+              : ""
+          }
 
-          ${pdfData.notes ? `
+          ${
+            pdfData.notes
+              ? `
             <div style="border-top: 1px solid #e5e7eb; padding-top: 24px; margin-top: 40px;">
               <h4 style="font-weight: 600; margin-bottom: 8px;">Notes:</h4>
               <div style="color: #6b7280;">${pdfData.notes}</div>
             </div>
-          ` : ''}
+          `
+              : ""
+          }
         </div>
       `;
 
       document.body.appendChild(tempDiv);
 
       // Generate PDF using html2canvas and jsPDF
-      const html2canvas = (await import('html2canvas')).default;
-      const jsPDF = (await import('jspdf')).default;
-      
+      const html2canvas = (await import("html2canvas")).default;
+      const jsPDF = (await import("jspdf")).default;
+
       const canvas = await html2canvas(tempDiv, {
-        backgroundColor: '#ffffff',
+        backgroundColor: "#ffffff",
         scale: 2,
         useCORS: true,
         allowTaint: true,
         logging: false,
       });
-      
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'a4');
+
+      const imgData = canvas.toDataURL("image/png");
+      const pdf = new jsPDF("p", "mm", "a4");
       const pdfWidth = pdf.internal.pageSize.getWidth();
       const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-      
+
       // Handle multi-page PDFs
       let heightLeft = pdfHeight;
       let position = 0;
       const pageHeight = pdf.internal.pageSize.getHeight();
-      
-      pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
+
+      pdf.addImage(imgData, "PNG", 0, position, pdfWidth, pdfHeight);
       heightLeft -= pageHeight;
-      
+
       while (heightLeft > 0) {
         position = heightLeft - pdfHeight;
         pdf.addPage();
-        pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
+        pdf.addImage(imgData, "PNG", 0, position, pdfWidth, pdfHeight);
         heightLeft -= pageHeight;
       }
-      
+
       // Clean up temporary element
       document.body.removeChild(tempDiv);
-      
+
       // Download PDF
       pdf.save(`invoice-${pdfData.invoiceNumber || invoice.id}.pdf`);
 
@@ -742,7 +777,7 @@ export default function Invoices() {
             "Content-Type": "application/json",
             Authorization: `Bearer ${localStorage.getItem("token")}`,
           },
-        },
+        }
       );
 
       if (response.ok) {
@@ -774,14 +809,14 @@ export default function Invoices() {
             "Content-Type": "application/json",
             Authorization: `Bearer ${localStorage.getItem("token")}`,
           },
-        },
+        }
       );
 
       if (response.ok) {
         const data = await response.json();
         if (data.whatsappLink) {
           // Open WhatsApp link in new tab
-          window.open(data.whatsappLink, '_blank');
+          window.open(data.whatsappLink, "_blank");
           toast({
             title: "Success",
             description: `WhatsApp link opened. Please send the message to complete.`,
@@ -799,7 +834,8 @@ export default function Invoices() {
     } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message || "Failed to send WhatsApp message. Please try again.",
+        description:
+          error.message || "Failed to send WhatsApp message. Please try again.",
         variant: "destructive",
       });
     }
@@ -866,7 +902,7 @@ export default function Invoices() {
         `/api/customers?action=get-customers&tenantId=${tenant?.id}`,
         {
           headers: { Authorization: `Bearer ${token}` },
-        },
+        }
       );
       if (!response.ok) {
         throw new Error("Failed to fetch customers");
@@ -910,9 +946,10 @@ export default function Invoices() {
     enabled: !!tenant?.id,
     queryFn: async () => {
       const token = auth.getToken();
-      const url = leadTypeFilter && leadTypeFilter !== "all"
-        ? `/api/tenants/${tenant?.id}/service-providers?leadTypeId=${leadTypeFilter}`
-        : `/api/tenants/${tenant?.id}/service-providers`;
+      const url =
+        leadTypeFilter && leadTypeFilter !== "all"
+          ? `/api/tenants/${tenant?.id}/service-providers?leadTypeId=${leadTypeFilter}`
+          : `/api/tenants/${tenant?.id}/service-providers`;
       const response = await fetch(url, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -968,8 +1005,31 @@ export default function Invoices() {
     data: invoicesResponse,
     isLoading,
     error,
-  } = useQuery<{ data: Invoice[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }>({
-    queryKey: [`/api/tenants/${tenant?.id}/invoices`, currentPage, pageSize, statusFilter, customerFilter, vendorFilter, providerFilter, leadTypeFilter, searchTerm, dateFilter, customDateFrom, customDateTo, sortBy, sortOrder],
+  } = useQuery<{
+    data: Invoice[];
+    pagination: {
+      page: number;
+      pageSize: number;
+      total: number;
+      totalPages: number;
+    };
+  }>({
+    queryKey: [
+      `/api/tenants/${tenant?.id}/invoices`,
+      currentPage,
+      pageSize,
+      statusFilter,
+      customerFilter,
+      vendorFilter,
+      providerFilter,
+      leadTypeFilter,
+      searchTerm,
+      dateFilter,
+      customDateFrom,
+      customDateTo,
+      sortBy,
+      sortOrder,
+    ],
     enabled: !!tenant?.id,
     refetchOnWindowFocus: true,
     refetchInterval: 30000,
@@ -980,7 +1040,7 @@ export default function Invoices() {
       const params = new URLSearchParams();
       params.append("page", currentPage.toString());
       params.append("pageSize", pageSize.toString());
-      
+
       if (statusFilter && statusFilter !== "all") {
         params.append("status", statusFilter);
       }
@@ -1001,14 +1061,18 @@ export default function Invoices() {
       if (searchTerm) {
         params.append("search", searchTerm);
       }
-      
+
       // Build date filters from date filter state
-      const dateFilters = buildDateFilters(dateFilter, customDateFrom, customDateTo);
+      const dateFilters = buildDateFilters(
+        dateFilter,
+        customDateFrom,
+        customDateTo
+      );
       if (dateFilters) {
         params.append("startDate", dateFilters.startDate);
         params.append("endDate", dateFilters.endDate);
       }
-      
+
       if (sortBy) {
         params.append("sortBy", sortBy);
         params.append("sortOrder", sortOrder);
@@ -1021,35 +1085,50 @@ export default function Invoices() {
             Authorization: `Bearer ${token}`,
             "Cache-Control": "no-cache",
           },
-        },
+        }
       );
       if (!response.ok) {
         console.error("Invoices API Error:", response.status);
-        return { data: [], pagination: { page: 1, pageSize: 10, total: 0, totalPages: 0 } };
+        return {
+          data: [],
+          pagination: { page: 1, pageSize: 10, total: 0, totalPages: 0 },
+        };
       }
       const result = await response.json();
-      
+
       // Handle both old format (array) and new format (object with data and pagination)
       let invoicesData: Invoice[] = [];
       let paginationData = { page: 1, pageSize: 10, total: 0, totalPages: 0 };
-      
+
       if (Array.isArray(result)) {
         invoicesData = result;
-        paginationData = { page: 1, pageSize: result.length, total: result.length, totalPages: 1 };
+        paginationData = {
+          page: 1,
+          pageSize: result.length,
+          total: result.length,
+          totalPages: 1,
+        };
       } else {
         invoicesData = result.data || [];
-        paginationData = result.pagination || { page: 1, pageSize: 10, total: 0, totalPages: 0 };
+        paginationData = result.pagination || {
+          page: 1,
+          pageSize: 10,
+          total: 0,
+          totalPages: 0,
+        };
       }
-      
+
       // Filter out void status invoices
       const filteredInvoices = invoicesData.filter(
         (invoice) => invoice.status?.toLowerCase() !== "void"
       );
-      
+
       // Recalculate pagination for filtered results
       const filteredTotal = filteredInvoices.length;
-      const filteredTotalPages = Math.ceil(filteredTotal / paginationData.pageSize);
-      
+      const filteredTotalPages = Math.ceil(
+        filteredTotal / paginationData.pageSize
+      );
+
       return {
         data: filteredInvoices,
         pagination: {
@@ -1062,7 +1141,12 @@ export default function Invoices() {
   });
 
   const invoices = invoicesResponse?.data || [];
-  const pagination = invoicesResponse?.pagination || { page: 1, pageSize: 10, total: 0, totalPages: 0 };
+  const pagination = invoicesResponse?.pagination || {
+    page: 1,
+    pageSize: 10,
+    total: 0,
+    totalPages: 0,
+  };
 
   // Helper function to get currency symbol
   const getCurrencySymbol = (currencyCode: string): string => {
@@ -1086,33 +1170,42 @@ export default function Invoices() {
   // Helper function to format date as dd-mm-yyyy
   const formatDate = (date: string | Date | null | undefined): string => {
     if (!date) return "-";
-    const dateObj = typeof date === 'string' ? new Date(date) : date;
+    const dateObj = typeof date === "string" ? new Date(date) : date;
     if (isNaN(dateObj.getTime())) return "-";
-    
-    const day = String(dateObj.getDate()).padStart(2, '0');
-    const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+
+    const day = String(dateObj.getDate()).padStart(2, "0");
+    const month = String(dateObj.getMonth() + 1).padStart(2, "0");
     const year = dateObj.getFullYear();
-    
+
     return `${day}-${month}-${year}`;
   };
 
   // Update invoice status mutation
   const updateStatusMutation = useMutation({
-    mutationFn: async ({ invoiceId, status }: { invoiceId: number; status: string }) => {
+    mutationFn: async ({
+      invoiceId,
+      status,
+    }: {
+      invoiceId: number;
+      status: string;
+    }) => {
       const token = auth.getToken();
-      const response = await fetch(`/api/tenants/${tenant?.id}/invoices/${invoiceId}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ status }),
-      });
+      const response = await fetch(
+        `/api/tenants/${tenant?.id}/invoices/${invoiceId}`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ status }),
+        }
+      );
 
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(
-          `Failed to update invoice status: ${response.status} - ${errorText}`,
+          `Failed to update invoice status: ${response.status} - ${errorText}`
         );
       }
 
@@ -1197,7 +1290,7 @@ export default function Invoices() {
       render: (_, invoice) => {
         const invoiceData = invoice as any;
         let lineItems: any[] = [];
-        
+
         // Parse line items
         if (invoiceData.lineItems) {
           if (typeof invoiceData.lineItems === "string") {
@@ -1210,16 +1303,16 @@ export default function Invoices() {
             lineItems = invoiceData.lineItems;
           }
         }
-        
+
         // Extract invoice/voucher numbers from line items
         const numbers = lineItems
           .map((item) => item.invoiceNumber || item.voucherNumber)
           .filter((num) => num && num.trim() !== "");
-        
+
         if (numbers.length === 0) {
           return <div className="text-gray-400">-</div>;
         }
-        
+
         return (
           <div className="flex flex-col gap-1">
             {numbers.slice(0, 3).map((num, idx) => (
@@ -1243,9 +1336,7 @@ export default function Invoices() {
       render: (issueDate) => (
         <div className="flex items-center">
           <Calendar className="h-4 w-4 mr-2 text-gray-400" />
-          <span>
-            {formatDate(issueDate)}
-          </span>
+          <span>{formatDate(issueDate)}</span>
         </div>
       ),
     },
@@ -1256,7 +1347,9 @@ export default function Invoices() {
       render: (dueDate, invoice) => {
         const isOverdue =
           invoice.status === "overdue" ||
-          (invoice.status === "pending" && dueDate && new Date(dueDate) < new Date());
+          (invoice.status === "pending" &&
+            dueDate &&
+            new Date(dueDate) < new Date());
         return (
           <div className="flex items-center">
             <Clock
@@ -1313,9 +1406,15 @@ export default function Invoices() {
       render: (status, invoice) => {
         // Use the status from the API - don't auto-detect to override explicit status
         const invoiceData = invoice as any;
-        const paidAmount = parseFloat(invoiceData.paidAmount?.toString() || invoiceData.amountPaid?.toString() || "0");
-        const totalAmount = parseFloat(invoiceData.totalAmount?.toString() || "0");
-        
+        const paidAmount = parseFloat(
+          invoiceData.paidAmount?.toString() ||
+            invoiceData.amountPaid?.toString() ||
+            "0"
+        );
+        const totalAmount = parseFloat(
+          invoiceData.totalAmount?.toString() || "0"
+        );
+
         // Only auto-detect if status is missing/null/undefined, not when explicitly set
         let displayStatus = status;
         if (!displayStatus) {
@@ -1328,7 +1427,7 @@ export default function Invoices() {
             displayStatus = "pending";
           }
         }
-        
+
         const statusConfig = getStatusBadge(displayStatus);
         return (
           <Select
@@ -1341,7 +1440,9 @@ export default function Invoices() {
             }}
             disabled={updateStatusMutation.isPending}
           >
-            <SelectTrigger className={`w-[140px] h-8 ${statusConfig.color} border-0`}>
+            <SelectTrigger
+              className={`w-[140px] h-8 ${statusConfig.color} border-0`}
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -1419,18 +1520,25 @@ export default function Invoices() {
   // Reset to page 1 when applied filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [statusFilter, customerFilter, vendorFilter, providerFilter, leadTypeFilter, searchTerm]);
+  }, [
+    statusFilter,
+    customerFilter,
+    vendorFilter,
+    providerFilter,
+    leadTypeFilter,
+    searchTerm,
+  ]);
 
   // Map column keys to API field names
   const getApiFieldName = (columnKey: string): string => {
     const fieldMap: { [key: string]: string } = {
-      invoiceNumber: 'invoice_number',
-      customerName: 'customer_id', // Will need to sort by customer name via join
-      issueDate: 'issue_date',
-      dueDate: 'due_date',
-      totalAmount: 'total_amount',
-      paidAmount: 'paid_amount',
-      status: 'status',
+      invoiceNumber: "invoice_number",
+      customerName: "customer_id", // Will need to sort by customer name via join
+      issueDate: "issue_date",
+      dueDate: "due_date",
+      totalAmount: "total_amount",
+      paidAmount: "paid_amount",
+      status: "status",
     };
     return fieldMap[columnKey] || columnKey;
   };
@@ -1438,14 +1546,14 @@ export default function Invoices() {
   // Map API field names back to column keys for icon display
   const getColumnKeyFromApiField = (apiField: string): string | null => {
     const reverseMap: { [key: string]: string } = {
-      'invoice_number': 'invoiceNumber',
-      'customer_id': 'customerName',
-      'issue_date': 'issueDate',
-      'due_date': 'dueDate',
-      'total_amount': 'totalAmount',
-      'paid_amount': 'paidAmount',
-      'status': 'status',
-      'created_at': 'created_at',
+      invoice_number: "invoiceNumber",
+      customer_id: "customerName",
+      issue_date: "issueDate",
+      due_date: "dueDate",
+      total_amount: "totalAmount",
+      paid_amount: "paidAmount",
+      status: "status",
+      created_at: "created_at",
     };
     return reverseMap[apiField] || null;
   };
@@ -1455,11 +1563,11 @@ export default function Invoices() {
     const apiField = getApiFieldName(columnKey);
     if (sortBy === apiField) {
       // Toggle sort order
-      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+      setSortOrder(sortOrder === "asc" ? "desc" : "asc");
     } else {
       // Set new sort column
       setSortBy(apiField);
-      setSortOrder('asc');
+      setSortOrder("asc");
     }
     setCurrentPage(1); // Reset to first page when sorting changes
   };
@@ -1520,7 +1628,11 @@ export default function Invoices() {
   };
 
   // Multi-select customer component
-  const MultiSelectCustomer = ({ customers, selectedCustomers, onSelectionChange }: {
+  const MultiSelectCustomer = ({
+    customers,
+    selectedCustomers,
+    onSelectionChange,
+  }: {
     customers: any[];
     selectedCustomers: string[];
     onSelectionChange: (selected: string[]) => void;
@@ -1532,7 +1644,10 @@ export default function Invoices() {
       if (!searchQuery) return true;
       const name = (customer.name || customer.customerName || "").toLowerCase();
       const email = (customer.email || "").toLowerCase();
-      return name.includes(searchQuery.toLowerCase()) || email.includes(searchQuery.toLowerCase());
+      return (
+        name.includes(searchQuery.toLowerCase()) ||
+        email.includes(searchQuery.toLowerCase())
+      );
     });
 
     const toggleCustomer = (customerId: string) => {
@@ -1543,13 +1658,16 @@ export default function Invoices() {
       }
     };
 
-    const displayText = selectedCustomers.length === 0
-      ? "Customer"
-      : selectedCustomers.length === 1
-      ? customers.find((c) => c.id.toString() === selectedCustomers[0])?.name || 
-        customers.find((c) => c.id.toString() === selectedCustomers[0])?.customerName || 
-        "1 selected"
-      : `${selectedCustomers.length} selected`;
+    const displayText =
+      selectedCustomers.length === 0
+        ? "Customer"
+        : selectedCustomers.length === 1
+          ? customers.find((c) => c.id.toString() === selectedCustomers[0])
+              ?.name ||
+            customers.find((c) => c.id.toString() === selectedCustomers[0])
+              ?.customerName ||
+            "1 selected"
+          : `${selectedCustomers.length} selected`;
 
     return (
       <div>
@@ -1576,7 +1694,9 @@ export default function Invoices() {
                 <CommandEmpty>No customers found.</CommandEmpty>
                 <CommandGroup>
                   {filteredCustomers.map((customer) => {
-                    const isSelected = selectedCustomers.includes(customer.id.toString());
+                    const isSelected = selectedCustomers.includes(
+                      customer.id.toString()
+                    );
                     return (
                       <CommandItem
                         key={customer.id}
@@ -1590,9 +1710,15 @@ export default function Invoices() {
                           )}
                         />
                         <div className="flex-1">
-                          <div>{customer.name || customer.customerName || "Unknown"}</div>
+                          <div>
+                            {customer.name ||
+                              customer.customerName ||
+                              "Unknown"}
+                          </div>
                           {customer.email && (
-                            <div className="text-xs text-gray-500">{customer.email}</div>
+                            <div className="text-xs text-gray-500">
+                              {customer.email}
+                            </div>
                           )}
                         </div>
                       </CommandItem>
@@ -1606,7 +1732,9 @@ export default function Invoices() {
         {selectedCustomers.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-2">
             {selectedCustomers.map((customerId) => {
-              const customer = customers.find((c) => c.id.toString() === customerId);
+              const customer = customers.find(
+                (c) => c.id.toString() === customerId
+              );
               return (
                 <span
                   key={customerId}
@@ -1616,7 +1744,9 @@ export default function Invoices() {
                   <button
                     type="button"
                     onClick={() => {
-                      onSelectionChange(selectedCustomers.filter((id) => id !== customerId));
+                      onSelectionChange(
+                        selectedCustomers.filter((id) => id !== customerId)
+                      );
                     }}
                     className="hover:text-blue-600"
                   >
@@ -1647,7 +1777,7 @@ export default function Invoices() {
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(
-          `Failed to create invoice: ${response.status} - ${errorText}`,
+          `Failed to create invoice: ${response.status} - ${errorText}`
         );
       }
 
@@ -1762,53 +1892,7 @@ export default function Invoices() {
   }
 
 
-  // Calculate analytics data
-  const totalInvoices = invoices.length;
-  const totalAmount = invoices.reduce(
-    (sum, inv) => sum + parseFloat(inv.totalAmount?.toString() || "0"),
-    0
-  );
-  const paidAmount = invoices.reduce(
-    (sum, inv) => sum + parseFloat((inv as any).paidAmount?.toString() || "0"),
-    0
-  );
-  const pendingAmount = invoices.reduce((sum, inv) => {
-    const total = parseFloat(inv.totalAmount?.toString() || "0");
-    const paid = parseFloat((inv as any).paidAmount?.toString() || "0");
-    return sum + Math.max(0, total - paid);
-  }, 0);
-  const collectionRate = totalAmount > 0 ? Math.round((paidAmount / totalAmount) * 100) : 0;
 
-  // Chart data
-  const statusData = invoiceStatuses.map((status) => ({
-    name: status.label,
-    count: invoices.filter((inv) => inv.status === status.value).length,
-    color: status.value === "paid" ? "#10b981" : status.value === "pending" ? "#f59e0b" : status.value === "overdue" ? "#ef4444" : "#6b7280"
-  }));
-
-  const monthlyData = invoices.reduce((acc: any[], inv) => {
-    const date = new Date(inv.issueDate || Date.now());
-    const monthYear = `${date.toLocaleString('default', { month: 'short' })} ${date.getFullYear()}`;
-    const existing = acc.find(item => item.month === monthYear);
-    const amount = parseFloat(inv.totalAmount?.toString() || "0");
-    const paid = parseFloat((inv as any).paidAmount?.toString() || "0");
-    
-    if (existing) {
-      existing.total += amount;
-      existing.paid += paid;
-      existing.pending += (amount - paid);
-    } else {
-      acc.push({
-        month: monthYear,
-        total: amount,
-        paid: paid,
-        pending: amount - paid
-      });
-    }
-    return acc;
-  }, []).slice(-6);
-
-  const COLORS = ['#10b981', '#f59e0b', '#ef4444', '#6b7280', '#8b5cf6'];
 
   return (
     <Layout>
@@ -1824,196 +1908,11 @@ export default function Invoices() {
             </p>
           </div>
           <div className="flex gap-2">
-            <Sheet open={isAnalyticsOpen} onOpenChange={setIsAnalyticsOpen}>
-              <SheetTrigger asChild>
-                <Button variant="outline" data-testid="button-analytics">
-                  <BarChart3 className="mr-2 h-4 w-4" />
-                  Analytics
-                </Button>
-              </SheetTrigger>
-              <SheetContent side="right" className="w-[600px] sm:max-w-[600px] overflow-y-auto">
-                <SheetHeader>
-                  <SheetTitle>Invoice Analytics</SheetTitle>
-                  <SheetDescription>
-                    Overview of your invoice metrics and trends
-                  </SheetDescription>
-                </SheetHeader>
-                
-                <div className="mt-6 space-y-6">
-                  {/* Summary Cards */}
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-gradient-to-r from-blue-50 to-blue-100 dark:from-blue-950 dark:to-blue-900 p-4 rounded-lg">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm text-blue-600 dark:text-blue-400 font-medium">
-                            Total Invoices
-                          </p>
-                          <p className="text-2xl font-bold text-blue-700 dark:text-blue-300">
-                            {totalInvoices}
-                          </p>
-                        </div>
-                        <Receipt className="h-8 w-8 text-blue-500" />
-                      </div>
-                    </div>
+            <InvoiceAnalyticsSheet
+              isAnalyticsOpen={isAnalyticsOpen}
+              setIsAnalyticsOpen={setIsAnalyticsOpen}
+            />
 
-                    <div className="bg-gradient-to-r from-purple-50 to-purple-100 dark:from-purple-950 dark:to-purple-900 p-4 rounded-lg">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm text-purple-600 dark:text-purple-400 font-medium">
-                            Total Amount
-                          </p>
-                          <p className="text-2xl font-bold text-purple-700 dark:text-purple-300">
-                            ₹{totalAmount.toLocaleString()}
-                          </p>
-                        </div>
-                        <IndianRupee className="h-8 w-8 text-purple-500" />
-                      </div>
-                    </div>
-
-                    <div className="bg-gradient-to-r from-green-50 to-green-100 dark:from-green-950 dark:to-green-900 p-4 rounded-lg">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm text-green-600 dark:text-green-400 font-medium">
-                            Paid Amount
-                          </p>
-                          <p className="text-2xl font-bold text-green-700 dark:text-green-300">
-                            ₹{paidAmount.toLocaleString()}
-                          </p>
-                        </div>
-                        <CheckCircle className="h-8 w-8 text-green-500" />
-                      </div>
-                    </div>
-
-                    <div className="bg-gradient-to-r from-yellow-50 to-yellow-100 dark:from-yellow-950 dark:to-yellow-900 p-4 rounded-lg">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm text-yellow-600 dark:text-yellow-400 font-medium">
-                            Pending
-                          </p>
-                          <p className="text-2xl font-bold text-yellow-700 dark:text-yellow-300">
-                            ₹{pendingAmount.toLocaleString()}
-                          </p>
-                        </div>
-                        <Clock className="h-8 w-8 text-yellow-500" />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Collection Rate */}
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="text-lg flex items-center gap-2">
-                        <TrendingUp className="h-5 w-5" />
-                        Collection Rate
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="flex items-center gap-4">
-                        <div className="text-4xl font-bold text-cyan-600">{collectionRate}%</div>
-                        <div className="flex-1">
-                          <div className="w-full bg-gray-200 rounded-full h-4">
-                            <div
-                              className="bg-cyan-600 h-4 rounded-full transition-all"
-                              style={{ width: `${collectionRate}%` }}
-                            ></div>
-                          </div>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  {/* Invoice Status Distribution */}
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="text-lg">Status Distribution</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <ResponsiveContainer width="100%" height={250}>
-                        <PieChart>
-                          <Pie
-                            data={statusData}
-                            cx="50%"
-                            cy="50%"
-                            labelLine={false}
-                            label={({ name, count }) => `${name}: ${count}`}
-                            outerRadius={80}
-                            fill="#8884d8"
-                            dataKey="count"
-                          >
-                            {statusData.map((entry, index) => (
-                              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                            ))}
-                          </Pie>
-                          <Tooltip />
-                        </PieChart>
-                      </ResponsiveContainer>
-                      <div className="mt-4 space-y-2">
-                        {statusData.map((status, index) => (
-                          <div key={status.name} className="flex justify-between items-center">
-                            <div className="flex items-center gap-2">
-                              <div 
-                                className="w-3 h-3 rounded-full" 
-                                style={{ backgroundColor: COLORS[index % COLORS.length] }}
-                              ></div>
-                              <span className="text-sm text-gray-600 dark:text-gray-400">
-                                {status.name}
-                              </span>
-                            </div>
-                            <Badge>{status.count}</Badge>
-                          </div>
-                        ))}
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  {/* Monthly Trends */}
-                  {monthlyData.length > 0 && (
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="text-lg">Monthly Trends</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <ResponsiveContainer width="100%" height={300}>
-                          <BarChart data={monthlyData}>
-                            <CartesianGrid strokeDasharray="3 3" />
-                            <XAxis dataKey="month" />
-                            <YAxis />
-                            <Tooltip />
-                            <Legend />
-                            <Bar dataKey="total" fill="#8b5cf6" name="Total Amount" />
-                            <Bar dataKey="paid" fill="#10b981" name="Paid Amount" />
-                            <Bar dataKey="pending" fill="#f59e0b" name="Pending Amount" />
-                          </BarChart>
-                        </ResponsiveContainer>
-                      </CardContent>
-                    </Card>
-                  )}
-
-                  {/* Payment Timeline */}
-                  {monthlyData.length > 0 && (
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="text-lg">Payment Timeline</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <ResponsiveContainer width="100%" height={300}>
-                          <LineChart data={monthlyData}>
-                            <CartesianGrid strokeDasharray="3 3" />
-                            <XAxis dataKey="month" />
-                            <YAxis />
-                            <Tooltip />
-                            <Legend />
-                            <Line type="monotone" dataKey="total" stroke="#8b5cf6" name="Total" strokeWidth={2} />
-                            <Line type="monotone" dataKey="paid" stroke="#10b981" name="Paid" strokeWidth={2} />
-                          </LineChart>
-                        </ResponsiveContainer>
-                      </CardContent>
-                    </Card>
-                  )}
-                </div>
-              </SheetContent>
-            </Sheet>
-            
             <Link href="/invoice-create">
               <Button data-testid="button-create-invoice">
                 <Plus className="mr-2 h-4 w-4" />
@@ -2072,7 +1971,7 @@ export default function Invoices() {
                     }}
                   />
                 </div>
-                
+
                 {/* Second Row: Status, Customer, Services, Vendor, Provider */}
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
                   <Select
@@ -2120,7 +2019,10 @@ export default function Invoices() {
                     <SelectContent>
                       <SelectItem value="all">All Services</SelectItem>
                       {leadTypes.map((leadType) => (
-                        <SelectItem key={leadType.id} value={leadType.id.toString()}>
+                        <SelectItem
+                          key={leadType.id}
+                          value={leadType.id.toString()}
+                        >
                           {leadType.name || leadType.leadTypeName || "Unknown"}
                         </SelectItem>
                       ))}
@@ -2140,7 +2042,10 @@ export default function Invoices() {
                     <SelectContent>
                       <SelectItem value="all">All Vendors</SelectItem>
                       {vendors.map((vendor) => (
-                        <SelectItem key={vendor.id} value={vendor.id.toString()}>
+                        <SelectItem
+                          key={vendor.id}
+                          value={vendor.id.toString()}
+                        >
                           {vendor.name || vendor.vendorName || "Unknown"}
                         </SelectItem>
                       ))}
@@ -2160,7 +2065,10 @@ export default function Invoices() {
                     <SelectContent>
                       <SelectItem value="all">All Providers</SelectItem>
                       {serviceProviders.map((provider) => (
-                        <SelectItem key={provider.id} value={provider.id.toString()}>
+                        <SelectItem
+                          key={provider.id}
+                          value={provider.id.toString()}
+                        >
                           {provider.name || provider.providerName || "Unknown"}
                         </SelectItem>
                       ))}
@@ -2168,30 +2076,27 @@ export default function Invoices() {
                   </Select>
                 </div>
               </div>
-            <div className="flex items-center justify-between mt-3 pt-3 border-t">
-              <div className="text-xs text-gray-500">
-                Showing {invoices.length} of {pagination.total} invoices
-                {pagination.totalPages > 1 && ` (Page ${pagination.page} of ${pagination.totalPages})`}
+              <div className="flex items-center justify-between mt-3 pt-3 border-t">
+                <div className="text-xs text-gray-500">
+                  Showing {invoices.length} of {pagination.total} invoices
+                  {pagination.totalPages > 1 &&
+                    ` (Page ${pagination.page} of ${pagination.totalPages})`}
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleResetFilters}
+                    className="h-8 text-xs"
+                  >
+                    Reset
+                  </Button>
+                  <Button type="submit" size="sm" className="h-8 text-xs">
+                    Apply Filters
+                  </Button>
+                </div>
               </div>
-              <div className="flex gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={handleResetFilters}
-                  className="h-8 text-xs"
-                >
-                  Reset
-                </Button>
-                <Button
-                  type="submit"
-                  size="sm"
-                  className="h-8 text-xs"
-                >
-                  Apply Filters
-                </Button>
-              </div>
-            </div>
             </form>
           </CardContent>
         </Card>
@@ -2218,7 +2123,9 @@ export default function Invoices() {
             <div className="flex items-center justify-between mt-4 pt-4 border-t">
               <div className="flex items-center gap-4">
                 <div className="text-sm text-gray-500">
-                  Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, pagination.total)} of {pagination.total} invoices
+                  Showing {(currentPage - 1) * pageSize + 1} to{" "}
+                  {Math.min(currentPage * pageSize, pagination.total)} of{" "}
+                  {pagination.total} invoices
                 </div>
                 <div className="flex items-center gap-2">
                   <Label htmlFor="pageSize" className="text-sm text-gray-500">
@@ -2252,39 +2159,44 @@ export default function Invoices() {
                   >
                     Previous
                   </Button>
-                  
+
                   {/* Page Numbers */}
                   <div className="flex items-center space-x-1">
-                    {Array.from({ length: Math.min(5, pagination.totalPages) }, (_, i) => {
-                      let pageNum;
-                      if (pagination.totalPages <= 5) {
-                        // Show all pages if 5 or fewer
-                        pageNum = i + 1;
-                      } else if (currentPage <= 3) {
-                        // Show first 5 pages
-                        pageNum = i + 1;
-                      } else if (currentPage >= pagination.totalPages - 2) {
-                        // Show last 5 pages
-                        pageNum = pagination.totalPages - 4 + i;
-                      } else {
-                        // Show pages around current page
-                        pageNum = currentPage - 2 + i;
+                    {Array.from(
+                      { length: Math.min(5, pagination.totalPages) },
+                      (_, i) => {
+                        let pageNum;
+                        if (pagination.totalPages <= 5) {
+                          // Show all pages if 5 or fewer
+                          pageNum = i + 1;
+                        } else if (currentPage <= 3) {
+                          // Show first 5 pages
+                          pageNum = i + 1;
+                        } else if (currentPage >= pagination.totalPages - 2) {
+                          // Show last 5 pages
+                          pageNum = pagination.totalPages - 4 + i;
+                        } else {
+                          // Show pages around current page
+                          pageNum = currentPage - 2 + i;
+                        }
+
+                        return (
+                          <Button
+                            key={pageNum}
+                            variant={
+                              currentPage === pageNum ? "default" : "outline"
+                            }
+                            size="sm"
+                            onClick={() => setCurrentPage(pageNum)}
+                            className="min-w-[2.5rem]"
+                          >
+                            {pageNum}
+                          </Button>
+                        );
                       }
-                      
-                      return (
-                        <Button
-                          key={pageNum}
-                          variant={currentPage === pageNum ? "default" : "outline"}
-                          size="sm"
-                          onClick={() => setCurrentPage(pageNum)}
-                          className="min-w-[2.5rem]"
-                        >
-                          {pageNum}
-                        </Button>
-                      );
-                    })}
+                    )}
                   </div>
-                  
+
                   <Button
                     variant="outline"
                     size="sm"
@@ -2516,7 +2428,7 @@ export default function Invoices() {
                           updateLineItem(
                             index,
                             "quantity",
-                            parseInt(e.target.value) || 1,
+                            parseInt(e.target.value) || 1
                           )
                         }
                       />
@@ -2534,7 +2446,7 @@ export default function Invoices() {
                           updateLineItem(
                             index,
                             "unitPrice",
-                            parseFloat(e.target.value) || 0,
+                            parseFloat(e.target.value) || 0
                           )
                         }
                         placeholder="0"
@@ -2551,7 +2463,7 @@ export default function Invoices() {
                           updateLineItem(
                             index,
                             "sellingPrice",
-                            parseFloat(e.target.value) || 0,
+                            parseFloat(e.target.value) || 0
                           )
                         }
                         placeholder="0"
@@ -2568,7 +2480,7 @@ export default function Invoices() {
                           updateLineItem(
                             index,
                             "purchasePrice",
-                            parseFloat(e.target.value) || 0,
+                            parseFloat(e.target.value) || 0
                           )
                         }
                         placeholder="0"
@@ -2587,7 +2499,7 @@ export default function Invoices() {
                           updateLineItem(
                             index,
                             "tax",
-                            parseFloat(e.target.value) || 0,
+                            parseFloat(e.target.value) || 0
                           )
                         }
                         placeholder="0"
@@ -2769,198 +2681,249 @@ export default function Invoices() {
               View invoice details as it appears to customers.
             </DialogDescription>
           </DialogHeader>
-          {selectedInvoice && (() => {
-            // Get currency symbol helper
-            const getCurrencySymbol = (currencyCode: string): string => {
-              const symbols: { [key: string]: string } = {
-                USD: "$",
-                INR: "₹",
-                EUR: "€",
-                GBP: "£",
-                JPY: "¥",
-                AUD: "A$",
-                CAD: "C$",
-                CHF: "CHF",
-                CNY: "¥",
-                SGD: "S$",
-                HKD: "HK$",
-                NZD: "NZ$",
+          {selectedInvoice &&
+            (() => {
+              // Get currency symbol helper
+              const getCurrencySymbol = (currencyCode: string): string => {
+                const symbols: { [key: string]: string } = {
+                  USD: "$",
+                  INR: "₹",
+                  EUR: "€",
+                  GBP: "£",
+                  JPY: "¥",
+                  AUD: "A$",
+                  CAD: "C$",
+                  CHF: "CHF",
+                  CNY: "¥",
+                  SGD: "S$",
+                  HKD: "HK$",
+                  NZD: "NZ$",
+                };
+                return symbols[currencyCode] || currencyCode;
               };
-              return symbols[currencyCode] || currencyCode;
-            };
 
-            // Parse line items
-            const invoiceData = selectedInvoice as any;
-            let lineItems: any[] = [];
-            
-            // Try multiple ways to get line items
-            if (invoiceData.lineItems) {
-              if (typeof invoiceData.lineItems === "string") {
-                try {
-                  lineItems = JSON.parse(invoiceData.lineItems);
-                } catch (e) {
-                  console.warn("Failed to parse line items:", e);
-                }
-              } else if (Array.isArray(invoiceData.lineItems)) {
-                lineItems = invoiceData.lineItems;
-              }
-            }
-            
-            // Also check for line_items (snake_case) or items
-            if (lineItems.length === 0) {
-              if (invoiceData.line_items) {
-                if (typeof invoiceData.line_items === "string") {
+              // Parse line items
+              const invoiceData = selectedInvoice as any;
+              let lineItems: any[] = [];
+
+              // Try multiple ways to get line items
+              if (invoiceData.lineItems) {
+                if (typeof invoiceData.lineItems === "string") {
                   try {
-                    lineItems = JSON.parse(invoiceData.line_items);
+                    lineItems = JSON.parse(invoiceData.lineItems);
                   } catch (e) {
-                    console.warn("Failed to parse line_items:", e);
+                    console.warn("Failed to parse line items:", e);
                   }
-                } else if (Array.isArray(invoiceData.line_items)) {
-                  lineItems = invoiceData.line_items;
+                } else if (Array.isArray(invoiceData.lineItems)) {
+                  lineItems = invoiceData.lineItems;
                 }
-              } else if (invoiceData.items && Array.isArray(invoiceData.items)) {
-                lineItems = invoiceData.items;
               }
-            }
-            
-            console.log("📋 Parsed line items for preview:", lineItems);
 
-            // Get customer data
-            const customer = customers.find(
-              (c) => c.id === selectedInvoice.customerId,
-            );
-
-            // Get company info from tenant
-            const companyName = tenant?.companyName || "Company Name";
-            const companyEmail = tenant?.contactEmail || "company@example.com";
-            const companyPhone = tenant?.contactPhone || "";
-
-            // Get currency symbol
-            const currency = selectedInvoice.currency || "USD";
-            const currencySymbol = getCurrencySymbol(currency);
-
-            // Prepare invoice data for template
-            const previewData: InvoiceData = {
-              invoiceNumber: selectedInvoice.invoiceNumber || `INV-${selectedInvoice.id}`,
-              issueDate: selectedInvoice.issueDate || new Date().toISOString().split("T")[0],
-              dueDate: selectedInvoice.dueDate || new Date().toISOString().split("T")[0],
-              customerName: customer?.name || customer?.customerName || "Customer",
-              customerEmail: customer?.email || customer?.customerEmail || "",
-              customerPhone: customer?.phone || customer?.customerPhone || "",
-              customerAddress: customer?.address || customer?.customerAddress || "",
-              companyName: companyName,
-              companyEmail: companyEmail,
-              companyPhone: companyPhone,
-              companyAddress: tenant?.address || "",
-              items: lineItems.length > 0
-                ? lineItems
-                    .map((item, index) => {
-                      const sellingPrice = parseFloat(
-                        item.sellingPrice?.toString() || 
-                        item.unitPrice?.toString() || 
-                        item.price?.toString() || 
-                        "0"
-                      );
-                      const quantity = parseInt(
-                        item.quantity?.toString() || 
-                        item.qty?.toString() || 
-                        "1"
-                      );
-                      const totalAmount = parseFloat(
-                        item.totalAmount?.toString() || 
-                        item.totalPrice?.toString() || 
-                        item.amount?.toString() || 
-                        "0"
-                      );
-                      const hasTitle = item.itemTitle && item.itemTitle.trim() !== "";
-                      const hasPrice = sellingPrice > 0;
-                      const hasTotal = totalAmount > 0;
-                      const hasCategory = item.travelCategory && item.travelCategory.trim() !== "";
-                      const hasDescription = item.description && item.description.trim() !== "";
-                      
-                      // Include items that have any meaningful data
-                      if (!hasTitle && !hasPrice && !hasTotal && !hasCategory && !hasDescription) {
-                        return null;
-                      }
-                      
-                      // Build description from available data
-                      let description = item.itemTitle?.trim() || item.description?.trim();
-                      if (!description && hasCategory) {
-                        description = item.travelCategory;
-                      }
-                      if (!description && item.name) {
-                        description = item.name;
-                      }
-                      if (!description) {
-                        description = `Item ${index + 1}`;
-                      }
-                      
-                      // Calculate total if not provided
-                      const calculatedTotal = totalAmount > 0 
-                        ? totalAmount 
-                        : (sellingPrice * quantity);
-                      
-                      return {
-                        description: description,
-                        quantity: quantity || 1,
-                        unitPrice: sellingPrice || 0,
-                        totalPrice: calculatedTotal || 0,
-                        invoiceNumber: item.invoiceNumber || item.invoice_number || undefined,
-                        voucherNumber: item.voucherNumber || item.voucher_number || undefined,
-                      };
-                    })
-                    .filter((item) => item !== null) as { description: string; quantity: number; unitPrice: number; totalPrice: number; invoiceNumber?: string; voucherNumber?: string; }[]
-                : [
-                    // Fallback: show at least one item if no line items found
-                    {
-                      description: "No line items available",
-                      quantity: 1,
-                      unitPrice: 0,
-                      totalPrice: 0,
+              // Also check for line_items (snake_case) or items
+              if (lineItems.length === 0) {
+                if (invoiceData.line_items) {
+                  if (typeof invoiceData.line_items === "string") {
+                    try {
+                      lineItems = JSON.parse(invoiceData.line_items);
+                    } catch (e) {
+                      console.warn("Failed to parse line_items:", e);
                     }
-                  ],
-              subtotal: parseFloat((invoiceData.subtotal || invoiceData.totalAmount || 0).toString()),
-              taxAmount: parseFloat((invoiceData.taxAmount || 0).toString()),
-              discountAmount: parseFloat((invoiceData.discountAmount || 0).toString()),
-              totalAmount: parseFloat(selectedInvoice.totalAmount || 0),
-              currency: currencySymbol,
-              notes: selectedInvoice.notes || undefined,
-              paymentTerms: invoiceData.paymentTerms || undefined,
-              paymentStatus: invoiceData.status || selectedInvoice.status || "pending",
-              paidAmount: parseFloat((invoiceData.paidAmount || 0).toString()),
-              installments: invoiceData.installments || undefined,
-            };
+                  } else if (Array.isArray(invoiceData.line_items)) {
+                    lineItems = invoiceData.line_items;
+                  }
+                } else if (
+                  invoiceData.items &&
+                  Array.isArray(invoiceData.items)
+                ) {
+                  lineItems = invoiceData.items;
+                }
+              }
 
-            return (
-              <div className="mt-4">
-                <ModernTemplate data={previewData} />
-                <div className="flex justify-end gap-2 pt-4 border-t mt-4">
-                  <Button
-                    variant="outline"
-                    onClick={() => handleDownloadPDF(selectedInvoice)}
-                  >
-                    <Download className="mr-2 h-4 w-4" />
-                    Download PDF
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => handleSendEmail(selectedInvoice)}
-                  >
-                    <Mail className="mr-2 h-4 w-4" />
-                    Send Email
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => handleSendWhatsApp(selectedInvoice)}
-                  >
-                    <MessageCircle className="mr-2 h-4 w-4" />
-                    Send WhatsApp
-                  </Button>
-                  <Button onClick={() => setIsViewDialogOpen(false)}>Close</Button>
+              console.log("📋 Parsed line items for preview:", lineItems);
+
+              // Get customer data
+              const customer = customers.find(
+                (c) => c.id === selectedInvoice.customerId
+              );
+
+              // Get company info from tenant
+              const companyName = tenant?.companyName || "Company Name";
+              const companyEmail =
+                tenant?.contactEmail || "company@example.com";
+              const companyPhone = tenant?.contactPhone || "";
+
+              // Get currency symbol
+              const currency = selectedInvoice.currency || "USD";
+              const currencySymbol = getCurrencySymbol(currency);
+
+              // Prepare invoice data for template
+              const previewData: InvoiceData = {
+                invoiceNumber:
+                  selectedInvoice.invoiceNumber || `INV-${selectedInvoice.id}`,
+                issueDate:
+                  selectedInvoice.issueDate ||
+                  new Date().toISOString().split("T")[0],
+                dueDate:
+                  selectedInvoice.dueDate ||
+                  new Date().toISOString().split("T")[0],
+                customerName:
+                  customer?.name || customer?.customerName || "Customer",
+                customerEmail: customer?.email || customer?.customerEmail || "",
+                customerPhone: customer?.phone || customer?.customerPhone || "",
+                customerAddress:
+                  customer?.address || customer?.customerAddress || "",
+                companyName: companyName,
+                companyEmail: companyEmail,
+                companyPhone: companyPhone,
+                companyAddress: tenant?.address || "",
+                items:
+                  lineItems.length > 0
+                    ? (lineItems
+                        .map((item, index) => {
+                          const sellingPrice = parseFloat(
+                            item.sellingPrice?.toString() ||
+                              item.unitPrice?.toString() ||
+                              item.price?.toString() ||
+                              "0"
+                          );
+                          const quantity = parseInt(
+                            item.quantity?.toString() ||
+                              item.qty?.toString() ||
+                              "1"
+                          );
+                          const totalAmount = parseFloat(
+                            item.totalAmount?.toString() ||
+                              item.totalPrice?.toString() ||
+                              item.amount?.toString() ||
+                              "0"
+                          );
+                          const hasTitle =
+                            item.itemTitle && item.itemTitle.trim() !== "";
+                          const hasPrice = sellingPrice > 0;
+                          const hasTotal = totalAmount > 0;
+                          const hasCategory =
+                            item.travelCategory &&
+                            item.travelCategory.trim() !== "";
+                          const hasDescription =
+                            item.description && item.description.trim() !== "";
+
+                          // Include items that have any meaningful data
+                          if (
+                            !hasTitle &&
+                            !hasPrice &&
+                            !hasTotal &&
+                            !hasCategory &&
+                            !hasDescription
+                          ) {
+                            return null;
+                          }
+
+                          // Build description from available data
+                          let description =
+                            item.itemTitle?.trim() || item.description?.trim();
+                          if (!description && hasCategory) {
+                            description = item.travelCategory;
+                          }
+                          if (!description && item.name) {
+                            description = item.name;
+                          }
+                          if (!description) {
+                            description = `Item ${index + 1}`;
+                          }
+
+                          // Calculate total if not provided
+                          const calculatedTotal =
+                            totalAmount > 0
+                              ? totalAmount
+                              : sellingPrice * quantity;
+
+                          return {
+                            description: description,
+                            quantity: quantity || 1,
+                            unitPrice: sellingPrice || 0,
+                            totalPrice: calculatedTotal || 0,
+                            invoiceNumber:
+                              item.invoiceNumber ||
+                              item.invoice_number ||
+                              undefined,
+                            voucherNumber:
+                              item.voucherNumber ||
+                              item.voucher_number ||
+                              undefined,
+                          };
+                        })
+                        .filter((item) => item !== null) as {
+                        description: string;
+                        quantity: number;
+                        unitPrice: number;
+                        totalPrice: number;
+                        invoiceNumber?: string;
+                        voucherNumber?: string;
+                      }[])
+                    : [
+                        // Fallback: show at least one item if no line items found
+                        {
+                          description: "No line items available",
+                          quantity: 1,
+                          unitPrice: 0,
+                          totalPrice: 0,
+                        },
+                      ],
+                subtotal: parseFloat(
+                  (
+                    invoiceData.subtotal ||
+                    invoiceData.totalAmount ||
+                    0
+                  ).toString()
+                ),
+                taxAmount: parseFloat((invoiceData.taxAmount || 0).toString()),
+                discountAmount: parseFloat(
+                  (invoiceData.discountAmount || 0).toString()
+                ),
+                totalAmount: parseFloat(selectedInvoice.totalAmount || 0),
+                currency: currencySymbol,
+                notes: selectedInvoice.notes || undefined,
+                paymentTerms: invoiceData.paymentTerms || undefined,
+                paymentStatus:
+                  invoiceData.status || selectedInvoice.status || "pending",
+                paidAmount: parseFloat(
+                  (invoiceData.paidAmount || 0).toString()
+                ),
+                installments: invoiceData.installments || undefined,
+              };
+
+              return (
+                <div className="mt-4">
+                  <ModernTemplate data={previewData} />
+                  <div className="flex justify-end gap-2 pt-4 border-t mt-4">
+                    <Button
+                      variant="outline"
+                      onClick={() => handleDownloadPDF(selectedInvoice)}
+                    >
+                      <Download className="mr-2 h-4 w-4" />
+                      Download PDF
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => handleSendEmail(selectedInvoice)}
+                    >
+                      <Mail className="mr-2 h-4 w-4" />
+                      Send Email
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => handleSendWhatsApp(selectedInvoice)}
+                    >
+                      <MessageCircle className="mr-2 h-4 w-4" />
+                      Send WhatsApp
+                    </Button>
+                    <Button onClick={() => setIsViewDialogOpen(false)}>
+                      Close
+                    </Button>
+                  </div>
                 </div>
-              </div>
-            );
-          })()}
+              );
+            })()}
         </DialogContent>
       </Dialog>
 
@@ -2981,7 +2944,7 @@ export default function Invoices() {
 
                 const grandTotal = editLineItems.reduce(
                   (total, item) => total + (item.totalAmount || 0),
-                  0,
+                  0
                 );
                 const finalAmount = grandTotal - editDiscountAmount;
 
@@ -2998,7 +2961,7 @@ export default function Invoices() {
                   subtotal: grandTotal,
                   taxAmount: editLineItems.reduce(
                     (total, item) => total + (item.tax || 0),
-                    0,
+                    0
                   ),
                   discountAmount: editDiscountAmount,
                   status: editPaymentStatus,
@@ -3020,7 +2983,7 @@ export default function Invoices() {
                         Authorization: `Bearer ${token}`,
                       },
                       body: JSON.stringify(invoiceData),
-                    },
+                    }
                   );
 
                   if (response.ok) {
@@ -3189,7 +3152,7 @@ export default function Invoices() {
                           size="sm"
                           onClick={() => {
                             const newItems = editLineItems.filter(
-                              (_, i) => i !== index,
+                              (_, i) => i !== index
                             );
                             setEditLineItems(newItems);
                           }}
@@ -3414,7 +3377,7 @@ export default function Invoices() {
                       {editLineItems
                         .reduce(
                           (total, item) => total + (item.totalAmount || 0),
-                          0,
+                          0
                         )
                         .toFixed(2)}
                     </span>
@@ -3493,7 +3456,7 @@ export default function Invoices() {
                         {editLineItems
                           .reduce(
                             (total, item) => total + (item.totalAmount || 0),
-                            0,
+                            0
                           )
                           .toFixed(2)}
                       </p>
@@ -3511,7 +3474,7 @@ export default function Invoices() {
                         {(
                           editLineItems.reduce(
                             (total, item) => total + (item.totalAmount || 0),
-                            0,
+                            0
                           ) - editDiscountAmount
                         ).toFixed(2)}
                       </p>
@@ -3523,7 +3486,7 @@ export default function Invoices() {
                         {(
                           editLineItems.reduce(
                             (total, item) => total + (item.totalAmount || 0),
-                            0,
+                            0
                           ) -
                           editDiscountAmount -
                           editAmountPaid
