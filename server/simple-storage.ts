@@ -7835,6 +7835,28 @@ RateHonk CRM Team`,
     }
   }
 
+  // Check if follow-up already exists for an entity (excluding completed/cancelled)
+  async checkFollowUpExists(
+    tenantId: number,
+    relatedTableName: string,
+    relatedTableId: number
+  ): Promise<boolean> {
+    try {
+      const [existing] = await sql`
+        SELECT id FROM general_follow_ups
+        WHERE tenant_id = ${tenantId}
+          AND related_table_name = ${relatedTableName}
+          AND related_table_id = ${relatedTableId}
+          AND status NOT IN ('completed', 'cancelled')
+        LIMIT 1
+      `;
+      return !!existing;
+    } catch (error) {
+      console.error("Error checking follow-up existence:", error);
+      throw error;
+    }
+  }
+
   // Create general follow-up
   async createGeneralFollowUp(followUpData: {
     tenantId: number;
@@ -7944,27 +7966,41 @@ RateHonk CRM Team`,
         return null;
       }
 
+      // Helper function to convert date to ISO string
+      const toISOString = (date: any): string | null => {
+        if (!date) return null;
+        if (date instanceof Date) return date.toISOString();
+        if (typeof date === 'string') return date;
+        return new Date(date).toISOString();
+      };
+
       // Prepare update values
       const title = updateData.title !== undefined ? updateData.title : current.title;
       const description = updateData.description !== undefined ? updateData.description : current.description;
       const assignedUserId = updateData.assignedUserId !== undefined ? updateData.assignedUserId : current.assigned_user_id;
       const priority = updateData.priority !== undefined ? updateData.priority : current.priority;
       const status = updateData.status !== undefined ? updateData.status : current.status;
-      const dueDate = updateData.dueDate !== undefined ? updateData.dueDate : current.due_date;
+      const dueDate = updateData.dueDate !== undefined ? updateData.dueDate : toISOString(current.due_date);
       const relatedTableName = updateData.relatedTableName !== undefined ? updateData.relatedTableName : current.related_table_name;
       const relatedTableId = updateData.relatedTableId !== undefined ? updateData.relatedTableId : current.related_table_id;
       const tags = updateData.tags !== undefined ? updateData.tags : current.tags;
-      const reminderDate = updateData.reminderDate !== undefined ? updateData.reminderDate : current.reminder_date;
+      const reminderDate = updateData.reminderDate !== undefined ? updateData.reminderDate : toISOString(current.reminder_date);
       const completionNotes = updateData.completionNotes !== undefined ? updateData.completionNotes : current.completion_notes;
 
       // Handle completed_at based on status
-      let completedAt = current.completed_at;
+      let completedAt: string | null = null;
       if (updateData.status !== undefined) {
         if (updateData.status === 'completed' && !current.completed_at) {
-          completedAt = new Date();
+          completedAt = new Date().toISOString();
         } else if (updateData.status !== 'completed') {
           completedAt = null;
+        } else {
+          // Keep existing completed_at if status is still completed
+          completedAt = toISOString(current.completed_at);
         }
+      } else {
+        // If status is not being updated, keep existing completed_at
+        completedAt = toISOString(current.completed_at);
       }
 
       const [updatedFollowUp] = await sql`

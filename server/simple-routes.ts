@@ -16856,6 +16856,29 @@ Please improve this email.`;
           return res.status(400).json({ message: "Title and due date are required" });
         }
 
+        // Check for duplicate follow-ups for leads, invoices, bookings, and customers
+        const entityTypesRequiringUniqueness = ['leads', 'invoices', 'bookings', 'customers'];
+        if (relatedTableName && relatedTableId && entityTypesRequiringUniqueness.includes(relatedTableName)) {
+          const duplicateExists = await simpleStorage.checkFollowUpExists(
+            parseInt(tenantId),
+            relatedTableName,
+            relatedTableId
+          );
+
+          if (duplicateExists) {
+            const entityTypeLabels: Record<string, string> = {
+              leads: 'Lead',
+              invoices: 'Invoice',
+              bookings: 'Booking',
+              customers: 'Customer'
+            };
+            const entityLabel = entityTypeLabels[relatedTableName] || relatedTableName;
+            return res.status(409).json({ 
+              message: `A follow-up already exists for this ${entityLabel.toLowerCase()}. Please complete or cancel the existing follow-up before creating a new one.` 
+            });
+          }
+        }
+
         const followUpData = {
           tenantId: parseInt(tenantId),
           title,

@@ -54,6 +54,7 @@ import {
   ChevronLeft,
   ChevronDown,
   Phone,
+  Target,
 } from "lucide-react";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useToast } from "@/hooks/use-toast";

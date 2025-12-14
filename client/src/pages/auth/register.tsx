@@ -5,10 +5,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { CheckCircle, AlertCircle, UserCheck, UserX, Loader2, Eye, EyeOff } from "lucide-react";
+import { AlertCircle, UserX, Loader2, Eye, EyeOff } from "lucide-react";
 import { auth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
-import Logo from "../../assets/Logo-sidebar.svg";
+import { PortfolioHeader } from "@/components/layout/portfolio-header";
 
 export default function Register() {
   const [formData, setFormData] = useState({
@@ -64,9 +64,6 @@ export default function Register() {
     if (!formData.password) errors.push("Password is required");
     if (formData.password.length < 6) errors.push("Password must be at least 6 characters long");
     if (!formData.companyName.trim()) errors.push("Company name is required");
-    
-    // Simplified password validation - just require 6+ characters
-    // Remove overly strict password requirements that prevent registration
     
     setValidationErrors(errors);
     return errors.length === 0;
@@ -155,188 +152,215 @@ export default function Register() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        <Card className="border-0 shadow-2xl bg-white rounded-2xl overflow-hidden">
-          <CardContent className="p-8">
-            {/* Logo and branding */}
-            <div className="text-center mb-8">
-              <div className="flex justify-center mb-4">
-                <img
-                  src={Logo}
-                  alt="RateHonk Logo"
-                  className="w-auto h-20 object-contain"
-                />
-              </div>
-              <p className="text-gray-500 text-sm mb-8">Marketing / SEO / Web Development</p>
-              
-              <div className="mb-6">
-                <h2 className="text-3xl font-bold text-gray-900 mb-2">Get Started</h2>
-                <p className="text-gray-600">Start setting up your account ✋</p>
-              </div>
-            </div>
-            {/* Validation Errors Alert */}
-            {validationErrors.length > 0 && (
-              <Alert variant="destructive" className="mb-4">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>
-                  <div className="font-medium mb-2">Please fix the following issues:</div>
-                  <ul className="list-disc list-inside space-y-1 text-sm">
-                    {validationErrors.map((error, index) => (
-                      <li key={index}>{error}</li>
-                    ))}
-                  </ul>
-                </AlertDescription>
-              </Alert>
-            )}
+    <div className="min-h-screen relative overflow-hidden bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+      <PortfolioHeader showSignUpButton={false} showSignInButton={true} />
+      
+      {/* Animated Background */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        {/* Gradient Mesh Background */}
+        <div className="absolute inset-0 bg-gradient-to-br from-blue-400/20 via-indigo-400/20 to-purple-400/20"></div>
+        
+        {/* Animated Blobs */}
+        <div className="absolute top-0 -right-40 w-96 h-96 bg-blue-400 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-blob"></div>
+        <div className="absolute top-40 -left-40 w-96 h-96 bg-purple-400 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-blob animation-delay-2000"></div>
+        <div className="absolute -bottom-40 left-1/2 transform -translate-x-1/2 w-96 h-96 bg-indigo-400 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-blob animation-delay-4000"></div>
+        <div className="absolute top-1/2 right-1/4 w-80 h-80 bg-cyan-400 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-blob animation-delay-6000"></div>
+        
+        {/* Grid Pattern Overlay */}
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:24px_24px]"></div>
+      </div>
 
-            {/* Email Exists Alert */}
-            {emailExists && (
-              <Alert variant="destructive" className="mb-4">
-                <UserX className="h-4 w-4" />
-                <AlertDescription>
-                  <div className="font-medium">Email Already Registered</div>
-                  <div className="text-sm mt-1">
-                    This email is already associated with an account. 
-                    <Link href="/login">
-                      <a className="underline ml-1">Click here to log in</a>
-                    </Link> or use a different email address.
-                  </div>
-                </AlertDescription>
-              </Alert>
-            )}
-
-            <form onSubmit={handleSubmit} className="space-y-6">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="firstName" className="text-sm font-medium text-gray-700">First Name</Label>
-                  <Input
-                    id="firstName"
-                    name="firstName"
-                    value={formData.firstName}
-                    onChange={handleChange}
-                    placeholder="Harsh"
-                    className="h-12 border-2 border-orange-200 focus:border-orange-400 focus:ring-orange-400 rounded-lg bg-gray-50"
-                    required
-                  />
+      {/* Main Content */}
+      <div className="relative z-10 flex items-center justify-center min-h-[calc(100vh-80px)] p-4 py-12">
+        <div className="w-full max-w-2xl">
+          <Card className="border-0 shadow-2xl bg-white/90 backdrop-blur-xl">
+            <CardContent className="p-8 lg:p-10">
+              <div className="space-y-6">
+                {/* Header */}
+                <div className="space-y-2 text-center">
+                  <h1 className="text-3xl font-bold text-gray-900">Create Your Account</h1>
+                  <p className="text-gray-600">Get started with your 14-day free trial</p>
                 </div>
-                
-                <div className="space-y-2">
-                  <Label htmlFor="lastName" className="text-sm font-medium text-gray-700">Last Name</Label>
-                  <Input
-                    id="lastName"
-                    name="lastName"
-                    value={formData.lastName}
-                    onChange={handleChange}
-                    placeholder="Smith"
-                    className="h-12 border-gray-300 focus:border-cyan-500 focus:ring-cyan-500 rounded-lg"
-                    required
-                  />
-                </div>
-              </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="email" className="text-sm font-medium text-gray-700">Email Address</Label>
-                <Input
-                  id="email"
-                  name="email"
-                  type="email"
-                  value={formData.email}
-                  onChange={handleChange}
-                  onBlur={(e) => checkEmailAvailability(e.target.value)}
-                  placeholder="Harshvani09@gmail.com"
-                  className="h-12 border-gray-300 focus:border-cyan-500 focus:ring-cyan-500 rounded-lg"
-                  required
-                />
-                {emailExists && (
-                  <p className="text-sm text-red-600">This email is already registered</p>
+                {/* Validation Errors */}
+                {validationErrors.length > 0 && (
+                  <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      <div className="font-semibold mb-2">Please fix the following issues:</div>
+                      <ul className="list-disc list-inside space-y-1 text-sm">
+                        {validationErrors.map((error, index) => (
+                          <li key={index}>{error}</li>
+                        ))}
+                      </ul>
+                    </AlertDescription>
+                  </Alert>
                 )}
-              </div>
-              
-              <div className="space-y-2">
-                <Label htmlFor="password" className="text-sm font-medium text-gray-700">Password</Label>
-                <div className="relative">
-                  <Input
-                    id="password"
-                    name="password"
-                    type={showPassword ? "text" : "password"}
-                    value={formData.password}
-                    onChange={handleChange}
-                    placeholder="Enter Password"
-                    className="h-12 border-gray-300 focus:border-cyan-500 focus:ring-cyan-500 rounded-lg pr-10"
-                    required
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
-                    onClick={() => setShowPassword(!showPassword)}
+
+                {/* Email Exists Alert */}
+                {emailExists && (
+                  <Alert variant="destructive">
+                    <UserX className="h-4 w-4" />
+                    <AlertDescription>
+                      <div className="font-semibold mb-1">Email Already Registered</div>
+                      <div className="text-sm mt-1">
+                        This email is already associated with an account.{" "}
+                        <Link href="/login" className="underline font-medium hover:text-blue-600">
+                          Click here to log in
+                        </Link> or use a different email address.
+                      </div>
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                {/* Form */}
+                <form onSubmit={handleSubmit} className="space-y-5">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    <div className="space-y-2">
+                      <Label htmlFor="firstName" className="text-sm font-semibold text-gray-700">
+                        First Name
+                      </Label>
+                      <Input
+                        id="firstName"
+                        name="firstName"
+                        value={formData.firstName}
+                        onChange={handleChange}
+                        placeholder="John"
+                        className="h-12 border-gray-300 focus:border-blue-500 focus:ring-blue-500"
+                        required
+                      />
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <Label htmlFor="lastName" className="text-sm font-semibold text-gray-700">
+                        Last Name
+                      </Label>
+                      <Input
+                        id="lastName"
+                        name="lastName"
+                        value={formData.lastName}
+                        onChange={handleChange}
+                        placeholder="Doe"
+                        className="h-12 border-gray-300 focus:border-blue-500 focus:ring-blue-500"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="email" className="text-sm font-semibold text-gray-700">
+                      Email Address
+                    </Label>
+                    <Input
+                      id="email"
+                      name="email"
+                      type="email"
+                      value={formData.email}
+                      onChange={handleChange}
+                      onBlur={(e) => checkEmailAvailability(e.target.value)}
+                      placeholder="john.doe@example.com"
+                      className="h-12 border-gray-300 focus:border-blue-500 focus:ring-blue-500"
+                      required
+                    />
+                    {emailExists && (
+                      <p className="text-sm text-red-600 font-medium mt-1">
+                        This email is already registered
+                      </p>
+                    )}
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <Label htmlFor="password" className="text-sm font-semibold text-gray-700">
+                      Password
+                    </Label>
+                    <div className="relative">
+                      <Input
+                        id="password"
+                        name="password"
+                        type={showPassword ? "text" : "password"}
+                        value={formData.password}
+                        onChange={handleChange}
+                        placeholder="Create a strong password"
+                        className="h-12 border-gray-300 focus:border-blue-500 focus:ring-blue-500 pr-10"
+                        required
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
+                        onClick={() => setShowPassword(!showPassword)}
+                      >
+                        {showPassword ? (
+                          <EyeOff className="h-4 w-4 text-gray-400" />
+                        ) : (
+                          <Eye className="h-4 w-4 text-gray-400" />
+                        )}
+                      </Button>
+                    </div>
+                    <p className="text-xs text-gray-500">Must be at least 6 characters</p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="companyName" className="text-sm font-semibold text-gray-700">
+                      Company Name
+                    </Label>
+                    <Input
+                      id="companyName"
+                      name="companyName"
+                      value={formData.companyName}
+                      onChange={handleChange}
+                      placeholder="Your Company Name"
+                      className="h-12 border-gray-300 focus:border-blue-500 focus:ring-blue-500"
+                      required
+                    />
+                  </div>
+
+                  <Button 
+                    type="submit" 
+                    className="w-full h-12 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white font-semibold shadow-lg hover:shadow-xl transition-all duration-200" 
+                    disabled={loading || emailExists || emailChecking || validationErrors.length > 0}
                   >
-                    {showPassword ? (
-                      <EyeOff className="h-4 w-4 text-gray-400" />
+                    {loading ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Creating Account...
+                      </>
+                    ) : emailChecking ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Checking Email...
+                      </>
                     ) : (
-                      <Eye className="h-4 w-4 text-gray-400" />
+                      "Create Account"
                     )}
                   </Button>
+                </form>
+
+                {/* Footer */}
+                <div className="pt-6 border-t border-gray-200 space-y-4">
+                  <p className="text-center text-xs text-gray-500">
+                    By signing up, you agree to our{" "}
+                    <Link href="#" className="text-blue-600 hover:text-blue-700 hover:underline font-medium">
+                      Privacy Policy
+                    </Link>{" "}
+                    and{" "}
+                    <Link href="#" className="text-blue-600 hover:text-blue-700 hover:underline font-medium">
+                      Terms of Service
+                    </Link>
+                  </p>
+                  
+                  <p className="text-center text-sm text-gray-600">
+                    Already have an account?{" "}
+                    <Link href="/login" className="text-blue-600 hover:text-blue-700 hover:underline font-semibold">
+                      Sign In
+                    </Link>
+                  </p>
                 </div>
               </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="companyName" className="text-sm font-medium text-gray-700">Company Name</Label>
-                <Input
-                  id="companyName"
-                  name="companyName"
-                  value={formData.companyName}
-                  onChange={handleChange}
-                  placeholder="Your Company Name"
-                  className="h-12 border-gray-300 focus:border-cyan-500 focus:ring-cyan-500 rounded-lg"
-                  required
-                />
-              </div>
-
-              <Button 
-                type="submit" 
-                className="w-full h-12 bg-blue-400 hover:bg-blue-500 text-white font-medium text-sm rounded-lg transition-all duration-200 disabled:opacity-50" 
-                disabled={loading || emailExists || emailChecking || validationErrors.length > 0}
-              >
-                {loading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Creating Account...
-                  </>
-                ) : emailChecking ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Checking Email...
-                  </>
-                ) : (
-                  "Sign Up"
-                )}
-              </Button>
-            </form>
-
-            <div className="mt-6 text-center">
-              <p className="text-xs text-gray-500 mb-4">
-                By signing up, you agree to our{" "}
-                <Link href="#" className="text-gray-600 hover:underline underline">
-                  privacy policy
-                </Link>{" "}
-                and{" "}
-                <Link href="#" className="text-gray-600 hover:underline underline">
-                  terms of use
-                </Link>.
-              </p>
-              
-              <p className="text-sm text-gray-600">
-                Already have an account?{" "}
-                <Link href="/login" className="text-cyan-600 hover:text-cyan-700 hover:underline font-medium">
-                  Log In
-                </Link>
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </div>
   );

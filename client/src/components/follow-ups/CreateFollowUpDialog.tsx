@@ -138,7 +138,7 @@ export function CreateFollowUpDialog({
       queryClient.invalidateQueries({
         queryKey: [`/api/tenants/${tenant?.id}/general-follow-ups`],
       });
-      handleClose();
+      handleClose(false);
       onSuccess?.();
     },
     onError: (error: any) => {
@@ -150,18 +150,22 @@ export function CreateFollowUpDialog({
     },
   });
 
-  const handleClose = () => {
-    setTitle("");
-    setDescription("");
-    setDueDate(undefined);
-    setDueTime("");
-    setPriority("medium");
-    setAssignedUserId(null);
-    setTags("");
-    setReminderEnabled(false);
-    setReminderDate(undefined);
-    setReminderTime("");
-    onOpenChange(false);
+  const handleClose = (open: boolean) => {
+    // Only reset form when closing (open === false)
+    if (!open) {
+      setTitle("");
+      setDescription("");
+      setDueDate(undefined);
+      setDueTime("");
+      setPriority("medium");
+      setAssignedUserId(null);
+      setTags("");
+      setReminderEnabled(false);
+      setReminderDate(undefined);
+      setReminderTime("");
+    }
+    // Always call onOpenChange to update parent state
+    onOpenChange(open);
   };
 
   const handleSubmit = () => {
@@ -430,7 +434,7 @@ export function CreateFollowUpDialog({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={handleClose}>
+          <Button variant="outline" onClick={() => handleClose(false)}>
             Cancel
           </Button>
           <Button
