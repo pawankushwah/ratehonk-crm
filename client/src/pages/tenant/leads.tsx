@@ -107,6 +107,106 @@ import ActivityModal, { ActivityItem } from "@/LeadsModal/ActivityModal";
 import EmailModal, { EmailItem } from "@/LeadsModal/EmailModal";
 import LeadDetails from "./LeadDetails";
 
+// Assigned User Cell Component
+function AssignedUserCell({ 
+  lead, 
+  tenantId, 
+  onAssignmentChange 
+}: { 
+  lead: any; 
+  tenantId?: number;
+  onAssignmentChange: () => void;
+}) {
+  const { toast } = useToast();
+  const { user } = useAuth();
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  // Fetch users for dropdown
+  const { data: users = [] } = useQuery({
+    queryKey: [`/api/tenants/${tenantId}/users`],
+    queryFn: async () => {
+      if (!tenantId) return [];
+      const res = await fetch(`/api/tenants/${tenantId}/users`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+        }
+      });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data) ? data.filter((u: any) => u.isActive) : [];
+    },
+    enabled: !!tenantId,
+  });
+
+  const handleAssignmentChange = async (newUserId: string) => {
+    if (!tenantId || !user?.id) return;
+    
+    const userId = newUserId === "none" ? null : parseInt(newUserId);
+    setIsUpdating(true);
+
+    try {
+      const response = await fetch(`/api/tenants/${tenantId}/leads/${lead.id}/assign`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("auth_token")}`,
+        },
+        body: JSON.stringify({
+          userId: userId,
+          reason: "manual_assignment",
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || "Failed to update assignment");
+      }
+
+      toast({
+        title: "Success",
+        description: userId ? "Lead assigned successfully" : "Lead unassigned successfully",
+      });
+      
+      onAssignmentChange();
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update assignment",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const assignedUserName = (lead as any).assignedUserName || 
+    (lead.assignedUserId && users.find((u: any) => u.id === lead.assignedUserId) 
+      ? `${users.find((u: any) => u.id === lead.assignedUserId).firstName} ${users.find((u: any) => u.id === lead.assignedUserId).lastName}`
+      : null);
+
+  return (
+    <Select
+      value={lead.assignedUserId?.toString() || "none"}
+      onValueChange={handleAssignmentChange}
+      disabled={isUpdating}
+    >
+      <SelectTrigger className="w-[160px] h-8 border-gray-300">
+        <SelectValue placeholder="Unassigned">
+          {assignedUserName || "Unassigned"}
+        </SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="none">Unassigned</SelectItem>
+        {users.map((u: any) => (
+          <SelectItem key={u.id} value={u.id.toString()}>
+            {u.firstName} {u.lastName}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 const leadStatuses = [
   {
     value: "new",
@@ -1321,19 +1421,6 @@ export default function Leads() {
 
             "
                     >
-                      <div className="flex h-10 items-center justify-between rounded-md border px-3 py-2 text-sm ring-offset-background data-[placeholder]:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1 w-[160px] bg-transparent border-gray-300">
-                        Phone
-                      </div>
-                    </TableHead>
-                    <TableHead
-                      className="
-              px-[20px] pr-[8px] py-[12px]
-              text-left
-              text-sm font-medium text-[#121926]
-              first:rounded-tl-lg first:rounded-bl-lg
-
-            "
-                    >
                       <Select
                         value={sourceFilter}
                         onValueChange={setSourceFilter}
@@ -1468,6 +1555,19 @@ export default function Leads() {
             "
                     >
                       <div className="flex h-10 items-center justify-between rounded-md border px-3 py-2 text-sm ring-offset-background data-[placeholder]:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1 w-[160px] bg-transparent border-gray-300">
+                        Assigned User
+                      </div>
+                    </TableHead>
+                    <TableHead
+                      className="
+              px-[20px] pr-[8px] py-[12px]
+              text-left
+              text-sm font-medium text-[#121926]
+              first:rounded-tl-lg first:rounded-bl-lg
+
+            "
+                    >
+                      <div className="flex h-10 items-center justify-between rounded-md border px-3 py-2 text-sm ring-offset-background data-[placeholder]:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1 w-[160px] bg-transparent border-gray-300">
                         Date Added
                       </div>
                     </TableHead>
@@ -1528,11 +1628,13 @@ export default function Leads() {
                                 <div className="text-sm text-gray-500">
                                   {lead.email}
                                 </div>
+                                {lead.phone && (
+                                  <div className="text-sm text-gray-500 mt-1">
+                                    📞 {lead.phone}
+                                  </div>
+                                )}
                               </div>
                             </div>
-                          </TableCell>
-                          <TableCell className="px-[20px] pr-[8px] py-[12px] text-gray-600 text-left">
-                            {lead.phone || "Unknown"}
                           </TableCell>
                           <TableCell className="px-[20px] pr-[8px] py-[12px] text-gray-600 text-left">
                             {lead.source || "Unknown"}
@@ -1687,6 +1789,17 @@ export default function Leads() {
                                 ))}
                               </SelectContent>
                             </Select>
+                          </TableCell>
+                          <TableCell className="px-[20px] pr-[8px] py-[12px] text-gray-600 text-left">
+                            <AssignedUserCell 
+                              lead={lead} 
+                              tenantId={tenant?.id}
+                              onAssignmentChange={() => {
+                                queryClient.invalidateQueries({
+                                  queryKey: [`leads-tenant-${tenant?.id}`],
+                                });
+                              }}
+                            />
                           </TableCell>
                           <TableCell className="px-[20px] pr-[8px] py-[12px] text-gray-600 text-left">
                             {lead.created_at

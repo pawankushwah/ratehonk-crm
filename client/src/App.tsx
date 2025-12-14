@@ -67,6 +67,8 @@ import Calendar from "@/pages/tenant/calendar";
 import DynamicFields from "@/pages/tenant/dynamic-fields";
 import Roles from "@/pages/tenant/roles";
 import Users from "@/pages/tenant/users";
+import Assignments from "@/pages/tenant/assignments";
+import Performance from "@/pages/tenant/performance";
 import Estimates from "@/pages/tenant/estimates";
 import EstimateCreate from "@/pages/tenant/estimate-create";
 import Vendors from "@/pages/tenant/vendors";
@@ -543,6 +545,18 @@ function Router() {
         <Route path="/users">
           <ProtectedRoute>
             <Users />
+          </ProtectedRoute>
+        </Route>
+
+        <Route path="/assignments">
+          <ProtectedRoute>
+            <Assignments />
+          </ProtectedRoute>
+        </Route>
+
+        <Route path="/performance">
+          <ProtectedRoute>
+            <Performance />
           </ProtectedRoute>
         </Route>
 

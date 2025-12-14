@@ -993,6 +993,7 @@ export class SimpleStorage {
           u.role,
           u.tenant_id as "tenantId",
           u.role_id as "roleId",
+          u.reporting_user_id as "reportingUserId",
           u.first_name as "firstName",
           u.last_name as "lastName",
           u.phone,
@@ -1002,16 +1003,108 @@ export class SimpleStorage {
           u.password_reset_required as "passwordResetRequired",
           u.created_at as "createdAt",
           u.updated_at as "updatedAt",
-          r.name as "roleName"
+          r.name as "roleName",
+          r.hierarchy_level as "hierarchyLevel",
+          reportingUser.first_name || ' ' || reportingUser.last_name as "reportingUserName"
         FROM users u
         LEFT JOIN roles r ON u.role_id = r.id
+        LEFT JOIN users reportingUser ON u.reporting_user_id = reportingUser.id
         WHERE u.tenant_id = ${tenantId} AND u.is_active = true
-        ORDER BY u.created_at DESC
+        ORDER BY COALESCE(r.hierarchy_level, 999), u.first_name, u.last_name
       `;
       return users;
     } catch (error) {
       console.error("Error getting users by tenant:", error);
       throw error;
+    }
+  }
+
+  // Get all direct subordinates of a user
+  async getDirectSubordinates(userId: number, tenantId: number) {
+    try {
+      const subordinates = await sql`
+        SELECT 
+          u.id,
+          u.email,
+          u.role,
+          u.tenant_id as "tenantId",
+          u.role_id as "roleId",
+          u.reporting_user_id as "reportingUserId",
+          u.first_name as "firstName",
+          u.last_name as "lastName",
+          u.phone,
+          u.is_active as "isActive",
+          r.name as "roleName",
+          r.hierarchy_level as "hierarchyLevel"
+        FROM users u
+        LEFT JOIN roles r ON u.role_id = r.id
+        WHERE u.reporting_user_id = ${userId} 
+          AND u.tenant_id = ${tenantId} 
+          AND u.is_active = true
+        ORDER BY COALESCE(r.hierarchy_level, 999), u.first_name, u.last_name
+      `;
+      return subordinates;
+    } catch (error) {
+      console.error("Error getting direct subordinates:", error);
+      throw error;
+    }
+  }
+
+  // Get all subordinates recursively (including subordinates of subordinates)
+  async getAllSubordinates(userId: number, tenantId: number): Promise<number[]> {
+    try {
+      const allSubordinateIds: number[] = [];
+      const processed = new Set<number>();
+
+      const getSubordinatesRecursive = async (currentUserId: number) => {
+        if (processed.has(currentUserId)) return;
+        processed.add(currentUserId);
+
+        const directSubs = await this.getDirectSubordinates(currentUserId, tenantId);
+        for (const sub of directSubs) {
+          if (!allSubordinateIds.includes(sub.id)) {
+            allSubordinateIds.push(sub.id);
+            await getSubordinatesRecursive(sub.id); // Recursively get their subordinates
+          }
+        }
+      };
+
+      await getSubordinatesRecursive(userId);
+      return allSubordinateIds;
+    } catch (error) {
+      console.error("Error getting all subordinates:", error);
+      throw error;
+    }
+  }
+
+  // Get user's team IDs (user + all subordinates)
+  async getUserTeamIds(userId: number, tenantId: number): Promise<number[]> {
+    const subordinates = await this.getAllSubordinates(userId, tenantId);
+    return [userId, ...subordinates];
+  }
+
+  // Check if user is owner/superadmin
+  async isUserOwner(userId: number, tenantId: number): Promise<boolean> {
+    try {
+      const [user] = await sql`
+        SELECT u.role_id, r.is_default, u.role
+        FROM users u
+        LEFT JOIN roles r ON u.role_id = r.id
+        WHERE u.id = ${userId} AND u.tenant_id = ${tenantId}
+      `;
+      
+      if (!user) return false;
+      
+      // Check if role is default (owner)
+      if (user.is_default === true) return true;
+      
+      // Legacy check: tenant_admin role
+      if (user.role === "tenant_admin") return true;
+      
+      return false;
+    } catch (error) {
+      console.error("Error checking if user is owner:", error);
+      return false;
     }
   }
 
@@ -1025,6 +1118,7 @@ export class SimpleStorage {
           email = COALESCE(${userData.email}, email),
           phone = COALESCE(${userData.phone}, phone),
           role_id = COALESCE(${userData.roleId}, role_id),
+          reporting_user_id = COALESCE(${userData.reportingUserId}, reporting_user_id),
           is_active = COALESCE(${userData.isActive}, is_active),
           updated_at = NOW()
         WHERE id = ${userId}
@@ -1034,6 +1128,119 @@ export class SimpleStorage {
     } catch (error) {
       console.error("Error updating user:", error);
       throw error;
+    }
+  }
+
+  // Auto-assign lead based on role hierarchy and workload
+  // Priority: 1. Configured priority role (from tenant settings), 2. Preferred role, 3. Lowest hierarchy level, 4. Least workload
+  async autoAssignLead(tenantId: number, leadTypeId?: number, preferredRoleId?: number): Promise<number | null> {
+    try {
+      console.log(`🤖 Auto-assigning lead for tenant ${tenantId}, leadType: ${leadTypeId}, preferredRole: ${preferredRoleId}`);
+
+      // Get tenant settings to check for configured priority role
+      const [tenantSettings] = await sql`
+        SELECT auto_assignment_priority_role_id 
+        FROM tenant_settings 
+        WHERE tenant_id = ${tenantId}
+      `;
+      
+      const configuredPriorityRoleId = tenantSettings?.auto_assignment_priority_role_id || null;
+      
+      if (configuredPriorityRoleId) {
+        console.log(`📋 Found configured priority role ID: ${configuredPriorityRoleId}`);
+      }
+
+      // Get all active users in tenant with their roles and workload
+      const usersWithWorkload = await sql`
+        SELECT 
+          u.id,
+          u.role_id,
+          u.reporting_user_id,
+          r.name as role_name,
+          r.hierarchy_level,
+          r.permissions,
+          COUNT(l.id) as assigned_leads_count,
+          COUNT(CASE WHEN l.status NOT IN ('closed_won', 'closed_lost') THEN 1 END) as active_leads_count
+        FROM users u
+        LEFT JOIN roles r ON u.role_id = r.id
+        LEFT JOIN leads l ON l.assigned_user_id = u.id AND l.tenant_id = ${tenantId}
+        WHERE u.tenant_id = ${tenantId} 
+          AND u.is_active = true
+          AND (r.permissions->>'leads' IS NOT NULL OR r.is_default = true)
+        GROUP BY u.id, u.role_id, u.reporting_user_id, r.name, r.hierarchy_level, r.permissions
+        HAVING (
+          r.permissions->>'leads' LIKE '%"view"%' OR 
+          r.permissions->>'leads' LIKE '%"create"%' OR
+          r.is_default = true
+        )
+        ORDER BY 
+          COALESCE(r.hierarchy_level, 999) ASC, -- Lower hierarchy level = higher priority
+          active_leads_count ASC, -- Least active leads first
+          assigned_leads_count ASC -- Least total leads first
+      `;
+
+      if (usersWithWorkload.length === 0) {
+        console.log("⚠️ No eligible users found for auto-assignment");
+        return null;
+      }
+
+      // STEP 1: Prioritize configured priority role users first (from tenant settings)
+      if (configuredPriorityRoleId) {
+        const priorityRoleUsers = usersWithWorkload.filter((u: any) => 
+          u.role_id === configuredPriorityRoleId
+        );
+
+        if (priorityRoleUsers.length > 0) {
+          console.log(`✅ Found ${priorityRoleUsers.length} users with configured priority role (ID: ${configuredPriorityRoleId}), prioritizing them`);
+          // Select user with least active leads (round-robin style)
+          const selectedUser = priorityRoleUsers.reduce((prev: any, curr: any) => {
+            return (prev.active_leads_count ?? 0) <= (curr.active_leads_count ?? 0) ? prev : curr;
+          });
+          console.log(`✅ Auto-assigned to priority role user ${selectedUser.id} (${selectedUser.role_name}) with ${selectedUser.active_leads_count} active leads`);
+          return selectedUser.id;
+        } else {
+          console.log(`ℹ️ Configured priority role (ID: ${configuredPriorityRoleId}) has no active users, falling back to other roles`);
+        }
+      }
+
+      // STEP 2: Filter by preferred role if specified (include child roles in hierarchy)
+      let eligibleUsers = usersWithWorkload;
+      if (preferredRoleId) {
+        // Get the preferred role and all its child roles (roles that have this as parent)
+        const childRoleIds = await this.getRoleHierarchy(preferredRoleId, tenantId);
+        const eligibleRoleIds = [preferredRoleId, ...childRoleIds];
+        eligibleUsers = usersWithWorkload.filter((u: any) => 
+          eligibleRoleIds.includes(u.role_id)
+        );
+        if (eligibleUsers.length === 0) {
+          // Fallback to all users if preferred role has no users
+          eligibleUsers = usersWithWorkload;
+        }
+      }
+
+      // STEP 3: Find users at the lowest hierarchy level (sales reps, not managers)
+      const minHierarchyLevel = Math.min(
+        ...eligibleUsers.map((u: any) => u.hierarchy_level ?? 999)
+      );
+
+      // Filter to users at the sales rep level (highest hierarchy_level number)
+      const salesReps = eligibleUsers.filter(
+        (u: any) => (u.hierarchy_level ?? 999) === minHierarchyLevel
+      );
+
+      // If no sales reps found, use all eligible users
+      const finalCandidates = salesReps.length > 0 ? salesReps : eligibleUsers;
+
+      // STEP 4: Select user with least active leads
+      const selectedUser = finalCandidates.reduce((prev: any, curr: any) => {
+        return (prev.active_leads_count ?? 0) <= (curr.active_leads_count ?? 0) ? prev : curr;
+      });
+
+      console.log(`✅ Auto-assigned to user ${selectedUser.id} (${selectedUser.role_name}) with ${selectedUser.active_leads_count} active leads`);
+      return selectedUser.id;
+    } catch (error) {
+      console.error("❌ Error in auto-assign lead:", error);
+      return null;
     }
   }
 
@@ -1164,6 +1371,7 @@ export class SimpleStorage {
   // Lead management methods using direct SQL (enhanced version)
   async getLeadsByTenant({
     tenantId,
+    teamUserIds, // Optional: filter by team user IDs (for hierarchical access)
     limit = 50,
     offset = 0,
     search = "",
@@ -1178,6 +1386,7 @@ export class SimpleStorage {
     typeSpecificFilters = "",
   }: {
     tenantId: number;
+    teamUserIds?: number[]; // Filter leads by assigned_user_id if provided (for team/supervisor access)
     limit?: number;
     offset?: number;
     search?: string;
@@ -1193,6 +1402,11 @@ export class SimpleStorage {
   }) {
     try {
       let whereClauses = sql`l.tenant_id = ${tenantId}`;
+
+      // Filter by team user IDs if provided (supervisor sees their team's leads)
+      if (teamUserIds && teamUserIds.length > 0) {
+        whereClauses = sql`${whereClauses} AND l.assigned_user_id = ANY(${sql.array(teamUserIds)})`;
+      }
 
       if (search) {
         whereClauses = sql`${whereClauses} AND (
@@ -1260,11 +1474,16 @@ export class SimpleStorage {
         SELECT 
           l.*,
           l.type_specific_data as "typeSpecificData",
+          l.assigned_user_id as "assignedUserId",
           lt.name AS lead_type_name,
           lt.icon AS lead_type_icon,
-          lt.color AS lead_type_color
+          lt.color AS lead_type_color,
+          assigned_user.first_name as "assignedUserFirstName",
+          assigned_user.last_name as "assignedUserLastName",
+          assigned_user.email as "assignedUserEmail"
         FROM leads l
         LEFT JOIN lead_types lt ON l.lead_type_id = lt.id
+        LEFT JOIN users assigned_user ON l.assigned_user_id = assigned_user.id
         WHERE ${whereClauses}
         ORDER BY ${sql(sortColumn)} ${order}
         LIMIT ${limit} OFFSET ${offset}
@@ -1287,6 +1506,10 @@ export class SimpleStorage {
         leadTypeName: lead.lead_type_name || "General",
         leadTypeIcon: lead.lead_type_icon || "User",
         leadTypeColor: lead.lead_type_color || "#0BBCD6",
+        assignedUserName: lead.assignedUserFirstName && lead.assignedUserLastName
+          ? `${lead.assignedUserFirstName} ${lead.assignedUserLastName}`
+          : null,
+        assignedUserEmail: lead.assignedUserEmail || null,
         dynamicData: {},
       }));
 
@@ -1686,9 +1909,21 @@ async getAllLeadsByTenant(
       console.log("  finalName:", finalName);
       console.log("  email:", email);
 
+      // Auto-assign lead if userId not provided
+      let finalUserId = userId;
+      if (!finalUserId && tenantId) {
+        // Get role ID from lead type if available (for role-based assignment)
+        const [leadType] = leadData.leadTypeId 
+          ? await sql`SELECT id, preferred_role_id FROM lead_types WHERE id = ${leadData.leadTypeId} AND tenant_id = ${tenantId}`
+          : [null];
+        
+        const preferredRoleId = leadType?.preferred_role_id || null;
+        finalUserId = await this.autoAssignLead(tenantId, finalLeadTypeId, preferredRoleId);
+      }
+
       const [lead] = await sql`
-        INSERT INTO leads (tenant_id, lead_type_id, first_name, last_name, name, email,phone,source,status,notes,budget_range,priority,country,state,city,type_specific_data,assigned_user_id)
-        VALUES (${tenantId}, ${finalLeadTypeId}, ${finalFirstName}, ${finalLastName}, ${finalName}, ${email || ""}, ${phone || null}, ${source || null}, ${status || "new"}, ${notes || null}, ${budgetRange || null}, ${priority || "medium"}, ${country || null}, ${state || null},${city || null},${typeSpecificData ? JSON.stringify(typeSpecificData) : {}}, ${userId || null})
+        INSERT INTO leads (tenant_id, lead_type_id, first_name, last_name, name, email,phone,source,status,notes,budget_range,priority,country,state,city,type_specific_data,assigned_user_id,created_by)
+        VALUES (${tenantId}, ${finalLeadTypeId}, ${finalFirstName}, ${finalLastName}, ${finalName}, ${email || ""}, ${phone || null}, ${source || null}, ${status || "new"}, ${notes || null}, ${budgetRange || null}, ${priority || "medium"}, ${country || null}, ${state || null},${city || null},${typeSpecificData ? JSON.stringify(typeSpecificData) : {}}, ${finalUserId || null}, ${userId || null})
         RETURNING 
           id,
           tenant_id as "tenantId",
@@ -1708,6 +1943,7 @@ async getAllLeadsByTenant(
           state,
           city,
           assigned_user_id as "assignedUserId",
+          created_by as "createdBy",
           created_at as "createdAt"
       `;
 
@@ -1928,6 +2164,7 @@ async getAllLeadsByTenant(
           notes = ${updates.notes || null}, budget_range = ${updates.budgetRange || null},
           priority = ${updates.priority}, country = ${updates.country || null}, 
           state = ${updates.state || null}, city = ${updates.city || null},
+          updated_by = ${userId || null},
           updated_at = NOW()
       WHERE id = ${leadId}
       RETURNING 
@@ -1947,6 +2184,8 @@ async getAllLeadsByTenant(
         country,
         state,
         city,
+        created_by as "createdBy",
+        updated_by as "updatedBy",
         created_at as "createdAt",
         updated_at as "updatedAt"
     `;
@@ -2064,42 +2303,237 @@ async getAllLeadsByTenant(
   // Lead Types management
   // Role Management Methods
   async createRole(roleData: any) {
-    const [role] = await sql`
-      INSERT INTO roles (tenant_id, name, description, permissions, is_active)
-      VALUES (${roleData.tenantId}, ${roleData.name}, ${roleData.description || null}, 
-              ${JSON.stringify(roleData.permissions)}, ${roleData.isActive !== false})
-      RETURNING *
-    `;
-    return role;
+    try {
+      // Calculate hierarchy level based on parent role
+      let hierarchyLevel = roleData.hierarchyLevel;
+      if (roleData.parentRoleId && hierarchyLevel === undefined) {
+        const [parentRole] = await sql`
+          SELECT hierarchy_level FROM roles 
+          WHERE id = ${roleData.parentRoleId} AND tenant_id = ${roleData.tenantId}
+        `;
+        if (parentRole) {
+          hierarchyLevel = (parentRole.hierarchy_level ?? 0) + 1;
+        } else {
+          hierarchyLevel = 0;
+        }
+      } else if (hierarchyLevel === undefined) {
+        hierarchyLevel = 0;
+      }
+
+      const [role] = await sql`
+        INSERT INTO roles (
+          tenant_id, name, description, permissions, 
+          parent_role_id, hierarchy_level, is_active, is_default, created_at, updated_at
+        )
+        VALUES (
+          ${roleData.tenantId},
+          ${roleData.name},
+          ${roleData.description || null},
+          ${JSON.stringify(roleData.permissions)},
+          ${roleData.parentRoleId || null},
+          ${hierarchyLevel},
+          ${roleData.isActive !== false},
+          ${roleData.isDefault || false},
+          NOW(),
+          NOW()
+        )
+        RETURNING *
+      `;
+      
+      // Parse permissions if stored as string
+      if (role && typeof role.permissions === 'string') {
+        try {
+          role.permissions = JSON.parse(role.permissions);
+        } catch (e) {
+          console.error(`Error parsing permissions for new role:`, e);
+          role.permissions = {};
+        }
+      }
+      
+      return role;
+    } catch (error) {
+      console.error("Error creating role:", error);
+      throw error;
+    }
   }
 
   async getRolesByTenant(tenantId: number) {
     const roles = await sql`
-      SELECT * FROM roles 
-      WHERE tenant_id = ${tenantId} AND is_active = true
-      ORDER BY created_at DESC
+      SELECT 
+        r.id,
+        r.tenant_id as "tenantId",
+        r.name,
+        r.description,
+        r.permissions,
+        r.is_active as "isActive",
+        r.is_default as "isDefault",
+        r.parent_role_id as "parentRoleId",
+        r.hierarchy_level as "hierarchyLevel",
+        r.created_at as "createdAt",
+        r.updated_at as "updatedAt",
+        parent.name as "parentRoleName"
+      FROM roles r
+      LEFT JOIN roles parent ON r.parent_role_id = parent.id
+      WHERE r.tenant_id = ${tenantId} AND (r.is_active = true OR r.is_default = true)
+      ORDER BY COALESCE(r.hierarchy_level, 999), r.name
     `;
-    return roles;
+    
+    // Parse permissions if they're stored as JSON strings
+    return roles.map((role: any) => {
+      if (typeof role.permissions === 'string') {
+        try {
+          role.permissions = JSON.parse(role.permissions);
+        } catch (e) {
+          console.error(`Error parsing permissions for role ${role.id}:`, e);
+          role.permissions = {};
+        }
+      }
+      return role;
+    });
+  }
+
+  // Get role hierarchy tree (role + all child roles recursively)
+  async getRoleHierarchy(roleId: number, tenantId: number): Promise<number[]> {
+    try {
+      const allChildRoleIds: number[] = [];
+      const processed = new Set<number>();
+
+      const getChildRolesRecursive = async (currentRoleId: number) => {
+        if (processed.has(currentRoleId)) return;
+        processed.add(currentRoleId);
+
+        const childRoles = await sql`
+          SELECT id FROM roles 
+          WHERE parent_role_id = ${currentRoleId} 
+            AND tenant_id = ${tenantId} 
+            AND is_active = true
+        `;
+        
+        for (const child of childRoles) {
+          if (!allChildRoleIds.includes(child.id)) {
+            allChildRoleIds.push(child.id);
+            await getChildRolesRecursive(child.id); // Recursively get their children
+          }
+        }
+      };
+
+      await getChildRolesRecursive(roleId);
+      return allChildRoleIds;
+    } catch (error) {
+      console.error("Error getting role hierarchy:", error);
+      throw error;
+    }
+  }
+
+  // Get all roles that can be parent roles (roles higher in hierarchy)
+  async getAvailableParentRoles(roleId: number | null, tenantId: number) {
+    try {
+      console.log(`🔍 getAvailableParentRoles called - roleId: ${roleId}, tenantId: ${tenantId}`);
+      
+      let query = sql`
+        SELECT id, name, hierarchy_level, parent_role_id, is_default, is_active
+        FROM roles 
+        WHERE tenant_id = ${tenantId} 
+          AND (is_active = true OR is_default = true)
+      `;
+
+      // If editing existing role, exclude itself and its descendants
+      if (roleId) {
+        const descendantRoleIds = await this.getRoleHierarchy(roleId, tenantId);
+        const excludeIds = [roleId, ...descendantRoleIds];
+        console.log(`🔍 Excluding role IDs:`, excludeIds);
+        query = sql`
+          SELECT id, name, hierarchy_level, parent_role_id, is_default, is_active
+          FROM roles 
+          WHERE tenant_id = ${tenantId} 
+            AND (is_active = true OR is_default = true)
+            AND id != ALL(${sql.array(excludeIds)})
+        `;
+      }
+
+      const roles = await query;
+      console.log(`🔍 Found ${roles.length} available parent roles:`, roles.map((r: any) => ({ id: r.id, name: r.name, is_default: r.is_default, is_active: r.is_active })));
+      
+      const sorted = roles.sort((a: any, b: any) => {
+        // Sort by hierarchy level, but Owner role (is_default) should be first
+        if (a.is_default) return -1;
+        if (b.is_default) return 1;
+        return (a.hierarchy_level ?? 999) - (b.hierarchy_level ?? 999);
+      });
+      
+      console.log(`🔍 Sorted roles (Owner first):`, sorted.map((r: any) => r.name));
+      return sorted;
+    } catch (error) {
+      console.error("Error getting available parent roles:", error);
+      throw error;
+    }
   }
 
   async getRoleById(roleId: number, tenantId: number) {
     const [role] = await sql`
-      SELECT * FROM roles 
-      WHERE id = ${roleId} AND tenant_id = ${tenantId}
+      SELECT 
+        r.*,
+        r.parent_role_id as "parentRoleId",
+        r.hierarchy_level as "hierarchyLevel",
+        parent.name as "parentRoleName"
+      FROM roles r
+      LEFT JOIN roles parent ON r.parent_role_id = parent.id
+      WHERE r.id = ${roleId} AND r.tenant_id = ${tenantId}
     `;
     return role;
   }
 
   async updateRole(roleId: number, roleData: any) {
-    const [role] = await sql`
-      UPDATE roles 
-      SET name = ${roleData.name}, description = ${roleData.description || null}, 
-          permissions = ${JSON.stringify(roleData.permissions)}, 
-          is_active = ${roleData.isActive !== false}, updated_at = NOW()
-      WHERE id = ${roleId}
-      RETURNING *
-    `;
-    return role;
+    try {
+      // Calculate hierarchy level if parent role changed
+      let hierarchyLevel = roleData.hierarchyLevel;
+      if (roleData.parentRoleId !== undefined && hierarchyLevel === undefined) {
+        if (roleData.parentRoleId) {
+          const [parentRole] = await sql`
+            SELECT hierarchy_level FROM roles 
+            WHERE id = ${roleData.parentRoleId}
+          `;
+          if (parentRole) {
+            hierarchyLevel = (parentRole.hierarchy_level ?? 0) + 1;
+          }
+        } else {
+          // No parent, set to 0 or keep existing
+          const [currentRole] = await sql`
+            SELECT hierarchy_level FROM roles WHERE id = ${roleId}
+          `;
+          hierarchyLevel = currentRole?.hierarchy_level ?? 0;
+        }
+      }
+
+      const [role] = await sql`
+        UPDATE roles 
+        SET 
+          name = COALESCE(${roleData.name}, name),
+          description = ${roleData.description !== undefined ? (roleData.description || null) : sql`description`},
+          permissions = ${roleData.permissions !== undefined ? JSON.stringify(roleData.permissions) : sql`permissions`},
+          parent_role_id = ${roleData.parentRoleId !== undefined ? (roleData.parentRoleId || null) : sql`parent_role_id`},
+          hierarchy_level = ${hierarchyLevel !== undefined ? hierarchyLevel : sql`hierarchy_level`},
+          is_active = ${roleData.isActive !== undefined ? (roleData.isActive !== false) : sql`is_active`},
+          updated_at = NOW()
+        WHERE id = ${roleId}
+        RETURNING *
+      `;
+      
+      // Parse permissions if stored as string
+      if (role && typeof role.permissions === 'string') {
+        try {
+          role.permissions = JSON.parse(role.permissions);
+        } catch (e) {
+          console.error(`Error parsing permissions for updated role ${roleId}:`, e);
+          role.permissions = {};
+        }
+      }
+      
+      return role;
+    } catch (error) {
+      console.error("Error updating role:", error);
+      throw error;
+    }
   }
 
   async deleteRole(roleId: number) {
@@ -2114,15 +2548,16 @@ async getAllLeadsByTenant(
 
     const [user] = await sql`
       INSERT INTO users (
-        email, password, role, tenant_id, role_id, first_name, last_name, 
+        email, password, role, tenant_id, role_id, reporting_user_id, first_name, last_name, 
         phone, is_active, is_email_verified, password_reset_required
       )
       VALUES (
         ${userData.email}, ${hashedPassword}, 'tenant_user', ${userData.tenantId}, 
-        ${userData.roleId}, ${userData.firstName}, ${userData.lastName}, 
+        ${userData.roleId}, ${userData.reportingUserId || null}, ${userData.firstName}, ${userData.lastName}, 
         ${userData.phone || null}, ${userData.isActive !== false}, false, true
       )
       RETURNING id, email, role, tenant_id as "tenantId", role_id as "roleId", 
+               reporting_user_id as "reportingUserId",
                first_name as "firstName", last_name as "lastName", phone, 
                is_active as "isActive", is_email_verified as "isEmailVerified",
                password_reset_required as "passwordResetRequired", 
@@ -2135,12 +2570,15 @@ async getAllLeadsByTenant(
     const users = await sql`
       SELECT 
         u.id, u.email, u.role, u.tenant_id as "tenantId", u.role_id as "roleId",
+        u.reporting_user_id as "reportingUserId",
         u.first_name as "firstName", u.last_name as "lastName", u.phone,
         u.is_active as "isActive", u.is_email_verified as "isEmailVerified",
         u.last_login_at as "lastLoginAt", u.created_at as "createdAt",
-        r.name as "roleName"
+        r.name as "roleName",
+        reportingUser.first_name || ' ' || reportingUser.last_name as "reportingUserName"
       FROM users u
       LEFT JOIN roles r ON u.role_id = r.id
+      LEFT JOIN users reportingUser ON u.reporting_user_id = reportingUser.id
       WHERE u.tenant_id = ${tenantId} AND u.is_active = true
       ORDER BY u.created_at DESC
     `;
@@ -2172,6 +2610,10 @@ async getAllLeadsByTenant(
       updates.push(`role_id = $${paramIndex++}`);
       values.push(userData.roleId);
     }
+    if (userData.reportingUserId !== undefined) {
+      updates.push(`reporting_user_id = $${paramIndex++}`);
+      values.push(userData.reportingUserId);
+    }
     if (userData.isActive !== undefined) {
       updates.push(`is_active = $${paramIndex++}`);
       values.push(userData.isActive);
@@ -2185,6 +2627,7 @@ async getAllLeadsByTenant(
       SET ${updates.join(", ")}
       WHERE id = $${paramIndex}
       RETURNING id, email, role, tenant_id as "tenantId", role_id as "roleId",
+               reporting_user_id as "reportingUserId",
                first_name as "firstName", last_name as "lastName", phone,
                is_active as "isActive", is_email_verified as "isEmailVerified",
                updated_at as "updatedAt"
@@ -4004,18 +4447,58 @@ async getAllLeadsByTenant(
   // Settings management methods
   async updateTenant(tenantId: number, tenantData: any) {
     try {
+      // Build update query dynamically, only including defined fields (not undefined)
+      // Note: null values are allowed, but undefined values are not
+      const updateParts: any[] = [];
+      
+      if (tenantData.company_name !== undefined) {
+        updateParts.push(sql`company_name = ${tenantData.company_name ?? null}`);
+      }
+      if (tenantData.contact_email !== undefined) {
+        updateParts.push(sql`contact_email = ${tenantData.contact_email ?? null}`);
+      }
+      if (tenantData.contact_phone !== undefined) {
+        updateParts.push(sql`contact_phone = ${tenantData.contact_phone ?? null}`);
+      }
+      if (tenantData.address !== undefined) {
+        updateParts.push(sql`address = ${tenantData.address ?? null}`);
+      }
+      if (tenantData.subdomain !== undefined) {
+        updateParts.push(sql`subdomain = ${tenantData.subdomain ?? null}`);
+      }
+      if (tenantData.logo !== undefined) {
+        updateParts.push(sql`logo = ${tenantData.logo ?? null}`);
+      }
+      if (tenantData.timezone !== undefined) {
+        updateParts.push(sql`timezone = ${tenantData.timezone ?? null}`);
+      }
+      if (tenantData.currency !== undefined) {
+        updateParts.push(sql`currency = ${tenantData.currency ?? null}`);
+      }
+      if (tenantData.date_format !== undefined) {
+        updateParts.push(sql`date_format = ${tenantData.date_format ?? null}`);
+      }
+      if (tenantData.zoom_account_id !== undefined) {
+        updateParts.push(sql`zoom_account_id = ${tenantData.zoom_account_id ?? null}`);
+      }
+      if (tenantData.zoom_client_id !== undefined) {
+        updateParts.push(sql`zoom_client_id = ${tenantData.zoom_client_id ?? null}`);
+      }
+      if (tenantData.zoom_client_secret !== undefined) {
+        updateParts.push(sql`zoom_client_secret = ${tenantData.zoom_client_secret ?? null}`);
+      }
+
+      if (updateParts.length === 0) {
+        // No updates to make, return current tenant
+        const [tenant] = await sql`SELECT * FROM tenants WHERE id = ${tenantId}`;
+        return tenant;
+      }
+
+      // Build the query using sql template tag
+      const updateClause = sql.join(updateParts, sql`, `);
       const [updatedTenant] = await sql`
         UPDATE tenants 
-        SET 
-          company_name = COALESCE(${tenantData.company_name}, company_name),
-          contact_email = COALESCE(${tenantData.contact_email}, contact_email),
-          contact_phone = COALESCE(${tenantData.contact_phone}, contact_phone),
-          address = COALESCE(${tenantData.address}, address),
-          subdomain = COALESCE(${tenantData.subdomain}, subdomain),
-          logo = COALESCE(${tenantData.logo}, logo),
-          timezone = COALESCE(${tenantData.timezone}, timezone),
-          currency = COALESCE(${tenantData.currency}, currency),
-          date_format = COALESCE(${tenantData.date_format}, date_format)
+        SET ${updateClause}
         WHERE id = ${tenantId}
         RETURNING *
       `;
@@ -5941,6 +6424,19 @@ async getAllLeadsByTenant(
   // Tasks management methods
   async getTasksByTenant(tenantId: number) {
     try {
+      // Check if tasks table exists
+      const tableExists = await sql`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables 
+          WHERE table_name = 'tasks'
+        )
+      `;
+      
+      if (!tableExists[0]?.exists) {
+        console.warn("tasks table does not exist. Returning empty array.");
+        return [];
+      }
+
       const tasks = await sql`
         SELECT 
           t.*,
@@ -6116,15 +6612,20 @@ async getAllLeadsByTenant(
   async assignEntityToUser(
     entityType: string,
     entityId: number,
-    userId: number,
+    userId: number | null,
     assignedBy: number,
     reason: string = "manual_assignment",
   ) {
     try {
-      // Get user details for assignment
-      const [user] =
-        await sql`SELECT first_name, last_name FROM users WHERE id = ${userId}`;
-      const fullName = `${user.first_name} ${user.last_name}`;
+      // Get user details for assignment (if userId is provided)
+      let fullName = "Unassigned";
+      if (userId) {
+        const [user] =
+          await sql`SELECT first_name, last_name FROM users WHERE id = ${userId}`;
+        if (user) {
+          fullName = `${user.first_name} ${user.last_name}`;
+        }
+      }
 
       // Get current assignment for history tracking
       let previousUserId = null;
@@ -6133,10 +6634,13 @@ async getAllLeadsByTenant(
           await sql`SELECT assigned_user_id FROM leads WHERE id = ${entityId}`;
         previousUserId = currentLead?.assigned_user_id;
 
-        // Update lead assignment
+        // Update lead assignment (allow null to unassign)
         await sql`
           UPDATE leads 
-          SET assigned_user_id = ${userId}, assigned_at = NOW(), assigned_by = ${assignedBy}, last_activity_user_id = ${userId}
+          SET assigned_user_id = ${userId}, 
+              assigned_at = ${userId ? sql`NOW()` : sql`NULL`}, 
+              assigned_by = ${assignedBy}, 
+              last_activity_user_id = ${userId || assignedBy}
           WHERE id = ${entityId}
         `;
       } else if (entityType === "customer") {
@@ -6144,36 +6648,285 @@ async getAllLeadsByTenant(
           await sql`SELECT assigned_user_id FROM customers WHERE id = ${entityId}`;
         previousUserId = currentCustomer?.assigned_user_id;
 
-        // Update customer assignment
+        // Update customer assignment (allow null to unassign)
         await sql`
           UPDATE customers 
-          SET assigned_user_id = ${userId}, assigned_at = NOW(), assigned_by = ${assignedBy}, last_activity_user_id = ${userId}
+          SET assigned_user_id = ${userId}, 
+              assigned_at = ${userId ? sql`NOW()` : sql`NULL`}, 
+              assigned_by = ${assignedBy}, 
+              last_activity_user_id = ${userId || assignedBy}
           WHERE id = ${entityId}
         `;
       }
 
-      // Log assignment history
-      await this.logAssignmentHistory({
-        tenantId: await this.getTenantIdFromEntity(entityType, entityId),
-        entityType,
-        entityId,
-        previousUserId,
-        newUserId: userId,
-        assignedBy,
-        reason,
-      });
+      const tenantId = await this.getTenantIdFromEntity(entityType, entityId);
 
-      // Create notification for assigned user
-      await this.createNotification({
-        tenantId: await this.getTenantIdFromEntity(entityType, entityId),
-        userId,
-        title: `New ${entityType} Assigned`,
-        message: `${entityType.charAt(0).toUpperCase() + entityType.slice(1)} has been assigned to you`,
-        type: "assignment",
-        entityType,
-        entityId,
-        priority: "medium",
-      });
+      // Log assignment history (only if userId is provided)
+      if (userId) {
+        await this.logAssignmentHistory({
+          tenantId,
+          entityType,
+          entityId,
+          previousUserId,
+          newUserId: userId,
+          assignedBy,
+          reason,
+        });
+      }
+
+      // For leads, also log to lead activities
+      if (entityType === "lead" && userId) {
+        try {
+          const [lead] = await sql`SELECT first_name, last_name, name FROM leads WHERE id = ${entityId}`;
+          const leadName = lead?.name || `${lead?.first_name || ''} ${lead?.last_name || ''}`.trim() || `Lead #${entityId}`;
+          const [previousUser] = previousUserId 
+            ? await sql`SELECT first_name, last_name FROM users WHERE id = ${previousUserId}`
+            : [null];
+          const previousUserName = previousUser ? `${previousUser.first_name} ${previousUser.last_name}` : "Unassigned";
+          
+          await this.saveLeadActivity({
+            tenant_id: tenantId,
+            lead_id: entityId,
+            user_id: assignedBy,
+            activity_type: 2, // ASSIGNMENT activity type
+            activity_title: userId ? `Lead Assigned to ${fullName}` : "Lead Unassigned",
+            activity_description: userId 
+              ? `Lead "${leadName}" was assigned from ${previousUserName} to ${fullName}`
+              : `Lead "${leadName}" was unassigned from ${previousUserName}`,
+            activity_status: 1,
+          });
+        } catch (error) {
+          console.error("Error logging lead activity for assignment:", error);
+          // Don't throw - allow assignment to continue
+        }
+      }
+
+      // Create notification and send email only if userId is provided
+      if (userId) {
+        // Create notification for assigned user
+        await this.createNotification({
+          tenantId,
+          userId,
+          title: `New ${entityType} Assigned`,
+          message: `${entityType.charAt(0).toUpperCase() + entityType.slice(1)} has been assigned to you`,
+          type: "assignment",
+          entityType,
+          entityId,
+          priority: "medium",
+        });
+
+        // Send email notification for lead assignments
+        if (entityType === "lead") {
+          try {
+            const [assignedUser] = await sql`SELECT email, first_name, last_name FROM users WHERE id = ${userId}`;
+            const [lead] = await sql`
+              SELECT 
+                l.id,
+                l.first_name,
+                l.last_name,
+                l.name,
+                l.email,
+                l.phone,
+                l.source,
+                l.status,
+                l.priority,
+                l.budget_range,
+                l.country,
+                l.state,
+                l.city,
+                l.notes,
+                l.created_at,
+                l.score,
+                lt.name as lead_type_name
+              FROM leads l
+              LEFT JOIN lead_types lt ON l.lead_type_id = lt.id
+              WHERE l.id = ${entityId}
+            `;
+            
+            if (assignedUser?.email && lead) {
+              const leadName = lead?.name || `${lead?.first_name || ''} ${lead?.last_name || ''}`.trim() || `Lead #${entityId}`;
+              const emailService = (await import("./email-service")).emailService;
+              
+              // Format created date
+              const createdDate = lead.created_at 
+                ? new Date(lead.created_at).toLocaleDateString('en-US', { 
+                    year: 'numeric', 
+                    month: 'long', 
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })
+                : 'N/A';
+              
+              // Build details HTML
+              const detailsHtml = `
+                <table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+                  <tr>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Lead ID:</strong></td>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">#${lead.id}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Name:</strong></td>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${leadName}</td>
+                  </tr>
+                  ${lead.email ? `
+                  <tr>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Email:</strong></td>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><a href="mailto:${lead.email}">${lead.email}</a></td>
+                  </tr>
+                  ` : ''}
+                  ${lead.phone ? `
+                  <tr>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Phone:</strong></td>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><a href="tel:${lead.phone}">${lead.phone}</a></td>
+                  </tr>
+                  ` : ''}
+                  ${lead.source ? `
+                  <tr>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Source:</strong></td>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${lead.source}</td>
+                  </tr>
+                  ` : ''}
+                  ${lead.lead_type_name ? `
+                  <tr>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Lead Type:</strong></td>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${lead.lead_type_name}</td>
+                  </tr>
+                  ` : ''}
+                  <tr>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Status:</strong></td>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">
+                      <span style="background-color: #e3f2fd; color: #1976d2; padding: 4px 8px; border-radius: 4px; font-size: 12px; text-transform: capitalize;">
+                        ${lead.status || 'New'}
+                      </span>
+                    </td>
+                  </tr>
+                  ${lead.priority ? `
+                  <tr>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Priority:</strong></td>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">
+                      <span style="background-color: #fff3e0; color: #f57c00; padding: 4px 8px; border-radius: 4px; font-size: 12px; text-transform: capitalize;">
+                        ${lead.priority}
+                      </span>
+                    </td>
+                  </tr>
+                  ` : ''}
+                  ${lead.score ? `
+                  <tr>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Score:</strong></td>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${lead.score}</td>
+                  </tr>
+                  ` : ''}
+                  ${lead.budget_range ? `
+                  <tr>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Budget Range:</strong></td>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${lead.budget_range}</td>
+                  </tr>
+                  ` : ''}
+                  ${lead.country || lead.state || lead.city ? `
+                  <tr>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Location:</strong></td>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">
+                      ${[lead.city, lead.state, lead.country].filter(Boolean).join(', ') || 'N/A'}
+                    </td>
+                  </tr>
+                  ` : ''}
+                  <tr>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Created:</strong></td>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${createdDate}</td>
+                  </tr>
+                  ${lead.notes ? `
+                  <tr>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0; vertical-align: top;"><strong>Notes:</strong></td>
+                    <td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${lead.notes}</td>
+                  </tr>
+                  ` : ''}
+                </table>
+              `;
+              
+              // Build text version
+              const textDetails = `
+Lead ID: #${lead.id}
+Name: ${leadName}
+${lead.email ? `Email: ${lead.email}` : ''}
+${lead.phone ? `Phone: ${lead.phone}` : ''}
+${lead.source ? `Source: ${lead.source}` : ''}
+${lead.lead_type_name ? `Lead Type: ${lead.lead_type_name}` : ''}
+Status: ${lead.status || 'New'}
+${lead.priority ? `Priority: ${lead.priority}` : ''}
+${lead.score ? `Score: ${lead.score}` : ''}
+${lead.budget_range ? `Budget Range: ${lead.budget_range}` : ''}
+${lead.country || lead.state || lead.city ? `Location: ${[lead.city, lead.state, lead.country].filter(Boolean).join(', ')}` : ''}
+Created: ${createdDate}
+${lead.notes ? `Notes: ${lead.notes}` : ''}
+              `.trim();
+              
+              await emailService.sendEmail({
+                to: assignedUser.email,
+                subject: `New Lead Assigned: ${leadName}`,
+                html: `
+                  <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 8px 8px 0 0; color: white;">
+                      <h2 style="margin: 0; color: white;">New Lead Assignment</h2>
+                    </div>
+                    <div style="background-color: #ffffff; padding: 20px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 8px 8px;">
+                      <p style="color: #333; font-size: 16px;">Hello <strong>${assignedUser.first_name} ${assignedUser.last_name}</strong>,</p>
+                      <p style="color: #666;">A new lead has been assigned to you. Please review the details below and follow up as soon as possible.</p>
+                      
+                      <div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #667eea;">
+                        ${detailsHtml}
+                      </div>
+                      
+                      <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
+                        <p style="color: #666; font-size: 14px; margin: 0;">
+                          <strong>Next Steps:</strong><br>
+                          • Review the lead details above<br>
+                          • Contact the lead at your earliest convenience<br>
+                          • Update the lead status in CRM after initial contact
+                        </p>
+                      </div>
+                      
+                      <div style="margin-top: 30px; text-align: center;">
+                        <a href="${process.env.APP_URL || 'http://localhost:5000'}/leads/${lead.id}" 
+                           style="background-color: #667eea; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">
+                          View Lead in CRM
+                        </a>
+                      </div>
+                    </div>
+                    <div style="margin-top: 20px; text-align: center; color: #999; font-size: 12px;">
+                      <p>This is an automated notification from RateHonk CRM</p>
+                      <p>Best regards,<br><strong>RateHonk CRM Team</strong></p>
+                    </div>
+                  </div>
+                `,
+                text: `New Lead Assignment
+
+Hello ${assignedUser.first_name} ${assignedUser.last_name},
+
+A new lead has been assigned to you. Please review the details below and follow up as soon as possible.
+
+${textDetails}
+
+Next Steps:
+• Review the lead details above
+• Contact the lead at your earliest convenience
+• Update the lead status in CRM after initial contact
+
+View Lead: ${process.env.APP_URL || 'http://localhost:5000'}/leads/${lead.id}
+
+This is an automated notification from RateHonk CRM
+
+Best regards,
+RateHonk CRM Team`,
+              });
+              console.log(`✅ Assignment email sent to ${assignedUser.email} with full lead details`);
+            }
+          } catch (error) {
+            console.error("Error sending assignment email:", error);
+            // Don't throw - allow assignment to continue even if email fails
+          }
+        }
+      }
 
       return { success: true, assignedUser: fullName };
     } catch (error) {
@@ -6193,7 +6946,16 @@ async getAllLeadsByTenant(
       result =
         await sql`SELECT tenant_id FROM customers WHERE id = ${entityId}`;
     } else if (entityType === "task") {
-      result = await sql`SELECT tenant_id FROM tasks WHERE id = ${entityId}`;
+      // Check if tasks table exists before querying
+      const tableExists = await sql`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables 
+          WHERE table_name = 'tasks'
+        )
+      `;
+      if (tableExists[0]?.exists) {
+        result = await sql`SELECT tenant_id FROM tasks WHERE id = ${entityId}`;
+      }
     }
     return result[0]?.tenant_id;
   }
@@ -6248,13 +7010,35 @@ async getAllLeadsByTenant(
 
   async getUserAssignments(userId: number, tenantId: number) {
     try {
-      const [assignments] = await sql`
-        SELECT 
-          (SELECT COUNT(*) FROM leads WHERE assigned_user_id = ${userId} AND tenant_id = ${tenantId}) as assigned_leads,
-          (SELECT COUNT(*) FROM customers WHERE assigned_user_id = ${userId} AND tenant_id = ${tenantId}) as assigned_customers,
-          (SELECT COUNT(*) FROM tasks WHERE assigned_to_id = ${userId} AND tenant_id = ${tenantId} AND status != 'completed') as active_tasks,
-          (SELECT COUNT(*) FROM tasks WHERE assigned_to_id = ${userId} AND tenant_id = ${tenantId} AND status = 'completed') as completed_tasks
+      // Check if tasks table exists
+      const tasksTableExists = await sql`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables 
+          WHERE table_name = 'tasks'
+        )
       `;
+      
+      const hasTasksTable = tasksTableExists[0]?.exists || false;
+
+      let assignments;
+      if (hasTasksTable) {
+        [assignments] = await sql`
+          SELECT 
+            (SELECT COUNT(*) FROM leads WHERE assigned_user_id = ${userId} AND tenant_id = ${tenantId}) as assigned_leads,
+            (SELECT COUNT(*) FROM customers WHERE assigned_user_id = ${userId} AND tenant_id = ${tenantId}) as assigned_customers,
+            (SELECT COUNT(*) FROM tasks WHERE assigned_to_id = ${userId} AND tenant_id = ${tenantId} AND status != 'completed') as active_tasks,
+            (SELECT COUNT(*) FROM tasks WHERE assigned_to_id = ${userId} AND tenant_id = ${tenantId} AND status = 'completed') as completed_tasks
+        `;
+      } else {
+        // If tasks table doesn't exist, return counts without tasks
+        [assignments] = await sql`
+          SELECT 
+            (SELECT COUNT(*) FROM leads WHERE assigned_user_id = ${userId} AND tenant_id = ${tenantId}) as assigned_leads,
+            (SELECT COUNT(*) FROM customers WHERE assigned_user_id = ${userId} AND tenant_id = ${tenantId}) as assigned_customers,
+            0 as active_tasks,
+            0 as completed_tasks
+        `;
+      }
 
       const recentLeads = await sql`
         SELECT id, name, status, created_at, priority 
@@ -6272,13 +7056,16 @@ async getAllLeadsByTenant(
         LIMIT 5
       `;
 
-      const upcomingTasks = await sql`
-        SELECT id, title, due_date, priority, status, type 
-        FROM tasks 
-        WHERE assigned_to_id = ${userId} AND tenant_id = ${tenantId} AND status != 'completed'
-        ORDER BY due_date ASC 
-        LIMIT 10
-      `;
+      let upcomingTasks = [];
+      if (hasTasksTable) {
+        upcomingTasks = await sql`
+          SELECT id, title, due_date, priority, status, type 
+          FROM tasks 
+          WHERE assigned_to_id = ${userId} AND tenant_id = ${tenantId} AND status != 'completed'
+          ORDER BY due_date ASC 
+          LIMIT 10
+        `;
+      }
 
       return {
         summary: {
@@ -6319,6 +7106,19 @@ async getAllLeadsByTenant(
   // Assignment History Methods
   async logAssignmentHistory(historyData: any) {
     try {
+      // Check if table exists first
+      const tableExists = await sql`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables 
+          WHERE table_name = 'assignment_history'
+        )
+      `;
+      
+      if (!tableExists[0]?.exists) {
+        console.warn("assignment_history table does not exist. Skipping history logging.");
+        return;
+      }
+
       await sql`
         INSERT INTO assignment_history (
           tenant_id, entity_type, entity_id, previous_user_id, 
@@ -6331,7 +7131,7 @@ async getAllLeadsByTenant(
       `;
     } catch (error) {
       console.error("Error logging assignment history:", error);
-      throw error;
+      // Don't throw - allow the operation to continue even if history logging fails
     }
   }
 
@@ -6341,28 +7141,60 @@ async getAllLeadsByTenant(
     entityId?: number,
   ) {
     try {
-      let whereClause = `WHERE ah.tenant_id = ${tenantId}`;
-      if (entityType && entityId) {
-        whereClause += ` AND ah.entity_type = '${entityType}' AND ah.entity_id = ${entityId}`;
+      // Check if table exists first
+      const tableExists = await sql`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables 
+          WHERE table_name = 'assignment_history'
+        )
+      `;
+      
+      if (!tableExists[0]?.exists) {
+        console.warn("assignment_history table does not exist. Returning empty array.");
+        return [];
       }
 
-      const history = await sql`
-        SELECT 
-          ah.*,
-          prev_user.first_name as previous_user_first_name,
-          prev_user.last_name as previous_user_last_name,
-          new_user.first_name as new_user_first_name,
-          new_user.last_name as new_user_last_name,
-          assigned_user.first_name as assigned_by_first_name,
-          assigned_user.last_name as assigned_by_last_name
-        FROM assignment_history ah
-        LEFT JOIN users prev_user ON ah.previous_user_id = prev_user.id
-        LEFT JOIN users new_user ON ah.new_user_id = new_user.id
-        LEFT JOIN users assigned_user ON ah.assigned_by = assigned_user.id
-        ${sql.raw(whereClause)}
-        ORDER BY ah.created_at DESC
-        LIMIT 50
-      `;
+      let history;
+      
+      if (entityType && entityId) {
+        history = await sql`
+          SELECT 
+            ah.*,
+            prev_user.first_name as previous_user_first_name,
+            prev_user.last_name as previous_user_last_name,
+            new_user.first_name as new_user_first_name,
+            new_user.last_name as new_user_last_name,
+            assigned_user.first_name as assigned_by_first_name,
+            assigned_user.last_name as assigned_by_last_name
+          FROM assignment_history ah
+          LEFT JOIN users prev_user ON ah.previous_user_id = prev_user.id
+          LEFT JOIN users new_user ON ah.new_user_id = new_user.id
+          LEFT JOIN users assigned_user ON ah.assigned_by = assigned_user.id
+          WHERE ah.tenant_id = ${tenantId}
+            AND ah.entity_type = ${entityType}
+            AND ah.entity_id = ${entityId}
+          ORDER BY ah.created_at DESC
+          LIMIT 50
+        `;
+      } else {
+        history = await sql`
+          SELECT 
+            ah.*,
+            prev_user.first_name as previous_user_first_name,
+            prev_user.last_name as previous_user_last_name,
+            new_user.first_name as new_user_first_name,
+            new_user.last_name as new_user_last_name,
+            assigned_user.first_name as assigned_by_first_name,
+            assigned_user.last_name as assigned_by_last_name
+          FROM assignment_history ah
+          LEFT JOIN users prev_user ON ah.previous_user_id = prev_user.id
+          LEFT JOIN users new_user ON ah.new_user_id = new_user.id
+          LEFT JOIN users assigned_user ON ah.assigned_by = assigned_user.id
+          WHERE ah.tenant_id = ${tenantId}
+          ORDER BY ah.created_at DESC
+          LIMIT 50
+        `;
+      }
 
       return history.map((record) => ({
         id: record.id,
@@ -6395,6 +7227,19 @@ async getAllLeadsByTenant(
   // User Metrics Methods
   async recordUserMetric(metricData: any) {
     try {
+      // Check if table exists first
+      const tableExists = await sql`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables 
+          WHERE table_name = 'user_metrics'
+        )
+      `;
+      
+      if (!tableExists[0]?.exists) {
+        console.warn("user_metrics table does not exist. Skipping metric recording.");
+        return;
+      }
+
       await sql`
         INSERT INTO user_metrics (
           tenant_id, user_id, metric_type, metric_value, 
@@ -6407,7 +7252,7 @@ async getAllLeadsByTenant(
       `;
     } catch (error) {
       console.error("Error recording user metric:", error);
-      throw error;
+      // Don't throw - allow the operation to continue even if metric recording fails
     }
   }
 
@@ -6418,23 +7263,49 @@ async getAllLeadsByTenant(
     endDate?: Date,
   ) {
     try {
-      let dateFilter = "";
-      if (startDate && endDate) {
-        dateFilter = ` AND metric_date BETWEEN '${startDate.toISOString()}' AND '${endDate.toISOString()}'`;
+      // Check if table exists first
+      const tableExists = await sql`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables 
+          WHERE table_name = 'user_metrics'
+        )
+      `;
+      
+      if (!tableExists[0]?.exists) {
+        console.warn("user_metrics table does not exist. Returning empty array.");
+        return [];
       }
 
-      const metrics = await sql`
-        SELECT 
-          metric_type,
-          SUM(metric_value) as total_value,
-          AVG(metric_value) as average_value,
-          COUNT(*) as record_count,
-          MAX(metric_date) as last_recorded
-        FROM user_metrics
-        WHERE user_id = ${userId} AND tenant_id = ${tenantId} ${sql.raw(dateFilter)}
-        GROUP BY metric_type
-        ORDER BY metric_type
-      `;
+      let metrics;
+      
+      if (startDate && endDate) {
+        metrics = await sql`
+          SELECT 
+            metric_type,
+            SUM(metric_value) as total_value,
+            AVG(metric_value) as average_value,
+            COUNT(*) as record_count,
+            MAX(metric_date) as last_recorded
+          FROM user_metrics
+          WHERE user_id = ${userId} AND tenant_id = ${tenantId}
+            AND metric_date BETWEEN ${startDate.toISOString()} AND ${endDate.toISOString()}
+          GROUP BY metric_type
+          ORDER BY metric_type
+        `;
+      } else {
+        metrics = await sql`
+          SELECT 
+            metric_type,
+            SUM(metric_value) as total_value,
+            AVG(metric_value) as average_value,
+            COUNT(*) as record_count,
+            MAX(metric_date) as last_recorded
+          FROM user_metrics
+          WHERE user_id = ${userId} AND tenant_id = ${tenantId}
+          GROUP BY metric_type
+          ORDER BY metric_type
+        `;
+      }
 
       return metrics.map((metric) => ({
         type: metric.metric_type,
@@ -6452,6 +7323,27 @@ async getAllLeadsByTenant(
   // User Notifications Methods
   async createNotification(notificationData: any) {
     try {
+      // Check if table exists first
+      const tableExists = await sql`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables 
+          WHERE table_name = 'user_notifications'
+        )
+      `;
+      
+      if (!tableExists[0]?.exists) {
+        console.warn("user_notifications table does not exist. Skipping notification creation.");
+        return {
+          id: 0,
+          title: notificationData.title,
+          message: notificationData.message,
+          type: notificationData.type,
+          priority: notificationData.priority || "medium",
+          isRead: notificationData.isRead || false,
+          createdAt: new Date(),
+        };
+      }
+
       const [notification] = await sql`
         INSERT INTO user_notifications (
           tenant_id, user_id, title, message, type, entity_type,
@@ -6488,23 +7380,53 @@ async getAllLeadsByTenant(
     includeRead: boolean = false,
   ) {
     try {
-      const readFilter = includeRead ? "" : " AND is_read = false";
-
-      const notifications = await sql`
-        SELECT * FROM user_notifications
-        WHERE user_id = ${userId} AND tenant_id = ${tenantId}
-        ${sql.raw(readFilter)}
-        AND (expires_at IS NULL OR expires_at > NOW())
-        ORDER BY 
-          CASE priority
-            WHEN 'urgent' THEN 1
-            WHEN 'high' THEN 2
-            WHEN 'medium' THEN 3
-            ELSE 4
-          END,
-          created_at DESC
-        LIMIT 50
+      // Check if table exists first
+      const tableExists = await sql`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables 
+          WHERE table_name = 'user_notifications'
+        )
       `;
+      
+      if (!tableExists[0]?.exists) {
+        console.warn("user_notifications table does not exist. Returning empty array.");
+        return [];
+      }
+
+      let notifications;
+      
+      if (includeRead) {
+        notifications = await sql`
+          SELECT * FROM user_notifications
+          WHERE user_id = ${userId} AND tenant_id = ${tenantId}
+            AND (expires_at IS NULL OR expires_at > NOW())
+          ORDER BY 
+            CASE priority
+              WHEN 'urgent' THEN 1
+              WHEN 'high' THEN 2
+              WHEN 'medium' THEN 3
+              ELSE 4
+            END,
+            created_at DESC
+          LIMIT 50
+        `;
+      } else {
+        notifications = await sql`
+          SELECT * FROM user_notifications
+          WHERE user_id = ${userId} AND tenant_id = ${tenantId}
+            AND is_read = false
+            AND (expires_at IS NULL OR expires_at > NOW())
+          ORDER BY 
+            CASE priority
+              WHEN 'urgent' THEN 1
+              WHEN 'high' THEN 2
+              WHEN 'medium' THEN 3
+              ELSE 4
+            END,
+            created_at DESC
+          LIMIT 50
+        `;
+      }
 
       return notifications.map((notification) => ({
         id: notification.id,
@@ -8439,7 +9361,14 @@ async getAllLeadsByTenant(
           enable_lead_welcome_message,
           lead_welcome_message,
           enable_customer_welcome_message,
-          customer_welcome_message
+          customer_welcome_message,
+          auto_assignment_priority_role_id,
+          lead_scoring_enabled,
+          auto_lead_assignment,
+          duplicate_detection,
+          data_retention_days,
+          audit_logging,
+          session_timeout
         FROM tenant_settings 
         WHERE tenant_id = ${tenantId}
       `;
@@ -8471,6 +9400,13 @@ async getAllLeadsByTenant(
         customerWelcomeMessage:
           settings.customer_welcome_message ??
           "Welcome! Thank you for choosing us. We're excited to serve you!",
+        autoAssignmentPriorityRoleId: settings.auto_assignment_priority_role_id || null,
+        leadScoringEnabled: settings.lead_scoring_enabled ?? true,
+        autoLeadAssignment: settings.auto_lead_assignment ?? false,
+        duplicateDetection: settings.duplicate_detection ?? true,
+        dataRetentionDays: settings.data_retention_days ?? 365,
+        auditLogging: settings.audit_logging ?? true,
+        sessionTimeout: settings.session_timeout ?? 120,
       };
     } catch (error) {
       console.error("Error getting tenant settings:", error);
@@ -8493,7 +9429,7 @@ async getAllLeadsByTenant(
         settingsData,
       );
 
-      // Insert or update the four columns using COALESCE to preserve existing values
+      // Insert or update settings using COALESCE to preserve existing values
       const [updatedSettings] = await sql`
         INSERT INTO tenant_settings (
           tenant_id, 
@@ -8501,6 +9437,13 @@ async getAllLeadsByTenant(
           lead_welcome_message,
           enable_customer_welcome_message, 
           customer_welcome_message,
+          auto_assignment_priority_role_id,
+          lead_scoring_enabled,
+          auto_lead_assignment,
+          duplicate_detection,
+          data_retention_days,
+          audit_logging,
+          session_timeout,
           updated_at
         )
         VALUES (
@@ -8509,6 +9452,13 @@ async getAllLeadsByTenant(
           ${settingsData.leadWelcomeMessage ?? ""},
           ${settingsData.enableCustomerWelcomeMessage ?? false}, 
           ${settingsData.customerWelcomeMessage ?? ""},
+          ${settingsData.autoAssignmentPriorityRoleId || null},
+          ${settingsData.leadScoringEnabled ?? true},
+          ${settingsData.autoLeadAssignment ?? false},
+          ${settingsData.duplicateDetection ?? true},
+          ${settingsData.dataRetentionDays ?? 365},
+          ${settingsData.auditLogging ?? true},
+          ${settingsData.sessionTimeout ?? 120},
           NOW()
         )
         ON CONFLICT (tenant_id)
@@ -8517,12 +9467,26 @@ async getAllLeadsByTenant(
           lead_welcome_message = COALESCE(${settingsData.leadWelcomeMessage}, tenant_settings.lead_welcome_message),
           enable_customer_welcome_message = COALESCE(${settingsData.enableCustomerWelcomeMessage}, tenant_settings.enable_customer_welcome_message),
           customer_welcome_message = COALESCE(${settingsData.customerWelcomeMessage}, tenant_settings.customer_welcome_message),
+          auto_assignment_priority_role_id = COALESCE(${settingsData.autoAssignmentPriorityRoleId}, tenant_settings.auto_assignment_priority_role_id),
+          lead_scoring_enabled = COALESCE(${settingsData.leadScoringEnabled}, tenant_settings.lead_scoring_enabled),
+          auto_lead_assignment = COALESCE(${settingsData.autoLeadAssignment}, tenant_settings.auto_lead_assignment),
+          duplicate_detection = COALESCE(${settingsData.duplicateDetection}, tenant_settings.duplicate_detection),
+          data_retention_days = COALESCE(${settingsData.dataRetentionDays}, tenant_settings.data_retention_days),
+          audit_logging = COALESCE(${settingsData.auditLogging}, tenant_settings.audit_logging),
+          session_timeout = COALESCE(${settingsData.sessionTimeout}, tenant_settings.session_timeout),
           updated_at = NOW()
         RETURNING 
           enable_lead_welcome_message,
           lead_welcome_message,
           enable_customer_welcome_message,
-          customer_welcome_message
+          customer_welcome_message,
+          auto_assignment_priority_role_id,
+          lead_scoring_enabled,
+          auto_lead_assignment,
+          duplicate_detection,
+          data_retention_days,
+          audit_logging,
+          session_timeout
       `;
 
       console.log(
@@ -8537,6 +9501,13 @@ async getAllLeadsByTenant(
         enableCustomerWelcomeMessage:
           updatedSettings.enable_customer_welcome_message ?? false,
         customerWelcomeMessage: updatedSettings.customer_welcome_message ?? "",
+        autoAssignmentPriorityRoleId: updatedSettings.auto_assignment_priority_role_id || null,
+        leadScoringEnabled: updatedSettings.lead_scoring_enabled ?? true,
+        autoLeadAssignment: updatedSettings.auto_lead_assignment ?? false,
+        duplicateDetection: updatedSettings.duplicate_detection ?? true,
+        dataRetentionDays: updatedSettings.data_retention_days ?? 365,
+        auditLogging: updatedSettings.audit_logging ?? true,
+        sessionTimeout: updatedSettings.session_timeout ?? 120,
       };
     } catch (error) {
       console.error("Error updating tenant settings:", error);
@@ -10006,12 +10977,14 @@ async getAllLeadsByTenant(
 
 async getDashboardMetrics(
   tenantId: number,
+  teamUserIds?: number[], // Optional: filter by team user IDs (for hierarchical access)
   startDate?: string,
   endDate?: string,
   period?: string,
 ) {
   console.log(
     `📊 STORAGE: Getting dashboard metrics for tenant ${tenantId}`,
+    teamUserIds ? `(filtered for team: ${teamUserIds.join(', ')})` : "(all data)",
     { startDate, endDate, period },
   );
 
@@ -10056,22 +11029,37 @@ async getDashboardMetrics(
 
     // OTHER METRICS
    
+    // Bookings - filter by team if provided
+    let bookingsFilter = sql`tenant_id = ${tenantId}`;
+    if (teamUserIds && teamUserIds.length > 0) {
+      bookingsFilter = sql`${bookingsFilter} AND (created_by = ANY(${sql.array(teamUserIds)}) OR assigned_user_id = ANY(${sql.array(teamUserIds)}))`;
+    }
     const [bookingsResult] = await sql`
       SELECT COUNT(*) as active_bookings
       FROM bookings 
-      WHERE tenant_id = ${tenantId} AND ${dateFilter}
+      WHERE ${bookingsFilter} AND ${dateFilter}
     `;
 
+    // Customers - filter by team if provided
+    let customersFilter = sql`tenant_id = ${tenantId}`;
+    if (teamUserIds && teamUserIds.length > 0) {
+      customersFilter = sql`${customersFilter} AND (created_by = ANY(${sql.array(teamUserIds)}) OR assigned_user_id = ANY(${sql.array(teamUserIds)}))`;
+    }
     const [customersResult] = await sql`
       SELECT COUNT(*) as customers
       FROM customers 
-      WHERE tenant_id = ${tenantId} AND ${dateFilter}
+      WHERE ${customersFilter} AND ${dateFilter}
     `;
 
+    // Leads - filter by team if provided
+    let leadsFilter = sql`tenant_id = ${tenantId}`;
+    if (teamUserIds && teamUserIds.length > 0) {
+      leadsFilter = sql`${leadsFilter} AND assigned_user_id = ANY(${sql.array(teamUserIds)})`;
+    }
     const [leadsResult] = await sql`
       SELECT COUNT(*) as leads
       FROM leads 
-      WHERE tenant_id = ${tenantId} AND ${dateFilter}
+      WHERE ${leadsFilter} AND ${dateFilter}
     `;
 
    
@@ -10092,13 +11080,17 @@ async getDashboardMetrics(
       LIMIT 6
     `;
 
+    // Leads chart data - filter by team if provided
+    let leadsChartFilter = sql`tenant_id = ${tenantId} AND created_at >= NOW() - INTERVAL '6 months'`;
+    if (teamUserIds && teamUserIds.length > 0) {
+      leadsChartFilter = sql`${leadsChartFilter} AND assigned_user_id = ANY(${sql.array(teamUserIds)})`;
+    }
     const leadsData = await sql`
       SELECT 
         TO_CHAR(created_at, 'Mon') as month,
         COUNT(*) as leads
       FROM leads 
-      WHERE tenant_id = ${tenantId} 
-        AND created_at >= NOW() - INTERVAL '6 months'
+      WHERE ${leadsChartFilter}
       GROUP BY TO_CHAR(created_at, 'Mon'), DATE_TRUNC('month', created_at)
       ORDER BY DATE_TRUNC('month', created_at)
       LIMIT 6
@@ -11589,7 +12581,7 @@ async getDashboardMetrics(
         SELECT 
           wm.*,
           wd.number as device_number,
-          u.name as sent_by_name
+          CONCAT(u.first_name, ' ', u.last_name) as sent_by_name
         FROM whatsapp_messages wm
         LEFT JOIN whatsapp_devices wd ON wm.device_id = wd.id
         LEFT JOIN users u ON wm.sent_by = u.id
@@ -11632,7 +12624,7 @@ async getDashboardMetrics(
         SELECT 
           wm.*,
           wd.number as device_number,
-          u.name as sent_by_name
+          CONCAT(u.first_name, ' ', u.last_name) as sent_by_name
         FROM whatsapp_messages wm
         LEFT JOIN whatsapp_devices wd ON wm.device_id = wd.id
         LEFT JOIN users u ON wm.sent_by = u.id

@@ -1765,10 +1765,29 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
   app.get("/api/leads", authenticateToken, async (req, res) => {
     try {
       const tenantId = req.user.tenantId;
+      const userId = req.user.id;
       if (!tenantId) {
         return res
           .status(400)
           .json({ error: "Tenant ID not found in user session" });
+      }
+
+      // Check if user is owner/superadmin (has role with isDefault = true)
+      let isOwner = false;
+      if (req.user.roleId) {
+        const userRole = await simpleStorage.getRoleById(req.user.roleId, tenantId);
+        isOwner = userRole?.is_default === true;
+      }
+      // Also check if user role is tenant_admin (legacy check)
+      if (!isOwner && req.user.role === "tenant_admin") {
+        isOwner = true;
+      }
+
+      // Get user's team IDs (user + all subordinates) for hierarchical access
+      let teamUserIds: number[] | undefined = undefined;
+      if (!isOwner) {
+        teamUserIds = await simpleStorage.getUserTeamIds(userId, tenantId);
+        console.log(`👥 User ${userId} team members:`, teamUserIds);
       }
 
       const {
@@ -1793,6 +1812,7 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
 
       const leads = await simpleStorage.getLeadsByTenant({
         tenantId,
+        teamUserIds: isOwner ? undefined : teamUserIds, // Filter by team if not owner
         limit: Number(limit),
         offset: calculatedOffset,
         search: String(search),
@@ -3249,7 +3269,8 @@ app.get("/api/tenants/:tenantId/all-customers-graph", authenticateToken, async (
         tenantId: tenantId,
       };
       
-      const updatedLead = await simpleStorage.updateLead(leadId, tenantId, leadData);
+      const user = (req as any).user;
+      const updatedLead = await simpleStorage.updateLead(leadId, tenantId, leadData, user?.id);
 
       return res.json({
         success: true,
@@ -4468,10 +4489,12 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
           ...req.body,
           tenantId: parseInt(tenantId as string),
         };
+        const user = (req as any).user;
         const updatedLead = await simpleStorage.updateLead(
           parseInt(leadId as string),
           parseInt(tenantId as string),
           leadData,
+          user?.id,
         );
 
         return res.json({
@@ -4938,10 +4961,12 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
           ...req.body,
           tenantId: parseInt(tenantId as string),
         };
+        const user = (req as any).user;
         const updatedLead = await simpleStorage.updateLead(
           parseInt(leadId as string),
           parseInt(tenantId as string),
           leadData,
+          user?.id,
         );
 
         return res.json({
@@ -5120,10 +5145,12 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
           ...req.body,
           tenantId: parseInt(tenantId as string),
         };
+        const user = (req as any).user;
         const updatedLead = await simpleStorage.updateLead(
           parseInt(leadId as string),
           parseInt(tenantId as string),
           leadData,
+          user?.id,
         );
 
         return res.json({
@@ -5619,9 +5646,15 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
   // ====================================================
 
   // Get all roles for a tenant
-  app.get("/api/tenants/:tenantId/roles", async (req, res) => {
+  app.get("/api/tenants/:tenantId/roles", authenticateToken, async (req, res) => {
     try {
       const tenantId = parseInt(req.params.tenantId);
+      
+      // Verify user has access to this tenant
+      if ((req as any).user.tenantId !== tenantId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
       const roles = await simpleStorage.getRolesByTenant(tenantId);
       res.json(roles);
     } catch (error) {
@@ -5631,13 +5664,31 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
   });
 
   // Create a new role
-  app.post("/api/tenants/:tenantId/roles", async (req, res) => {
+  app.post("/api/tenants/:tenantId/roles", authenticateToken, async (req, res) => {
     try {
       const tenantId = parseInt(req.params.tenantId);
+      
+      // Verify user has access to this tenant
+      if ((req as any).user.tenantId !== tenantId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
       const roleData = {
         ...req.body,
         tenantId,
       };
+
+      // Validate parent role if provided
+      if (roleData.parentRoleId) {
+        const [parentRole] = await sql`
+          SELECT id, tenant_id FROM roles 
+          WHERE id = ${roleData.parentRoleId} AND tenant_id = ${tenantId}
+        `;
+        if (!parentRole) {
+          return res.status(400).json({ error: "Parent role not found or belongs to different tenant" });
+        }
+      }
+
       const role = await simpleStorage.createRole(roleData);
       res.status(201).json(role);
     } catch (error) {
@@ -5647,9 +5698,39 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
   });
 
   // Update a role
-  app.put("/api/tenants/:tenantId/roles/:roleId", async (req, res) => {
+  app.put("/api/tenants/:tenantId/roles/:roleId", authenticateToken, async (req, res) => {
     try {
+      const tenantId = parseInt(req.params.tenantId);
       const roleId = parseInt(req.params.roleId);
+      
+      // Verify user has access to this tenant
+      if ((req as any).user.tenantId !== tenantId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      // Validate parent role if provided
+      if (req.body.parentRoleId !== undefined && req.body.parentRoleId !== null) {
+        // Prevent circular reference (role cannot be its own parent)
+        if (req.body.parentRoleId === roleId) {
+          return res.status(400).json({ error: "Role cannot be its own parent" });
+        }
+
+        // Check if parent role exists and belongs to same tenant
+        const [parentRole] = await sql`
+          SELECT id, tenant_id FROM roles 
+          WHERE id = ${req.body.parentRoleId} AND tenant_id = ${tenantId}
+        `;
+        if (!parentRole) {
+          return res.status(400).json({ error: "Parent role not found or belongs to different tenant" });
+        }
+
+        // Prevent circular reference (parent cannot be a descendant)
+        const descendantRoleIds = await simpleStorage.getRoleHierarchy(roleId, tenantId);
+        if (descendantRoleIds.includes(req.body.parentRoleId)) {
+          return res.status(400).json({ error: "Cannot set parent role: would create circular reference" });
+        }
+      }
+
       const role = await simpleStorage.updateRole(roleId, req.body);
       res.json(role);
     } catch (error) {
@@ -5667,6 +5748,171 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
     } catch (error) {
       console.error("Error deleting role:", error);
       res.status(500).json({ error: "Failed to delete role" });
+    }
+  });
+
+  // Get available parent roles for a role
+  app.get("/api/tenants/:tenantId/roles/:roleId/available-parents", authenticateToken, async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId);
+      const roleId = req.params.roleId === "new" ? null : parseInt(req.params.roleId);
+      
+      // Verify user has access to this tenant
+      if ((req as any).user.tenantId !== tenantId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const availableRoles = await simpleStorage.getAvailableParentRoles(roleId, tenantId);
+      // Ensure we always return an array
+      res.json(Array.isArray(availableRoles) ? availableRoles : []);
+    } catch (error) {
+      console.error("Error getting available parent roles:", error);
+      res.status(500).json({ error: "Failed to get available parent roles" });
+    }
+  });
+
+  // ====================================================
+  // USER HIERARCHY MANAGEMENT ROUTES
+  // ====================================================
+
+  // Get user hierarchy tree (user + all subordinates)
+  app.get("/api/tenants/:tenantId/users/:userId/hierarchy", authenticateToken, async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId);
+      const userId = parseInt(req.params.userId);
+
+      // Verify user has access to this tenant
+      if ((req as any).user.tenantId !== tenantId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const subordinates = await simpleStorage.getDirectSubordinates(userId, tenantId);
+      const allSubordinates = await simpleStorage.getAllSubordinates(userId, tenantId);
+
+      res.json({
+        userId,
+        directSubordinates: subordinates,
+        allSubordinateIds: allSubordinates,
+        teamSize: allSubordinates.length + 1, // +1 for the user themselves
+      });
+    } catch (error) {
+      console.error("Error fetching user hierarchy:", error);
+      res.status(500).json({ error: "Failed to fetch user hierarchy" });
+    }
+  });
+
+  // Update user reporting relationship
+  app.put("/api/tenants/:tenantId/users/:userId/reporting-user", authenticateToken, async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId);
+      const userId = parseInt(req.params.userId);
+      const { reportingUserId } = req.body;
+
+      // Verify user has access to this tenant
+      if ((req as any).user.tenantId !== tenantId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      // Prevent circular references (user cannot be their own reporting user)
+      if (reportingUserId === userId) {
+        return res.status(400).json({ error: "User cannot report to themselves" });
+      }
+
+      // If reportingUserId is provided, verify it exists and is in same tenant
+      if (reportingUserId !== null && reportingUserId !== undefined) {
+        const [reportingUser] = await sql`
+          SELECT id FROM users 
+          WHERE id = ${reportingUserId} AND tenant_id = ${tenantId} AND is_active = true
+        `;
+        if (!reportingUser) {
+          return res.status(400).json({ error: "Reporting user not found" });
+        }
+
+        // Check for circular reference (reporting user cannot be a subordinate)
+        const reportingUserSubordinates = await simpleStorage.getAllSubordinates(userId, tenantId);
+        if (reportingUserSubordinates.includes(reportingUserId)) {
+          return res.status(400).json({ error: "Cannot assign reporting user: would create circular reference" });
+        }
+      }
+
+      await sql`
+        UPDATE users 
+        SET reporting_user_id = ${reportingUserId || null}, updated_at = NOW()
+        WHERE id = ${userId} AND tenant_id = ${tenantId}
+      `;
+
+      res.json({ success: true, message: "Reporting user updated successfully" });
+    } catch (error) {
+      console.error("Error updating supervisor:", error);
+      res.status(500).json({ error: "Failed to update supervisor" });
+    }
+  });
+
+  // Get team progress/reports for supervisor
+  app.get("/api/tenants/:tenantId/users/:userId/team-progress", authenticateToken, async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId);
+      const userId = parseInt(req.params.userId);
+
+      // Verify user has access to this tenant
+      if ((req as any).user.tenantId !== tenantId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const teamUserIds = await simpleStorage.getUserTeamIds(userId, tenantId);
+
+      // Get team metrics
+      const [teamLeads] = await sql`
+        SELECT COUNT(*) as total_leads,
+               COUNT(CASE WHEN status = 'closed_won' THEN 1 END) as won_leads,
+               COUNT(CASE WHEN status = 'closed_lost' THEN 1 END) as lost_leads,
+               COUNT(CASE WHEN status NOT IN ('closed_won', 'closed_lost') THEN 1 END) as active_leads
+        FROM leads
+        WHERE tenant_id = ${tenantId} AND assigned_user_id = ANY(${sql.array(teamUserIds)})
+      `;
+
+      const [teamCustomers] = await sql`
+        SELECT COUNT(*) as total_customers
+        FROM customers
+        WHERE tenant_id = ${tenantId} AND assigned_user_id = ANY(${sql.array(teamUserIds)})
+      `;
+
+      // Get individual user performance
+      const userPerformance = await sql`
+        SELECT 
+          u.id,
+          u.first_name || ' ' || u.last_name as name,
+          u.email,
+          r.name as role_name,
+          COUNT(DISTINCT l.id) as leads_count,
+          COUNT(DISTINCT CASE WHEN l.status = 'closed_won' THEN l.id END) as won_count,
+          COUNT(DISTINCT c.id) as customers_count
+        FROM users u
+        LEFT JOIN roles r ON u.role_id = r.id
+        LEFT JOIN leads l ON l.assigned_user_id = u.id AND l.tenant_id = ${tenantId}
+        LEFT JOIN customers c ON c.assigned_user_id = u.id AND c.tenant_id = ${tenantId}
+        WHERE u.id = ANY(${sql.array(teamUserIds)})
+        GROUP BY u.id, u.first_name, u.last_name, u.email, r.name
+        ORDER BY leads_count DESC
+      `;
+
+      res.json({
+        teamSize: teamUserIds.length,
+        metrics: {
+          totalLeads: parseInt(teamLeads.total_leads) || 0,
+          activeLeads: parseInt(teamLeads.active_leads) || 0,
+          wonLeads: parseInt(teamLeads.won_leads) || 0,
+          lostLeads: parseInt(teamLeads.lost_leads) || 0,
+          totalCustomers: parseInt(teamCustomers.total_customers) || 0,
+          conversionRate: teamLeads.total_leads > 0 
+            ? ((parseInt(teamLeads.won_leads) / parseInt(teamLeads.total_leads)) * 100).toFixed(2)
+            : "0.00",
+        },
+        userPerformance: userPerformance,
+      });
+    } catch (error) {
+      console.error("Error fetching team progress:", error);
+      res.status(500).json({ error: "Failed to fetch team progress" });
     }
   });
 
@@ -6859,10 +7105,12 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
         }
 
         console.log("🔍 Updating lead:", leadId, "with data:", req.body);
+        const user = (req as any).user;
         const lead = await simpleStorage.updateLead(
           parseInt(leadId as string),
           parseInt(tenantId as string),
           req.body,
+          user?.id,
         );
 
         if (!lead) {
@@ -13709,6 +13957,7 @@ Please improve this email.`;
             leadWelcomeMessage,
             enableCustomerWelcomeMessage,
             customerWelcomeMessage,
+            autoAssignmentPriorityRoleId: req.body.autoAssignmentPriorityRoleId || null,
           },
         );
 
@@ -13723,6 +13972,46 @@ Please improve this email.`;
       }
     },
   );
+
+  // Update auto-assignment priority role
+  app.put("/api/tenant-settings/auto-assignment", authenticateToken, async (req, res) => {
+    try {
+      const user = (req as any).user;
+      if (!user) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const { autoAssignmentPriorityRoleId } = req.body;
+
+      console.log(
+        "Updating auto-assignment priority role for tenant:",
+        user.tenantId,
+        "Role ID:",
+        autoAssignmentPriorityRoleId,
+      );
+
+      // Get current settings first
+      const currentSettings = await simpleStorage.getTenantSettings(user.tenantId);
+      
+      // Update tenant settings with new priority role
+      const updated = await simpleStorage.updateTenantSettings(
+        user.tenantId,
+        {
+          ...currentSettings,
+          autoAssignmentPriorityRoleId: autoAssignmentPriorityRoleId || null,
+        },
+      );
+
+      res.json({
+        success: true,
+        message: "Auto-assignment priority role updated successfully",
+        autoAssignmentPriorityRoleId: updated.autoAssignmentPriorityRoleId,
+      });
+    } catch (error) {
+      console.error("Update auto-assignment settings error:", error);
+      res.status(500).json({ message: "Failed to update auto-assignment settings" });
+    }
+  });
 
   // Update Zoom credentials
   app.put("/api/tenant-settings/zoom", authenticateToken, async (req, res) => {
@@ -13898,20 +14187,17 @@ Please improve this email.`;
         return res.status(401).json({ message: "Unauthorized" });
       }
 
-      // Get tenant to retrieve system settings
-      const tenant = await simpleStorage.getTenant(user.tenantId);
-      if (!tenant) {
-        return res.status(404).json({ message: "Tenant not found" });
-      }
+      // Get tenant settings to retrieve system settings
+      const settings = await simpleStorage.getTenantSettings(user.tenantId);
 
       // Return system settings with stored values or defaults
       res.json({
-        leadScoringEnabled: tenant.lead_scoring_enabled !== false,
-        autoLeadAssignment: tenant.auto_lead_assignment === true,
-        duplicateDetection: tenant.duplicate_detection !== false,
-        dataRetentionDays: tenant.data_retention_days || 365,
-        auditLogging: tenant.audit_logging !== false,
-        sessionTimeout: tenant.session_timeout || 120,
+        leadScoringEnabled: (settings as any).leadScoringEnabled !== false,
+        autoLeadAssignment: (settings as any).autoLeadAssignment === true,
+        duplicateDetection: (settings as any).duplicateDetection !== false,
+        dataRetentionDays: (settings as any).dataRetentionDays || 365,
+        auditLogging: (settings as any).auditLogging !== false,
+        sessionTimeout: (settings as any).sessionTimeout || 120,
       });
     } catch (error) {
       console.error("Get system settings error:", error);
@@ -13972,33 +14258,24 @@ Please improve this email.`;
         sessionTimeout,
       } = req.body;
 
-      // Store system settings (could be in tenant preferences or separate system_settings table)
-      // For now, store as tenant-specific system preferences
-      const systemSettingsData = {
-        lead_scoring_enabled: leadScoringEnabled,
-        auto_lead_assignment: autoLeadAssignment,
-        duplicate_detection: duplicateDetection,
-        data_retention_days: dataRetentionDays,
-        audit_logging: auditLogging,
-        session_timeout: sessionTimeout,
-      };
-
-      // Update tenant with system settings
-      const updatedTenant = await simpleStorage.updateTenant(
+      // Store system settings in tenant_settings table
+      // Get current settings first to preserve other settings
+      const currentSettings = await simpleStorage.getTenantSettings(user.tenantId);
+      
+      // Update tenant settings with system settings
+      const updated = await simpleStorage.updateTenantSettings(
         user.tenantId,
-        systemSettingsData,
+        {
+          ...currentSettings,
+          leadScoringEnabled,
+          autoLeadAssignment,
+          duplicateDetection,
+          dataRetentionDays,
+          auditLogging,
+          sessionTimeout,
+        },
       );
 
-      res.json({
-        leadScoringEnabled,
-        autoLeadAssignment,
-        duplicateDetection,
-        dataRetentionDays,
-        auditLogging,
-        sessionTimeout,
-      });
-
-      // Update system settings (would typically be stored in a settings table)
       console.log("System settings updated:", {
         leadScoringEnabled,
         autoLeadAssignment,
@@ -14009,12 +14286,12 @@ Please improve this email.`;
       });
 
       res.json({
-        leadScoringEnabled,
-        autoLeadAssignment,
-        duplicateDetection,
-        dataRetentionDays,
-        auditLogging,
-        sessionTimeout,
+        leadScoringEnabled: updated.leadScoringEnabled ?? leadScoringEnabled,
+        autoLeadAssignment: updated.autoLeadAssignment ?? autoLeadAssignment,
+        duplicateDetection: updated.duplicateDetection ?? duplicateDetection,
+        dataRetentionDays: updated.dataRetentionDays ?? dataRetentionDays,
+        auditLogging: updated.auditLogging ?? auditLogging,
+        sessionTimeout: updated.sessionTimeout ?? sessionTimeout,
       });
     } catch (error) {
       console.error("Update system settings error:", error);
@@ -15965,6 +16242,48 @@ Please improve this email.`;
       }
     },
   );
+
+  // Lead assignment endpoint with history tracking and email notification
+  app.put("/api/tenants/:tenantId/leads/:leadId/assign", authenticateToken, async (req, res) => {
+    try {
+      const { tenantId, leadId } = req.params;
+      const { userId, reason } = req.body;
+      const user = (req as any).user;
+
+      if (!user) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      console.log(`🎯 Lead assignment request:`, {
+        tenantId,
+        leadId,
+        userId,
+        assignedBy: user.id,
+        reason,
+      });
+
+      // Use assignEntityToUser which handles history, activity logging, and email
+      const result = await simpleStorage.assignEntityToUser(
+        "lead",
+        parseInt(leadId),
+        userId ? parseInt(userId) : null,
+        user.id,
+        reason || "manual_assignment",
+      );
+
+      res.json({
+        success: true,
+        message: userId ? "Lead assigned successfully" : "Lead unassigned successfully",
+        assignedUser: result.assignedUser,
+      });
+    } catch (error: any) {
+      console.error("❌ Lead assignment error:", error);
+      res.status(500).json({
+        message: "Failed to assign lead",
+        error: error?.message || "Unknown error",
+      });
+    }
+  });
 
   // FIXED ASSIGNMENT ENDPOINT - Remove authentication blocker
   app.post("/api/tenants/:tenantId/assign-entity", async (req, res) => {

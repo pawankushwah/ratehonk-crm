@@ -37,6 +37,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
+import { useAuth } from "@/components/auth/auth-provider";
 
 import {
   Settings as SettingsIcon,
@@ -90,6 +91,7 @@ const userPreferencesSchema = z.object({
 const systemSettingsSchema = z.object({
   leadScoringEnabled: z.boolean(),
   autoLeadAssignment: z.boolean(),
+  autoAssignmentPriorityRoleId: z.number().nullable().optional(),
   duplicateDetection: z.boolean(),
   dataRetentionDays: z.number().min(30).max(2555),
   auditLogging: z.boolean(),
@@ -155,6 +157,26 @@ export default function Settings() {
 
   const { data: whatsappData, isLoading: whatsappLoading } = useQuery({
     queryKey: ["/api/tenant-settings"],
+  });
+
+  const { tenant } = useAuth();
+  const tenantId = tenant?.id;
+
+  // Fetch roles for auto-assignment priority role dropdown
+  const { data: roles = [] } = useQuery({
+    queryKey: [`/api/tenants/${tenantId}/roles`],
+    queryFn: async () => {
+      if (!tenantId) return [];
+      const res = await fetch(`/api/tenants/${tenantId}/roles`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+        }
+      });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    },
+    enabled: !!tenantId,
   });
 
   // Forms with data from API
@@ -225,6 +247,7 @@ export default function Settings() {
     defaultValues: {
       leadScoringEnabled: true,
       autoLeadAssignment: false,
+      autoAssignmentPriorityRoleId: null,
       duplicateDetection: true,
       dataRetentionDays: 365,
       auditLogging: true,
@@ -238,6 +261,7 @@ export default function Settings() {
       systemForm.reset({
         leadScoringEnabled: (systemData as any).leadScoringEnabled !== false,
         autoLeadAssignment: (systemData as any).autoLeadAssignment === true,
+        autoAssignmentPriorityRoleId: (systemData as any).autoAssignmentPriorityRoleId || null,
         duplicateDetection: (systemData as any).duplicateDetection !== false,
         dataRetentionDays: (systemData as any).dataRetentionDays || 365,
         auditLogging: (systemData as any).auditLogging !== false,
@@ -245,6 +269,13 @@ export default function Settings() {
       });
     }
   }, [systemData, systemForm]);
+
+  // Load auto-assignment priority role from tenant settings
+  React.useEffect(() => {
+    if (whatsappData && (whatsappData as any).autoAssignmentPriorityRoleId !== undefined) {
+      systemForm.setValue('autoAssignmentPriorityRoleId', (whatsappData as any).autoAssignmentPriorityRoleId || null);
+    }
+  }, [whatsappData, systemForm]);
 
   const whatsappForm = useForm<WhatsAppSettings>({
     resolver: zodResolver(whatsappSettingsSchema),
@@ -374,13 +405,28 @@ export default function Settings() {
   const updateSystemMutation = useMutation({
     mutationFn: async (data: SystemSettings) => {
       const token = localStorage.getItem("auth_token");
+      
+      // Update auto-assignment priority role separately via dedicated endpoint
+      if (data.autoAssignmentPriorityRoleId !== undefined) {
+        try {
+          await apiRequest("PUT", "/api/tenant-settings/auto-assignment", {
+            autoAssignmentPriorityRoleId: data.autoAssignmentPriorityRoleId,
+          });
+        } catch (error) {
+          console.error("Failed to update auto-assignment priority role:", error);
+          // Don't throw - continue with other settings
+        }
+      }
+
+      // Update other system settings
+      const { autoAssignmentPriorityRoleId, ...otherSettings } = data;
       const response = await fetch("/api/system/settings", {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(data),
+        body: JSON.stringify(otherSettings),
       });
       if (!response.ok) {
         const errorData = await response.text();
@@ -392,6 +438,7 @@ export default function Settings() {
     onSuccess: () => {
       toast({ title: "System settings updated successfully" });
       queryClient.invalidateQueries({ queryKey: ["/api/system/settings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/tenant-settings"] });
     },
     onError: () => {
       toast({
@@ -1269,6 +1316,53 @@ export default function Settings() {
                                 onCheckedChange={field.onChange}
                               />
                             </FormControl>
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={systemForm.control}
+                        name="autoAssignmentPriorityRoleId"
+                        render={({ field }) => (
+                          <FormItem className="rounded-lg border p-4">
+                            <div className="space-y-3">
+                              <div>
+                                <FormLabel className="text-base">
+                                  Auto-Assignment Priority Role
+                                </FormLabel>
+                                <FormDescription>
+                                  Select which role should receive leads first when auto-assigning. 
+                                  Leads will be distributed evenly among users with this role based on workload.
+                                  Leave empty to use default assignment logic.
+                                </FormDescription>
+                              </div>
+                              <FormControl>
+                                <Select
+                                  value={field.value?.toString() || "none"}
+                                  onValueChange={(value) => {
+                                    field.onChange(value === "none" ? null : parseInt(value));
+                                  }}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Select priority role (optional)" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="none">None (Use Default Logic)</SelectItem>
+                                    {Array.isArray(roles) && roles.map((role: any) => (
+                                      <SelectItem key={role.id} value={role.id.toString()}>
+                                        {role.name}
+                                        {role.isDefault && " (Owner)"}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </FormControl>
+                              {field.value && (
+                                <p className="text-sm text-muted-foreground">
+                                  Selected role: {roles.find((r: any) => r.id === field.value)?.name || 'Unknown'}
+                                </p>
+                              )}
+                            </div>
                           </FormItem>
                         )}
                       />
