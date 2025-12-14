@@ -78,38 +78,41 @@ export default function LeadDetails({ lead, open, setOpen }: LeadDetailsProps) {
   const [calls, setCalls] = useState<any[]>([]);
   const [emails, setEmails] = useState<any[]>([]);
 
+  // Get tenant ID from lead or auth context
+  const tenantId = lead?.tenantId || tenant?.id;
+
   // Fetch real activities from API
   const { data: activitiesData, isLoading: activitiesLoading, refetch: refetchActivities } = useQuery({
-    queryKey: [`/api/tenants/${lead?.tenantId}/leads/${lead?.id}/activities`],
-    enabled: !!lead?.id && open, // Only fetch when lead is available and modal is open
+    queryKey: [`/api/tenants/${tenantId}/leads/${lead?.id}/activities`],
+    enabled: !!lead?.id && !!tenantId && open, // Only fetch when lead and tenant are available and modal is open
     staleTime: 0, // Always fetch fresh data
   });
 
   // Fetch real notes from API
   const { data: notesData, isLoading: notesLoading, refetch: refetchNotes } = useQuery({
-    queryKey: [`/api/tenants/${lead?.tenantId}/leads/${lead?.id}/notes`],
-    enabled: !!lead?.id && open, // Only fetch when lead is available and modal is open
+    queryKey: [`/api/tenants/${tenantId}/leads/${lead?.id}/notes`],
+    enabled: !!lead?.id && !!tenantId && open, // Only fetch when lead and tenant are available and modal is open
     staleTime: 0, // Always fetch fresh data
   });
 
   // Fetch real emails from API
   const { data: emailsData, isLoading: emailsLoading, refetch: refetchEmails } = useQuery({
-    queryKey: [`/api/tenants/${lead?.tenantId}/leads/${lead?.id}/emails`],
-    enabled: !!lead?.id && open, // Only fetch when lead is available and modal is open
+    queryKey: [`/api/tenants/${tenantId}/leads/${lead?.id}/emails`],
+    enabled: !!lead?.id && !!tenantId && open, // Only fetch when lead and tenant are available and modal is open
     staleTime: 0, // Always fetch fresh data
   });
 
   // Fetch real call logs from API
   const { data: callsData, isLoading: callsLoading, refetch: refetchCalls } = useQuery({
-    queryKey: [`/api/tenants/${lead?.tenantId}/leads/${lead?.id}/calls`],
-    enabled: !!lead?.id && open, // Only fetch when lead is available and modal is open
+    queryKey: [`/api/tenants/${tenantId}/leads/${lead?.id}/calls`],
+    enabled: !!lead?.id && !!tenantId && open, // Only fetch when lead and tenant are available and modal is open
     staleTime: 0, // Always fetch fresh data
   });
 
   // Fetch WhatsApp messages from API
   const { data: messagesData, isLoading: messagesLoading, refetch: refetchMessages } = useQuery({
-    queryKey: [`/api/tenants/${lead?.tenantId}/leads/${lead?.id}/whatsapp-messages`],
-    enabled: !!lead?.id && open, // Only fetch when lead is available and modal is open
+    queryKey: [`/api/tenants/${tenantId}/leads/${lead?.id}/whatsapp-messages`],
+    enabled: !!lead?.id && !!tenantId && open, // Only fetch when lead and tenant are available and modal is open
     staleTime: 0, // Always fetch fresh data
   });
 
@@ -127,7 +130,7 @@ export default function LeadDetails({ lead, open, setOpen }: LeadDetailsProps) {
   const createActivityMutation = useMutation({
     mutationFn: async (activityData: any) => {
       // Validate required IDs are available
-      if (!lead?.id || !user?.id || !(lead?.tenantId || tenant?.id)) {
+      if (!lead?.id || !user?.id || !tenantId) {
         throw new Error("Missing required lead ID, user ID, or tenant ID");
       }
 
@@ -135,17 +138,17 @@ export default function LeadDetails({ lead, open, setOpen }: LeadDetailsProps) {
       const activityPayload = {
         ...activityData,
         leadId: lead.id,
-        tenantId: lead.tenantId || tenant?.id,
+        tenantId: tenantId,
         userId: user.id
       };
       
       console.log("🔥 Frontend - Sending activity data:", activityPayload);
-      return await apiRequest("POST", `/api/tenants/${lead.tenantId}/leads/${lead.id}/activities`, activityPayload);
+      return await apiRequest("POST", `/api/tenants/${tenantId}/leads/${lead.id}/activities`, activityPayload);
     },
     onSuccess: () => {
       // Invalidate and refetch activities
       queryClient.invalidateQueries({ 
-        queryKey: [`/api/tenants/${lead?.tenantId}/leads/${lead?.id}/activities`] 
+        queryKey: [`/api/tenants/${tenantId}/leads/${lead?.id}/activities`] 
       });
       refetchActivities();
       // Close modal on success
@@ -160,7 +163,7 @@ export default function LeadDetails({ lead, open, setOpen }: LeadDetailsProps) {
   const createNoteMutation = useMutation({
     mutationFn: async (noteData: any) => {
       // Validate required IDs are available
-      if (!lead?.id || !user?.id || !(lead?.tenantId || tenant?.id)) {
+      if (!lead?.id || !user?.id || !tenantId) {
         throw new Error("Missing required lead ID, user ID, or tenant ID");
       }
 
@@ -168,17 +171,17 @@ export default function LeadDetails({ lead, open, setOpen }: LeadDetailsProps) {
       const notePayload = {
         ...noteData,
         leadId: lead.id,
-        tenantId: lead.tenantId || tenant?.id,
+        tenantId: tenantId,
         userId: user.id
       };
       
       console.log("🔥 Frontend - Sending note data:", notePayload);
-      return await apiRequest("POST", `/api/tenants/${lead.tenantId}/leads/${lead.id}/notes`, notePayload);
+      return await apiRequest("POST", `/api/tenants/${tenantId}/leads/${lead.id}/notes`, notePayload);
     },
     onSuccess: () => {
       // Invalidate and refetch notes
       queryClient.invalidateQueries({ 
-        queryKey: [`/api/tenants/${lead?.tenantId}/leads/${lead?.id}/notes`] 
+        queryKey: [`/api/tenants/${tenantId}/leads/${lead?.id}/notes`] 
       });
       refetchNotes();
       // Close modal on success
@@ -878,7 +881,7 @@ export default function LeadDetails({ lead, open, setOpen }: LeadDetailsProps) {
       <div
         className={`fixed top-0 right-0 h-full bg-white shadow-2xl transform transition-transform duration-300 z-50
           ${open ? "translate-x-0" : "translate-x-full"} 
-          w-full sm:w-[600px] md:w-[750px] lg:w-[900px]`}
+          w-full sm:w-[800px] md:w-[1000px] lg:w-[1200px] xl:w-[1400px]`}
       >
         {/* Header */}
         <div className="flex justify-between items-center p-4 border-b">

@@ -420,6 +420,39 @@ class EmailService {
       return false;
     }
   }
+
+  async sendEmail(data: {
+    to: string;
+    subject: string;
+    html: string;
+    text?: string;
+    tenantId?: number;
+  }) {
+    try {
+      if (!this.transporter) {
+        console.error("❌ Email transporter is not initialized!");
+        return false;
+      }
+
+      const smtpUser = process.env.EMAIL_USER || process.env.SMTP_USER || "support@vanitechnologies.in";
+      const fromEmail = smtpUser;
+
+      const mailOptions = {
+        from: fromEmail,
+        to: data.to,
+        subject: data.subject,
+        html: data.html,
+        text: data.text || data.html.replace(/<[^>]*>/g, ""),
+      };
+
+      const result = await this.transporter.sendMail(mailOptions);
+      console.log(`✅ Email sent successfully to ${data.to}:`, result.messageId);
+      return true;
+    } catch (error: any) {
+      console.error("❌ Error sending email:", error);
+      return false;
+    }
+  }
 }
 
 export const emailService = new EmailService();

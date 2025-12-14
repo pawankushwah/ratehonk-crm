@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Edit2, Trash2, Mail, Phone, UserCheck, UserX, Eye, EyeOff, Users, Target, Calendar, Bell, TrendingUp, Activity } from "lucide-react";
+import { Plus, Edit2, Mail, Phone, UserCheck, UserX, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/components/auth/auth-provider";
 import { Layout } from "@/components/layout/layout";
@@ -28,6 +29,8 @@ interface User {
   lastLoginAt: string | null;
   createdAt: string;
   roleName: string | null;
+  reportingUserId?: number | null;
+  reportingUserName?: string | null;
   workload?: {
     leads: number;
     customers: number;
@@ -36,67 +39,13 @@ interface User {
   };
 }
 
-interface AssignableUser extends User {
-  permissions: Record<string, string[]>;
-}
-
-interface Assignment {
-  summary: {
-    assignedLeads: number;
-    assignedCustomers: number;
-    activeTasks: number;
-    completedTasks: number;
-  };
-  recentLeads: Array<{
-    id: number;
-    name: string;
-    status: string;
-    createdAt: string;
-    priority: string;
-  }>;
-  recentCustomers: Array<{
-    id: number;
-    name: string;
-    crmStatus: string;
-    lastActivity: string;
-    totalValue: number;
-  }>;
-  upcomingTasks: Array<{
-    id: number;
-    title: string;
-    dueDate: string;
-    priority: string;
-    status: string;
-    type: string;
-  }>;
-}
-
-interface UserDashboard {
-  performance: {
-    leadsAssigned: number;
-    customersAssigned: number;
-    activeTasks: number;
-    completedTasks: number;
-    unreadNotifications: number;
-    conversionRate: number;
-  };
-  assignments: Assignment;
-  notifications: Array<{
-    id: number;
-    title: string;
-    message: string;
-    type: string;
-    isRead: boolean;
-    priority: string;
-    createdAt: string;
-  }>;
-  metrics: Record<string, any>;
-}
 
 interface Role {
   id: number;
   name: string;
   description: string;
+  hierarchyLevel?: number;
+  parentRoleId?: number | null;
 }
 
 function UsersPageContent() {
@@ -107,14 +56,14 @@ function UsersPageContent() {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [showPassword, setShowPassword] = useState(false);
-  const [activeTab, setActiveTab] = useState("users");
-  const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
+  const [userViewTab, setUserViewTab] = useState("list");
   const [formData, setFormData] = useState({
     email: "",
     firstName: "",
     lastName: "",
     phone: "",
     roleId: "" as string | number,
+    reportingUserId: "" as string | number | null,
     isActive: true
   });
 
@@ -145,58 +94,41 @@ function UsersPageContent() {
     enabled: !!tenantId
   });
 
-  // Fetch assignable users (with workload data)
-  const { data: assignableUsers = [], isLoading: assignableUsersLoading, error: assignableUsersError } = useQuery<AssignableUser[]>({
-    queryKey: [`/api/tenants/${tenantId}/assignable-users`],
-    queryFn: async () => {
-      const response = await fetch(`/api/tenants/${tenantId}/assignable-users?entityType=leads`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
-        }
-      });
-      if (!response.ok) {
-        throw new Error('Failed to fetch assignable users');
-      }
-      const data = await response.json();
-      return Array.isArray(data) ? data : [];
-    },
-    enabled: !!tenantId && activeTab === "assignments"
-  });
+  // Get selected role details
+  const selectedRole = formData.roleId && formData.roleId !== "" 
+    ? roles.find((r: Role) => r.id.toString() === formData.roleId.toString())
+    : null;
 
-  // Fetch user dashboard data when a specific user is selected
-  const { data: userDashboard, isLoading: dashboardLoading } = useQuery<UserDashboard>({
-    queryKey: [`/api/tenants/${tenantId}/users/${selectedUserId}/dashboard`],
-    queryFn: async () => {
-      const response = await fetch(`/api/tenants/${tenantId}/users/${selectedUserId}/dashboard`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
-        }
-      });
-      if (!response.ok) {
-        return null;
-      }
-      return response.json();
-    },
-    enabled: !!tenantId && !!selectedUserId && activeTab === "performance"
-  });
+  // Filter users who can be reporting users (users with roles that are higher in hierarchy or parent roles)
+  const availableReportingUsers = useMemo(() => {
+    if (!selectedRole || !users.length) return [];
+    
+    const selectedRoleLevel = selectedRole.hierarchyLevel ?? 999;
+    
+    const filteredUsers = users.filter((user: User) => {
+      if (!user.roleId) return false;
+      const userRole = roles.find((r: Role) => r.id === user.roleId);
+      if (!userRole) return false;
+      
+      const userRoleLevel = userRole.hierarchyLevel ?? 999;
+      
+      // User can be reporting user if:
+      // 1. Their role level is lower (higher in hierarchy) than selected role
+      // 2. Or their role is the parent role of the selected role
+      return userRoleLevel < selectedRoleLevel || userRole.id === selectedRole.parentRoleId;
+    });
 
-  // Fetch assignment history
-  const { data: assignmentHistory = [], isLoading: historyLoading } = useQuery<any[]>({
-    queryKey: [`/api/tenants/${tenantId}/assignment-history`],
-    queryFn: async () => {
-      const response = await fetch(`/api/tenants/${tenantId}/assignment-history`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
-        }
-      });
-      if (!response.ok) {
-        return [];
+    // If editing a user, include their current reporting user even if they don't meet hierarchy criteria
+    if (selectedUser && selectedUser.reportingUserId) {
+      const currentReportingUser = users.find((u: User) => u.id === selectedUser.reportingUserId);
+      if (currentReportingUser && !filteredUsers.find((u: User) => u.id === currentReportingUser.id)) {
+        filteredUsers.push(currentReportingUser);
       }
-      const data = await response.json();
-      return Array.isArray(data) ? data : [];
-    },
-    enabled: !!tenantId && activeTab === "assignments"
-  });
+    }
+
+    return filteredUsers;
+  }, [users, roles, selectedRole, selectedUser]);
+
 
   // Create user mutation
   const createUserMutation = useMutation({
@@ -298,6 +230,7 @@ function UsersPageContent() {
       lastName: "",
       phone: "",
       roleId: "",
+      reportingUserId: null,
       isActive: true
     });
     setSelectedUser(null);
@@ -306,7 +239,8 @@ function UsersPageContent() {
   const handleCreateUser = () => {
     createUserMutation.mutate({
       ...formData,
-      roleId: formData.roleId ? parseInt(formData.roleId as string) : null
+      roleId: formData.roleId ? parseInt(formData.roleId as string) : null,
+      reportingUserId: formData.reportingUserId ? parseInt(formData.reportingUserId as string) : null
     });
   };
 
@@ -315,7 +249,8 @@ function UsersPageContent() {
       updateUserMutation.mutate({
         userId: selectedUser.id,
         ...formData,
-        roleId: formData.roleId ? parseInt(formData.roleId as string) : null
+        roleId: formData.roleId ? parseInt(formData.roleId as string) : null,
+        reportingUserId: formData.reportingUserId ? parseInt(formData.reportingUserId as string) : null
       });
     }
   };
@@ -328,6 +263,7 @@ function UsersPageContent() {
       lastName: user.lastName,
       phone: user.phone || "",
       roleId: user.roleId || "",
+      reportingUserId: user.reportingUserId || null,
       isActive: user.isActive
     });
     setIsEditDialogOpen(true);
@@ -349,6 +285,163 @@ function UsersPageContent() {
     return <Badge variant="default">Active</Badge>;
   };
 
+  // Build user hierarchy tree structure
+  const buildUserHierarchy = (): Array<User & { children: User[] }> => {
+    const userMap = new Map<number, User & { children: User[] }>();
+    
+    // Initialize all users with empty children arrays
+    users.forEach((user: User) => {
+      userMap.set(user.id, { ...user, children: [] });
+    });
+
+    // Build parent-child relationships
+    const rootUsers: Array<User & { children: User[] }> = [];
+    
+    users.forEach((user: User) => {
+      const userNode = userMap.get(user.id)!;
+      
+      if (user.reportingUserId) {
+        const parent = userMap.get(user.reportingUserId);
+        if (parent) {
+          parent.children.push(userNode);
+        } else {
+          // Parent not found, treat as root
+          rootUsers.push(userNode);
+        }
+      } else {
+        // No reporting user, this is a root user
+        rootUsers.push(userNode);
+      }
+    });
+
+    // Sort root users by role hierarchy level, then by name
+    rootUsers.sort((a, b) => {
+      const roleA = roles.find((r: Role) => r.id === a.roleId);
+      const roleB = roles.find((r: Role) => r.id === b.roleId);
+      const levelA = roleA?.hierarchyLevel ?? 999;
+      const levelB = roleB?.hierarchyLevel ?? 999;
+      if (levelA !== levelB) return levelA - levelB;
+      return `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`);
+    });
+
+    // Sort children recursively
+    const sortChildren = (node: User & { children: User[] }) => {
+      node.children.sort((a, b) => {
+        const roleA = roles.find((r: Role) => r.id === a.roleId);
+        const roleB = roles.find((r: Role) => r.id === b.roleId);
+        const levelA = roleA?.hierarchyLevel ?? 999;
+        const levelB = roleB?.hierarchyLevel ?? 999;
+        if (levelA !== levelB) return levelA - levelB;
+        return `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`);
+      });
+      node.children.forEach(sortChildren);
+    };
+
+    rootUsers.forEach(sortChildren);
+    return rootUsers;
+  };
+
+  // Render user hierarchy node (similar to roles hierarchy)
+  const renderUserHierarchyNode = (user: User & { children: User[] }, level: number = 0, index: number = 0, totalSiblings: number = 1) => {
+    const hasChildren = user.children.length > 0;
+    
+    const nodeStyles = {
+      bg: 'bg-white',
+      border: 'border-gray-300',
+      text: 'text-gray-900',
+      icon: 'text-gray-600',
+      hover: 'hover:border-gray-400'
+    };
+
+    return (
+      <div key={user.id} className="flex flex-col items-center">
+        {/* Node Box */}
+        <div className={`relative ${nodeStyles.bg} ${nodeStyles.border} ${nodeStyles.hover} border rounded-lg p-4 w-[280px] flex-shrink-0 transition-all ${nodeStyles.text}`}>
+          {/* Action buttons - Top right */}
+          <div className="absolute top-3 right-3 flex gap-1.5 z-10">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => handleEditUser(user)}
+              className="h-6 w-6 p-0 text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+            >
+              <Edit2 className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => handleDeactivateUser(user.id)}
+              className="h-6 w-6 p-0 text-gray-600 hover:text-red-600 hover:bg-gray-100"
+            >
+              <UserX className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+          
+          {/* Content */}
+          <div className="flex items-start gap-3 pr-8">
+            {/* Avatar Icon */}
+            <div className={`${nodeStyles.icon} flex-shrink-0 mt-0.5`}>
+              <div className="w-10 h-10 rounded-full bg-blue-600 text-white flex items-center justify-center text-sm font-medium">
+                {user.firstName.charAt(0)}{user.lastName.charAt(0)}
+              </div>
+            </div>
+            
+            {/* Text Content */}
+            <div className="flex-1 min-w-0">
+              {/* User Name */}
+              <div className="font-bold text-base mb-1.5 leading-tight text-gray-900 pr-2">
+                {user.firstName} {user.lastName}
+              </div>
+              
+              {/* Role */}
+              <div className="text-sm text-gray-600 leading-relaxed mb-2 line-clamp-1">
+                {user.roleName || "No role"}
+              </div>
+              
+              {/* Email */}
+              <div className="text-xs text-gray-500 mb-1">
+                {user.email}
+              </div>
+              
+              {/* Reporting User */}
+              {user.reportingUserName && (
+                <div className="text-xs text-gray-500">
+                  Reports to: {user.reportingUserName}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Vertical line down from node if it has children */}
+        {hasChildren && (
+          <>
+            <div className="h-8 w-0.5 bg-gray-300 mx-auto"></div>
+            {/* Container for horizontal line and children */}
+            <div className="relative flex justify-center" style={{ 
+              width: `${Math.max(400, user.children.length * 280 + (user.children.length - 1) * 48 + 100)}px` 
+            }}>
+              {/* Horizontal connector line */}
+              <div className="absolute top-0 left-0 right-0 h-0.5 bg-gray-300"></div>
+              
+              {/* Children nodes */}
+              <div className="flex items-start justify-center gap-12 pt-2">
+                {user.children.map((child, childIndex) => (
+                  <div key={child.id} className="flex flex-col items-center flex-shrink-0">
+                    {/* Vertical line up from child to horizontal line */}
+                    <div className="h-8 w-0.5 bg-gray-300"></div>
+                    {/* Render child node */}
+                    {renderUserHierarchyNode(child, level + 1, childIndex, user.children.length)}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  };
+
   if (usersLoading || rolesLoading) {
     return (
       <div className="p-6">
@@ -365,25 +458,45 @@ function UsersPageContent() {
   }
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      <div className="flex justify-between items-center mb-6">
+    <div className="p-6 w-full space-y-6">
+      {/* Header Section */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold">User Management</h1>
-          <p className="text-gray-600 mt-2">Manage team members, assignments, and performance</p>
+          <h1 className="text-3xl font-bold text-gray-900">User Management</h1>
+          <p className="text-gray-600 mt-1">Manage team members and their roles</p>
         </div>
-      
-        <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-          <DialogTrigger asChild>
-            <Button onClick={resetForm}>
-              <Plus className="h-4 w-4 mr-2" />
-              Add User
+
+        {/* Action Buttons Row */}
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Tasks & Follow-ups */}
+          <Link href="/tasks">
+            <Button variant="outline" className="flex items-center gap-2 shadow-sm hover:shadow">
+              <CheckSquare className="w-4 h-4" />
+              Tasks & Follow-ups
             </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-lg">
-            <DialogHeader>
-              <DialogTitle>Add New User</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
+          </Link>
+
+          {/* Role Management */}
+          <Link href="/roles">
+            <Button variant="outline" className="flex items-center gap-2 shadow-sm hover:shadow">
+              <Crown className="w-4 h-4" />
+              Role Management
+            </Button>
+          </Link>
+
+          {/* Create User */}
+          <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+            <DialogTrigger asChild>
+              <Button onClick={resetForm} className="flex items-center gap-2 shadow-sm hover:shadow">
+                <Plus className="h-4 w-4" />
+                Create User
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-lg">
+              <DialogHeader>
+                <DialogTitle>Add New User</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="firstName">First Name</Label>
@@ -430,7 +543,13 @@ function UsersPageContent() {
                 <Label htmlFor="role">Role</Label>
                 <Select 
                   value={formData.roleId.toString()} 
-                  onValueChange={(value) => setFormData(prev => ({ ...prev, roleId: value }))}
+                  onValueChange={(value) => {
+                    setFormData(prev => ({ 
+                      ...prev, 
+                      roleId: value,
+                      reportingUserId: null // Reset reporting user when role changes
+                    }));
+                  }}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select a role" />
@@ -444,6 +563,34 @@ function UsersPageContent() {
                   </SelectContent>
                 </Select>
               </div>
+
+              {formData.roleId && availableReportingUsers.length > 0 && (
+                <div>
+                  <Label htmlFor="reportingUser">Reporting User (Optional)</Label>
+                  <Select 
+                    value={formData.reportingUserId?.toString() || "none"} 
+                    onValueChange={(value) => setFormData(prev => ({ 
+                      ...prev, 
+                      reportingUserId: value === "none" ? null : value 
+                    }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select a reporting user" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">None</SelectItem>
+                      {availableReportingUsers.map((user: User) => (
+                        <SelectItem key={user.id} value={user.id.toString()}>
+                          {user.firstName} {user.lastName} ({user.roleName || user.role})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Select a user who will be this user's manager or supervisor
+                  </p>
+                </div>
+              )}
               
               <div className="bg-blue-50 p-4 rounded-lg">
                 <p className="text-sm text-blue-800">
@@ -463,70 +610,9 @@ function UsersPageContent() {
                   {createUserMutation.isPending ? "Creating..." : "Create User"}
                 </Button>
               </div>
-            </div>
-          </DialogContent>
+              </div>
+            </DialogContent>
         </Dialog>
-      </div>
-
-      {/* Tab Navigation */}
-        <div className="flex flex-wrap items-center gap-3  p-4 rounded-lg shadow-sm">
-
-      {/* Tasks & Follow-ups */}
-      <Link href="/tasks">
-        <Button className="flex items-center gap-2 bg-white text-black text-sm px-4 py-2 rounded-md shadow hover:bg-gray-100">
-          <CheckSquare className="w-4 h-4" />
-          Tasks & Follow-ups
-        </Button>
-      </Link>
-
-      {/* Role Management */}
-      <Link href="/roles">
-        <Button className="flex items-center gap-2 bg-white text-black text-sm px-4 py-2 rounded-md shadow hover:bg-gray-100">
-          <Crown className="w-4 h-4" />
-          Role Management
-        </Button>
-      </Link>
-
-     
-      
-    </div>
-      <div className="mb-6">
-        <div className="border-b border-gray-200">
-          <nav className="-mb-px flex space-x-8">
-            <button
-              onClick={() => setActiveTab("users")}
-              className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                activeTab === "users"
-                  ? "border-cyan-500 text-cyan-600"
-                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-              }`}
-            >
-              <Users className="h-4 w-4 inline mr-2" />
-              Users & Roles
-            </button>
-            <button
-              onClick={() => setActiveTab("assignments")}
-              className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                activeTab === "assignments"
-                  ? "border-cyan-500 text-cyan-600"
-                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-              }`}
-            >
-              <Target className="h-4 w-4 inline mr-2" />
-              Assignments & Workload
-            </button>
-            <button
-              onClick={() => setActiveTab("performance")}
-              className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                activeTab === "performance"
-                  ? "border-cyan-500 text-cyan-600"
-                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-              }`}
-            >
-              <TrendingUp className="h-4 w-4 inline mr-2" />
-              Performance Dashboard
-            </button>
-          </nav>
         </div>
       </div>
 
@@ -583,7 +669,13 @@ function UsersPageContent() {
               <Label htmlFor="edit-role">Role</Label>
               <Select 
                 value={formData.roleId.toString()} 
-                onValueChange={(value) => setFormData(prev => ({ ...prev, roleId: value }))}
+                onValueChange={(value) => {
+                  setFormData(prev => ({ 
+                    ...prev, 
+                    roleId: value,
+                    reportingUserId: null // Reset reporting user when role changes
+                  }));
+                }}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Select a role" />
@@ -597,6 +689,40 @@ function UsersPageContent() {
                 </SelectContent>
               </Select>
             </div>
+
+            {formData.roleId && (
+              <div>
+                <Label htmlFor="edit-reportingUser">Reporting User (Optional)</Label>
+                <Select 
+                  value={formData.reportingUserId && formData.reportingUserId !== "" ? formData.reportingUserId.toString() : "none"} 
+                  onValueChange={(value) => setFormData(prev => ({ 
+                    ...prev, 
+                    reportingUserId: value === "none" ? null : value 
+                  }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a reporting user" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
+                    {availableReportingUsers.length > 0 ? (
+                      availableReportingUsers.map((user: User) => (
+                        <SelectItem key={user.id} value={user.id.toString()}>
+                          {user.firstName} {user.lastName} ({user.roleName || user.role})
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <SelectItem value="no-users" disabled>
+                        No available reporting users for this role
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-gray-500 mt-1">
+                  Select a user who will be this user's manager or supervisor
+                </p>
+              </div>
+            )}
             
             <div className="flex justify-end space-x-2">
               <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
@@ -613,10 +739,17 @@ function UsersPageContent() {
         </DialogContent>
       </Dialog>
 
-      {/* Tab Content */}
-      {activeTab === "users" && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {users.map((user: User) => (
+      {/* User View Tabs */}
+      <Tabs value={userViewTab} onValueChange={setUserViewTab} className="w-full">
+        <TabsList className="mb-6">
+          <TabsTrigger value="list">List View</TabsTrigger>
+          <TabsTrigger value="hierarchy">Hierarchy View</TabsTrigger>
+        </TabsList>
+
+        {/* List View Tab */}
+        <TabsContent value="list" className="mt-0">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {users.map((user: User) => (
           <Card key={user.id} className="hover:shadow-lg transition-shadow">
             <CardHeader>
               <div className="flex justify-between items-start">
@@ -664,6 +797,14 @@ function UsersPageContent() {
                   </div>
                 )}
                 
+                {user.reportingUserName && (
+                  <div className="flex items-center gap-2 text-sm">
+                    <Users className="h-4 w-4 text-gray-500" />
+                    <span className="text-gray-600">Reports to:</span>
+                    <span className="font-medium">{user.reportingUserName}</span>
+                  </div>
+                )}
+                
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-gray-600">Status</span>
                   {getStatusBadge(user)}
@@ -682,309 +823,58 @@ function UsersPageContent() {
                 </div>
               </div>
             </CardContent>
-          </Card>
-        ))}
+            </Card>
+            ))}
 
-        {users.length === 0 && (
-          <div className="text-center py-12">
-            <UserCheck className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">No users found</h3>
-            <p className="text-gray-600 mb-4">Add your first team member to get started.</p>
-            <Button onClick={() => setIsCreateDialogOpen(true)}>
-              <Plus className="h-4 w-4 mr-2" />
-              Add User
-            </Button>
-          </div>
-        )}
-      </div>
-      )}
-
-      {/* Assignments Tab */}
-      {activeTab === "assignments" && (
-        <div className="space-y-6">
-          {/* Workload Overview */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {assignableUsersLoading ? (
-              Array.from({length: 3}).map((_, i) => (
-                <div key={i} className="animate-pulse">
-                  <div className="h-32 bg-gray-200 rounded-lg"></div>
-                </div>
-              ))
-            ) : assignableUsersError ? (
-              <div className="col-span-3 text-center py-8">
-                <Users className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">Unable to load user data</h3>
-                <p className="text-gray-600">Please try refreshing the page or check your connection.</p>
-              </div>
-            ) : Array.isArray(assignableUsers) && assignableUsers.length > 0 ? (
-              assignableUsers.map((user: AssignableUser) => (
-                <Card key={user.id} className="hover:shadow-md transition-shadow">
-                  <CardHeader>
-                    <CardTitle className="text-sm font-medium">
-                      {user.firstName} {user.lastName}
-                    </CardTitle>
-                    <CardDescription>{user.roleName}</CardDescription>
-                  </CardHeader>
-                  <CardContent className="pt-0">
-                    <div className="grid grid-cols-2 gap-2 text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">Leads:</span>
-                        <span className="font-medium">{user.workload?.leads || 0}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">Customers:</span>
-                        <span className="font-medium">{user.workload?.customers || 0}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">Tasks:</span>
-                        <span className="font-medium">{user.workload?.activeTasks || 0}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">Total:</span>
-                        <span className="font-semibold text-cyan-600">{user.workload?.total || 0}</span>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))
-            ) : (
-              <div className="col-span-3 text-center py-8">
-                <Users className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">No users available</h3>
-                <p className="text-gray-600">Add team members in the Users & Roles tab to see their workload here.</p>
+            {users.length === 0 && (
+              <div className="text-center py-12 col-span-full">
+                <UserCheck className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">No users found</h3>
+                <p className="text-gray-600 mb-4">Add your first team member to get started.</p>
+                <Button onClick={() => setIsCreateDialogOpen(true)}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add User
+                </Button>
               </div>
             )}
           </div>
+        </TabsContent>
 
-          {/* Assignment History */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Recent Assignments</CardTitle>
-              <CardDescription>Track recent assignment changes and distributions</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {historyLoading ? (
-                <div className="animate-pulse space-y-4">
-                  {Array.from({length: 5}).map((_, i) => (
-                    <div key={i} className="h-16 bg-gray-200 rounded"></div>
-                  ))}
-                </div>
-              ) : Array.isArray(assignmentHistory) && assignmentHistory.length > 0 ? (
-                <div className="space-y-4">
-                  {assignmentHistory.map((assignment: any, index: number) => (
-                    <div key={index} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                      <div className="flex items-center space-x-3">
-                        <div className="w-8 h-8 bg-cyan-100 rounded-full flex items-center justify-center">
-                          <Target className="h-4 w-4 text-cyan-600" />
+        {/* Hierarchy View Tab */}
+        <TabsContent value="hierarchy" className="mt-0">
+            <Card>
+              <CardHeader>
+                <CardTitle>User Hierarchy</CardTitle>
+                <CardDescription>
+                  Visual representation of user hierarchy based on reporting relationships
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="p-0">
+                {users.length === 0 ? (
+                  <div className="text-center py-12 px-6">
+                    <Users className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                    <h3 className="text-lg font-semibold text-gray-900 mb-2">No users found</h3>
+                    <p className="text-gray-600 mb-4">Create your first user to see the hierarchy.</p>
+                    <Button onClick={() => setIsCreateDialogOpen(true)}>
+                      <Plus className="h-4 w-4 mr-2" />
+                      Create User
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="relative py-12 overflow-x-auto w-full">
+                    <div className="flex justify-center items-start px-12 min-w-full">
+                      {buildUserHierarchy().map((userNode, index) => 
+                        <div key={userNode.id} className="group flex-shrink-0">
+                          {renderUserHierarchyNode(userNode, 0, index, buildUserHierarchy().length)}
                         </div>
-                        <div>
-                          <p className="text-sm font-medium">{assignment.entityType} assigned</p>
-                          <p className="text-xs text-gray-500">
-                            {assignment.assignedToName} • {assignment.reason}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="text-xs text-gray-500">
-                        {new Date(assignment.createdAt).toLocaleDateString()}
-                      </div>
+                      )}
                     </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-center py-8">
-                  <Target className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold text-gray-900 mb-2">No assignments yet</h3>
-                  <p className="text-gray-600">Assignment history will appear here as you assign leads and customers to users.</p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      {/* Performance Dashboard Tab */}
-      {activeTab === "performance" && (
-        <div className="space-y-6">
-          {/* User Selection */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Select User for Performance Dashboard</CardTitle>
-              <CardDescription>View detailed performance metrics for individual team members</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Select 
-                value={selectedUserId?.toString() || ""} 
-                onValueChange={(value) => setSelectedUserId(Number(value))}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Choose a user to view their dashboard" />
-                </SelectTrigger>
-                <SelectContent>
-                  {users.map((user: User) => (
-                    <SelectItem key={user.id} value={user.id.toString()}>
-                      {user.firstName} {user.lastName} - {user.roleName}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </CardContent>
-          </Card>
-
-          {/* Performance Metrics */}
-          {selectedUserId && (
-            <>
-              {dashboardLoading ? (
-                <div className="animate-pulse space-y-6">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    {Array.from({length: 6}).map((_, i) => (
-                      <div key={i} className="h-32 bg-gray-200 rounded-lg"></div>
-                    ))}
                   </div>
-                </div>
-              ) : userDashboard ? (
-                <>
-                  {/* Performance Summary Cards */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
-                    <Card>
-                      <CardContent className="p-4">
-                        <div className="flex items-center">
-                          <Users className="h-8 w-8 text-blue-600" />
-                          <div className="ml-4">
-                            <p className="text-sm text-gray-600">Leads</p>
-                            <p className="text-2xl font-bold">{userDashboard.performance.leadsAssigned}</p>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-
-                    <Card>
-                      <CardContent className="p-4">
-                        <div className="flex items-center">
-                          <UserCheck className="h-8 w-8 text-green-600" />
-                          <div className="ml-4">
-                            <p className="text-sm text-gray-600">Customers</p>
-                            <p className="text-2xl font-bold">{userDashboard.performance.customersAssigned}</p>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-
-                    <Card>
-                      <CardContent className="p-4">
-                        <div className="flex items-center">
-                          <Calendar className="h-8 w-8 text-orange-600" />
-                          <div className="ml-4">
-                            <p className="text-sm text-gray-600">Active Tasks</p>
-                            <p className="text-2xl font-bold">{userDashboard.performance.activeTasks}</p>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-
-                    <Card>
-                      <CardContent className="p-4">
-                        <div className="flex items-center">
-                          <Activity className="h-8 w-8 text-cyan-600" />
-                          <div className="ml-4">
-                            <p className="text-sm text-gray-600">Completed</p>
-                            <p className="text-2xl font-bold">{userDashboard.performance.completedTasks}</p>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-
-                    <Card>
-                      <CardContent className="p-4">
-                        <div className="flex items-center">
-                          <Bell className="h-8 w-8 text-purple-600" />
-                          <div className="ml-4">
-                            <p className="text-sm text-gray-600">Notifications</p>
-                            <p className="text-2xl font-bold">{userDashboard.performance.unreadNotifications}</p>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-
-                    <Card>
-                      <CardContent className="p-4">
-                        <div className="flex items-center">
-                          <TrendingUp className="h-8 w-8 text-teal-600" />
-                          <div className="ml-4">
-                            <p className="text-sm text-gray-600">Conversion</p>
-                            <p className="text-2xl font-bold">{userDashboard.performance.conversionRate}%</p>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </div>
-
-                  {/* Recent Activity & Notifications */}
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    {/* Recent Assignments */}
-                    <Card>
-                      <CardHeader>
-                        <CardTitle>Recent Leads</CardTitle>
-                        <CardDescription>Latest assigned leads and their status</CardDescription>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="space-y-3">
-                          {userDashboard.assignments?.recentLeads?.map((lead: any) => (
-                            <div key={lead.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                              <div>
-                                <p className="font-medium text-sm">{lead.name}</p>
-                                <p className="text-xs text-gray-500">{lead.status} • {lead.priority} priority</p>
-                              </div>
-                              <Badge variant="outline">{new Date(lead.createdAt).toLocaleDateString()}</Badge>
-                            </div>
-                          )) || (
-                            <p className="text-gray-500 text-center py-4">No recent leads</p>
-                          )}
-                        </div>
-                      </CardContent>
-                    </Card>
-
-                    {/* Notifications */}
-                    <Card>
-                      <CardHeader>
-                        <CardTitle>Notifications</CardTitle>
-                        <CardDescription>Recent updates and alerts</CardDescription>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="space-y-3">
-                          {userDashboard.notifications?.map((notification: any) => (
-                            <div key={notification.id} className={`p-3 rounded-lg ${notification.isRead ? 'bg-gray-50' : 'bg-blue-50'}`}>
-                              <div className="flex items-start justify-between">
-                                <div className="flex-1">
-                                  <p className="font-medium text-sm">{notification.title}</p>
-                                  <p className="text-xs text-gray-600 mt-1">{notification.message}</p>
-                                </div>
-                                <Badge variant={notification.priority === 'high' ? 'destructive' : 'secondary'}>
-                                  {notification.priority}
-                                </Badge>
-                              </div>
-                              <div className="text-xs text-gray-500 mt-2">
-                                {new Date(notification.createdAt).toLocaleDateString()}
-                              </div>
-                            </div>
-                          )) || (
-                            <p className="text-gray-500 text-center py-4">No notifications</p>
-                          )}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </div>
-                </>
-              ) : (
-                <div className="text-center py-8">
-                  <Activity className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold text-gray-900 mb-2">No data available</h3>
-                  <p className="text-gray-600">Performance data will appear here once the user has been active.</p>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
     </div>
   );
 }

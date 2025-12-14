@@ -10,6 +10,7 @@ export const users = pgTable("users", {
   role: text("role").notNull().default("tenant_admin"), // saas_owner, tenant_admin, tenant_user
   tenantId: integer("tenant_id"),
   roleId: integer("role_id"), // For tenant users - references roles table
+  reportingUserId: integer("reporting_user_id"), // References users.id - creates hierarchical structure
   firstName: text("first_name").notNull(),
   lastName: text("last_name").notNull(),
   phone: text("phone"),
@@ -38,6 +39,8 @@ export const roles = pgTable("roles", {
   name: text("name").notNull(),
   description: text("description"),
   permissions: json("permissions").$type<Record<string, string[]>>().notNull(), // { "dashboard": ["view"], "customers": ["view", "edit", "delete"] }
+  parentRoleId: integer("parent_role_id"), // References roles.id - creates role hierarchy
+  hierarchyLevel: integer("hierarchy_level").default(0), // Lower number = higher in hierarchy (0 = Owner, 1 = Manager, 2 = Supervisor, 3 = Sales Rep)
   isActive: boolean("is_active").notNull().default(true),
   isDefault: boolean("is_default").notNull().default(false), // Owner role is default for tenant
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -89,6 +92,8 @@ export const tenantSettings = pgTable("tenant_settings", {
   leadWelcomeMessage: text("lead_welcome_message").default("Hello! Thank you for your interest. Our team will get in touch with you shortly."),
   enableCustomerWelcomeMessage: boolean("enable_customer_welcome_message").default(true),
   customerWelcomeMessage: text("customer_welcome_message").default("Welcome! Thank you for choosing us. We're excited to serve you!"),
+  // Lead Auto-Assignment Settings
+  autoAssignmentPriorityRoleId: integer("auto_assignment_priority_role_id").references(() => roles.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -214,6 +219,12 @@ export const leads = pgTable("leads", {
   convertedToCustomerId: integer("converted_to_customer_id"),
   score: integer("score").default(0),
   lastContactDate: timestamp("last_contact_date"),
+  assignedUserId: integer("assigned_user_id"),
+  assignedAt: timestamp("assigned_at"),
+  assignedBy: integer("assigned_by"),
+  lastActivityUserId: integer("last_activity_user_id"),
+  createdBy: integer("created_by"),
+  updatedBy: integer("updated_by"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
