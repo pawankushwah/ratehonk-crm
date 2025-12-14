@@ -5,22 +5,22 @@ import { FollowUpList } from "@/components/follow-ups/FollowUpList";
 interface SidebarListsProps {
   followUpsArray: any[];
   customersArray: any[];
-  activitiesArray: any[];
+  invoicesArray: any[];
   contactsArray: any[];
   canViewFollowUps?: boolean;
   canViewCustomers?: boolean;
-  canViewBookings?: boolean;
+  canViewInvoices?: boolean;
   canViewContacts?: boolean;
 }
 
 export function SidebarLists({
   followUpsArray,
   customersArray,
-  activitiesArray,
+  invoicesArray,
   contactsArray,
   canViewFollowUps = true,
   canViewCustomers = true,
-  canViewBookings = true,
+  canViewInvoices = true,
   canViewContacts = true,
 }: SidebarListsProps) {
   const [isOpen, setIsOpen] = useState(false);
@@ -86,30 +86,32 @@ export function SidebarLists({
             </div>
           </div>
         )}
-        {canViewBookings && (
+        {canViewInvoices && (
           <div>
-            <h3 className="text-sm font-semibold text-gray-700 mb-3">Bookings</h3>
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">Invoices</h3>
             <div className="space-y-2">
-              {activitiesArray.length > 0 ? (
-                activitiesArray.slice(0, 4).map((item, i) => (
+              {invoicesArray.length > 0 ? (
+                invoicesArray.slice(0, 4).map((item, i) => (
                   <div key={i} className="flex items-center gap-2">
                     <div className="h-8 w-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-semibold text-gray-700">
                       {item.customerName
                         ? item.customerName.charAt(0).toUpperCase()
-                        : "U"}
+                        : item.invoiceNumber
+                        ? item.invoiceNumber.charAt(0).toUpperCase()
+                        : "I"}
                     </div>
                     <div>
                       <p className="text-xs font-medium text-gray-700">
-                        {item.customerName || "Unknown"}
+                        {item.invoiceNumber || `Invoice #${item.id}`}
                       </p>
                       <p className="text-xs text-gray-500 truncate">
-                        ₹{item.totalAmount?.toLocaleString()}
+                        {item.customerName || "No customer"}
                       </p>
                     </div>
                   </div>
                 ))
               ) : (
-                <p className="text-xs text-gray-400">No activities</p>
+                <p className="text-xs text-gray-400">No invoices</p>
               )}
             </div>
           </div>

@@ -1402,12 +1402,13 @@ export class SimpleStorage {
       let whereClauses = sql`l.tenant_id = ${tenantId}`;
 
       // Filter by allowed user IDs if provided (role-based hierarchy filtering)
-      // Show leads created by OR assigned to users in the role hierarchy
+      // Show leads assigned to users in the role hierarchy
       if (teamUserIds && teamUserIds.length > 0) {
-        whereClauses = sql`${whereClauses} AND (
-          l.created_by = ANY(${sql.array(teamUserIds)}) 
-          OR l.assigned_user_id = ANY(${sql.array(teamUserIds)})
-        )`;
+        // Ensure all IDs are integers
+        const userIdsAsInts = teamUserIds.map(id => Number(id)).filter(id => !isNaN(id));
+        if (userIdsAsInts.length > 0) {
+          whereClauses = sql`${whereClauses} AND l.assigned_user_id = ANY(${sql.array(userIdsAsInts)}::int[])`;
+        }
       }
 
       if (search) {
@@ -1427,7 +1428,10 @@ export class SimpleStorage {
       }
 
       if (type) {
-        whereClauses = sql`${whereClauses} AND l.lead_type_id = ${type}`; // adjust mapping
+        const typeId = parseInt(String(type), 10);
+        if (!isNaN(typeId)) {
+          whereClauses = sql`${whereClauses} AND l.lead_type_id = ${typeId}`;
+        }
       }
 
       if (source) {
@@ -11637,21 +11641,31 @@ async getDashboardMetrics(
 
     // OTHER METRICS
    
-    // Bookings - filter by team if provided
-    let bookingsFilter = sql`tenant_id = ${tenantId}`;
+    // Invoices - filter by team if provided (replacing bookings count with invoices)
+    let invoicesFilter = sql`tenant_id = ${tenantId}`;
     if (teamUserIds && teamUserIds.length > 0) {
-      bookingsFilter = sql`${bookingsFilter} AND (created_by = ANY(${sql.array(teamUserIds)}) OR assigned_user_id = ANY(${sql.array(teamUserIds)}))`;
+      // Ensure all IDs are integers
+      const userIdsAsInts = teamUserIds.map(id => Number(id)).filter(id => !isNaN(id));
+      if (userIdsAsInts.length > 0) {
+        // Invoices don't have assigned_user_id, so we'll filter by customer's assigned user if needed
+        // For now, just filter by tenant_id
+        invoicesFilter = sql`tenant_id = ${tenantId}`;
+      }
     }
-    const [bookingsResult] = await sql`
-      SELECT COUNT(*) as active_bookings
-      FROM bookings 
-      WHERE ${bookingsFilter} AND ${dateFilter}
+    const [invoicesResult] = await sql`
+      SELECT COUNT(*) as total_invoices
+      FROM invoices 
+      WHERE ${invoicesFilter} AND ${dateFilter} AND status NOT IN ('void', 'cancelled')
     `;
 
     // Customers - filter by team if provided
     let customersFilter = sql`tenant_id = ${tenantId}`;
     if (teamUserIds && teamUserIds.length > 0) {
-      customersFilter = sql`${customersFilter} AND (created_by = ANY(${sql.array(teamUserIds)}) OR assigned_user_id = ANY(${sql.array(teamUserIds)}))`;
+      // Ensure all IDs are integers
+      const userIdsAsInts = teamUserIds.map(id => Number(id)).filter(id => !isNaN(id));
+      if (userIdsAsInts.length > 0) {
+        customersFilter = sql`${customersFilter} AND assigned_user_id = ANY(${sql.array(userIdsAsInts)}::int[])`;
+      }
     }
     const [customersResult] = await sql`
       SELECT COUNT(*) as customers
@@ -11662,10 +11676,11 @@ async getDashboardMetrics(
     // Leads - filter by team if provided (role-based hierarchy filtering)
     let leadsFilter = sql`tenant_id = ${tenantId}`;
     if (teamUserIds && teamUserIds.length > 0) {
-      leadsFilter = sql`${leadsFilter} AND (
-        created_by = ANY(${sql.array(teamUserIds)}) 
-        OR assigned_user_id = ANY(${sql.array(teamUserIds)})
-      )`;
+      // Ensure all IDs are integers
+      const userIdsAsInts = teamUserIds.map(id => Number(id)).filter(id => !isNaN(id));
+      if (userIdsAsInts.length > 0) {
+        leadsFilter = sql`${leadsFilter} AND assigned_user_id = ANY(${sql.array(userIdsAsInts)}::int[])`;
+      }
     }
     const [leadsResult] = await sql`
       SELECT COUNT(*) as leads
@@ -11694,10 +11709,11 @@ async getDashboardMetrics(
     // Leads chart data - filter by team if provided (role-based hierarchy filtering)
     let leadsChartFilter = sql`tenant_id = ${tenantId} AND created_at >= NOW() - INTERVAL '6 months'`;
     if (teamUserIds && teamUserIds.length > 0) {
-      leadsChartFilter = sql`${leadsChartFilter} AND (
-        created_by = ANY(${sql.array(teamUserIds)}) 
-        OR assigned_user_id = ANY(${sql.array(teamUserIds)})
-      )`;
+      // Ensure all IDs are integers
+      const userIdsAsInts = teamUserIds.map(id => Number(id)).filter(id => !isNaN(id));
+      if (userIdsAsInts.length > 0) {
+        leadsChartFilter = sql`${leadsChartFilter} AND assigned_user_id = ANY(${sql.array(userIdsAsInts)}::int[])`;
+      }
     }
     const leadsData = await sql`
       SELECT 
@@ -11725,7 +11741,7 @@ async getDashboardMetrics(
 
     const metrics = {
       revenue: parseFloat(revenueResult.revenue) || 0,
-      activeBookings: parseInt(bookingsResult.active_bookings) || 0,
+      activeBookings: parseInt(invoicesResult.total_invoices) || 0, // Changed to invoice count
       customers: parseInt(customersResult.customers) || 0,
       leads: parseInt(leadsResult.leads) || 0,
     };

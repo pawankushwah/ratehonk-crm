@@ -145,9 +145,9 @@ export default function Login() {
         description: "Successfully logged in to your TravelCRM Pro account.",
       });
 
-      // Show welcome screen with fireworks animation
-      console.log("🎉 Setting welcome screen to true");
-      setShowWelcomeScreen(true);
+      // Navigate directly to dashboard (skip welcome screen)
+      console.log("🎉 Login successful, navigating to dashboard");
+      setLocation("/dashboard");
     } catch (error: any) {
       console.error("Login error:", error);
 
@@ -223,8 +223,8 @@ export default function Login() {
   };
 
   const handleWelcomeComplete = () => {
-    console.log("🎉 Welcome screen complete, navigating to modules");
-    setLocation("/modules");
+    console.log("🎉 Welcome screen complete, navigating to dashboard");
+    setLocation("/dashboard");
   };
 
   if (showWelcomeScreen) {

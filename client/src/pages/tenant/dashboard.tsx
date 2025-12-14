@@ -191,6 +191,34 @@ export default function TenantDashboard() {
     ],
     enabled: !!tenant?.id,
   });
+  
+  const { data: topInvoices } = useQuery({
+    queryKey: [
+      `/api/tenants/${tenant?.id}/invoices`,
+      { limit: 10, sortBy: "totalAmount", sortOrder: "desc" },
+    ],
+    queryFn: async () => {
+      if (!tenant?.id) return [];
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(
+        `/api/tenants/${tenant.id}/invoices?limit=10&sortBy=totalAmount&sortOrder=desc`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      if (!response.ok) return [];
+      const data = await response.json();
+      // Handle paginated response
+      if (data && typeof data === "object" && "data" in data) {
+        return data.data || [];
+      }
+      return Array.isArray(data) ? data : [];
+    },
+    enabled: !!tenant?.id,
+  });
  
   const { data: revenueByLeadTypeData } = useQuery({
     queryKey: [
@@ -374,7 +402,18 @@ export default function TenantDashboard() {
   
   const topLeadsArray = Array.isArray(topLeads) ? topLeads : [];
   const topBookingsArray = Array.isArray(topBookings) ? topBookings : [];
-  const topCustomersArray = Array.isArray(topCustomers) ? topCustomers : [];
+  // Handle customers data - check if it's paginated response
+  const topCustomersArray = useMemo(() => {
+    if (!topCustomers) return [];
+    if (Array.isArray(topCustomers)) return topCustomers;
+    if (topCustomers && typeof topCustomers === "object" && "data" in topCustomers) {
+      return topCustomers.data || [];
+    }
+    return [];
+  }, [topCustomers]);
+  
+  // Handle invoices data
+  const topInvoicesArray = Array.isArray(topInvoices) ? topInvoices : [];
   const revenueByLeadTypeArray = Array.isArray(revenueByLeadTypeData)
     ? revenueByLeadTypeData
     : [];
@@ -388,7 +427,7 @@ export default function TenantDashboard() {
 
   const followUpsArray = topLeadsArray ?? [];
   const customersArray = topCustomersArray ?? [];
-  const activitiesArray = topBookingsArray ?? [];
+  const invoicesArray = topInvoicesArray ?? [];
   const contactsArray = topCustomersArray ?? [];
 
   // Show loader while permissions are being fetched
@@ -473,9 +512,9 @@ export default function TenantDashboard() {
                 )}
                 {canView("dashboard.bookings") && (
                   <div data-testid="metric-card-bookings">
-                    <Link href={`/bookings`}>
+                    <Link href={`/invoices`}>
                       <MetricCard
-                        title="Total Bookings"
+                        title="Total Invoices"
                         value={metrics.activeBookings}
                         icon={BookOpen}
                         trend={`${(
@@ -549,7 +588,8 @@ export default function TenantDashboard() {
                 <ShortcutsDialog>
                   <button className="flex items-center gap-2 text-blue-600 hover:text-blue-700 font-medium transition-colors">
                     <Zap className="h-4 w-4" />
-                    <span>Shortcuts</span>
+                    <span className="text-lg">Shortcuts</span>
+                    <ChevronRight className="h-5 w-5" />
                   </button>
                 </ShortcutsDialog>
               </div>
@@ -610,11 +650,11 @@ export default function TenantDashboard() {
             <SidebarLists
               followUpsArray={followUpsArray}
               customersArray={customersArray}
-              activitiesArray={activitiesArray}
+              invoicesArray={invoicesArray}
               contactsArray={contactsArray}
               canViewFollowUps={canView("dashboard.sidebar-followups")}
               canViewCustomers={canView("dashboard.sidebar-customers")}
-              canViewBookings={canView("dashboard.sidebar-bookings")}
+              canViewInvoices={canView("dashboard.sidebar-bookings")}
               canViewContacts={canView("dashboard.sidebar-contacts")}
             />
           </div>
