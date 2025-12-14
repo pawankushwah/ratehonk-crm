@@ -35,6 +35,7 @@ async function runMigrations() {
       'migrations/create_user_metrics_table.sql',
       'migrations/create_user_notifications_table.sql',
       'migrations/create_tasks_table.sql',
+      'migrations/create_general_follow_ups_table.sql',
     ];
     
     for (const migrationFile of migrationFiles) {

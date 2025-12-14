@@ -18,8 +18,10 @@ import {
   Bell,
   ChevronRight,
   X,
+  Zap,
 } from "lucide-react";
 import { useAuth } from "@/components/auth/auth-provider";
+import { usePermissions } from "@/hooks/use-permissions";
 import type { DashboardData } from "@/lib/types";
 import type { Estimate, Expense, EmailCampaign } from "@shared/schema";
 
@@ -35,6 +37,7 @@ import { MarketingSEOBar } from "@/components/dashboard/MarketingSEOBar";
 import { SidebarLists } from "@/components/dashboard/SidebarList";
 import { ConsolidatedVendorBookingChart } from "@/components/dashboard/ConsolidatedVendorBookingChart";
 import { ServiceProviderChart } from "@/components/dashboard/ServiceProviderChart";
+import { ShortcutsDialog } from "@/components/dashboard/ShortcutsDialog";
 
 
 
@@ -58,6 +61,7 @@ export default function TenantDashboard() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
   const { user, tenant } = useAuth();
+  const { canView, isLoading: permissionsLoading } = usePermissions();
   const [dateFilter, setDateFilter] = useState<{
     period: string;
     startDate?: Date;
@@ -386,6 +390,21 @@ export default function TenantDashboard() {
   const customersArray = topCustomersArray ?? [];
   const activitiesArray = topBookingsArray ?? [];
   const contactsArray = topCustomersArray ?? [];
+
+  // Show loader while permissions are being fetched
+  if (permissionsLoading) {
+    return (
+      <Layout>
+        <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-blue-50 dark:from-gray-950 dark:via-gray-900 dark:to-blue-950 flex items-center justify-center">
+          <div className="flex flex-col items-center gap-4">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+            <p className="text-gray-600 text-sm">Loading dashboard permissions...</p>
+          </div>
+        </div>
+      </Layout>
+    );
+  }
+
   return (
     <Layout>
       <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-blue-50 dark:from-gray-950 dark:via-gray-900 dark:to-blue-950 relative overflow-hidden">
@@ -429,135 +448,174 @@ export default function TenantDashboard() {
                 className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6"
                 data-testid="metric-cards-container"
               >
-                <div data-testid="metric-card-revenue">
-                  <MetricCard
-                    
-                    title="Total Revenue"
-                    value={`C$ ${formatNumberShort(metrics.revenue)}`}
-                    icon={DollarSign}
-                    trend={`${(
-                      ((monthlyData.revenue.current -
-                        monthlyData.revenue.previous) /
-                        (monthlyData.revenue.previous || 1)) *
-                      100
-                    ).toFixed(1)}`}
-                    previousMonth={monthlyData.revenue.previous}
-                    currentMonth={monthlyData.revenue.current}
-                    isPositive={
-                      monthlyData.revenue.current >=
-                      monthlyData.revenue.previous
-                    }
-                    bgColor="#E6F1FD"
-                  />
-                </div>
-                <div data-testid="metric-card-bookings">
-                  <Link href={`/bookings`}>
+                {canView("dashboard.revenue") && (
+                  <div data-testid="metric-card-revenue">
                     <MetricCard
-                      title="Total Bookings"
-                      value={metrics.activeBookings}
-                      icon={BookOpen}
+                      
+                      title="Total Revenue"
+                      value={`C$ ${formatNumberShort(metrics.revenue)}`}
+                      icon={DollarSign}
                       trend={`${(
-                        ((monthlyData.bookings.current -
-                          monthlyData.bookings.previous) /
-                          (monthlyData.bookings.previous || 1)) *
+                        ((monthlyData.revenue.current -
+                          monthlyData.revenue.previous) /
+                          (monthlyData.revenue.previous || 1)) *
                         100
                       ).toFixed(1)}`}
-                      previousMonth={monthlyData.bookings.previous}
-                      currentMonth={monthlyData.bookings.current}
+                      previousMonth={monthlyData.revenue.previous}
+                      currentMonth={monthlyData.revenue.current}
                       isPositive={
-                        monthlyData.bookings.current >=
-                        monthlyData.bookings.previous
-                      }
-                      bgColor="#EDEEFC"
-                    />
-                  </Link>
-                </div>
-                <div data-testid="metric-card-customers">
-                  <Link href={`/customers`}>
-                    <MetricCard
-                      title="Total Customers"
-                      value={metrics.customers}
-                      icon={Users}
-                      trend={`${(
-                        ((monthlyData.customers.current -
-                          monthlyData.customers.previous) /
-                          (monthlyData.customers.previous || 1)) *
-                        100
-                      ).toFixed(1)}`}
-                      previousMonth={monthlyData.customers.previous}
-                      currentMonth={monthlyData.customers.current}
-                      isPositive={
-                        monthlyData.customers.current >=
-                        monthlyData.customers.previous
+                        monthlyData.revenue.current >=
+                        monthlyData.revenue.previous
                       }
                       bgColor="#E6F1FD"
                     />
-                  </Link>
-                </div>
-                <div data-testid="metric-card-leads">
-                  <Link href={`/leads`}>
-                    <MetricCard
-                      title="Total Leads"
-                      value={metrics.leads}
-                      icon={UserCheck}
-                      trend={`${(
-                        ((monthlyData.leads.current -
-                          monthlyData.leads.previous) /
-                          (monthlyData.leads.previous || 1)) *
-                        100
-                      ).toFixed(1)}`}
-                      previousMonth={monthlyData.leads.previous}
-                      currentMonth={monthlyData.leads.current}
-                      isPositive={
-                        monthlyData.leads.current >= monthlyData.leads.previous
-                      }
-                      bgColor="#EDEEFC"
-                    />
-                  </Link>
-                </div>
+                  </div>
+                )}
+                {canView("dashboard.bookings") && (
+                  <div data-testid="metric-card-bookings">
+                    <Link href={`/bookings`}>
+                      <MetricCard
+                        title="Total Bookings"
+                        value={metrics.activeBookings}
+                        icon={BookOpen}
+                        trend={`${(
+                          ((monthlyData.bookings.current -
+                            monthlyData.bookings.previous) /
+                            (monthlyData.bookings.previous || 1)) *
+                          100
+                        ).toFixed(1)}`}
+                        previousMonth={monthlyData.bookings.previous}
+                        currentMonth={monthlyData.bookings.current}
+                        isPositive={
+                          monthlyData.bookings.current >=
+                          monthlyData.bookings.previous
+                        }
+                        bgColor="#EDEEFC"
+                      />
+                    </Link>
+                  </div>
+                )}
+                {canView("dashboard.customers") && (
+                  <div data-testid="metric-card-customers">
+                    <Link href={`/customers`}>
+                      <MetricCard
+                        title="Total Customers"
+                        value={metrics.customers}
+                        icon={Users}
+                        trend={`${(
+                          ((monthlyData.customers.current -
+                            monthlyData.customers.previous) /
+                            (monthlyData.customers.previous || 1)) *
+                          100
+                        ).toFixed(1)}`}
+                        previousMonth={monthlyData.customers.previous}
+                        currentMonth={monthlyData.customers.current}
+                        isPositive={
+                          monthlyData.customers.current >=
+                          monthlyData.customers.previous
+                        }
+                        bgColor="#E6F1FD"
+                      />
+                    </Link>
+                  </div>
+                )}
+                {canView("dashboard.leads") && (
+                  <div data-testid="metric-card-leads">
+                    <Link href={`/leads`}>
+                      <MetricCard
+                        title="Total Leads"
+                        value={metrics.leads}
+                        icon={UserCheck}
+                        trend={`${(
+                          ((monthlyData.leads.current -
+                            monthlyData.leads.previous) /
+                            (monthlyData.leads.previous || 1)) *
+                          100
+                        ).toFixed(1)}`}
+                        previousMonth={monthlyData.leads.previous}
+                        currentMonth={monthlyData.leads.current}
+                        isPositive={
+                          monthlyData.leads.current >= monthlyData.leads.previous
+                        }
+                        bgColor="#EDEEFC"
+                      />
+                    </Link>
+                  </div>
+                )}
               </div>
-              <div
-                className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 h-fit mt-6 lg:mt-10"
-                data-testid="dashboard-main-content"
-              >
-                <RevenueChart />
-                <ProfitLossCard />
-              </div>
-              <div
-                className="grid grid-cols-1 lg:grid-cols-12 gap-6 sm:gap-8 mt-6 sm:mt-10"
-                data-testid="dashboard-main-content"
-              >
-                <ExpensePieChart />
-                <ServiceBookingScatter />
-              </div>
-              <div
-                className="grid grid-cols-1 lg:grid-cols-12 gap-6 sm:gap-8 mt-6 sm:mt-10"
-                data-testid="dashboard-main-content"
-              >
-               <ServiceProviderChart />
-                <ConsolidatedVendorBookingChart />
+              
+              {/* Shortcuts Link */}
+              <div className="mt-6 lg:mt-10 mb-4">
+                <ShortcutsDialog>
+                  <button className="flex items-center gap-2 text-blue-600 hover:text-blue-700 font-medium transition-colors">
+                    <Zap className="h-4 w-4" />
+                    <span>Shortcuts</span>
+                  </button>
+                </ShortcutsDialog>
               </div>
 
-              <div
-                className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 h-fit mt-6 lg:mt-10"
-                data-testid="dashboard-main-content"
-              >
-                <InvoiceStatusBar />
-              </div>
-              <div
-                className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 h-fit mt-6 lg:mt-10"
-                data-testid="dashboard-main-content"
-              >
-                <MarketingSEOBar />
-              </div>
+              {/* Revenue Chart and Profit/Loss Card - grouped together */}
+              {(canView("dashboard.revenue-chart") || canView("dashboard.profit-loss")) && (
+                <div
+                  className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 h-fit mt-6 lg:mt-10"
+                  data-testid="dashboard-main-content"
+                >
+                  {canView("dashboard.revenue-chart") && <RevenueChart />}
+                  {canView("dashboard.profit-loss") && <ProfitLossCard />}
+                </div>
+              )}
+              
+              {/* Expense Chart and Service Booking - grouped together */}
+              {(canView("dashboard.expense-chart") || canView("dashboard.service-booking")) && (
+                <div
+                  className="grid grid-cols-1 lg:grid-cols-12 gap-6 sm:gap-8 mt-6 sm:mt-10"
+                  data-testid="dashboard-main-content"
+                >
+                  {canView("dashboard.expense-chart") && <ExpensePieChart />}
+                  {canView("dashboard.service-booking") && <ServiceBookingScatter />}
+                </div>
+              )}
+              
+              {/* Service Provider and Vendor Booking - grouped together */}
+              {(canView("dashboard.service-provider") || canView("dashboard.vendor-booking")) && (
+                <div
+                  className="grid grid-cols-1 lg:grid-cols-12 gap-6 sm:gap-8 mt-6 sm:mt-10"
+                  data-testid="dashboard-main-content"
+                >
+                  {canView("dashboard.service-provider") && <ServiceProviderChart />}
+                  {canView("dashboard.vendor-booking") && <ConsolidatedVendorBookingChart />}
+                </div>
+              )}
+
+              {/* Invoice Status Bar */}
+              {canView("dashboard.invoice-status") && (
+                <div
+                  className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 h-fit mt-6 lg:mt-10"
+                  data-testid="dashboard-main-content"
+                >
+                  <InvoiceStatusBar />
+                </div>
+              )}
+              
+              {/* Marketing SEO Bar */}
+              {canView("dashboard.marketing-seo") && (
+                <div
+                  className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 h-fit mt-6 lg:mt-10"
+                  data-testid="dashboard-main-content"
+                >
+                  <MarketingSEOBar />
+                </div>
+              )}
             </div>
             <SidebarLists
               followUpsArray={followUpsArray}
               customersArray={customersArray}
               activitiesArray={activitiesArray}
               contactsArray={contactsArray}
-              isOpen={isOpen}
-              setIsOpen={setIsOpen}
+              canViewFollowUps={canView("dashboard.sidebar-followups")}
+              canViewCustomers={canView("dashboard.sidebar-customers")}
+              canViewBookings={canView("dashboard.sidebar-bookings")}
+              canViewContacts={canView("dashboard.sidebar-contacts")}
             />
           </div>
         </div>

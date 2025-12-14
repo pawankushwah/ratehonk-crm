@@ -89,6 +89,7 @@ import { useAuth } from "@/components/auth/auth-provider";
 import { useToast } from "@/hooks/use-toast";
 import { FlexibleLeadForm } from "@/components/lead/flexible-lead-form";
 import { directLeadsApi } from "@/lib/direct-leads-api";
+import { CreateFollowUpDialog } from "@/components/follow-ups/CreateFollowUpDialog";
 import type { Lead } from "@/lib/types";
 import { usePermissions } from "@/hooks/use-permissions";
 import KanbanBoard from "./KanbanBoard";
@@ -264,6 +265,10 @@ export default function Leads() {
   const [openItemId, setOpenItemId] = useState(null);
 
   const [draggedIndex, setDraggedIndex] = useState(null);
+  
+  // Follow-up dialog state
+  const [followUpDialogOpen, setFollowUpDialogOpen] = useState(false);
+  const [selectedLeadForFollowUp, setSelectedLeadForFollowUp] = useState<any>(null);
 
   // Save Note (Add or Edit)
   const getCurrentData = () => {
@@ -413,7 +418,7 @@ export default function Leads() {
   const { tenant, user } = useAuth();
   const [, setLocation] = useLocation();
 
-  const { canView, canCreate, canEdit, canDelete } = usePermissions();
+  const { canView, canCreate, canEdit, canDelete, isLoading: permissionsLoading } = usePermissions();
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [dateFilter, setDateFilter] = useState("all");
@@ -634,14 +639,55 @@ export default function Leads() {
 
       const result = await directLeadsApi.getLeads(tenantId!, allFilters);
 
+      console.log("🔍 Leads Query - API Response:", result);
+      console.log("🔍 Leads Query - Response type:", typeof result);
+      console.log("🔍 Leads Query - Has 'data'?", "data" in (result || {}));
+      console.log("🔍 Leads Query - Has 'pagination'?", result && typeof result === "object" && "pagination" in result);
+
       // Handle pagination response
       if (result && typeof result === "object" && "data" in result) {
-        // If API returns paginated response with { data: [], total: number }
-        setTotalItems(result.total || 0);
-        return Array.isArray(result.data) ? result.data : [];
+        const leadsData = Array.isArray(result.data) ? result.data : [];
+        
+        // New format: { data: [], pagination: { total, page, limit, etc. } }
+        if (result.pagination && typeof result.pagination === "object") {
+          let total = result.pagination.total || 0;
+          // If total is 0 but we have data, use data length as fallback
+          if (total === 0 && leadsData.length > 0) {
+            console.warn("🔍 Warning: API returned total=0 but we have", leadsData.length, "leads. Using data length as fallback.");
+            total = leadsData.length;
+          }
+          console.log("🔍 Setting totalItems from pagination:", total, "(from pagination.total:", result.pagination.total, ", data length:", leadsData.length, ")");
+          setTotalItems(total);
+          return leadsData;
+        }
+        // Old format: { data: [], total: number }
+        if ("total" in result && typeof result.total === "number") {
+          let total = result.total || 0;
+          // If total is 0 but we have data, use data length as fallback
+          if (total === 0 && leadsData.length > 0) {
+            console.warn("🔍 Warning: API returned total=0 but we have", leadsData.length, "leads. Using data length as fallback.");
+            total = leadsData.length;
+          }
+          console.log("🔍 Setting totalItems from result.total:", total);
+          setTotalItems(total);
+          return leadsData;
+        }
+        // Just data array in object - use data length
+        console.log("🔍 Setting totalItems from data length:", leadsData.length);
+        setTotalItems(leadsData.length);
+        return leadsData;
       }
 
-      return Array.isArray(result) ? result : [];
+      // Fallback: array response (old format)
+      if (Array.isArray(result)) {
+        console.log("🔍 Setting totalItems from array length:", result.length);
+        setTotalItems(result.length);
+        return result;
+      }
+
+      console.warn("🔍 Unexpected response format:", result);
+      setTotalItems(0);
+      return [];
     },
     refetchOnWindowFocus: true,
     refetchOnMount: true,
@@ -735,7 +781,8 @@ export default function Leads() {
   });
 
   // Check if user has permission to view this page
-  if (!canView("leads")) {
+  // Wait for permissions to load before checking
+  if (!permissionsLoading && !canView("leads")) {
     return (
       <Layout>
         <div className="container mx-auto px-4 py-8">
@@ -746,6 +793,22 @@ export default function Leads() {
             <p className="text-gray-600">
               You don't have permission to view leads.
             </p>
+          </div>
+        </div>
+      </Layout>
+    );
+  }
+  
+  // Show loading state while permissions are being fetched
+  if (permissionsLoading) {
+    return (
+      <Layout>
+        <div className="container mx-auto px-4 py-8">
+          <div className="text-center">
+            <div className="animate-pulse">
+              <div className="h-8 bg-gray-200 rounded w-1/4 mx-auto mb-4"></div>
+              <div className="h-4 bg-gray-200 rounded w-1/3 mx-auto"></div>
+            </div>
           </div>
         </div>
       </Layout>
@@ -1859,6 +1922,15 @@ export default function Leads() {
                                     Edit Lead
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
+                                    onClick={() => {
+                                      setSelectedLeadForFollowUp(lead);
+                                      setFollowUpDialogOpen(true);
+                                    }}
+                                  >
+                                    <Target className="mr-2 h-4 w-4" />
+                                    Add Follow-Up
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
                                     className="text-red-600"
                                     onClick={() => {
                                       setLeadToDelete(lead);
@@ -1935,7 +2007,7 @@ export default function Leads() {
                     variant="outline"
                     size="sm"
                     onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-                    disabled={currentPage === 1}
+                    disabled={currentPage === 1 || totalItems === 0}
                     data-testid="button-previous-page"
                   >
                     Previous
@@ -1944,21 +2016,35 @@ export default function Leads() {
                   <div className="flex items-center space-x-1">
                     {(() => {
                       const totalPages = Math.ceil(totalItems / itemsPerPage);
+                      console.log("🔍 Pagination Debug - totalItems:", totalItems, "itemsPerPage:", itemsPerPage, "totalPages:", totalPages, "currentPage:", currentPage);
+                      
+                      // Show pagination if we have items or if we're on a page > 1
+                      if (totalPages === 0 && totalItems === 0 && currentPage === 1) {
+                        return null; // Don't show pagination if no items and on first page
+                      }
+                      
+                      // Ensure at least 1 page if we have items
+                      const effectiveTotalPages = totalPages > 0 ? totalPages : (totalItems > 0 ? 1 : 0);
+                      
+                      if (effectiveTotalPages === 0) {
+                        return null;
+                      }
+                      
                       const maxVisiblePages = 5;
                       const pages = [];
 
                       for (
                         let i = 0;
-                        i < Math.min(maxVisiblePages, totalPages);
+                        i < Math.min(maxVisiblePages, effectiveTotalPages);
                         i++
                       ) {
                         let pageNumber;
-                        if (totalPages <= maxVisiblePages) {
+                        if (effectiveTotalPages <= maxVisiblePages) {
                           pageNumber = i + 1;
                         } else if (currentPage <= 3) {
                           pageNumber = i + 1;
-                        } else if (currentPage >= totalPages - 2) {
-                          pageNumber = totalPages - 4 + i;
+                        } else if (currentPage >= effectiveTotalPages - 2) {
+                          pageNumber = effectiveTotalPages - 4 + i;
                         } else {
                           pageNumber = currentPage - 2 + i;
                         }
@@ -1985,16 +2071,12 @@ export default function Leads() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() =>
-                      setCurrentPage(
-                        Math.min(
-                          Math.ceil(totalItems / itemsPerPage),
-                          currentPage + 1
-                        )
-                      )
-                    }
+                    onClick={() => {
+                      const totalPages = Math.ceil(totalItems / itemsPerPage);
+                      setCurrentPage(Math.min(totalPages, currentPage + 1));
+                    }}
                     disabled={
-                      currentPage >= Math.ceil(totalItems / itemsPerPage)
+                      totalItems === 0 || currentPage >= Math.ceil(totalItems / itemsPerPage)
                     }
                     data-testid="button-next-page"
                   >
@@ -2097,6 +2179,26 @@ export default function Leads() {
             : undefined
         }
       />
+
+      {/* Follow-Up Dialog */}
+      {selectedLeadForFollowUp && (
+        <CreateFollowUpDialog
+          open={followUpDialogOpen}
+          onOpenChange={(open) => {
+            setFollowUpDialogOpen(open);
+            if (!open) {
+              setSelectedLeadForFollowUp(null);
+            }
+          }}
+          relatedTableName="leads"
+          relatedTableId={selectedLeadForFollowUp.id}
+          relatedEntityName={
+            selectedLeadForFollowUp.name ||
+            `${selectedLeadForFollowUp.firstName || ""} ${selectedLeadForFollowUp.lastName || ""}`.trim() ||
+            selectedLeadForFollowUp.email
+          }
+        />
+      )}
     </Layout>
   );
 }

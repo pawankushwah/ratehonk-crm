@@ -453,6 +453,146 @@ class EmailService {
       return false;
     }
   }
+
+  async sendFollowUpAssignmentEmail(data: {
+    to: string;
+    assignedUserName: string;
+    createdByName: string;
+    followUpTitle: string;
+    followUpDescription?: string;
+    dueDate: string;
+    priority: string;
+    relatedEntityType?: string;
+    relatedEntityId?: number;
+    relatedEntityName?: string;
+    followUpId: number;
+    tenantId: number;
+    previousUserName?: string; // For reassignments
+    isReassignment?: boolean; // Flag to indicate if this is a reassignment
+  }) {
+    try {
+      const baseUrl = getBaseUrl();
+      const followUpUrl = `${baseUrl}/dashboard`;
+      const priorityColors: Record<string, string> = {
+        low: '#6B7280',
+        medium: '#3B82F6',
+        high: '#F59E0B',
+        urgent: '#EF4444'
+      };
+      const priorityColor = priorityColors[data.priority] || '#3B82F6';
+      
+      let relatedEntitySection = '';
+      if (data.relatedEntityType && data.relatedEntityId && data.relatedEntityName) {
+        const entityTypeMap: Record<string, string> = {
+          leads: 'Lead',
+          customers: 'Customer',
+          invoices: 'Invoice',
+          bookings: 'Booking',
+          estimates: 'Estimate',
+          expenses: 'Expense'
+        };
+        const entityTypeLabel = entityTypeMap[data.relatedEntityType] || data.relatedEntityType;
+        relatedEntitySection = `
+          <tr>
+            <td style="padding: 10px 0;">
+              <strong>Related To:</strong> ${entityTypeLabel} - ${data.relatedEntityName}
+            </td>
+          </tr>
+        `;
+      }
+
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+            <h2 style="color: #333; margin-top: 0;">${data.isReassignment ? 'Follow-Up Reassigned' : 'New Follow-Up Assigned'}</h2>
+            <p>Hello ${data.assignedUserName},</p>
+            <p>${data.isReassignment && data.previousUserName 
+              ? `A follow-up has been moved from ${data.previousUserName} to you:` 
+              : 'A new follow-up has been assigned to you:'}</p>
+            ${data.isReassignment && data.previousUserName ? `
+            <p style="background-color: #fff3cd; padding: 10px; border-radius: 4px; border-left: 4px solid #ffc107; margin-top: 10px;">
+              <strong>Note:</strong> This follow-up was previously assigned to ${data.previousUserName} and has now been reassigned to you.
+            </p>
+            ` : ''}
+          </div>
+
+          <div style="background-color: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
+            <table style="width: 100%; border-collapse: collapse;">
+              <tr>
+                <td style="padding: 10px 0;">
+                  <strong>Title:</strong> ${data.followUpTitle}
+                </td>
+              </tr>
+              ${data.followUpDescription ? `
+              <tr>
+                <td style="padding: 10px 0;">
+                  <strong>Description:</strong><br>
+                  <div style="margin-top: 5px; color: #666;">${data.followUpDescription}</div>
+                </td>
+              </tr>
+              ` : ''}
+              <tr>
+                <td style="padding: 10px 0;">
+                  <strong>Due Date:</strong> ${new Date(data.dueDate).toLocaleString()}
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 10px 0;">
+                  <strong>Priority:</strong> 
+                  <span style="background-color: ${priorityColor}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; text-transform: uppercase;">
+                    ${data.priority}
+                  </span>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 10px 0;">
+                  <strong>Assigned By:</strong> ${data.createdByName}
+                </td>
+              </tr>
+              ${relatedEntitySection}
+            </table>
+          </div>
+
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${followUpUrl}" style="background-color: #3B82F6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">
+              View Follow-Up in Dashboard
+            </a>
+          </div>
+
+          <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0; color: #666; font-size: 12px;">
+            <p>This is an automated notification from RateHonk CRM.</p>
+            <p>If you have any questions, please contact your system administrator.</p>
+          </div>
+        </body>
+        </html>
+      `;
+
+      const mailOptions = {
+        from: process.env.EMAIL_FROM || "noreply@ratehonk.com",
+        to: data.to,
+        subject: `New Follow-Up Assigned: ${data.followUpTitle}`,
+        html: html,
+      };
+
+      console.log("📧 Sending follow-up assignment email:", {
+        to: data.to,
+        followUpTitle: data.followUpTitle,
+      });
+
+      const result = await this.transporter.sendMail(mailOptions);
+      console.log("✅ Follow-up assignment email sent:", result.messageId);
+      return true;
+    } catch (error: any) {
+      console.error("❌ Error sending follow-up assignment email:", error);
+      return false;
+    }
+  }
 }
 
 export const emailService = new EmailService();

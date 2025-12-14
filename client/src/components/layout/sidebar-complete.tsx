@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/components/auth/auth-provider";
+import { usePermissions } from "@/hooks/use-permissions";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -485,6 +486,7 @@ export function CompleteSidebar({
   const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
   const [location] = useLocation();
   const { user, tenant, logout } = useAuth();
+  const { canView, isLoading: permissionsLoading } = usePermissions();
 
   // User info with real data and fallbacks
   const userName =
@@ -500,9 +502,30 @@ export function CompleteSidebar({
     (user as any)?.avatar ||
     `https://api.dicebear.com/7.x/initials/svg?seed=${userName}`;
 
-  // Group menu items
+  // Map menu item IDs to permission keys (some menu IDs differ from permission keys)
+  const permissionKeyMap: Record<string, string> = {
+    'supplier-management': 'vendors',
+    'settings': 'dynamic-fields', // Settings menu points to dynamic-fields page
+  };
+
+  // Group menu items and filter by permissions
   const menuGroups = React.useMemo(() => {
-    const items = Object.entries(allMenuItems)
+    // Filter items based on permissions (only show if user has view permission)
+    // While permissions are loading, show all items to prevent flickering
+    const filteredItems = Object.entries(allMenuItems)
+      .filter(([itemId, item]) => {
+        // If permissions are loading, show all items
+        if (permissionsLoading) return true;
+        
+        // Check if user has view permission for this menu item
+        // Map menu item IDs to permission keys (some may differ)
+        const permissionKey = permissionKeyMap[itemId] || itemId;
+        
+        // Check permission - if permission check returns true (including owner/admin), show item
+        const hasPermission = canView(permissionKey);
+        
+        return hasPermission;
+      })
       .map(([itemId, item]) => ({
         id: itemId,
         ...item,
@@ -513,7 +536,7 @@ export function CompleteSidebar({
     const groups: { [key: string]: any[] } = {};
     const singleItems: any[] = [];
 
-    items.forEach((item) => {
+    filteredItems.forEach((item) => {
       if (item.group) {
         if (!groups[item.group]) {
           groups[item.group] = [];
@@ -524,8 +547,11 @@ export function CompleteSidebar({
       }
     });
 
+    // Filter out empty groups
+    const nonEmptyGroups = Object.entries(groups).filter(([_, items]) => items.length > 0);
+
     // Sort groups by the minimum order of items in each group
-    const sortedGroups = Object.entries(groups).sort(([groupA, itemsA], [groupB, itemsB]) => {
+    const sortedGroups = nonEmptyGroups.sort(([groupA, itemsA], [groupB, itemsB]) => {
       const minOrderA = Math.min(...itemsA.map(item => item.order));
       const minOrderB = Math.min(...itemsB.map(item => item.order));
       return minOrderA - minOrderB;
@@ -549,7 +575,7 @@ export function CompleteSidebar({
     allMenuItemsSorted.sort((a, b) => a.order - b.order);
 
     return { groups: Object.fromEntries(sortedGroups), singleItems, allMenuItemsSorted };
-  }, []);
+  }, [canView, permissionsLoading]);
 
   const toggleSidebar = () => {
     setIsCollapsed(!isCollapsed);
