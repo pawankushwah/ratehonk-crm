@@ -54,6 +54,7 @@ import {
   ChevronLeft,
   ChevronDown,
   Phone,
+  Target,
 } from "lucide-react";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useToast } from "@/hooks/use-toast";
@@ -62,6 +63,7 @@ import { directCustomersApi } from "@/lib/direct-customers-api";
 import type { Customer } from "@shared/schema";
 import { Link } from "wouter";
 import { ZoomPhoneEmbed } from "@/components/zoom/zoom-phone-embed";
+import { CreateFollowUpDialog } from "@/components/follow-ups/CreateFollowUpDialog";
 
 import image1 from "../../assets/Nav icon.png";
 import { DateFilter } from "@/components/ui/date-filter";
@@ -147,6 +149,8 @@ export default function Customers() {
   );
   const [isZoomDialogOpen, setIsZoomDialogOpen] = useState(false);
   const [customerToCall, setCustomerToCall] = useState<Customer | null>(null);
+  const [followUpDialogOpen, setFollowUpDialogOpen] = useState(false);
+  const [selectedCustomerForFollowUp, setSelectedCustomerForFollowUp] = useState<Customer | null>(null);
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -802,6 +806,15 @@ export default function Customers() {
                                   Edit Customer
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
+                                  onClick={() => {
+                                    setSelectedCustomerForFollowUp(customer);
+                                    setFollowUpDialogOpen(true);
+                                  }}
+                                >
+                                  <Target className="mr-2 h-4 w-4" />
+                                  Add Follow-Up
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
                                   className="text-red-600"
                                   onClick={() => handleDelete(customer)}
                                 >
@@ -993,6 +1006,25 @@ export default function Customers() {
         customerPhone={customerToCall?.phone || undefined}
         customerName={getDisplayName(customerToCall || ({} as Customer))}
       />
+
+      {/* Follow-Up Dialog */}
+      {selectedCustomerForFollowUp && (
+        <CreateFollowUpDialog
+          open={followUpDialogOpen}
+          onOpenChange={(open) => {
+            setFollowUpDialogOpen(open);
+            if (!open) {
+              setSelectedCustomerForFollowUp(null);
+            }
+          }}
+          relatedTableName="customers"
+          relatedTableId={selectedCustomerForFollowUp.id}
+          relatedEntityName={
+            selectedCustomerForFollowUp.name ||
+            getDisplayName(selectedCustomerForFollowUp)
+          }
+        />
+      )}
     </Layout>
   );
 }

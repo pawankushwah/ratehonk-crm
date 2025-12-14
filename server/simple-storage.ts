@@ -1,5 +1,6 @@
 import bcrypt from "bcrypt";
 import { LeadScoringEngine } from "./leadScoring";
+import { MENU_ITEMS } from "../shared/permissions";
 
 // Use the same database connection as the rest of the app
 import { sql, db } from "./db";
@@ -138,19 +139,16 @@ export class SimpleStorage {
       if (existingOwnerRole) {
         ownerRoleId = existingOwnerRole.id;
       } else {
-        // Create Owner role with full permissions
-        const ownerPermissions = {
-          dashboard: ["view"],
-          customers: ["view", "edit", "create", "delete"],
-          leads: ["view", "edit", "create", "delete"],
-          bookings: ["view", "edit", "create", "delete"],
-          packages: ["view", "edit", "create", "delete"],
-          invoices: ["view", "edit", "create", "delete"],
-          reports: ["view"],
-          settings: ["view", "edit"],
-          users: ["view", "edit", "create", "delete"],
-          roles: ["view", "edit", "create", "delete"],
-        };
+        // Create Owner role with full permissions - get all permissions from MENU_ITEMS
+        // This includes all dashboard widgets and page permissions
+        const ownerPermissions: Record<string, string[]> = {};
+        
+        // Assign all permissions from MENU_ITEMS (includes all dashboard widgets)
+        Object.entries(MENU_ITEMS).forEach(([key, config]) => {
+          ownerPermissions[key] = [...config.actions];
+        });
+        
+        console.log(`✅ Owner role permissions generated:`, Object.keys(ownerPermissions).length, "permission keys");
 
         const [ownerRole] = await sql`
           INSERT INTO roles (tenant_id, name, description, permissions, is_active, is_default, created_at, updated_at)
@@ -1404,12 +1402,13 @@ export class SimpleStorage {
       let whereClauses = sql`l.tenant_id = ${tenantId}`;
 
       // Filter by allowed user IDs if provided (role-based hierarchy filtering)
-      // Show leads created by OR assigned to users in the role hierarchy
+      // Show leads assigned to users in the role hierarchy
       if (teamUserIds && teamUserIds.length > 0) {
-        whereClauses = sql`${whereClauses} AND (
-          l.created_by = ANY(${sql.array(teamUserIds)}) 
-          OR l.assigned_user_id = ANY(${sql.array(teamUserIds)})
-        )`;
+        // Ensure all IDs are integers
+        const userIdsAsInts = teamUserIds.map(id => Number(id)).filter(id => !isNaN(id));
+        if (userIdsAsInts.length > 0) {
+          whereClauses = sql`${whereClauses} AND l.assigned_user_id = ANY(${sql.array(userIdsAsInts)}::int[])`;
+        }
       }
 
       if (search) {
@@ -1429,7 +1428,10 @@ export class SimpleStorage {
       }
 
       if (type) {
-        whereClauses = sql`${whereClauses} AND l.lead_type_id = ${type}`; // adjust mapping
+        const typeId = parseInt(String(type), 10);
+        if (!isNaN(typeId)) {
+          whereClauses = sql`${whereClauses} AND l.lead_type_id = ${typeId}`;
+        }
       }
 
       if (source) {
@@ -1473,6 +1475,16 @@ export class SimpleStorage {
         ? sortBy
         : "created_at";
       const order = sortOrder.toLowerCase() === "asc" ? sql`ASC` : sql`DESC`;
+
+      // Get total count for pagination
+      const [countResult] = await sql`
+        SELECT COUNT(*)::int as total
+        FROM leads l
+        LEFT JOIN lead_types lt ON l.lead_type_id = lt.id
+        LEFT JOIN users assigned_user ON l.assigned_user_id = assigned_user.id
+        WHERE ${whereClauses}
+      `;
+      const total = countResult?.total || 0;
 
       const leadResults = await sql`
         SELECT 
@@ -1541,7 +1553,10 @@ export class SimpleStorage {
         }),
       );
 
-      return leadsWithDynamicData;
+      return {
+        data: leadsWithDynamicData,
+        total: total,
+      };
     } catch (error) {
       console.error("❌ Error fetching leads:", error);
       throw error;
@@ -2425,9 +2440,10 @@ async getAllLeadsByTenant(
         `;
         
         for (const child of childRoles) {
-          if (!allChildRoleIds.includes(child.id)) {
-            allChildRoleIds.push(child.id);
-            await getChildRolesRecursive(child.id); // Recursively get their children
+          const childId = Number(child.id);
+          if (!isNaN(childId) && !allChildRoleIds.includes(childId)) {
+            allChildRoleIds.push(childId);
+            await getChildRolesRecursive(childId); // Recursively get their children
           }
         }
       };
@@ -2449,13 +2465,24 @@ async getAllLeadsByTenant(
 
       console.log(`🔍 Getting users for role hierarchy: roleId=${roleId}, childRoles=${childRoleIds.length}, totalRoles=${allRoleIds.length}`);
 
+      // Ensure all role IDs are integers
+      const roleIdsAsInts = allRoleIds.map(id => Number(id)).filter(id => !isNaN(id));
+      
+      if (roleIdsAsInts.length === 0) {
+        console.log("⚠️ No valid role IDs found");
+        return [];
+      }
+
       // Get all active users with these role IDs
-      const users = await sql`
+      // PostgreSQL requires explicit integer array type casting
+      // Construct array literal with explicit ::int[] cast
+      const roleIdsString = roleIdsAsInts.join(', ');
+      const users = await sql.unsafe(`
         SELECT id FROM users
-        WHERE role_id = ANY(${sql.array(allRoleIds)})
+        WHERE role_id = ANY(ARRAY[${roleIdsString}]::int[])
           AND tenant_id = ${tenantId}
           AND is_active = true
-      `;
+      `);
 
       const userIds = users.map((u: any) => u.id);
       console.log(`✅ Found ${userIds.length} users in role hierarchy`);
@@ -7606,6 +7633,549 @@ RateHonk CRM Team`,
     }
   }
 
+  // ==================== General Follow-Ups Methods ====================
+
+  // Get assignable users for follow-up (parent + child users based on role hierarchy)
+  async getAssignableUsersForFollowUp(userId: number, tenantId: number) {
+    try {
+      // Get current user's role
+      const [user] = await sql`
+        SELECT id, role_id, reporting_user_id
+        FROM users
+        WHERE id = ${userId} AND tenant_id = ${tenantId} AND is_active = true
+      `;
+
+      if (!user || !user.role_id) {
+        return [];
+      }
+
+      const assignableUsers: any[] = [];
+      
+      // Add self
+      const [selfUser] = await sql`
+        SELECT u.id, u.email, u.first_name, u.last_name, r.name as role_name
+        FROM users u
+        LEFT JOIN roles r ON u.role_id = r.id
+        WHERE u.id = ${userId} AND u.tenant_id = ${tenantId} AND u.is_active = true
+      `;
+      if (selfUser) {
+        assignableUsers.push({
+          id: selfUser.id,
+          name: `${selfUser.first_name || ''} ${selfUser.last_name || ''}`.trim() || selfUser.email,
+          email: selfUser.email,
+          role: selfUser.role_name,
+          relationship: 'self'
+        });
+      }
+
+      // Get parent user (reporting user)
+      if (user.reporting_user_id) {
+        const [parentUser] = await sql`
+          SELECT u.id, u.email, u.first_name, u.last_name, r.name as role_name
+          FROM users u
+          LEFT JOIN roles r ON u.role_id = r.id
+          WHERE u.id = ${user.reporting_user_id} AND u.tenant_id = ${tenantId} AND u.is_active = true
+        `;
+        if (parentUser) {
+          assignableUsers.push({
+            id: parentUser.id,
+            name: `${parentUser.first_name || ''} ${parentUser.last_name || ''}`.trim() || parentUser.email,
+            email: parentUser.email,
+            role: parentUser.role_name,
+            relationship: 'parent'
+          });
+        }
+      }
+
+      // Get child users (users who report to current user)
+      const childUsers = await sql`
+        SELECT u.id, u.email, u.first_name, u.last_name, r.name as role_name
+        FROM users u
+        LEFT JOIN roles r ON u.role_id = r.id
+        WHERE u.reporting_user_id = ${userId} AND u.tenant_id = ${tenantId} AND u.is_active = true
+      `;
+      
+      for (const child of childUsers) {
+        assignableUsers.push({
+          id: child.id,
+          name: `${child.first_name || ''} ${child.last_name || ''}`.trim() || child.email,
+          email: child.email,
+          role: child.role_name,
+          relationship: 'child'
+        });
+      }
+
+      return assignableUsers;
+    } catch (error) {
+      console.error("Error getting assignable users for follow-up:", error);
+      throw error;
+    }
+  }
+
+  // Get general follow-ups by tenant with filters
+  async getGeneralFollowUpsByTenant(tenantId: number, filters?: {
+    assignedUserId?: number;
+    createdByUserId?: number;
+    userId?: number; // For non-owners: show follow-ups assigned to OR created by this user
+    status?: string;
+    excludeStatus?: string; // Exclude follow-ups with this status
+    priority?: string;
+    relatedTableName?: string;
+    relatedTableId?: number;
+    limit?: number;
+    offset?: number;
+    sort?: string;
+  }) {
+    try {
+      let whereClauses = sql`f.tenant_id = ${tenantId}`;
+      
+      // If userId is provided, show follow-ups assigned to OR created by this user
+      if (filters?.userId) {
+        whereClauses = sql`${whereClauses} AND (f.assigned_user_id = ${filters.userId} OR f.created_by_user_id = ${filters.userId})`;
+      } else {
+        // Otherwise use specific filters
+        if (filters?.assignedUserId) {
+          whereClauses = sql`${whereClauses} AND f.assigned_user_id = ${filters.assignedUserId}`;
+        }
+        
+        if (filters?.createdByUserId) {
+          whereClauses = sql`${whereClauses} AND f.created_by_user_id = ${filters.createdByUserId}`;
+        }
+      }
+      
+      if (filters?.status) {
+        whereClauses = sql`${whereClauses} AND f.status = ${filters.status}`;
+      }
+      
+      if (filters?.excludeStatus) {
+        whereClauses = sql`${whereClauses} AND f.status != ${filters.excludeStatus}`;
+      }
+      
+      if (filters?.priority) {
+        whereClauses = sql`${whereClauses} AND f.priority = ${filters.priority}`;
+      }
+      
+      if (filters?.relatedTableName) {
+        whereClauses = sql`${whereClauses} AND f.related_table_name = ${filters.relatedTableName}`;
+      }
+      
+      if (filters?.relatedTableId) {
+        whereClauses = sql`${whereClauses} AND f.related_table_id = ${filters.relatedTableId}`;
+      }
+
+      const sortOrder = filters?.sort === 'asc' ? sql`ASC` : sql`DESC`;
+      const limitNum = filters?.limit || 50;
+      const offsetNum = filters?.offset || 0;
+
+      const followUps = await sql`
+        SELECT 
+          f.*,
+          assigned_user.email as assigned_user_email,
+          assigned_user.first_name as assigned_user_first_name,
+          assigned_user.last_name as assigned_user_last_name,
+          created_by.email as created_by_email,
+          created_by.first_name as created_by_first_name,
+          created_by.last_name as created_by_last_name,
+          previous_user.email as previous_user_email,
+          previous_user.first_name as previous_user_first_name,
+          previous_user.last_name as previous_user_last_name
+        FROM general_follow_ups f
+        LEFT JOIN users assigned_user ON f.assigned_user_id = assigned_user.id
+        LEFT JOIN users created_by ON f.created_by_user_id = created_by.id
+        LEFT JOIN users previous_user ON f.previous_assigned_user_id = previous_user.id
+        WHERE ${whereClauses}
+        ORDER BY f.due_date ${sortOrder}
+        LIMIT ${limitNum}
+        OFFSET ${offsetNum}
+      `;
+
+      const totalResult = await sql`
+        SELECT COUNT(*) as total
+        FROM general_follow_ups f
+        WHERE ${whereClauses}
+      `;
+      const total = Number(totalResult[0]?.total || 0);
+
+      return {
+        data: followUps.map((f: any) => ({
+          id: f.id,
+          tenantId: f.tenant_id,
+          title: f.title,
+          description: f.description,
+          assignedUserId: f.assigned_user_id,
+          assignedUserName: f.assigned_user_first_name && f.assigned_user_last_name
+            ? `${f.assigned_user_first_name} ${f.assigned_user_last_name}`
+            : f.assigned_user_email,
+          assignedUserEmail: f.assigned_user_email,
+          createdByUserId: f.created_by_user_id,
+          createdByName: f.created_by_first_name && f.created_by_last_name
+            ? `${f.created_by_first_name} ${f.created_by_last_name}`
+            : f.created_by_email,
+          createdByEmail: f.created_by_email,
+          previousAssignedUserId: f.previous_assigned_user_id,
+          previousAssignedUserName: f.previous_user_first_name && f.previous_user_last_name
+            ? `${f.previous_user_first_name} ${f.previous_user_last_name}`
+            : f.previous_user_email,
+          previousAssignedUserEmail: f.previous_user_email,
+          priority: f.priority,
+          status: f.status,
+          dueDate: f.due_date,
+          relatedTableName: f.related_table_name,
+          relatedTableId: f.related_table_id,
+          tags: f.tags || [],
+          reminderDate: f.reminder_date,
+          completedAt: f.completed_at,
+          completionNotes: f.completion_notes,
+          emailSent: f.email_sent,
+          emailSentAt: f.email_sent_at,
+          createdAt: f.created_at,
+          updatedAt: f.updated_at,
+        })),
+        total,
+      };
+    } catch (error) {
+      console.error("Error fetching general follow-ups:", error);
+      throw error;
+    }
+  }
+
+  // Check if follow-up already exists for an entity (excluding completed/cancelled)
+  async checkFollowUpExists(
+    tenantId: number,
+    relatedTableName: string,
+    relatedTableId: number
+  ): Promise<boolean> {
+    try {
+      const [existing] = await sql`
+        SELECT id FROM general_follow_ups
+        WHERE tenant_id = ${tenantId}
+          AND related_table_name = ${relatedTableName}
+          AND related_table_id = ${relatedTableId}
+          AND status NOT IN ('completed', 'cancelled')
+        LIMIT 1
+      `;
+      return !!existing;
+    } catch (error) {
+      console.error("Error checking follow-up existence:", error);
+      throw error;
+    }
+  }
+
+  // Create general follow-up
+  async createGeneralFollowUp(followUpData: {
+    tenantId: number;
+    title: string;
+    description?: string;
+    assignedUserId?: number;
+    createdByUserId: number;
+    priority?: string;
+    status?: string;
+    dueDate: string;
+    relatedTableName?: string;
+    relatedTableId?: number;
+    tags?: string[];
+    reminderDate?: string;
+  }) {
+    try {
+      const [newFollowUp] = await sql`
+        INSERT INTO general_follow_ups (
+          tenant_id,
+          title,
+          description,
+          assigned_user_id,
+          created_by_user_id,
+          priority,
+          status,
+          due_date,
+          related_table_name,
+          related_table_id,
+          tags,
+          reminder_date
+        ) VALUES (
+          ${followUpData.tenantId},
+          ${followUpData.title},
+          ${followUpData.description || null},
+          ${followUpData.assignedUserId || null},
+          ${followUpData.createdByUserId},
+          ${followUpData.priority || 'medium'},
+          ${followUpData.status || 'pending'},
+          ${followUpData.dueDate},
+          ${followUpData.relatedTableName || null},
+          ${followUpData.relatedTableId || null},
+          ${sql.array(followUpData.tags || [])},
+          ${followUpData.reminderDate || null}
+        )
+        RETURNING *
+      `;
+
+      // Get assigned user and created by user details
+      const [assignedUser] = followUpData.assignedUserId ? await sql`
+        SELECT email, first_name, last_name FROM users WHERE id = ${followUpData.assignedUserId}
+      ` : [null];
+
+      const [createdBy] = await sql`
+        SELECT email, first_name, last_name FROM users WHERE id = ${followUpData.createdByUserId}
+      `;
+
+      return {
+        id: newFollowUp.id,
+        tenantId: newFollowUp.tenant_id,
+        title: newFollowUp.title,
+        description: newFollowUp.description,
+        assignedUserId: newFollowUp.assigned_user_id,
+        assignedUserName: assignedUser ? `${assignedUser.first_name || ''} ${assignedUser.last_name || ''}`.trim() : null,
+        assignedUserEmail: assignedUser?.email || null,
+        createdByUserId: newFollowUp.created_by_user_id,
+        createdByName: `${createdBy.first_name || ''} ${createdBy.last_name || ''}`.trim(),
+        createdByEmail: createdBy.email,
+        priority: newFollowUp.priority,
+        status: newFollowUp.status,
+        dueDate: newFollowUp.due_date,
+        relatedTableName: newFollowUp.related_table_name,
+        relatedTableId: newFollowUp.related_table_id,
+        tags: newFollowUp.tags || [],
+        reminderDate: newFollowUp.reminder_date,
+        emailSent: newFollowUp.email_sent,
+        emailSentAt: newFollowUp.email_sent_at,
+        createdAt: newFollowUp.created_at,
+        updatedAt: newFollowUp.updated_at,
+      };
+    } catch (error) {
+      console.error("Error creating general follow-up:", error);
+      throw error;
+    }
+  }
+
+  // Update general follow-up
+  async updateGeneralFollowUp(followUpId: number, updateData: {
+    title?: string;
+    description?: string;
+    assignedUserId?: number;
+    priority?: string;
+    status?: string;
+    dueDate?: string;
+    relatedTableName?: string;
+    relatedTableId?: number;
+    tags?: string[];
+    reminderDate?: string;
+    completionNotes?: string;
+  }) {
+    try {
+      // Get current follow-up first
+      const [current] = await sql`
+        SELECT * FROM general_follow_ups WHERE id = ${followUpId}
+      `;
+
+      if (!current) {
+        return null;
+      }
+
+      // Helper function to convert date to ISO string
+      const toISOString = (date: any): string | null => {
+        if (!date) return null;
+        if (date instanceof Date) return date.toISOString();
+        if (typeof date === 'string') return date;
+        return new Date(date).toISOString();
+      };
+
+      // Prepare update values
+      const title = updateData.title !== undefined ? updateData.title : current.title;
+      const description = updateData.description !== undefined ? updateData.description : current.description;
+      const assignedUserId = updateData.assignedUserId !== undefined ? updateData.assignedUserId : current.assigned_user_id;
+      const priority = updateData.priority !== undefined ? updateData.priority : current.priority;
+      const status = updateData.status !== undefined ? updateData.status : current.status;
+      const dueDate = updateData.dueDate !== undefined ? updateData.dueDate : toISOString(current.due_date);
+      const relatedTableName = updateData.relatedTableName !== undefined ? updateData.relatedTableName : current.related_table_name;
+      const relatedTableId = updateData.relatedTableId !== undefined ? updateData.relatedTableId : current.related_table_id;
+      const tags = updateData.tags !== undefined ? updateData.tags : current.tags;
+      const reminderDate = updateData.reminderDate !== undefined ? updateData.reminderDate : toISOString(current.reminder_date);
+      const completionNotes = updateData.completionNotes !== undefined ? updateData.completionNotes : current.completion_notes;
+
+      // Handle completed_at based on status
+      let completedAt: string | null = null;
+      if (updateData.status !== undefined) {
+        if (updateData.status === 'completed' && !current.completed_at) {
+          completedAt = new Date().toISOString();
+        } else if (updateData.status !== 'completed') {
+          completedAt = null;
+        } else {
+          // Keep existing completed_at if status is still completed
+          completedAt = toISOString(current.completed_at);
+        }
+      } else {
+        // If status is not being updated, keep existing completed_at
+        completedAt = toISOString(current.completed_at);
+      }
+
+      const [updatedFollowUp] = await sql`
+        UPDATE general_follow_ups 
+        SET 
+          title = ${title},
+          description = ${description},
+          assigned_user_id = ${assignedUserId},
+          priority = ${priority},
+          status = ${status},
+          due_date = ${dueDate}::timestamp,
+          related_table_name = ${relatedTableName},
+          related_table_id = ${relatedTableId},
+          tags = ${sql.array(tags || [])},
+          reminder_date = ${reminderDate ? sql`${reminderDate}::timestamp` : sql`NULL`},
+          completed_at = ${completedAt ? sql`${completedAt}::timestamp` : sql`NULL`},
+          completion_notes = ${completionNotes},
+          updated_at = NOW()
+        WHERE id = ${followUpId}
+        RETURNING *
+      `;
+
+      return updatedFollowUp || null;
+    } catch (error) {
+      console.error("Error updating general follow-up:", error);
+      throw error;
+    }
+  }
+
+  // Delete general follow-up
+  async deleteGeneralFollowUp(followUpId: number) {
+    try {
+      await sql`
+        DELETE FROM general_follow_ups
+        WHERE id = ${followUpId}
+      `;
+      return true;
+    } catch (error) {
+      console.error("Error deleting general follow-up:", error);
+      throw error;
+    }
+  }
+
+  // Mark follow-up as complete
+  async markFollowUpComplete(followUpId: number, completionNotes?: string) {
+    try {
+      const [updatedFollowUp] = await sql`
+        UPDATE general_follow_ups 
+        SET 
+          status = 'completed',
+          completed_at = NOW(),
+          completion_notes = COALESCE(${completionNotes}, completion_notes)
+        WHERE id = ${followUpId}
+        RETURNING *
+      `;
+
+      return updatedFollowUp;
+    } catch (error) {
+      console.error("Error marking follow-up as complete:", error);
+      throw error;
+    }
+  }
+
+  // Reassign follow-up
+  async reassignFollowUp(followUpId: number, newUserId: number) {
+    try {
+      // First get the current assigned_user_id before updating
+      const [currentFollowUp] = await sql`
+        SELECT assigned_user_id FROM general_follow_ups WHERE id = ${followUpId}
+      `;
+      
+      const previousUserId = currentFollowUp?.assigned_user_id || null;
+      
+      const [updatedFollowUp] = await sql`
+        UPDATE general_follow_ups 
+        SET 
+          previous_assigned_user_id = ${previousUserId},
+          assigned_user_id = ${newUserId},
+          email_sent = false,
+          email_sent_at = NULL
+        WHERE id = ${followUpId}
+        RETURNING *
+      `;
+
+      return updatedFollowUp;
+    } catch (error) {
+      console.error("Error reassigning follow-up:", error);
+      throw error;
+    }
+  }
+
+  // Get related entity details
+  async getRelatedEntityDetails(tableName: string, tableId: number) {
+    try {
+      switch (tableName) {
+        case 'leads':
+          const [lead] = await sql`
+            SELECT id, first_name, last_name, email, name
+            FROM leads
+            WHERE id = ${tableId}
+          `;
+          return lead ? {
+            id: lead.id,
+            name: lead.name || `${lead.first_name || ''} ${lead.last_name || ''}`.trim() || lead.email,
+            email: lead.email,
+            type: 'lead'
+          } : null;
+
+        case 'customers':
+          const [customer] = await sql`
+            SELECT id, first_name, last_name, email, name
+            FROM customers
+            WHERE id = ${tableId}
+          `;
+          return customer ? {
+            id: customer.id,
+            name: customer.name || `${customer.first_name || ''} ${customer.last_name || ''}`.trim() || customer.email,
+            email: customer.email,
+            type: 'customer'
+          } : null;
+
+        case 'invoices':
+          const [invoice] = await sql`
+            SELECT id, invoice_number, customer_id
+            FROM invoices
+            WHERE id = ${tableId}
+          `;
+          return invoice ? {
+            id: invoice.id,
+            name: `Invoice #${invoice.invoice_number}`,
+            type: 'invoice'
+          } : null;
+
+        case 'bookings':
+          const [booking] = await sql`
+            SELECT id, booking_number, customer_id
+            FROM bookings
+            WHERE id = ${tableId}
+          `;
+          return booking ? {
+            id: booking.id,
+            name: `Booking #${booking.booking_number}`,
+            type: 'booking'
+          } : null;
+
+        default:
+          return null;
+      }
+    } catch (error) {
+      console.error("Error getting related entity details:", error);
+      return null;
+    }
+  }
+
+  // Update email sent status
+  async updateFollowUpEmailSent(followUpId: number) {
+    try {
+      await sql`
+        UPDATE general_follow_ups 
+        SET 
+          email_sent = true,
+          email_sent_at = NOW()
+        WHERE id = ${followUpId}
+      `;
+      return true;
+    } catch (error) {
+      console.error("Error updating follow-up email sent status:", error);
+      throw error;
+    }
+  }
+
   // Email A/B Testing methods
   async createABTest(testData: any) {
     try {
@@ -11071,21 +11641,31 @@ async getDashboardMetrics(
 
     // OTHER METRICS
    
-    // Bookings - filter by team if provided
-    let bookingsFilter = sql`tenant_id = ${tenantId}`;
+    // Invoices - filter by team if provided (replacing bookings count with invoices)
+    let invoicesFilter = sql`tenant_id = ${tenantId}`;
     if (teamUserIds && teamUserIds.length > 0) {
-      bookingsFilter = sql`${bookingsFilter} AND (created_by = ANY(${sql.array(teamUserIds)}) OR assigned_user_id = ANY(${sql.array(teamUserIds)}))`;
+      // Ensure all IDs are integers
+      const userIdsAsInts = teamUserIds.map(id => Number(id)).filter(id => !isNaN(id));
+      if (userIdsAsInts.length > 0) {
+        // Invoices don't have assigned_user_id, so we'll filter by customer's assigned user if needed
+        // For now, just filter by tenant_id
+        invoicesFilter = sql`tenant_id = ${tenantId}`;
+      }
     }
-    const [bookingsResult] = await sql`
-      SELECT COUNT(*) as active_bookings
-      FROM bookings 
-      WHERE ${bookingsFilter} AND ${dateFilter}
+    const [invoicesResult] = await sql`
+      SELECT COUNT(*) as total_invoices
+      FROM invoices 
+      WHERE ${invoicesFilter} AND ${dateFilter} AND status NOT IN ('void', 'cancelled')
     `;
 
     // Customers - filter by team if provided
     let customersFilter = sql`tenant_id = ${tenantId}`;
     if (teamUserIds && teamUserIds.length > 0) {
-      customersFilter = sql`${customersFilter} AND (created_by = ANY(${sql.array(teamUserIds)}) OR assigned_user_id = ANY(${sql.array(teamUserIds)}))`;
+      // Ensure all IDs are integers
+      const userIdsAsInts = teamUserIds.map(id => Number(id)).filter(id => !isNaN(id));
+      if (userIdsAsInts.length > 0) {
+        customersFilter = sql`${customersFilter} AND assigned_user_id = ANY(${sql.array(userIdsAsInts)}::int[])`;
+      }
     }
     const [customersResult] = await sql`
       SELECT COUNT(*) as customers
@@ -11093,10 +11673,14 @@ async getDashboardMetrics(
       WHERE ${customersFilter} AND ${dateFilter}
     `;
 
-    // Leads - filter by team if provided
+    // Leads - filter by team if provided (role-based hierarchy filtering)
     let leadsFilter = sql`tenant_id = ${tenantId}`;
     if (teamUserIds && teamUserIds.length > 0) {
-      leadsFilter = sql`${leadsFilter} AND assigned_user_id = ANY(${sql.array(teamUserIds)})`;
+      // Ensure all IDs are integers
+      const userIdsAsInts = teamUserIds.map(id => Number(id)).filter(id => !isNaN(id));
+      if (userIdsAsInts.length > 0) {
+        leadsFilter = sql`${leadsFilter} AND assigned_user_id = ANY(${sql.array(userIdsAsInts)}::int[])`;
+      }
     }
     const [leadsResult] = await sql`
       SELECT COUNT(*) as leads
@@ -11122,10 +11706,14 @@ async getDashboardMetrics(
       LIMIT 6
     `;
 
-    // Leads chart data - filter by team if provided
+    // Leads chart data - filter by team if provided (role-based hierarchy filtering)
     let leadsChartFilter = sql`tenant_id = ${tenantId} AND created_at >= NOW() - INTERVAL '6 months'`;
     if (teamUserIds && teamUserIds.length > 0) {
-      leadsChartFilter = sql`${leadsChartFilter} AND assigned_user_id = ANY(${sql.array(teamUserIds)})`;
+      // Ensure all IDs are integers
+      const userIdsAsInts = teamUserIds.map(id => Number(id)).filter(id => !isNaN(id));
+      if (userIdsAsInts.length > 0) {
+        leadsChartFilter = sql`${leadsChartFilter} AND assigned_user_id = ANY(${sql.array(userIdsAsInts)}::int[])`;
+      }
     }
     const leadsData = await sql`
       SELECT 
@@ -11153,7 +11741,7 @@ async getDashboardMetrics(
 
     const metrics = {
       revenue: parseFloat(revenueResult.revenue) || 0,
-      activeBookings: parseInt(bookingsResult.active_bookings) || 0,
+      activeBookings: parseInt(invoicesResult.total_invoices) || 0, // Changed to invoice count
       customers: parseInt(customersResult.customers) || 0,
       leads: parseInt(leadsResult.leads) || 0,
     };

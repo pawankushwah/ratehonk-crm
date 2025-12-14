@@ -101,17 +101,32 @@ function UsersPageContent() {
 
   // Filter users who can be reporting users (only users with the parent role of the selected role)
   const availableReportingUsers = useMemo(() => {
-    if (!selectedRole || !users.length) return [];
+    if (!selectedRole || !users.length) {
+      console.log("🔍 No selectedRole or users:", { selectedRole, usersLength: users.length });
+      return [];
+    }
+    
+    console.log("🔍 Selected role:", selectedRole);
     
     // If selected role has no parent role, no reporting users available
-    if (!selectedRole.parentRoleId) return [];
+    if (!selectedRole.parentRoleId) {
+      console.log("⚠️ Selected role has no parentRoleId:", selectedRole.name);
+      return [];
+    }
+    
+    console.log("🔍 Looking for users with parent role ID:", selectedRole.parentRoleId);
     
     // Filter users to only show those with the parent role
     const filteredUsers = users.filter((user: User) => {
       if (!user.roleId) return false;
-      // User must have the exact parent role ID
-      return user.roleId === selectedRole.parentRoleId && user.isActive;
+      const matches = user.roleId === selectedRole.parentRoleId && user.isActive;
+      if (matches) {
+        console.log("✅ Found matching user:", user.firstName, user.lastName, "roleId:", user.roleId);
+      }
+      return matches;
     });
+
+    console.log("🔍 Filtered users count:", filteredUsers.length);
 
     // If editing a user, include their current reporting user even if they don't meet criteria
     if (selectedUser && selectedUser.reportingUserId) {
@@ -413,22 +428,24 @@ function UsersPageContent() {
           <>
             <div className="h-8 w-0.5 bg-gray-300 mx-auto"></div>
             {/* Container for horizontal line and children */}
-            <div className="relative flex justify-center" style={{ 
-              width: `${Math.max(400, user.children.length * 280 + (user.children.length - 1) * 48 + 100)}px` 
-            }}>
-              {/* Horizontal connector line */}
-              <div className="absolute top-0 left-0 right-0 h-0.5 bg-gray-300"></div>
-              
-              {/* Children nodes */}
-              <div className="flex items-start justify-center gap-12 pt-2">
-                {user.children.map((child, childIndex) => (
-                  <div key={child.id} className="flex flex-col items-center flex-shrink-0">
-                    {/* Vertical line up from child to horizontal line */}
-                    <div className="h-8 w-0.5 bg-gray-300"></div>
-                    {/* Render child node */}
-                    {renderUserHierarchyNode(child, level + 1, childIndex, user.children.length)}
-                  </div>
-                ))}
+            <div className="relative flex justify-center w-full overflow-x-auto py-4">
+              <div className="relative flex justify-center" style={{ 
+                minWidth: `${Math.max(600, user.children.length * 320 + (user.children.length - 1) * 80)}px` 
+              }}>
+                {/* Horizontal connector line */}
+                <div className="absolute top-0 left-0 right-0 h-0.5 bg-gray-300"></div>
+                
+                {/* Children nodes */}
+                <div className="flex items-start justify-center gap-20 pt-2">
+                  {user.children.map((child, childIndex) => (
+                    <div key={child.id} className="flex flex-col items-center flex-shrink-0">
+                      {/* Vertical line up from child to horizontal line */}
+                      <div className="h-8 w-0.5 bg-gray-300"></div>
+                      {/* Render child node */}
+                      {renderUserHierarchyNode(child, level + 1, childIndex, user.children.length)}
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           </>
@@ -559,7 +576,7 @@ function UsersPageContent() {
                 </Select>
               </div>
 
-              {formData.roleId && availableReportingUsers.length > 0 && (
+              {formData.roleId && (
                 <div>
                   <Label htmlFor="reportingUser">Reporting User (Optional)</Label>
                   <Select 
@@ -574,15 +591,25 @@ function UsersPageContent() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">None</SelectItem>
-                      {availableReportingUsers.map((user: User) => (
-                        <SelectItem key={user.id} value={user.id.toString()}>
-                          {user.firstName} {user.lastName} ({user.roleName || user.role})
+                      {availableReportingUsers.length > 0 ? (
+                        availableReportingUsers.map((user: User) => (
+                          <SelectItem key={user.id} value={user.id.toString()}>
+                            {user.firstName} {user.lastName} ({user.roleName || user.role})
+                          </SelectItem>
+                        ))
+                      ) : (
+                        <SelectItem value="no-users" disabled>
+                          {selectedRole?.parentRoleId 
+                            ? "No users found with parent role" 
+                            : "No parent role configured for this role"}
                         </SelectItem>
-                      ))}
+                      )}
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-gray-500 mt-1">
-                    Select a user who will be this user's manager or supervisor
+                    {selectedRole?.parentRoleId 
+                      ? `Select a user with the parent role (${roles.find((r: Role) => r.id === selectedRole.parentRoleId)?.name || 'Unknown'})`
+                      : "This role has no parent role configured. Set a parent role in Role Management to enable reporting user selection."}
                   </p>
                 </div>
               )}
@@ -837,38 +864,38 @@ function UsersPageContent() {
 
         {/* Hierarchy View Tab */}
         <TabsContent value="hierarchy" className="mt-0">
-            <Card>
-              <CardHeader>
-                <CardTitle>User Hierarchy</CardTitle>
-                <CardDescription>
-                  Visual representation of user hierarchy based on reporting relationships
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="p-0">
-                {users.length === 0 ? (
-                  <div className="text-center py-12 px-6">
-                    <Users className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                    <h3 className="text-lg font-semibold text-gray-900 mb-2">No users found</h3>
-                    <p className="text-gray-600 mb-4">Create your first user to see the hierarchy.</p>
-                    <Button onClick={() => setIsCreateDialogOpen(true)}>
-                      <Plus className="h-4 w-4 mr-2" />
-                      Create User
-                    </Button>
+          <Card>
+            <CardHeader>
+              <CardTitle>User Hierarchy</CardTitle>
+              <CardDescription>
+                Visual representation of user hierarchy based on reporting relationships
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-0">
+              {users.length === 0 ? (
+                <div className="text-center py-12 px-6">
+                  <Users className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                  <h3 className="text-lg font-semibold text-gray-900 mb-2">No users found</h3>
+                  <p className="text-gray-600 mb-4">Create your first user to see the hierarchy.</p>
+                  <Button onClick={() => setIsCreateDialogOpen(true)}>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Create User
+                  </Button>
+                </div>
+              ) : (
+                <div className="w-full overflow-x-auto overflow-y-auto" style={{ maxHeight: 'calc(100vh - 400px)' }}>
+                  <div className="flex flex-col items-center justify-start min-w-max py-8 px-8">
+                    {buildUserHierarchy().map((userNode, index) => (
+                      <div key={userNode.id} className="mb-8">
+                        {renderUserHierarchyNode(userNode, 0, index, buildUserHierarchy().length)}
+                      </div>
+                    ))}
                   </div>
-                ) : (
-                  <div className="relative py-12 overflow-x-auto w-full">
-                    <div className="flex justify-center items-start px-12 min-w-full">
-                      {buildUserHierarchy().map((userNode, index) => 
-                        <div key={userNode.id} className="group flex-shrink-0">
-                          {renderUserHierarchyNode(userNode, 0, index, buildUserHierarchy().length)}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
         </Tabs>
     </div>
   );

@@ -148,9 +148,18 @@ export const directLeadsApi = {
         return createMockLeads(tenantId);
       }
 
-      const leads = await response.json();
-      console.log("🔍 LEADS API: Got", leads.length, "real leads from API");
-      return leads;
+      const responseData = await response.json();
+      console.log("🔍 LEADS API: Response structure:", responseData);
+      
+      // Handle new paginated response format: { data: [], pagination: {} }
+      if (responseData && typeof responseData === "object" && "data" in responseData) {
+        console.log("🔍 LEADS API: Got paginated response -", responseData.data?.length || 0, "leads, total:", responseData.pagination?.total || 0);
+        return responseData; // Return full response with pagination
+      }
+      
+      // Fallback for old format (array)
+      console.log("🔍 LEADS API: Got", Array.isArray(responseData) ? responseData.length : 0, "leads from API (old format)");
+      return responseData;
     } catch (error) {
       console.error("🔍 LEADS API: Error:", error);
       console.log("🔍 LEADS API: Fallback to mock data");

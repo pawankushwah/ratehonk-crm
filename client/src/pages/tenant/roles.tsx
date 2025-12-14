@@ -206,7 +206,10 @@ function RolesPageContent() {
         body: JSON.stringify(roleData)
       }).then(res => res.json()),
     onSuccess: () => {
+      // Invalidate and refetch roles list
+      queryClient.invalidateQueries({ queryKey: ['roles', tenantId] });
       queryClient.invalidateQueries({ queryKey: [`/api/tenants/${tenantId}/roles`] });
+      refetch(); // Explicitly refetch the roles list
       setIsCreateDialogOpen(false);
       resetForm();
       toast({
@@ -235,7 +238,10 @@ function RolesPageContent() {
         body: JSON.stringify(roleData)
       }).then(res => res.json()),
     onSuccess: () => {
+      // Invalidate and refetch roles list
+      queryClient.invalidateQueries({ queryKey: ['roles', tenantId] });
       queryClient.invalidateQueries({ queryKey: [`/api/tenants/${tenantId}/roles`] });
+      refetch(); // Explicitly refetch the roles list
       setIsEditDialogOpen(false);
       resetForm();
       toast({
@@ -262,7 +268,10 @@ function RolesPageContent() {
         }
       }).then(res => res.json()),
     onSuccess: () => {
+      // Invalidate and refetch roles list
+      queryClient.invalidateQueries({ queryKey: ['roles', tenantId] });
       queryClient.invalidateQueries({ queryKey: [`/api/tenants/${tenantId}/roles`] });
+      refetch(); // Explicitly refetch the roles list
       toast({
         title: "Success",
         description: "Role deleted successfully"
@@ -698,30 +707,70 @@ function RolesPageContent() {
                   </div>
                 </div>
                 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {Object.entries(AVAILABLE_PAGES).map(([pageKey, pageConfig]) => (
-                    <Card key={pageKey}>
-                      <CardHeader className="pb-3">
-                        <CardTitle className="text-base">{pageConfig.name}</CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-2">
-                        {pageConfig.actions.map(action => (
-                          <div key={action} className="flex items-center space-x-2">
-                            <Checkbox
-                              id={`${pageKey}-${action}`}
-                              checked={formData.permissions[pageKey]?.includes(action) || false}
-                              onCheckedChange={(checked) => 
-                                handlePermissionChange(pageKey, action, checked as boolean)
-                              }
-                            />
-                            <Label htmlFor={`${pageKey}-${action}`} className="capitalize">
-                              {action}
-                            </Label>
-                          </div>
+                <div className="space-y-6">
+                  {/* Dashboard Widgets Section */}
+                  <div>
+                    <h3 className="text-lg font-semibold mb-4 text-gray-800">Dashboard Widgets</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {Object.entries(AVAILABLE_PAGES)
+                        .filter(([pageKey]) => pageKey.startsWith("dashboard."))
+                        .map(([pageKey, pageConfig]: [string, any]) => (
+                          <Card key={pageKey}>
+                            <CardHeader className="pb-3">
+                              <CardTitle className="text-sm">{pageConfig.name}</CardTitle>
+                            </CardHeader>
+                            <CardContent className="space-y-2">
+                              {pageConfig.actions.map((action: string) => (
+                                <div key={action} className="flex items-center space-x-2">
+                                  <Checkbox
+                                    id={`${pageKey}-${action}`}
+                                    checked={formData.permissions[pageKey]?.includes(action) || false}
+                                    onCheckedChange={(checked) => 
+                                      handlePermissionChange(pageKey, action, checked as boolean)
+                                    }
+                                  />
+                                  <Label htmlFor={`${pageKey}-${action}`} className="capitalize text-sm">
+                                    {action}
+                                  </Label>
+                                </div>
+                              ))}
+                            </CardContent>
+                          </Card>
                         ))}
-                      </CardContent>
-                    </Card>
-                  ))}
+                    </div>
+                  </div>
+
+                  {/* Other Pages Section */}
+                  <div>
+                    <h3 className="text-lg font-semibold mb-4 text-gray-800">Page Permissions</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {Object.entries(AVAILABLE_PAGES)
+                        .filter(([pageKey]) => !pageKey.startsWith("dashboard."))
+                        .map(([pageKey, pageConfig]: [string, any]) => (
+                          <Card key={pageKey}>
+                            <CardHeader className="pb-3">
+                              <CardTitle className="text-base">{pageConfig.name}</CardTitle>
+                            </CardHeader>
+                            <CardContent className="space-y-2">
+                              {pageConfig.actions.map((action: string) => (
+                                <div key={action} className="flex items-center space-x-2">
+                                  <Checkbox
+                                    id={`${pageKey}-${action}`}
+                                    checked={formData.permissions[pageKey]?.includes(action) || false}
+                                    onCheckedChange={(checked) => 
+                                      handlePermissionChange(pageKey, action, checked as boolean)
+                                    }
+                                  />
+                                  <Label htmlFor={`${pageKey}-${action}`} className="capitalize">
+                                    {action}
+                                  </Label>
+                                </div>
+                              ))}
+                            </CardContent>
+                          </Card>
+                        ))}
+                    </div>
+                  </div>
                 </div>
               </div>
               
@@ -886,30 +935,70 @@ function RolesPageContent() {
                 </div>
               </div>
               
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {Object.entries(AVAILABLE_PAGES).map(([pageKey, pageConfig]) => (
-                  <Card key={pageKey}>
-                    <CardHeader className="pb-3">
-                      <CardTitle className="text-base">{pageConfig.name}</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-2">
-                      {pageConfig.actions.map(action => (
-                        <div key={action} className="flex items-center space-x-2">
-                          <Checkbox
-                            id={`edit-${pageKey}-${action}`}
-                            checked={formData.permissions[pageKey]?.includes(action) || false}
-                            onCheckedChange={(checked) => 
-                              handlePermissionChange(pageKey, action, checked as boolean)
-                            }
-                          />
-                          <Label htmlFor={`edit-${pageKey}-${action}`} className="capitalize">
-                            {action}
-                          </Label>
-                        </div>
+              <div className="space-y-6">
+                {/* Dashboard Widgets Section */}
+                <div>
+                  <h3 className="text-lg font-semibold mb-4 text-gray-800">Dashboard Widgets</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {Object.entries(AVAILABLE_PAGES)
+                      .filter(([pageKey]) => pageKey.startsWith("dashboard."))
+                      .map(([pageKey, pageConfig]: [string, any]) => (
+                        <Card key={pageKey}>
+                          <CardHeader className="pb-3">
+                            <CardTitle className="text-sm">{pageConfig.name}</CardTitle>
+                          </CardHeader>
+                          <CardContent className="space-y-2">
+                            {pageConfig.actions.map((action: string) => (
+                              <div key={action} className="flex items-center space-x-2">
+                                <Checkbox
+                                  id={`edit-${pageKey}-${action}`}
+                                  checked={formData.permissions[pageKey]?.includes(action) || false}
+                                  onCheckedChange={(checked) => 
+                                    handlePermissionChange(pageKey, action, checked as boolean)
+                                  }
+                                />
+                                <Label htmlFor={`edit-${pageKey}-${action}`} className="capitalize text-sm">
+                                  {action}
+                                </Label>
+                              </div>
+                            ))}
+                          </CardContent>
+                        </Card>
                       ))}
-                    </CardContent>
-                  </Card>
-                ))}
+                  </div>
+                </div>
+
+                {/* Other Pages Section */}
+                <div>
+                  <h3 className="text-lg font-semibold mb-4 text-gray-800">Page Permissions</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {Object.entries(AVAILABLE_PAGES)
+                      .filter(([pageKey]) => !pageKey.startsWith("dashboard."))
+                      .map(([pageKey, pageConfig]: [string, any]) => (
+                        <Card key={pageKey}>
+                          <CardHeader className="pb-3">
+                            <CardTitle className="text-base">{pageConfig.name}</CardTitle>
+                          </CardHeader>
+                          <CardContent className="space-y-2">
+                            {pageConfig.actions.map((action: string) => (
+                              <div key={action} className="flex items-center space-x-2">
+                                <Checkbox
+                                  id={`edit-${pageKey}-${action}`}
+                                  checked={formData.permissions[pageKey]?.includes(action) || false}
+                                  onCheckedChange={(checked) => 
+                                    handlePermissionChange(pageKey, action, checked as boolean)
+                                  }
+                                />
+                                <Label htmlFor={`edit-${pageKey}-${action}`} className="capitalize">
+                                  {action}
+                                </Label>
+                              </div>
+                            ))}
+                          </CardContent>
+                        </Card>
+                      ))}
+                  </div>
+                </div>
               </div>
             </div>
             

@@ -113,6 +113,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 function PublicRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, loading } = useAuth();
+  const [location] = useLocation();
 
   if (loading) {
     return (
@@ -122,10 +123,11 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // Allow login component to handle its own welcome screen flow
-  // Don't auto-redirect if we're on the login page and authenticated
-  if (isAuthenticated && window.location.pathname !== "/login") {
-    return <Redirect to="/modules" />;
+  // Allow login component to handle its own navigation flow
+  // Don't auto-redirect if we're on the login or register page and authenticated
+  // This allows the login/register pages to handle their own redirects (e.g., to /dashboard)
+  if (isAuthenticated && location !== "/login" && location !== "/register") {
+    return <Redirect to="/dashboard" />;
   }
 
   return <>{children}</>;
@@ -187,7 +189,7 @@ function Router() {
         {/* Protected routes */}
         <Route path="/">
           <ProtectedRoute>
-            <Redirect to="/modules" />
+            <Redirect to="/dashboard" />
           </ProtectedRoute>
         </Route>
 

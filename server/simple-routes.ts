@@ -790,6 +790,8 @@ const authenticateToken = async (req: any, res: any, next: any) => {
       email: user.email,
       role: user.role,
       tenantId: user.tenant_id,
+      roleId: user.role_id || null,
+      reportingUserId: user.reporting_user_id || null,
       firstName: user.first_name,
       lastName: user.last_name,
       isActive: user.is_active,
@@ -1811,7 +1813,7 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
       const calculatedOffset =
         Number(offset) || (Number(page) - 1) * Number(limit);
 
-      const leads = await simpleStorage.getLeadsByTenant({
+      const result = await simpleStorage.getLeadsByTenant({
         tenantId,
         teamUserIds: isOwner ? undefined : teamUserIds, // Filter by team if not owner
         limit: Number(limit),
@@ -1828,7 +1830,25 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
         typeSpecificFilters: String(typeSpecificFilters),
       });
 
-      res.json(leads || []);
+      const limitNum = Number(limit);
+      const pageNum = Number(page);
+      const offsetNum = calculatedOffset;
+      const total = result?.total || 0;
+      const totalPages = Math.ceil(total / limitNum);
+
+      // Return response with pagination metadata
+      res.json({
+        data: result?.data || [],
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          offset: offsetNum,
+          total: total,
+          totalPages: totalPages,
+          hasNextPage: pageNum < totalPages,
+          hasPreviousPage: pageNum > 1,
+        },
+      });
     } catch (error: any) {
       console.error("❌ Enhanced leads API error:", error);
       res.status(500).json({ error: error.message });
@@ -5683,6 +5703,40 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
     }
   });
 
+  // Get a single role by ID for a tenant
+  app.get("/api/tenants/:tenantId/roles/:roleId", authenticateToken, async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId);
+      const roleId = parseInt(req.params.roleId);
+      
+      // Verify user has access to this tenant
+      if ((req as any).user.tenantId !== tenantId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const role = await simpleStorage.getRoleById(roleId, tenantId);
+      
+      if (!role) {
+        return res.status(404).json({ error: "Role not found" });
+      }
+
+      // Parse permissions if stored as JSON string
+      if (role && typeof role.permissions === 'string') {
+        try {
+          role.permissions = JSON.parse(role.permissions);
+        } catch (e) {
+          console.error(`Error parsing permissions for role ${roleId}:`, e);
+          role.permissions = {};
+        }
+      }
+
+      res.json(role);
+    } catch (error) {
+      console.error("Error fetching role:", error);
+      res.status(500).json({ error: "Failed to fetch role" });
+    }
+  });
+
   // Create a new role
   app.post("/api/tenants/:tenantId/roles", authenticateToken, async (req, res) => {
     try {
@@ -8619,6 +8673,8 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
           email: user.email,
           role: user.role,
           tenantId: user.tenant_id,
+          roleId: user.role_id || null,
+          reportingUserId: user.reporting_user_id || null,
           firstName: user.first_name || "",
           lastName: user.last_name || "",
           permissions: permissions ? permissions.permissions : {},
@@ -8829,6 +8885,8 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
           email: user.email,
           role: user.role,
           tenantId: user.tenant_id,
+          roleId: user.role_id || null,
+          reportingUserId: user.reporting_user_id || null,
           firstName:
             user.first_name || (user.name ? user.name.split(" ")[0] : ""),
           lastName:
@@ -16645,6 +16703,33 @@ Please improve this email.`;
     },
   );
 
+  // Get assignable users for follow-up (parent + child users)
+  // IMPORTANT: This route must come BEFORE /:followUpId route to avoid route conflicts
+  app.get(
+    "/api/tenants/:tenantId/follow-ups/assignable-users",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        const { tenantId } = req.params;
+        const userId = (req.user as any).id;
+        
+        if (!userId) {
+          return res.status(401).json({ message: "Unauthorized" });
+        }
+
+        const assignableUsers = await simpleStorage.getAssignableUsersForFollowUp(
+          userId,
+          parseInt(tenantId)
+        );
+
+        res.json({ users: assignableUsers });
+      } catch (error) {
+        console.error("Get assignable users error:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    }
+  );
+
   app.patch(
     "/api/tenants/:tenantId/follow-ups/:followUpId",
     authenticateToken,
@@ -16661,6 +16746,404 @@ Please improve this email.`;
         res.status(500).json({ message: "Internal server error" });
       }
     },
+  );
+
+  // ==================== General Follow-Ups Routes ====================
+
+  // Get general follow-ups
+  app.get(
+    "/api/tenants/:tenantId/general-follow-ups",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        const { tenantId } = req.params;
+        const userId = (req.user as any).id;
+        const userRole = (req.user as any).role;
+        const isOwner = userRole === "owner";
+
+        const {
+          assignedTo,
+          createdBy,
+          status,
+          excludeStatus,
+          priority,
+          relatedTableName,
+          relatedTableId,
+          limit,
+          offset,
+          sort,
+        } = req.query;
+
+        // Build filters
+        const filters: any = {};
+        
+        // Permission-based filtering
+        if (!isOwner) {
+          // Non-owners see follow-ups assigned to them OR created by them
+          filters.userId = userId;
+        } else {
+          // Owners can filter by assigned user
+          if (assignedTo) {
+            filters.assignedUserId = parseInt(assignedTo as string);
+          }
+        }
+
+        if (createdBy) {
+          filters.createdByUserId = parseInt(createdBy as string);
+        }
+        if (status) {
+          filters.status = status as string;
+        }
+        if (excludeStatus) {
+          filters.excludeStatus = excludeStatus as string;
+        }
+        if (priority) {
+          filters.priority = priority as string;
+        }
+        if (relatedTableName) {
+          filters.relatedTableName = relatedTableName as string;
+        }
+        if (relatedTableId) {
+          filters.relatedTableId = parseInt(relatedTableId as string);
+        }
+        if (limit) {
+          filters.limit = parseInt(limit as string);
+        }
+        if (offset) {
+          filters.offset = parseInt(offset as string);
+        }
+        if (sort) {
+          filters.sort = sort as string;
+        }
+
+        const result = await simpleStorage.getGeneralFollowUpsByTenant(
+          parseInt(tenantId),
+          filters
+        );
+
+        res.json(result);
+      } catch (error) {
+        console.error("Get general follow-ups error:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    }
+  );
+
+  // Create general follow-up
+  app.post(
+    "/api/tenants/:tenantId/general-follow-ups",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        const { tenantId } = req.params;
+        const userId = (req.user as any).id;
+        const userName = `${(req.user as any).firstName || ''} ${(req.user as any).lastName || ''}`.trim() || (req.user as any).email;
+
+        const {
+          title,
+          description,
+          assignedUserId,
+          priority,
+          status,
+          dueDate,
+          relatedTableName,
+          relatedTableId,
+          tags,
+          reminderDate,
+        } = req.body;
+
+        if (!title || !dueDate) {
+          return res.status(400).json({ message: "Title and due date are required" });
+        }
+
+        // Check for duplicate follow-ups for leads, invoices, bookings, and customers
+        const entityTypesRequiringUniqueness = ['leads', 'invoices', 'bookings', 'customers'];
+        if (relatedTableName && relatedTableId && entityTypesRequiringUniqueness.includes(relatedTableName)) {
+          const duplicateExists = await simpleStorage.checkFollowUpExists(
+            parseInt(tenantId),
+            relatedTableName,
+            relatedTableId
+          );
+
+          if (duplicateExists) {
+            const entityTypeLabels: Record<string, string> = {
+              leads: 'Lead',
+              invoices: 'Invoice',
+              bookings: 'Booking',
+              customers: 'Customer'
+            };
+            const entityLabel = entityTypeLabels[relatedTableName] || relatedTableName;
+            return res.status(409).json({ 
+              message: `A follow-up already exists for this ${entityLabel.toLowerCase()}. Please complete or cancel the existing follow-up before creating a new one.` 
+            });
+          }
+        }
+
+        const followUpData = {
+          tenantId: parseInt(tenantId),
+          title,
+          description,
+          assignedUserId: assignedUserId || null,
+          createdByUserId: userId,
+          priority: priority || 'medium',
+          status: status || 'pending',
+          dueDate,
+          relatedTableName: relatedTableName || null,
+          relatedTableId: relatedTableId || null,
+          tags: tags || [],
+          reminderDate: reminderDate || null,
+        };
+
+        const followUp = await simpleStorage.createGeneralFollowUp(followUpData);
+
+        // Send email notification if assigned to another user
+        if (followUp.assignedUserId && followUp.assignedUserId !== userId && followUp.assignedUserEmail) {
+          try {
+            // Get related entity details if applicable
+            let relatedEntityName = null;
+            if (followUp.relatedTableName && followUp.relatedTableId) {
+              const entityDetails = await simpleStorage.getRelatedEntityDetails(
+                followUp.relatedTableName,
+                followUp.relatedTableId
+              );
+              relatedEntityName = entityDetails?.name || null;
+            }
+
+            await emailService.sendFollowUpAssignmentEmail({
+              to: followUp.assignedUserEmail,
+              assignedUserName: followUp.assignedUserName || followUp.assignedUserEmail,
+              createdByName: userName,
+              followUpTitle: followUp.title,
+              followUpDescription: followUp.description || undefined,
+              dueDate: followUp.dueDate,
+              priority: followUp.priority,
+              relatedEntityType: followUp.relatedTableName || undefined,
+              relatedEntityId: followUp.relatedTableId || undefined,
+              relatedEntityName: relatedEntityName || undefined,
+              followUpId: followUp.id,
+              tenantId: parseInt(tenantId),
+            });
+
+            // Update email sent status
+            await simpleStorage.updateFollowUpEmailSent(followUp.id);
+            followUp.emailSent = true;
+            followUp.emailSentAt = new Date().toISOString();
+          } catch (emailError) {
+            console.error("Error sending follow-up assignment email:", emailError);
+            // Don't fail the request if email fails
+          }
+        }
+
+        res.status(201).json(followUp);
+      } catch (error) {
+        console.error("Create general follow-up error:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    }
+  );
+
+  // Get related entity details (MUST come before :followUpId route to avoid route conflicts)
+  app.get(
+    "/api/tenants/:tenantId/general-follow-ups/related-entity-details",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        const { tenantId } = req.params;
+        const { tableName, tableId } = req.query;
+
+        if (!tableName || !tableId) {
+          return res.status(400).json({ message: "tableName and tableId are required" });
+        }
+
+        const entityDetails = await simpleStorage.getRelatedEntityDetails(
+          tableName as string,
+          parseInt(tableId as string)
+        );
+
+        if (!entityDetails) {
+          return res.status(404).json({ message: "Entity not found" });
+        }
+
+        res.json(entityDetails);
+      } catch (error: any) {
+        console.error("Get related entity details error:", error);
+        res.status(500).json({ message: "Internal server error", error: error.message });
+      }
+    }
+  );
+
+  // Get single general follow-up
+  app.get(
+    "/api/tenants/:tenantId/general-follow-ups/:followUpId",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        const { tenantId, followUpId } = req.params;
+        const result = await simpleStorage.getGeneralFollowUpsByTenant(
+          parseInt(tenantId),
+          { limit: 1, offset: 0 }
+        );
+
+        const followUp = result.data.find((f: any) => f.id === parseInt(followUpId));
+        if (!followUp) {
+          return res.status(404).json({ message: "Follow-up not found" });
+        }
+
+        res.json(followUp);
+      } catch (error) {
+        console.error("Get general follow-up error:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    }
+  );
+
+  // Update general follow-up
+  app.patch(
+    "/api/tenants/:tenantId/general-follow-ups/:followUpId",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        const { followUpId } = req.params;
+        const followUp = await simpleStorage.updateGeneralFollowUp(
+          parseInt(followUpId),
+          req.body
+        );
+        if (!followUp) {
+          return res.status(404).json({ message: "Follow-up not found" });
+        }
+        res.json(followUp);
+      } catch (error: any) {
+        console.error("Update general follow-up error:", error);
+        res.status(500).json({ message: "Internal server error", error: error.message });
+      }
+    }
+  );
+
+  // Delete general follow-up
+  app.delete(
+    "/api/tenants/:tenantId/general-follow-ups/:followUpId",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        const { followUpId } = req.params;
+        await simpleStorage.deleteGeneralFollowUp(parseInt(followUpId));
+        res.json({ message: "Follow-up deleted successfully" });
+      } catch (error) {
+        console.error("Delete general follow-up error:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    }
+  );
+
+  // Mark follow-up as complete
+  app.post(
+    "/api/tenants/:tenantId/general-follow-ups/:followUpId/complete",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        const { followUpId } = req.params;
+        const { completionNotes } = req.body;
+        const followUp = await simpleStorage.markFollowUpComplete(
+          parseInt(followUpId),
+          completionNotes
+        );
+        res.json(followUp);
+      } catch (error) {
+        console.error("Mark follow-up complete error:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    }
+  );
+
+  // Reassign follow-up
+  app.post(
+    "/api/tenants/:tenantId/general-follow-ups/:followUpId/reassign",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        const { tenantId, followUpId } = req.params;
+        const { newUserId } = req.body;
+        const userId = (req.user as any).id;
+        const userName = `${(req.user as any).firstName || ''} ${(req.user as any).lastName || ''}`.trim() || (req.user as any).email;
+
+        if (!newUserId) {
+          return res.status(400).json({ message: "newUserId is required" });
+        }
+
+        // Get current follow-up to get previous assigned user before reassigning
+        const currentResult = await simpleStorage.getGeneralFollowUpsByTenant(
+          parseInt(tenantId),
+          { limit: 1000, offset: 0 }
+        );
+        const currentFollowUp = currentResult.data.find((f: any) => f.id === parseInt(followUpId));
+        const previousUserId = currentFollowUp?.assignedUserId || null;
+        let previousUserName = null;
+        
+        if (previousUserId) {
+          const previousUser = await simpleStorage.getUser(previousUserId);
+          if (previousUser) {
+            previousUserName = previousUser.first_name && previousUser.last_name
+              ? `${previousUser.first_name} ${previousUser.last_name}`
+              : previousUser.email;
+          }
+        }
+
+        const followUp = await simpleStorage.reassignFollowUp(
+          parseInt(followUpId),
+          newUserId
+        );
+
+        // Get updated follow-up details
+        const result = await simpleStorage.getGeneralFollowUpsByTenant(
+          parseInt(tenantId),
+          { limit: 1000, offset: 0 }
+        );
+        const updatedFollowUp = result.data.find((f: any) => f.id === parseInt(followUpId));
+
+        // Send email notification if reassigned to another user
+        if (updatedFollowUp && updatedFollowUp.assignedUserId !== userId && updatedFollowUp.assignedUserEmail) {
+          try {
+            // Get related entity details if applicable
+            let relatedEntityName = null;
+            if (updatedFollowUp.relatedTableName && updatedFollowUp.relatedTableId) {
+              const entityDetails = await simpleStorage.getRelatedEntityDetails(
+                updatedFollowUp.relatedTableName,
+                updatedFollowUp.relatedTableId
+              );
+              relatedEntityName = entityDetails?.name || null;
+            }
+
+            await emailService.sendFollowUpAssignmentEmail({
+              to: updatedFollowUp.assignedUserEmail,
+              assignedUserName: updatedFollowUp.assignedUserName || updatedFollowUp.assignedUserEmail,
+              createdByName: userName,
+              followUpTitle: updatedFollowUp.title,
+              followUpDescription: updatedFollowUp.description || undefined,
+              dueDate: updatedFollowUp.dueDate,
+              priority: updatedFollowUp.priority,
+              relatedEntityType: updatedFollowUp.relatedTableName || undefined,
+              relatedEntityId: updatedFollowUp.relatedTableId || undefined,
+              relatedEntityName: relatedEntityName || undefined,
+              followUpId: updatedFollowUp.id,
+              tenantId: parseInt(tenantId),
+              previousUserName: previousUserName || undefined,
+              isReassignment: !!previousUserId,
+            });
+
+            // Update email sent status
+            await simpleStorage.updateFollowUpEmailSent(parseInt(followUpId));
+          } catch (emailError) {
+            console.error("Error sending follow-up reassignment email:", emailError);
+            // Don't fail the request if email fails
+          }
+        }
+
+        res.json(updatedFollowUp || followUp);
+      } catch (error) {
+        console.error("Reassign follow-up error:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    }
   );
 
   // Create or update invoice from booking
@@ -18830,7 +19313,7 @@ Please improve this email.`;
 
 
 
-  app.get("/api/all-expenses", authenticateVendor, async (req: any, res) => {
+  app.get(["/api/all-expenses", "/api/All-expenses"], authenticateVendor, async (req: any, res) => {
   try {
     console.log("💰 GET /api/all-expenses - User authenticated:", {
       id: req.user.id,
@@ -21469,11 +21952,30 @@ Please improve this email.`;
   app.get("/api/reports/dashboard", authenticateToken, async (req, res) => {
     try {
       const tenantId = req.user.tenantId;
-      console.log(`📊 Dashboard metrics request for tenant ${tenantId}`);
+      const userId = req.user.id;
+      console.log(`📊 Dashboard metrics request for tenant ${tenantId}, user ${userId}`);
+
+      // Check if user is owner/superadmin
+      let isOwner = false;
+      if (req.user.roleId) {
+        const userRole = await simpleStorage.getRoleById(req.user.roleId, tenantId);
+        isOwner = userRole?.is_default === true;
+      }
+      if (!isOwner && req.user.role === "tenant_admin") {
+        isOwner = true;
+      }
+
+      // Get user IDs by role hierarchy (role-based filtering)
+      let teamUserIds: number[] | undefined = undefined;
+      if (!isOwner && req.user.roleId) {
+        teamUserIds = await simpleStorage.getUsersByRoleHierarchy(req.user.roleId, tenantId);
+        console.log(`👥 User ${userId} (role ${req.user.roleId}) - users in role hierarchy:`, teamUserIds);
+      }
 
       const { startDate, endDate, period } = req.query;
       const dashboardData = await simpleStorage.getDashboardMetrics(
         tenantId,
+        isOwner ? undefined : teamUserIds, // Filter by role hierarchy if not owner
         startDate as string,
         endDate as string,
         period as string,

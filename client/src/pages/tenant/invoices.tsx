@@ -44,6 +44,7 @@ import {
   BarChart3,
   TrendingUp,
   DollarSign,
+  Target,
 } from "lucide-react";
 import {
   Sheet,
@@ -74,6 +75,7 @@ import { useToast } from "@/hooks/use-toast";
 import { EnhancedTable, TableColumn } from "@/components/ui/enhanced-table";
 import type { Invoice } from "@shared/schema";
 import { Link, useLocation } from "wouter";
+import { CreateFollowUpDialog } from "@/components/follow-ups/CreateFollowUpDialog";
 import {
   ModernTemplate,
   InvoiceData,
@@ -163,6 +165,8 @@ export default function Invoices() {
   const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
   const [editingInvoice, setEditingInvoice] = useState<any>(null);
   const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false);
+  const [followUpDialogOpen, setFollowUpDialogOpen] = useState(false);
+  const [selectedInvoiceForFollowUp, setSelectedInvoiceForFollowUp] = useState<any>(null);
   const [lineItems, setLineItems] = useState([
     {
       travelCategory: "",
@@ -1484,6 +1488,18 @@ export default function Invoices() {
             title="Edit Invoice"
           >
             <Edit className="h-4 w-4" />
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setSelectedInvoiceForFollowUp(invoice);
+              setFollowUpDialogOpen(true);
+            }}
+            className="text-purple-600 hover:text-purple-700"
+            title="Add Follow-Up"
+          >
+            <Target className="h-4 w-4" />
           </Button>
           <Button
             size="sm"
@@ -3546,6 +3562,26 @@ export default function Invoices() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Follow-Up Dialog */}
+      {selectedInvoiceForFollowUp && (
+        <CreateFollowUpDialog
+          open={followUpDialogOpen}
+          onOpenChange={(open) => {
+            setFollowUpDialogOpen(open);
+            if (!open) {
+              setSelectedInvoiceForFollowUp(null);
+            }
+          }}
+          relatedTableName="invoices"
+          relatedTableId={selectedInvoiceForFollowUp.id}
+          relatedEntityName={
+            selectedInvoiceForFollowUp.invoiceNumber
+              ? `Invoice #${selectedInvoiceForFollowUp.invoiceNumber}`
+              : `Invoice #${selectedInvoiceForFollowUp.id}`
+          }
+        />
+      )}
     </Layout>
   );
 }

@@ -1,18 +1,27 @@
 import { ChevronRight, X } from "lucide-react";
 import { useState } from "react";
+import { FollowUpList } from "@/components/follow-ups/FollowUpList";
 
 interface SidebarListsProps {
   followUpsArray: any[];
   customersArray: any[];
-  activitiesArray: any[];
+  invoicesArray: any[];
   contactsArray: any[];
+  canViewFollowUps?: boolean;
+  canViewCustomers?: boolean;
+  canViewInvoices?: boolean;
+  canViewContacts?: boolean;
 }
 
 export function SidebarLists({
   followUpsArray,
   customersArray,
-  activitiesArray,
+  invoicesArray,
   contactsArray,
+  canViewFollowUps = true,
+  canViewCustomers = true,
+  canViewInvoices = true,
+  canViewContacts = true,
 }: SidebarListsProps) {
   const [isOpen, setIsOpen] = useState(false);
 
@@ -37,115 +46,101 @@ export function SidebarLists({
         >
           <X className="w-5 h-5" />
         </button>
-        <div className="mt-10 lg:mt-0">
-          <h3 className="text-sm font-semibold text-gray-700 mb-3">
-            Follow Ups
-          </h3>
-          <div className="space-y-2">
-            {followUpsArray.length > 0 ? (
-              followUpsArray.slice(0, 4).map((item, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <div className="h-8 w-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-semibold text-gray-700">
-                    {item.firstName
-                      ? item.firstName.charAt(0).toUpperCase()
-                      : item.name?.charAt(0).toUpperCase()}
+        {canViewFollowUps && (
+          <div className="mt-10 lg:mt-0">
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">
+              Follow Ups
+            </h3>
+            <FollowUpList limit={5} showAddButton={true} />
+          </div>
+        )}
+        {canViewCustomers && (
+          <div>
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">
+              Customers
+            </h3>
+            <div className="space-y-2">
+              {customersArray.length > 0 ? (
+                customersArray.slice(0, 4).map((item, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <div className="h-8 w-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-semibold text-gray-700">
+                      {item.firstName
+                        ? item.firstName.charAt(0).toUpperCase()
+                        : item.name?.charAt(0).toUpperCase()}
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium text-gray-700">
+                        {item.firstName
+                          ? `${item.firstName} ${item.lastName}`
+                          : item.name}
+                      </p>
+                      <p className="text-xs text-gray-500 truncate">
+                        {item.email}
+                      </p>
+                    </div>
                   </div>
-                  <div>
+                ))
+              ) : (
+                <p className="text-xs text-gray-400">No customers</p>
+              )}
+            </div>
+          </div>
+        )}
+        {canViewInvoices && (
+          <div>
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">Invoices</h3>
+            <div className="space-y-2">
+              {invoicesArray.length > 0 ? (
+                invoicesArray.slice(0, 4).map((item, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <div className="h-8 w-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-semibold text-gray-700">
+                      {item.customerName
+                        ? item.customerName.charAt(0).toUpperCase()
+                        : item.invoiceNumber
+                        ? item.invoiceNumber.charAt(0).toUpperCase()
+                        : "I"}
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium text-gray-700">
+                        {item.invoiceNumber || `Invoice #${item.id}`}
+                      </p>
+                      <p className="text-xs text-gray-500 truncate">
+                        {item.customerName || "No customer"}
+                      </p>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <p className="text-xs text-gray-400">No invoices</p>
+              )}
+            </div>
+          </div>
+        )}
+        {canViewContacts && (
+          <div>
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">Contacts</h3>
+            <div className="space-y-2">
+              {contactsArray.length > 0 ? (
+                contactsArray.slice(0, 4).map((item, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <div className="h-8 w-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-semibold text-gray-700">
+                      {item.firstName
+                        ? item.firstName.charAt(0).toUpperCase()
+                        : item.name?.charAt(0).toUpperCase()}
+                    </div>
                     <p className="text-xs font-medium text-gray-700">
                       {item.firstName
                         ? `${item.firstName} ${item.lastName}`
                         : item.name}
                     </p>
-                    <p className="text-xs text-gray-500 truncate">
-                      {item.email}
-                    </p>
                   </div>
-                </div>
-              ))
-            ) : (
-              <p className="text-xs text-gray-400">No Leads</p>
-            )}
+                ))
+              ) : (
+                <p className="text-xs text-gray-400">No contacts</p>
+              )}
+            </div>
           </div>
-        </div>
-        <div>
-          <h3 className="text-sm font-semibold text-gray-700 mb-3">
-            Customers
-          </h3>
-          <div className="space-y-2">
-            {customersArray.length > 0 ? (
-              customersArray.slice(0, 4).map((item, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <div className="h-8 w-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-semibold text-gray-700">
-                    {item.firstName
-                      ? item.firstName.charAt(0).toUpperCase()
-                      : item.name?.charAt(0).toUpperCase()}
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium text-gray-700">
-                      {item.firstName
-                        ? `${item.firstName} ${item.lastName}`
-                        : item.name}
-                    </p>
-                    <p className="text-xs text-gray-500 truncate">
-                      {item.email}
-                    </p>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <p className="text-xs text-gray-400">No customers</p>
-            )}
-          </div>
-        </div>
-        <div>
-          <h3 className="text-sm font-semibold text-gray-700 mb-3">Bookings</h3>
-          <div className="space-y-2">
-            {activitiesArray.length > 0 ? (
-              activitiesArray.slice(0, 4).map((item, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <div className="h-8 w-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-semibold text-gray-700">
-                    {item.customerName
-                      ? item.customerName.charAt(0).toUpperCase()
-                      : "U"}
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium text-gray-700">
-                      {item.customerName || "Unknown"}
-                    </p>
-                    <p className="text-xs text-gray-500 truncate">
-                      ₹{item.totalAmount?.toLocaleString()}
-                    </p>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <p className="text-xs text-gray-400">No activities</p>
-            )}
-          </div>
-        </div>
-        <div>
-          <h3 className="text-sm font-semibold text-gray-700 mb-3">Contacts</h3>
-          <div className="space-y-2">
-            {contactsArray.length > 0 ? (
-              contactsArray.slice(0, 4).map((item, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <div className="h-8 w-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-semibold text-gray-700">
-                    {item.firstName
-                      ? item.firstName.charAt(0).toUpperCase()
-                      : item.name?.charAt(0).toUpperCase()}
-                  </div>
-                  <p className="text-xs font-medium text-gray-700">
-                    {item.firstName
-                      ? `${item.firstName} ${item.lastName}`
-                      : item.name}
-                  </p>
-                </div>
-              ))
-            ) : (
-              <p className="text-xs text-gray-400">No contacts</p>
-            )}
-          </div>
-        </div>
+        )}
       </div>
       {isOpen && (
         <div

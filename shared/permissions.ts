@@ -13,6 +13,87 @@ export const MENU_ITEMS = {
     icon: BarChart3, 
     actions: ["view"] 
   },
+  // Dashboard widget permissions (granular control)
+  "dashboard.revenue": {
+    name: "Dashboard - Revenue Card",
+    icon: BarChart3,
+    actions: ["view"]
+  },
+  "dashboard.bookings": {
+    name: "Dashboard - Bookings Card",
+    icon: CheckSquare,
+    actions: ["view"]
+  },
+  "dashboard.customers": {
+    name: "Dashboard - Customers Card",
+    icon: Users,
+    actions: ["view"]
+  },
+  "dashboard.leads": {
+    name: "Dashboard - Leads Card",
+    icon: Target,
+    actions: ["view"]
+  },
+  "dashboard.revenue-chart": {
+    name: "Dashboard - Revenue Chart",
+    icon: BarChart3,
+    actions: ["view"]
+  },
+  "dashboard.profit-loss": {
+    name: "Dashboard - Profit/Loss Card",
+    icon: BarChart3,
+    actions: ["view"]
+  },
+  "dashboard.expense-chart": {
+    name: "Dashboard - Expense Chart",
+    icon: CreditCard,
+    actions: ["view"]
+  },
+  "dashboard.service-booking": {
+    name: "Dashboard - Service Booking Chart",
+    icon: CheckSquare,
+    actions: ["view"]
+  },
+  "dashboard.service-provider": {
+    name: "Dashboard - Service Provider Chart",
+    icon: Building2,
+    actions: ["view"]
+  },
+  "dashboard.vendor-booking": {
+    name: "Dashboard - Vendor Booking Chart",
+    icon: Building2,
+    actions: ["view"]
+  },
+  "dashboard.invoice-status": {
+    name: "Dashboard - Invoice Status Bar",
+    icon: FileText,
+    actions: ["view"]
+  },
+  "dashboard.marketing-seo": {
+    name: "Dashboard - Marketing SEO Bar",
+    icon: Mail,
+    actions: ["view"]
+  },
+  "dashboard.sidebar-followups": {
+    name: "Dashboard - Follow Ups List",
+    icon: Target,
+    actions: ["view"]
+  },
+  "dashboard.sidebar-customers": {
+    name: "Dashboard - Customers List",
+    icon: Users,
+    actions: ["view"]
+  },
+  "dashboard.sidebar-bookings": {
+    name: "Dashboard - Bookings List",
+    icon: CheckSquare,
+    actions: ["view"]
+  },
+  "dashboard.sidebar-contacts": {
+    name: "Dashboard - Contacts List",
+    icon: Users,
+    actions: ["view"]
+  },
   customers: { 
     name: "Customers", 
     

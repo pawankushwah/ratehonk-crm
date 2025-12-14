@@ -29,12 +29,14 @@ async function runMigrations() {
 
     console.log('📊 Connected to database');
     
-    // List of migration files to run
+    // List of migration files to run (in order)
     const migrationFiles = [
       'migrations/create_assignment_history_table.sql',
       'migrations/create_user_metrics_table.sql',
       'migrations/create_user_notifications_table.sql',
       'migrations/create_tasks_table.sql',
+      'migrations/create_general_follow_ups_table.sql',
+      'migrations/add_previous_assigned_user_to_follow_ups.sql',
     ];
     
     for (const migrationFile of migrationFiles) {
