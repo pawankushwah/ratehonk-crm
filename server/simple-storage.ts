@@ -1403,9 +1403,13 @@ export class SimpleStorage {
     try {
       let whereClauses = sql`l.tenant_id = ${tenantId}`;
 
-      // Filter by team user IDs if provided (supervisor sees their team's leads)
+      // Filter by allowed user IDs if provided (role-based hierarchy filtering)
+      // Show leads created by OR assigned to users in the role hierarchy
       if (teamUserIds && teamUserIds.length > 0) {
-        whereClauses = sql`${whereClauses} AND l.assigned_user_id = ANY(${sql.array(teamUserIds)})`;
+        whereClauses = sql`${whereClauses} AND (
+          l.created_by = ANY(${sql.array(teamUserIds)}) 
+          OR l.assigned_user_id = ANY(${sql.array(teamUserIds)})
+        )`;
       }
 
       if (search) {
@@ -1558,6 +1562,7 @@ async getAllLeadsByTenant(
     dateTo = "",
     sortBy = "created_at",
     sortOrder = "desc",
+    teamUserIds, // Optional: filter by role hierarchy user IDs
   }
 ) {
   try {
@@ -1567,6 +1572,16 @@ async getAllLeadsByTenant(
       dateFilter = sql`
         created_at >= ${dateFrom} AND created_at <= ${dateTo}
       `;
+    }
+
+    let whereClauses = sql`tenant_id = ${tenantId}`;
+
+    // Filter by allowed user IDs if provided (role-based hierarchy filtering)
+    if (teamUserIds && teamUserIds.length > 0) {
+      whereClauses = sql`${whereClauses} AND (
+        created_by = ANY(${sql.array(teamUserIds)}) 
+        OR assigned_user_id = ANY(${sql.array(teamUserIds)})
+      )`;
     }
 
     const leads = await sql`
@@ -1583,7 +1598,7 @@ async getAllLeadsByTenant(
         created_at,
         converted_to_customer_id
       FROM leads
-      WHERE tenant_id = ${tenantId}
+      WHERE ${whereClauses}
 
         AND (
           ${search} = '' OR
@@ -2421,6 +2436,33 @@ async getAllLeadsByTenant(
       return allChildRoleIds;
     } catch (error) {
       console.error("Error getting role hierarchy:", error);
+      throw error;
+    }
+  }
+
+  // Get all user IDs by role hierarchy (users with current role + all child roles)
+  async getUsersByRoleHierarchy(roleId: number, tenantId: number): Promise<number[]> {
+    try {
+      // Get current role + all child role IDs recursively
+      const childRoleIds = await this.getRoleHierarchy(roleId, tenantId);
+      const allRoleIds = [roleId, ...childRoleIds];
+
+      console.log(`🔍 Getting users for role hierarchy: roleId=${roleId}, childRoles=${childRoleIds.length}, totalRoles=${allRoleIds.length}`);
+
+      // Get all active users with these role IDs
+      const users = await sql`
+        SELECT id FROM users
+        WHERE role_id = ANY(${sql.array(allRoleIds)})
+          AND tenant_id = ${tenantId}
+          AND is_active = true
+      `;
+
+      const userIds = users.map((u: any) => u.id);
+      console.log(`✅ Found ${userIds.length} users in role hierarchy`);
+      
+      return userIds;
+    } catch (error) {
+      console.error("Error getting users by role hierarchy:", error);
       throw error;
     }
   }

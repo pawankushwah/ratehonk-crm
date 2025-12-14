@@ -1783,11 +1783,12 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
         isOwner = true;
       }
 
-      // Get user's team IDs (user + all subordinates) for hierarchical access
+      // Get user IDs by role hierarchy (role-based filtering, not user reporting hierarchy)
       let teamUserIds: number[] | undefined = undefined;
-      if (!isOwner) {
-        teamUserIds = await simpleStorage.getUserTeamIds(userId, tenantId);
-        console.log(`👥 User ${userId} team members:`, teamUserIds);
+      if (!isOwner && req.user.roleId) {
+        // Get all users with current role + all child roles (recursively)
+        teamUserIds = await simpleStorage.getUsersByRoleHierarchy(req.user.roleId, tenantId);
+        console.log(`👥 User ${userId} (role ${req.user.roleId}) - users in role hierarchy:`, teamUserIds);
       }
 
       const {
@@ -1838,10 +1839,28 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
 app.get("/api/All-leads", authenticateToken, async (req, res) => {
   try {
     const tenantId = req.user?.tenantId;
+    const userId = req.user?.id;
     if (!tenantId) {
       return res
         .status(400)
         .json({ error: "Tenant ID not found in user session" });
+    }
+
+    // Check if user is owner/superadmin
+    let isOwner = false;
+    if (req.user.roleId) {
+      const userRole = await simpleStorage.getRoleById(req.user.roleId, tenantId);
+      isOwner = userRole?.is_default === true;
+    }
+    if (!isOwner && req.user.role === "tenant_admin") {
+      isOwner = true;
+    }
+
+    // Get user IDs by role hierarchy (role-based filtering)
+    let teamUserIds: number[] | undefined = undefined;
+    if (!isOwner && req.user.roleId) {
+      teamUserIds = await simpleStorage.getUsersByRoleHierarchy(req.user.roleId, tenantId);
+      console.log(`👥 User ${userId} (role ${req.user.roleId}) - users in role hierarchy:`, teamUserIds);
     }
 
     const {
@@ -1883,6 +1902,7 @@ app.get("/api/All-leads", authenticateToken, async (req, res) => {
         dateTo: String(dateTo),
         sortBy: String(sortBy),
         sortOrder: String(sortOrder),
+        teamUserIds: isOwner ? undefined : teamUserIds,
       }
     );
 

@@ -488,10 +488,12 @@ export function CompleteSidebar({
 
   // User info with real data and fallbacks
   const userName =
-    (user as any)?.name ||
-    (user as any)?.displayName ||
-    (user as any)?.email?.split("@")[0] ||
-    "User";
+    (user as any)?.firstName && (user as any)?.lastName
+      ? `${(user as any).firstName} ${(user as any).lastName}`
+      : (user as any)?.name ||
+        (user as any)?.displayName ||
+        (user as any)?.email?.split("@")[0] ||
+        "User";
   const userEmail = (user as any)?.email || "user@example.com";
   const userProfileImage =
     (user as any)?.profileImage ||
@@ -947,7 +949,7 @@ export function CompleteSidebar({
         </TooltipProvider>
       </nav>
 
-      {/* User Profile Section */}
+      {/* User Profile Section with Settings Icon */}
       <div
         className={cn(
           "p-4 border-t",
@@ -955,25 +957,89 @@ export function CompleteSidebar({
         )}
       >
         {isCollapsed ? (
-          // Collapsed state - just avatar
-          <div className="flex justify-center">
-            <Avatar className="h-8 w-8">
-              <AvatarImage src={userProfileImage} alt={userName} />
-              <AvatarFallback className="bg-white text-blue-600 font-medium text-sm">
-                {userName.charAt(0) || "H"}
-              </AvatarFallback>
-            </Avatar>
-          </div>
-        ) : (
-          // Expanded state - white card design like Figma
-          <div className="bg-white rounded-lg p-3 shadow-sm border border-gray-200">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
+          // Collapsed state - avatar with popover
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="ghost"
+                className="w-full h-auto p-0 hover:bg-transparent"
+              >
+                <div className="flex justify-center w-full">
+                  <Avatar className="h-8 w-8">
+                    <AvatarImage src={userProfileImage} alt={userName} />
+                    <AvatarFallback className="bg-white text-blue-600 font-medium text-sm">
+                      {userName.charAt(0) || "H"}
+                    </AvatarFallback>
+                  </Avatar>
+                </div>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent 
+              side="right" 
+              align="start"
+              className="w-56 p-0 rounded-lg shadow-lg"
+            >
+              <div className="py-2">
+                <div className="px-3 py-2 border-b">
+                  <p className="text-sm font-medium text-gray-900">
+                    {userName}
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {userEmail}
+                  </p>
+                </div>
+                <div className="py-1">
+                  <Button
+                    variant="ghost"
+                    className="w-full justify-start h-9 px-3 text-left font-normal"
+                  >
+                    <User className="mr-2 h-4 w-4" />
+                    <span>Profile Settings</span>
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    className="w-full justify-start h-9 px-3 text-left font-normal"
+                  >
+                    <Settings className="mr-2 h-4 w-4" />
+                    <span>System Settings</span>
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    className="w-full justify-start h-9 px-3 text-left font-normal"
+                  >
+                    <Bell className="mr-2 h-4 w-4" />
+                    <span>Notifications</span>
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    className="w-full justify-start h-9 px-3 text-left font-normal"
+                  >
+                    <HelpCircle className="mr-2 h-4 w-4" />
+                    <span>Help & Support</span>
+                  </Button>
+                </div>
+                <div className="border-t my-1"></div>
                 <Button
                   variant="ghost"
-                  className="w-full h-auto p-0 hover:bg-gray-50"
+                  className="w-full justify-start h-9 px-3 text-left font-normal text-red-600 hover:text-red-600 hover:bg-red-50"
+                  onClick={() => logout()}
                 >
-                  <div className="flex items-center gap-3 w-full">
+                  <LogOut className="mr-2 h-4 w-4" />
+                  <span>Sign out</span>
+                </Button>
+              </div>
+            </PopoverContent>
+          </Popover>
+        ) : (
+          // Expanded state - user card with settings icon
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="ghost"
+                className="w-full h-auto p-0 hover:bg-transparent"
+              >
+                <div className="bg-white rounded-lg p-3 shadow-sm border border-gray-200 w-full hover:bg-gray-50 transition-colors">
+                  <div className="flex items-center gap-3">
                     <Avatar className="h-10 w-10">
                       <AvatarImage src={userProfileImage} alt={userName} />
                       <AvatarFallback className="bg-[#0EA5E9] text-white font-medium">
@@ -988,49 +1054,70 @@ export function CompleteSidebar({
                         {userEmail}
                       </p>
                     </div>
-                    <Settings className="h-4 w-4 text-gray-400" />
+                    <Settings className="h-4 w-4 text-gray-400 shrink-0" />
                   </div>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                align="start"
-                className="w-56 rounded-lg shadow-lg"
-                side="top"
-              >
-                <DropdownMenuLabel className="font-medium">
-                  <div className="flex items-center gap-2">
-                    <Building2 className="h-4 w-4" />
-                    {(tenant as any)?.name || "My Account"}
+                </div>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent 
+              side="right" 
+              align="start"
+              className="w-56 p-0 rounded-lg shadow-lg"
+            >
+              <div className="py-2">
+                <div className="px-3 py-2 border-b">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Building2 className="h-4 w-4 text-gray-500" />
+                    <span className="text-sm font-medium text-gray-900">
+                      {(tenant as any)?.companyName || (tenant as any)?.name || "My Account"}
+                    </span>
                   </div>
-                </DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem className="cursor-pointer">
-                  <User className="mr-2 h-4 w-4" />
-                  <span>Profile Settings</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem className="cursor-pointer">
-                  <Settings className="mr-2 h-4 w-4" />
-                  <span>System Settings</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem className="cursor-pointer">
-                  <Bell className="mr-2 h-4 w-4" />
-                  <span>Notifications</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem className="cursor-pointer">
-                  <HelpCircle className="mr-2 h-4 w-4" />
-                  <span>Help & Support</span>
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  className="cursor-pointer text-red-600 focus:text-red-600"
+                  <p className="text-xs text-gray-500">
+                    {userEmail}
+                  </p>
+                </div>
+                <div className="py-1">
+                  <Button
+                    variant="ghost"
+                    className="w-full justify-start h-9 px-3 text-left font-normal"
+                  >
+                    <User className="mr-2 h-4 w-4" />
+                    <span>Profile Settings</span>
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    className="w-full justify-start h-9 px-3 text-left font-normal"
+                  >
+                    <Settings className="mr-2 h-4 w-4" />
+                    <span>System Settings</span>
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    className="w-full justify-start h-9 px-3 text-left font-normal"
+                  >
+                    <Bell className="mr-2 h-4 w-4" />
+                    <span>Notifications</span>
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    className="w-full justify-start h-9 px-3 text-left font-normal"
+                  >
+                    <HelpCircle className="mr-2 h-4 w-4" />
+                    <span>Help & Support</span>
+                  </Button>
+                </div>
+                <div className="border-t my-1"></div>
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start h-9 px-3 text-left font-normal text-red-600 hover:text-red-600 hover:bg-red-50"
                   onClick={() => logout()}
                 >
                   <LogOut className="mr-2 h-4 w-4" />
                   <span>Sign out</span>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
+                </Button>
+              </div>
+            </PopoverContent>
+          </Popover>
         )}
       </div>
     </div>
