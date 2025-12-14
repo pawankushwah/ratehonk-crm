@@ -99,26 +99,21 @@ function UsersPageContent() {
     ? roles.find((r: Role) => r.id.toString() === formData.roleId.toString())
     : null;
 
-  // Filter users who can be reporting users (users with roles that are higher in hierarchy or parent roles)
+  // Filter users who can be reporting users (only users with the parent role of the selected role)
   const availableReportingUsers = useMemo(() => {
     if (!selectedRole || !users.length) return [];
     
-    const selectedRoleLevel = selectedRole.hierarchyLevel ?? 999;
+    // If selected role has no parent role, no reporting users available
+    if (!selectedRole.parentRoleId) return [];
     
+    // Filter users to only show those with the parent role
     const filteredUsers = users.filter((user: User) => {
       if (!user.roleId) return false;
-      const userRole = roles.find((r: Role) => r.id === user.roleId);
-      if (!userRole) return false;
-      
-      const userRoleLevel = userRole.hierarchyLevel ?? 999;
-      
-      // User can be reporting user if:
-      // 1. Their role level is lower (higher in hierarchy) than selected role
-      // 2. Or their role is the parent role of the selected role
-      return userRoleLevel < selectedRoleLevel || userRole.id === selectedRole.parentRoleId;
+      // User must have the exact parent role ID
+      return user.roleId === selectedRole.parentRoleId && user.isActive;
     });
 
-    // If editing a user, include their current reporting user even if they don't meet hierarchy criteria
+    // If editing a user, include their current reporting user even if they don't meet criteria
     if (selectedUser && selectedUser.reportingUserId) {
       const currentReportingUser = users.find((u: User) => u.id === selectedUser.reportingUserId);
       if (currentReportingUser && !filteredUsers.find((u: User) => u.id === currentReportingUser.id)) {

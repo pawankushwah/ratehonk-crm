@@ -1,5 +1,6 @@
 import React from "react";
 import { CompleteSidebar } from "./sidebar-complete";
+import { Header } from "./header";
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -14,7 +15,8 @@ export function Layout({ children, initialSidebarCollapsed = true }: LayoutProps
         className="main-content-wrapper flex flex-col min-w-0 transition-all duration-300"
         style={{ marginLeft: "4rem" }}
       >
-        <main className="flex-1 overflow-y-auto bg-gray-50 min-h-screen">
+        <Header />
+        <main className="flex-1 overflow-y-auto bg-gray-50 min-h-[calc(100vh-4rem)]">
           {children}
         </main>
       </div>
