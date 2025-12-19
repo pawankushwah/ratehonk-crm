@@ -26,7 +26,8 @@ import {
   Search, Filter, Grid, List, MoreHorizontal, Trash2, 
   Edit, Eye, CheckCircle, XCircle, AlertCircle, Clock,
   Download, FileText, Tag, TrendingUp, Users, Package,
-  MapPin, Wallet, Calculator, RefreshCw, Archive, BarChart3
+  MapPin, Wallet, Calculator, RefreshCw, Archive, BarChart3,
+  FileSpreadsheet, ChevronDown, Upload, FileDown
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -165,6 +166,268 @@ export default function Expenses() {
   const [showAnalyticsSheet, setShowAnalyticsSheet] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+
+  // Import/Export state
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+
+  // Import handlers
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const validExtensions = [".csv", ".xlsx", ".xls"];
+      const fileExtension = "." + file.name.split(".").pop()?.toLowerCase();
+      
+      if (!validExtensions.includes(fileExtension)) {
+        toast({
+          title: "Error",
+          description: "Please select a CSV or Excel file (.csv, .xlsx, .xls)",
+          variant: "destructive",
+        });
+        return;
+      }
+      setImportFile(file);
+    }
+  };
+
+  const handleDownloadSampleFile = async () => {
+    if (!tenant?.id) {
+      toast({
+        title: "Error",
+        description: "Tenant ID not found",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(`/api/tenants/${tenant.id}/expenses/import/sample`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to download sample file");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "expenses-import-sample.csv";
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast({
+        title: "Success",
+        description: "Sample file downloaded successfully",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to download sample file",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleImportExpenses = async () => {
+    if (!importFile || !tenant?.id) {
+      toast({
+        title: "Error",
+        description: "Please select a file to import",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsImporting(true);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", importFile);
+      formData.append("tenantId", tenant.id.toString());
+
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(`/api/tenants/${tenant.id}/expenses/import`, {
+        method: "POST",
+        body: formData,
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.message || "Failed to import expenses");
+      }
+
+      toast({
+        title: "Success",
+        description: `Successfully imported ${result.imported || 0} expenses`,
+      });
+
+      // Refresh expenses list
+      queryClient.invalidateQueries({
+        queryKey: ["expenses", tenant.id],
+      });
+
+      setImportDialogOpen(false);
+      setImportFile(null);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to import expenses",
+        variant: "destructive",
+      });
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  // Export expenses handler - CSV
+  const handleExportExpensesCSV = async () => {
+    if (!tenant?.id) {
+      toast({
+        title: "Error",
+        description: "Tenant ID not found",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(`/api/tenants/${tenant.id}/expenses/export?format=csv`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to export expenses");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `expenses-${new Date().toISOString().split("T")[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast({
+        title: "Success",
+        description: "Expenses exported to CSV successfully",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to export expenses",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Export expenses handler - Excel
+  const handleExportExpensesExcel = async () => {
+    if (!tenant?.id) {
+      toast({
+        title: "Error",
+        description: "Tenant ID not found",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(`/api/tenants/${tenant.id}/expenses/export?format=xlsx`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to export expenses");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `expenses-${new Date().toISOString().split("T")[0]}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast({
+        title: "Success",
+        description: "Expenses exported to Excel successfully",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to export expenses",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Export expenses handler - PDF
+  const handleExportExpensesPDF = async () => {
+    if (!tenant?.id) {
+      toast({
+        title: "Error",
+        description: "Tenant ID not found",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(`/api/tenants/${tenant.id}/expenses/export?format=pdf`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to export expenses");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `expenses-${new Date().toISOString().split("T")[0]}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast({
+        title: "Success",
+        description: "Expenses exported to PDF successfully",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to export expenses",
+        variant: "destructive",
+      });
+    }
+  };
   const [totalItems, setTotalItems] = useState(0);
   const [viewMode, setViewMode] = useState<"table" | "grid">("table");
   const [showDetailsDialog, setShowDetailsDialog] = useState(false);
@@ -833,6 +1096,41 @@ export default function Expenses() {
             </p>
           </div>
           <div className="flex gap-3">
+            {/* Export Dropdown */}
+            <Button
+              variant="outline"
+              onClick={() => setImportDialogOpen(true)}
+              title="Import Expenses"
+            >
+              <Upload className="h-4 w-4 mr-2" />
+              Import
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  title="Export Expenses"
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Export
+                  <ChevronDown className="h-4 w-4 ml-2" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={handleExportExpensesPDF}>
+                  <FileText className="h-4 w-4 mr-2" />
+                  Export as PDF
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleExportExpensesCSV}>
+                  <FileText className="h-4 w-4 mr-2" />
+                  Export as CSV
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleExportExpensesExcel}>
+                  <FileSpreadsheet className="h-4 w-4 mr-2" />
+                  Export as Excel
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             {/* Analytics Button */}
             <ExpenseAnalytics
   show={showAnalyticsSheet}
@@ -1960,6 +2258,62 @@ export default function Expenses() {
           </DialogContent>
         </Dialog>
       </div>
+      {/* Import Dialog */}
+      <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Import Expenses</DialogTitle>
+            <DialogDescription>
+              Upload a CSV or Excel file to import expenses. The file should contain columns: Title, Description, Amount, Currency, Category, Subcategory, Expense Date, Payment Method, Vendor, Status, Notes, etc.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <Label htmlFor="import-file">Select File</Label>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleDownloadSampleFile}
+                  className="text-xs"
+                >
+                  <FileDown className="h-3 w-3 mr-1" />
+                  Download Sample CSV
+                </Button>
+              </div>
+              <Input
+                id="import-file"
+                type="file"
+                accept=".csv,.xlsx,.xls"
+                onChange={handleFileSelect}
+                className="mt-2"
+              />
+              {importFile && (
+                <p className="text-sm text-gray-500 mt-2">
+                  Selected: {importFile.name}
+                </p>
+              )}
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setImportDialogOpen(false);
+                setImportFile(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleImportExpenses}
+              disabled={!importFile || isImporting}
+            >
+              {isImporting ? "Importing..." : "Import"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Layout>
   );
 }

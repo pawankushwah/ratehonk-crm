@@ -2273,6 +2273,606 @@ app.get("/api/All-leads", authenticateToken, async (req, res) => {
   // ====================================================
 
   // CUSTOMER ROUTES
+  // Export customers - Supports CSV, Excel, and PDF formats - MUST be before /:customerId route to avoid route conflict
+  app.get("/api/tenants/:tenantId/customers/export", authenticateToken, async (req, res) => {
+    try {
+      const { tenantId } = req.params;
+      const format = (req.query.format as string) || "csv"; // Default to CSV
+      const parsedTenantId = parseInt(tenantId);
+      
+      if (isNaN(parsedTenantId)) {
+        return res.status(400).json({ message: "Invalid tenant ID" });
+      }
+
+      const result = await simpleStorage.getCustomersByTenant({
+        tenantId: parsedTenantId,
+        limit: 10000, // Export all customers
+      });
+      
+      const customers = Array.isArray(result?.data) ? result.data : [];
+      const filteredCustomers = customers.filter((customer: any) => customer && (customer.id || customer.email || customer.name));
+
+      // Prepare data for export
+      const exportData = filteredCustomers.map((customer: any) => ({
+        name: customer.name || `${customer.firstName || ""} ${customer.lastName || ""}`.trim() || "",
+        firstName: customer.firstName || customer.first_name || "",
+        lastName: customer.lastName || customer.last_name || "",
+        email: customer.email || "",
+        phone: customer.phone || "",
+        address: customer.address || "",
+        city: customer.city || "",
+        state: customer.state || "",
+        country: customer.country || "",
+        pincode: customer.pincode || customer.zipCode || "",
+        status: customer.status || customer.crm_status || "active",
+        notes: customer.notes || "",
+        dateAdded: customer.createdAt || customer.created_at 
+          ? new Date(customer.createdAt || customer.created_at).toLocaleDateString() 
+          : "",
+      }));
+
+      const dateStr = new Date().toISOString().split("T")[0];
+
+      if (format === "xlsx" || format === "excel") {
+        // Export as Excel
+        const workbook = XLSX.utils.book_new();
+        const worksheet = XLSX.utils.json_to_sheet(exportData);
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Customers");
+        
+        const excelBuffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+        
+        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="customers-${dateStr}.xlsx"`,
+        );
+        res.send(excelBuffer);
+      } else if (format === "pdf") {
+        // Export as PDF using jsPDF with manual text wrapping
+        const { jsPDF } = await import("jspdf");
+        const doc = new jsPDF();
+        
+        // Helper function to split text into multiple lines (handles both word-based and character-based splitting)
+        const splitText = (text: string, maxWidth: number, doc: any): string[] => {
+          if (!text) return [""];
+          const textStr = text.toString();
+          const lines: string[] = [];
+          let currentLine = '';
+          
+          // First try word-based splitting
+          const words = textStr.split(' ');
+          
+          words.forEach(word => {
+            // Check if the word itself is too long (like long email addresses)
+            const wordWidth = doc.getTextWidth(word);
+            
+            if (wordWidth > maxWidth) {
+              // Word is too long, need to split by characters
+              if (currentLine) {
+                lines.push(currentLine);
+                currentLine = '';
+              }
+              
+              // Split long word character by character
+              let charLine = '';
+              for (let i = 0; i < word.length; i++) {
+                const testChar = charLine + word[i];
+                const testWidth = doc.getTextWidth(testChar);
+                
+                if (testWidth > maxWidth && charLine) {
+                  lines.push(charLine);
+                  charLine = word[i];
+                } else {
+                  charLine = testChar;
+                }
+              }
+              
+              if (charLine) {
+                currentLine = charLine;
+              }
+            } else {
+              // Word fits, try adding it to current line
+              const testLine = currentLine + (currentLine ? ' ' : '') + word;
+              const testWidth = doc.getTextWidth(testLine);
+              
+              if (testWidth > maxWidth && currentLine) {
+                lines.push(currentLine);
+                currentLine = word;
+              } else {
+                currentLine = testLine;
+              }
+            }
+          });
+          
+          if (currentLine) {
+            lines.push(currentLine);
+          }
+          
+          return lines.length > 0 ? lines : [textStr];
+        };
+        
+        // Calculate page dimensions
+        const pageWidth = doc.internal.pageSize.width;
+        const pageHeightFull = doc.internal.pageSize.height;
+        const pageHeight = pageHeightFull - 20;
+        
+        // Column widths (in mm)
+        const colWidths = {
+          name: 25,
+          email: 35,  // Increased width for email
+          phone: 20,
+          city: 18,
+          state: 15,
+          country: 15,
+          status: 12,
+          dateAdded: 15,
+        };
+        
+        // Calculate total table width
+        const spacingBetweenCols = 2;
+        const totalTableWidth = Object.values(colWidths).reduce((sum, width) => sum + width, 0) + 
+                                (Object.keys(colWidths).length - 1) * spacingBetweenCols;
+        
+        // Calculate left margin to center the table
+        const leftMargin = (pageWidth - totalTableWidth) / 2;
+        
+        // Column positions (centered on page)
+        let currentX = leftMargin;
+        const colPositions: any = {};
+        colPositions.name = currentX;
+        currentX += colWidths.name + spacingBetweenCols;
+        colPositions.email = currentX;
+        currentX += colWidths.email + spacingBetweenCols;
+        colPositions.phone = currentX;
+        currentX += colWidths.phone + spacingBetweenCols;
+        colPositions.city = currentX;
+        currentX += colWidths.city + spacingBetweenCols;
+        colPositions.state = currentX;
+        currentX += colWidths.state + spacingBetweenCols;
+        colPositions.country = currentX;
+        currentX += colWidths.country + spacingBetweenCols;
+        colPositions.status = currentX;
+        currentX += colWidths.status + spacingBetweenCols;
+        colPositions.dateAdded = currentX;
+        
+        // Center the title
+        doc.setFontSize(16);
+        const titleWidth = doc.getTextWidth("Customers Export");
+        doc.text("Customers Export", (pageWidth - titleWidth) / 2, 15);
+        doc.setFontSize(8);
+        
+        let yPos = 25;
+        const lineHeight = 5;
+        let pageNum = 1;
+        
+        // Draw headers
+        doc.setFont(undefined, "bold");
+        doc.text("Name", colPositions.name, yPos);
+        doc.text("Email", colPositions.email, yPos);
+        doc.text("Phone", colPositions.phone, yPos);
+        doc.text("City", colPositions.city, yPos);
+        doc.text("State", colPositions.state, yPos);
+        doc.text("Country", colPositions.country, yPos);
+        doc.text("Status", colPositions.status, yPos);
+        doc.text("Date Added", colPositions.dateAdded, yPos);
+        
+        yPos += lineHeight;
+        doc.line(leftMargin, yPos, leftMargin + totalTableWidth, yPos);
+        yPos += lineHeight;
+        
+        // Draw data rows with text wrapping
+        doc.setFont(undefined, "normal");
+        exportData.forEach((customer: any, index: number) => {
+          // Check if we need a new page
+          if (yPos > pageHeight) {
+            doc.addPage();
+            pageNum++;
+            yPos = 20;
+            
+            // Redraw headers on new page
+            doc.setFont(undefined, "bold");
+            doc.text("Name", colPositions.name, yPos);
+            doc.text("Email", colPositions.email, yPos);
+            doc.text("Phone", colPositions.phone, yPos);
+            doc.text("City", colPositions.city, yPos);
+            doc.text("State", colPositions.state, yPos);
+            doc.text("Country", colPositions.country, yPos);
+            doc.text("Status", colPositions.status, yPos);
+            doc.text("Date Added", colPositions.dateAdded, yPos);
+            yPos += lineHeight;
+            doc.line(leftMargin, yPos, leftMargin + totalTableWidth, yPos);
+            yPos += lineHeight;
+            doc.setFont(undefined, "normal");
+          }
+          
+          const startY = yPos;
+          let maxLines = 1;
+          
+          // Split text for each field and find max lines needed
+          const nameLines = splitText(customer.name || "", colWidths.name, doc);
+          const emailLines = splitText(customer.email || "", colWidths.email, doc);
+          const phoneLines = splitText(customer.phone || "", colWidths.phone, doc);
+          const cityLines = splitText(customer.city || "", colWidths.city, doc);
+          const stateLines = splitText(customer.state || "", colWidths.state, doc);
+          const countryLines = splitText(customer.country || "", colWidths.country, doc);
+          const statusLines = splitText(customer.status || "", colWidths.status, doc);
+          const dateAddedLines = splitText(customer.dateAdded || "", colWidths.dateAdded, doc);
+          
+          maxLines = Math.max(
+            nameLines.length,
+            emailLines.length,
+            phoneLines.length,
+            cityLines.length,
+            stateLines.length,
+            countryLines.length,
+            statusLines.length,
+            dateAddedLines.length,
+            1
+          );
+          
+          // Draw wrapped text for each column
+          nameLines.forEach((line, i) => {
+            doc.text(line, colPositions.name, startY + (i * lineHeight));
+          });
+          
+          emailLines.forEach((line, i) => {
+            doc.text(line, colPositions.email, startY + (i * lineHeight));
+          });
+          
+          phoneLines.forEach((line, i) => {
+            doc.text(line, colPositions.phone, startY + (i * lineHeight));
+          });
+          
+          cityLines.forEach((line, i) => {
+            doc.text(line, colPositions.city, startY + (i * lineHeight));
+          });
+          
+          stateLines.forEach((line, i) => {
+            doc.text(line, colPositions.state, startY + (i * lineHeight));
+          });
+          
+          countryLines.forEach((line, i) => {
+            doc.text(line, colPositions.country, startY + (i * lineHeight));
+          });
+          
+          statusLines.forEach((line, i) => {
+            doc.text(line, colPositions.status, startY + (i * lineHeight));
+          });
+          
+          dateAddedLines.forEach((line, i) => {
+            doc.text(line, colPositions.dateAdded, startY + (i * lineHeight));
+          });
+          
+          // Move to next row based on max lines used
+          yPos += (maxLines * lineHeight) + 2;
+        });
+        
+        // Footer on last page
+        const totalPages = doc.internal.getNumberOfPages();
+        for (let i = 1; i <= totalPages; i++) {
+          doc.setPage(i);
+          doc.setFontSize(8);
+          doc.text(
+            `Page ${i} of ${totalPages}`,
+            leftMargin,
+            doc.internal.pageSize.height - 10
+          );
+          doc.text(
+            `Total Customers: ${exportData.length}`,
+            doc.internal.pageSize.width - 60,
+            doc.internal.pageSize.height - 10
+          );
+        }
+        
+        const pdfBuffer = Buffer.from(doc.output("arraybuffer"));
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="customers-${dateStr}.pdf"`,
+        );
+        res.send(pdfBuffer);
+      } else {
+        // Default: Export as CSV
+        const csvHeaders = [
+          "Name",
+          "First Name",
+          "Last Name",
+          "Email",
+          "Phone",
+          "Address",
+          "City",
+          "State",
+          "Country",
+          "Pincode",
+          "Status",
+          "Notes",
+          "Date Added",
+        ];
+        
+        const csvRows = exportData.map((customer: any) => [
+          customer.name,
+          customer.firstName,
+          customer.lastName,
+          customer.email,
+          customer.phone,
+          customer.address,
+          customer.city,
+          customer.state,
+          customer.country,
+          customer.pincode,
+          customer.status,
+          customer.notes,
+          customer.dateAdded,
+        ]);
+
+        const csvContent = [csvHeaders, ...csvRows]
+          .map((row) =>
+            row
+              .map((field) => `"${field.toString().replace(/"/g, '""')}"`)
+              .join(","),
+          )
+          .join("\n");
+
+        res.setHeader("Content-Type", "text/csv");
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="customers-${dateStr}.csv"`,
+        );
+        res.send(csvContent);
+      }
+    } catch (error: any) {
+      console.error("Export customers error:", error);
+      res.status(500).json({ 
+        success: false,
+        message: error.message || "Internal server error" 
+      });
+    }
+  });
+
+  // Sample CSV download endpoint for customers import
+  app.get("/api/tenants/:tenantId/customers/import/sample", authenticateToken, async (req, res) => {
+    try {
+      const { tenantId } = req.params;
+      
+      // Standard columns for customers
+      const standardColumns = [
+        "Name",
+        "First Name",
+        "Last Name",
+        "Email",
+        "Phone",
+        "Address",
+        "City",
+        "State",
+        "Country",
+        "Postal Code",
+        "Pincode",
+        "Company",
+        "Customer Type",
+        "Status",
+        "CRM Status",
+        "Notes",
+      ];
+      
+      // Create CSV content with headers and one sample row
+      const csvHeaders = standardColumns.map(col => `"${col}"`).join(",");
+      const sampleRow = standardColumns.map((col) => {
+        // Provide sample values based on column name
+        const lowerCol = col.toLowerCase();
+        if (lowerCol.includes("name") && !lowerCol.includes("first") && !lowerCol.includes("last") && !lowerCol.includes("company")) {
+          return '"John Doe"';
+        } else if (lowerCol.includes("first name") || lowerCol.includes("firstname")) {
+          return '"John"';
+        } else if (lowerCol.includes("last name") || lowerCol.includes("lastname")) {
+          return '"Doe"';
+        } else if (lowerCol.includes("email")) {
+          return '"john.doe@example.com"';
+        } else if (lowerCol.includes("phone")) {
+          return '"+1234567890"';
+        } else if (lowerCol.includes("address")) {
+          return '"123 Main Street"';
+        } else if (lowerCol.includes("city")) {
+          return '"Los Angeles"';
+        } else if (lowerCol.includes("state")) {
+          return '"California"';
+        } else if (lowerCol.includes("country")) {
+          return '"United States"';
+        } else if (lowerCol.includes("postal code") || lowerCol.includes("postalcode")) {
+          return '"90001"';
+        } else if (lowerCol.includes("pincode") || lowerCol.includes("pin code")) {
+          return '"123456"';
+        } else if (lowerCol.includes("company")) {
+          return '"Acme Corporation"';
+        } else if (lowerCol.includes("customer type") || lowerCol.includes("customertype")) {
+          return '"individual"';
+        } else if (lowerCol.includes("status") || lowerCol.includes("crm")) {
+          return '"active"';
+        } else if (lowerCol.includes("notes")) {
+          return '"Sample customer notes"';
+        } else {
+          return '""';
+        }
+      }).join(",");
+      
+      const csvContent = `${csvHeaders}\n${sampleRow}`;
+      
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="customers-import-sample.csv"`,
+      );
+      res.send(csvContent);
+    } catch (error: any) {
+      console.error("Generate sample CSV error:", error);
+      res.status(500).json({ 
+        success: false,
+        message: error.message || "Internal server error" 
+      });
+    }
+  });
+
+  // Customer Import endpoint
+  app.post("/api/tenants/:tenantId/customers/import", upload.single("file"), authenticateToken, async (req, res) => {
+    console.log("📥 Customers Import request received for tenant:", req.params.tenantId);
+
+    try {
+      const { tenantId } = req.params;
+      const userId = (req as any).user?.id;
+
+      // Handle file upload
+      if (req.file) {
+        const fileExtension = req.file.originalname
+          .toLowerCase()
+          .split(".")
+          .pop();
+        
+        console.log(`📄 Processing ${fileExtension} file: ${req.file.originalname}`);
+
+        let parsedData: any[] = [];
+
+        // Parse based on file type
+        if (fileExtension === "csv") {
+          parsedData = await parseCsvFile(req.file.buffer);
+        } else if (fileExtension === "xlsx" || fileExtension === "xls") {
+          // Use XLSX to parse Excel files generically
+          const XLSX = await import("xlsx");
+          const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+          const sheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[sheetName];
+          parsedData = XLSX.utils.sheet_to_json(worksheet);
+        } else {
+          return res.status(400).json({
+            success: false,
+            message: `Unsupported file format: ${fileExtension}. Supported formats: .csv, .xlsx, .xls`,
+          });
+        }
+
+        const importedCustomers = [];
+        let skippedCount = 0;
+
+        for (const row of parsedData) {
+          try {
+            const customerData: any = {
+              tenantId: parseInt(tenantId),
+            };
+
+            // Map CSV/Excel columns to customer fields (case-insensitive)
+            Object.keys(row).forEach((key) => {
+              const lowerKey = key.toLowerCase().trim();
+              const value = row[key];
+
+              switch (lowerKey) {
+                case "name":
+                  customerData.name = value?.toString().trim() || "";
+                  break;
+                case "firstname":
+                case "first_name":
+                case "first name":
+                  customerData.firstName = value?.toString().trim() || "";
+                  break;
+                case "lastname":
+                case "last_name":
+                case "last name":
+                  customerData.lastName = value?.toString().trim() || "";
+                  break;
+                case "email":
+                  customerData.email = value?.toString().trim() || "";
+                  break;
+                case "phone":
+                case "phone number":
+                case "phone_number":
+                  customerData.phone = value?.toString().trim() || "";
+                  break;
+                case "address":
+                  customerData.address = value?.toString().trim() || "";
+                  break;
+                case "city":
+                  customerData.city = value?.toString().trim() || "";
+                  break;
+                case "state":
+                  customerData.state = value?.toString().trim() || "";
+                  break;
+                case "country":
+                  customerData.country = value?.toString().trim() || "";
+                  break;
+                case "postalcode":
+                case "postal_code":
+                case "postal code":
+                case "zip":
+                case "zipcode":
+                case "zip_code":
+                  customerData.postalCode = value?.toString().trim() || "";
+                  break;
+                case "pincode":
+                case "pin_code":
+                case "pin code":
+                  customerData.pincode = value?.toString().trim() || "";
+                  break;
+                case "company":
+                case "company_name":
+                case "company name":
+                  customerData.company = value?.toString().trim() || "";
+                  break;
+                case "customertype":
+                case "customer_type":
+                case "customer type":
+                case "type":
+                  customerData.customerType = value?.toString().trim() || "individual";
+                  break;
+                case "status":
+                case "crmstatus":
+                case "crm_status":
+                case "crm status":
+                  customerData.crmStatus = value?.toString().trim() || "active";
+                  break;
+                case "notes":
+                case "note":
+                  customerData.notes = value?.toString().trim() || "";
+                  break;
+              }
+            });
+
+            // Set name from firstName and lastName if name is not provided
+            if (!customerData.name && (customerData.firstName || customerData.lastName)) {
+              customerData.name = `${customerData.firstName || ""} ${customerData.lastName || ""}`.trim();
+            }
+
+            // Validate required fields - at least name or email should be present
+            if (!customerData.name && !customerData.email) {
+              skippedCount++;
+              continue;
+            }
+
+            // Create customer using simpleStorage
+            const customer = await simpleStorage.createCustomer(customerData);
+            importedCustomers.push(customer);
+          } catch (error: any) {
+            console.log("⚠️ Skipped invalid customer:", error.message);
+            skippedCount++;
+          }
+        }
+
+        return res.json({
+          success: true,
+          imported: importedCustomers.length,
+          skipped: skippedCount,
+          message: `Successfully imported ${importedCustomers.length} customers`,
+        });
+      }
+
+      return res.status(400).json({ 
+        success: false,
+        message: "No file provided" 
+      });
+    } catch (error: any) {
+      console.error("❌ Import customers error:", error);
+      res.status(500).json({ 
+        success: false,
+        message: error.message || "Internal server error" 
+      });
+    }
+  });
+
   app.get("/api/tenants/:tenantId/customers/:customerId", authenticateToken, async (req, res) => {
     try {
       const tenantId = parseInt(req.params.tenantId);
@@ -3255,6 +3855,616 @@ app.get("/api/tenants/:tenantId/all-customers-graph", authenticateToken, async (
     }
   });
 
+  // Export leads - Supports CSV, Excel, and PDF formats - MUST be before /:leadId route to avoid route conflict
+  app.get("/api/tenants/:tenantId/leads/export", authenticateToken, async (req, res) => {
+    try {
+      const { tenantId } = req.params;
+      const format = (req.query.format as string) || "csv"; // Default to CSV
+      const parsedTenantId = parseInt(tenantId);
+      
+      if (isNaN(parsedTenantId)) {
+        return res.status(400).json({ message: "Invalid tenant ID" });
+      }
+
+      const result = await simpleStorage.getLeadsByTenant({
+        tenantId: parsedTenantId,
+        limit: 10000, // Export all leads
+      });
+      
+      const leads = Array.isArray(result?.data) ? result.data : [];
+      const filteredLeads = leads.filter((lead: any) => lead && (lead.id || lead.email || lead.firstName));
+      
+      // Debug: Log first lead to check typeSpecificData structure
+      if (filteredLeads.length > 0) {
+        console.log("Sample lead typeSpecificData:", {
+          typeSpecificData: filteredLeads[0].typeSpecificData,
+          type_specific_data: filteredLeads[0].type_specific_data,
+          keys: Object.keys(filteredLeads[0]).filter(k => k.toLowerCase().includes('type') || k.toLowerCase().includes('specific'))
+        });
+      }
+
+      // Helper function to format type-specific data (travel category details) as readable text
+      const formatTravelCategoryDetails = (typeSpecificData: any, forPDF: boolean = false): string => {
+        if (!typeSpecificData) return "";
+        
+        try {
+          // Parse if it's a string
+          const data = typeof typeSpecificData === 'string' 
+            ? JSON.parse(typeSpecificData) 
+            : typeSpecificData;
+          
+          if (!data || typeof data !== 'object') return "";
+          
+          // Format as key-value pairs, excluding empty values
+          const formattedPairs: string[] = [];
+          
+          Object.entries(data).forEach(([key, value]) => {
+            if (value !== null && value !== undefined && value !== "") {
+              // Format the key (convert camelCase to Title Case)
+              const formattedKey = key
+                .replace(/([A-Z])/g, ' $1')
+                .replace(/^./, str => str.toUpperCase())
+                .trim();
+              
+              // Format the value more readably
+              let formattedValue = "";
+              if (typeof value === 'object') {
+                // Handle date objects and nested objects
+                if (value instanceof Date) {
+                  formattedValue = value.toLocaleDateString();
+                } else if (Array.isArray(value)) {
+                  // Format arrays more readably
+                  const arrayItems = value.map((item: any) => {
+                    if (typeof item === 'object' && item !== null) {
+                      return JSON.stringify(item);
+                    }
+                    return String(item);
+                  }).filter((item: string) => item && item !== 'null' && item !== 'undefined');
+                  formattedValue = arrayItems.length > 0 ? arrayItems.join(", ") : "";
+                } else {
+                  // Format nested objects
+                  const nestedPairs: string[] = [];
+                  Object.entries(value).forEach(([nestedKey, nestedValue]) => {
+                    if (nestedValue !== null && nestedValue !== undefined && nestedValue !== "") {
+                      nestedPairs.push(`${nestedKey}: ${nestedValue}`);
+                    }
+                  });
+                  formattedValue = nestedPairs.length > 0 ? nestedPairs.join(", ") : JSON.stringify(value);
+                }
+              } else {
+                formattedValue = String(value);
+              }
+              
+              if (formattedValue) {
+                // Use line breaks for PDF, semicolons for CSV/Excel
+                const separator = forPDF ? "\n" : "; ";
+                formattedPairs.push(`${formattedKey}: ${formattedValue}`);
+              }
+            }
+          });
+          
+          return formattedPairs.join(forPDF ? "\n" : "; ");
+        } catch (error) {
+          console.warn("Error formatting travel category details:", error);
+          return "";
+        }
+      };
+
+      // Prepare data for export
+      const exportData = filteredLeads.map((lead: any) => {
+        // Combine assigned user first and last name
+        const assignedUserFirstName = lead.assignedUserFirstName || lead.assigned_user_first_name || "";
+        const assignedUserLastName = lead.assignedUserLastName || lead.assigned_user_last_name || "";
+        const assignedUserName = assignedUserFirstName && assignedUserLastName
+          ? `${assignedUserFirstName} ${assignedUserLastName}`.trim()
+          : assignedUserFirstName || assignedUserLastName || "";
+        
+        // Format travel category details - check multiple possible field names
+        // PostgreSQL JSONB fields might come as objects or strings
+        let typeSpecificData = lead.typeSpecificData || 
+                               lead.type_specific_data || 
+                               (lead as any).typeSpecificData ||
+                               (lead as any).type_specific_data ||
+                               null;
+        
+        // If it's a string representation of JSON, try to parse it
+        if (typeof typeSpecificData === 'string' && typeSpecificData.trim() !== '') {
+          try {
+            typeSpecificData = JSON.parse(typeSpecificData);
+          } catch (e) {
+            // If parsing fails, keep as string
+            console.warn("Could not parse typeSpecificData as JSON:", e);
+          }
+        }
+        
+        const travelCategoryDetails = formatTravelCategoryDetails(
+          typeSpecificData,
+          false // false for CSV/Excel, will be reformatted for PDF later
+        );
+        
+        return {
+          firstName: lead.firstName || lead.first_name || "",
+          lastName: lead.lastName || lead.last_name || "",
+          email: lead.email || "",
+          phone: lead.phone || "",
+          source: lead.source || "",
+          status: lead.status || "",
+          score: lead.score || "0",
+          travelCategory: lead.lead_type_name || lead.leadTypeName || lead.travelCategory || "",
+          travelCategoryDetails: travelCategoryDetails,
+          priority: lead.priority || "low",
+          assignedUserName: assignedUserName,
+          budgetRange: lead.budgetRange || lead.budget_range || "",
+          country: lead.country || "",
+          state: lead.state || "",
+          city: lead.city || "",
+          notes: lead.notes || "",
+          // Store original typeSpecificData for PDF formatting
+          typeSpecificData: typeSpecificData,
+          dateAdded: lead.createdAt || lead.created_at 
+            ? new Date(lead.createdAt || lead.created_at).toLocaleDateString() 
+            : "",
+        };
+      });
+
+      const dateStr = new Date().toISOString().split("T")[0];
+
+      if (format === "xlsx" || format === "excel") {
+        // Export as Excel
+        const workbook = XLSX.utils.book_new();
+        const worksheet = XLSX.utils.json_to_sheet(exportData);
+        
+        // Set column widths for better readability
+        const colWidths = [
+          { wch: 15 }, // First Name
+          { wch: 15 }, // Last Name
+          { wch: 30 }, // Email
+          { wch: 15 }, // Phone
+          { wch: 12 }, // Source
+          { wch: 12 }, // Status
+          { wch: 8 },  // Score
+          { wch: 20 }, // Travel Category
+          { wch: 50 }, // Travel Category Details (wider for detailed data)
+          { wch: 12 }, // Priority
+          { wch: 20 }, // Assigned User
+          { wch: 15 }, // Budget Range
+          { wch: 15 }, // Country
+          { wch: 15 }, // State
+          { wch: 15 }, // City
+          { wch: 30 }, // Notes
+          { wch: 15 }, // Date Added
+        ];
+        worksheet['!cols'] = colWidths;
+        
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Leads");
+        
+        const excelBuffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+        
+        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="leads-${dateStr}.xlsx"`,
+        );
+        res.send(excelBuffer);
+      } else if (format === "pdf") {
+        // Export as PDF using jsPDF with manual text wrapping
+        // Use landscape orientation to fit all columns including travel category details
+        const { jsPDF } = await import("jspdf");
+        const doc = new jsPDF('landscape', 'mm', 'a4');
+        
+        // Helper function to split text into multiple lines (handles both word-based and character-based splitting)
+        const splitText = (text: string, maxWidth: number, doc: any): string[] => {
+          if (!text) return [""];
+          const textStr = text.toString();
+          const lines: string[] = [];
+          let currentLine = '';
+          
+          // First try word-based splitting
+          const words = textStr.split(' ');
+          
+          words.forEach(word => {
+            // Check if the word itself is too long (like long email addresses)
+            const wordWidth = doc.getTextWidth(word);
+            
+            if (wordWidth > maxWidth) {
+              // Word is too long, need to split by characters
+              if (currentLine) {
+                lines.push(currentLine);
+                currentLine = '';
+              }
+              
+              // Split long word character by character
+              let charLine = '';
+              for (let i = 0; i < word.length; i++) {
+                const testChar = charLine + word[i];
+                const testWidth = doc.getTextWidth(testChar);
+                
+                if (testWidth > maxWidth && charLine) {
+                  lines.push(charLine);
+                  charLine = word[i];
+                } else {
+                  charLine = testChar;
+                }
+              }
+              
+              if (charLine) {
+                currentLine = charLine;
+              }
+            } else {
+              // Word fits, try adding it to current line
+              const testLine = currentLine + (currentLine ? ' ' : '') + word;
+              const testWidth = doc.getTextWidth(testLine);
+              
+              if (testWidth > maxWidth && currentLine) {
+                lines.push(currentLine);
+                currentLine = word;
+              } else {
+                currentLine = testLine;
+              }
+            }
+          });
+          
+          if (currentLine) {
+            lines.push(currentLine);
+          }
+          
+          return lines.length > 0 ? lines : [textStr];
+        };
+        
+        // Set font - use smaller font for more columns
+        doc.setFontSize(16);
+        
+        // Calculate page dimensions (landscape A4: 297mm x 210mm)
+        const pageWidth = doc.internal.pageSize.width; // Should be ~297mm for landscape
+        const pageHeightFull = doc.internal.pageSize.height; // Should be ~210mm for landscape
+        const pageHeight = pageHeightFull - 20; // Usable height minus margins
+        
+        // Column widths (in mm)
+        const colWidths = {
+          firstName: 12,
+          lastName: 12,
+          email: 28,
+          phone: 12,
+          source: 8,
+          status: 8,
+          score: 8,
+          travelCategory: 22,
+          travelCategoryDetails: 48, // Wide column for details
+          priority: 13,
+          assignedUser: 13,
+          dateAdded: 12,
+        };
+        
+        // Calculate total table width (sum of all column widths + spacing between columns)
+        const spacingBetweenCols = 2; // 2mm spacing between columns
+        const totalTableWidth = Object.values(colWidths).reduce((sum, width) => sum + width, 0) + 
+                                (Object.keys(colWidths).length - 1) * spacingBetweenCols;
+        
+        // Calculate left margin to center the table
+        const leftMargin = (pageWidth - totalTableWidth) / 2;
+        
+        // Column positions (centered on page) - calculate sequentially
+        let currentX = leftMargin;
+        const colPositions: any = {};
+        colPositions.firstName = currentX;
+        currentX += colWidths.firstName + spacingBetweenCols;
+        colPositions.lastName = currentX;
+        currentX += colWidths.lastName + spacingBetweenCols;
+        colPositions.email = currentX;
+        currentX += colWidths.email + spacingBetweenCols;
+        colPositions.phone = currentX;
+        currentX += colWidths.phone + spacingBetweenCols;
+        colPositions.source = currentX;
+        currentX += colWidths.source + spacingBetweenCols;
+        colPositions.status = currentX;
+        currentX += colWidths.status + spacingBetweenCols;
+        colPositions.score = currentX;
+        currentX += colWidths.score + spacingBetweenCols;
+        colPositions.travelCategory = currentX;
+        currentX += colWidths.travelCategory + spacingBetweenCols;
+        colPositions.travelCategoryDetails = currentX;
+        currentX += colWidths.travelCategoryDetails + spacingBetweenCols;
+        colPositions.priority = currentX;
+        currentX += colWidths.priority + spacingBetweenCols;
+        colPositions.assignedUser = currentX;
+        currentX += colWidths.assignedUser + spacingBetweenCols;
+        colPositions.dateAdded = currentX;
+        
+        // Center the title
+        const titleWidth = doc.getTextWidth("Leads Export");
+        doc.text("Leads Export", (pageWidth - titleWidth) / 2, 15);
+        doc.setFontSize(7); // Reduced from 8 to fit more columns (landscape mode)
+        
+        let yPos = 25;
+        const lineHeight = 4.5; // Slightly reduced line height to fit more columns
+        // pageHeight is already declared above
+        let pageNum = 1;
+        
+        // Helper function to center-align text within column (for headers)
+        const drawCenteredHeader = (text: string, xPos: number, yPos: number, maxWidth: number) => {
+          const textWidth = doc.getTextWidth(text);
+          const centeredX = xPos + (maxWidth / 2) - (textWidth / 2);
+          doc.text(text, Math.max(xPos, centeredX), yPos);
+        };
+        
+        // Draw headers - use smaller font for headers to fit more columns, center-aligned
+        doc.setFontSize(6);
+        doc.setFont(undefined, "bold");
+        drawCenteredHeader("First", colPositions.firstName, yPos, colWidths.firstName);
+        drawCenteredHeader("Last", colPositions.lastName, yPos, colWidths.lastName);
+        drawCenteredHeader("Email", colPositions.email, yPos, colWidths.email);
+        drawCenteredHeader("Phone", colPositions.phone, yPos, colWidths.phone);
+        drawCenteredHeader("Src", colPositions.source, yPos, colWidths.source);
+        drawCenteredHeader("Status", colPositions.status, yPos, colWidths.status);
+        drawCenteredHeader("Score", colPositions.score, yPos, colWidths.score);
+        drawCenteredHeader("Travel Category", colPositions.travelCategory, yPos, colWidths.travelCategory);
+        // Travel Category Details header - left align for readability
+        doc.text("Travel Category Details", colPositions.travelCategoryDetails, yPos);
+        drawCenteredHeader("Priority", colPositions.priority, yPos, colWidths.priority);
+        drawCenteredHeader("Assigned", colPositions.assignedUser, yPos, colWidths.assignedUser);
+        drawCenteredHeader("Date", colPositions.dateAdded, yPos, colWidths.dateAdded);
+        
+        yPos += lineHeight;
+        // Draw line across the table width (centered)
+        doc.line(leftMargin, yPos, leftMargin + totalTableWidth, yPos);
+        yPos += lineHeight;
+        doc.setFontSize(7); // Reset to normal font size for data
+        
+        // Draw data rows with text wrapping
+        doc.setFont(undefined, "normal");
+        exportData.forEach((lead: any, index: number) => {
+          // Check if we need a new page
+          if (yPos > pageHeight) {
+            doc.addPage();
+            pageNum++;
+            yPos = 20;
+            
+            // Redraw headers on new page - center-aligned
+            doc.setFontSize(6);
+            doc.setFont(undefined, "bold");
+            drawCenteredHeader("First", colPositions.firstName, yPos, colWidths.firstName);
+            drawCenteredHeader("Last", colPositions.lastName, yPos, colWidths.lastName);
+            drawCenteredHeader("Email", colPositions.email, yPos, colWidths.email);
+            drawCenteredHeader("Phone", colPositions.phone, yPos, colWidths.phone);
+            drawCenteredHeader("Src", colPositions.source, yPos, colWidths.source);
+            drawCenteredHeader("Status", colPositions.status, yPos, colWidths.status);
+            drawCenteredHeader("Score", colPositions.score, yPos, colWidths.score);
+            drawCenteredHeader("Travel Category", colPositions.travelCategory, yPos, colWidths.travelCategory);
+            // Travel Category Details header - left align for readability
+            doc.text("Travel Category Details", colPositions.travelCategoryDetails, yPos);
+            drawCenteredHeader("Priority", colPositions.priority, yPos, colWidths.priority);
+            drawCenteredHeader("Assigned", colPositions.assignedUser, yPos, colWidths.assignedUser);
+            drawCenteredHeader("Date", colPositions.dateAdded, yPos, colWidths.dateAdded);
+            yPos += lineHeight;
+            // Draw line across the table width (centered)
+            doc.line(leftMargin, yPos, leftMargin + totalTableWidth, yPos);
+            yPos += lineHeight;
+            doc.setFontSize(7); // Reset to normal font size for data
+            doc.setFont(undefined, "normal");
+          }
+          
+          const startY = yPos;
+          let maxLines = 1;
+          
+          // Reformat travel category details for PDF with better formatting
+          // Use the typeSpecificData stored in exportData (we stored it above)
+          let typeSpecificDataForPDF = lead.typeSpecificData || 
+                                       lead.type_specific_data || 
+                                       (lead as any).typeSpecificData ||
+                                       (lead as any).type_specific_data ||
+                                       null;
+          
+          // If it's a string representation of JSON, try to parse it
+          if (typeof typeSpecificDataForPDF === 'string' && typeSpecificDataForPDF.trim() !== '') {
+            try {
+              typeSpecificDataForPDF = JSON.parse(typeSpecificDataForPDF);
+            } catch (e) {
+              // If parsing fails, keep as string
+            }
+          }
+          
+          const travelCategoryDetailsForPDF = formatTravelCategoryDetails(
+            typeSpecificDataForPDF,
+            true // true for PDF - uses line breaks
+          );
+          
+          // Split text for each field and find max lines needed
+          const firstNameLines = splitText(lead.firstName || "", colWidths.firstName, doc);
+          const lastNameLines = splitText(lead.lastName || "", colWidths.lastName, doc);
+          const emailLines = splitText(lead.email || "", colWidths.email, doc);
+          const phoneLines = splitText(lead.phone || "", colWidths.phone, doc);
+          const sourceLines = splitText(lead.source || "", colWidths.source, doc);
+          const statusLines = splitText(lead.status || "", colWidths.status, doc);
+          const scoreLines = splitText(lead.score?.toString() || "0", colWidths.score, doc);
+          const travelCategoryLines = splitText(lead.travelCategory || "", colWidths.travelCategory, doc);
+          // Split travel category details by line breaks for better readability
+          const travelCategoryDetailsLines = travelCategoryDetailsForPDF 
+            ? travelCategoryDetailsForPDF.split('\n').filter(line => line.trim() !== "")
+            : [""];
+          const priorityLines = splitText(lead.priority || "", colWidths.priority, doc);
+          const assignedUserLines = splitText(lead.assignedUserName || "", colWidths.assignedUser, doc);
+          const dateAddedLines = splitText(lead.dateAdded || "", colWidths.dateAdded, doc);
+          
+          // Helper function to center-align text within column
+          const drawCenteredText = (text: string, xPos: number, yPos: number, maxWidth: number) => {
+            const textWidth = doc.getTextWidth(text);
+            // Center the text within the column
+            const centeredX = xPos + (maxWidth / 2) - (textWidth / 2);
+            doc.text(text, Math.max(xPos, centeredX), yPos);
+          };
+          
+          // Calculate actual line count for travel category details (with wrapping)
+          let travelDetailsLineCount = 0;
+          travelCategoryDetailsLines.forEach((line) => {
+            const wrappedLines = splitText(line, colWidths.travelCategoryDetails, doc);
+            travelDetailsLineCount += wrappedLines.length;
+          });
+          
+          maxLines = Math.max(
+            firstNameLines.length,
+            lastNameLines.length,
+            emailLines.length,
+            phoneLines.length,
+            sourceLines.length,
+            statusLines.length,
+            scoreLines.length,
+            travelCategoryLines.length,
+            travelDetailsLineCount || 1, // Use wrapped line count
+            priorityLines.length,
+            assignedUserLines.length,
+            dateAddedLines.length,
+            1
+          );
+          
+          // Draw wrapped text for each column with center alignment
+          firstNameLines.forEach((line, i) => {
+            drawCenteredText(line, colPositions.firstName, startY + (i * lineHeight), colWidths.firstName);
+          });
+          
+          lastNameLines.forEach((line, i) => {
+            drawCenteredText(line, colPositions.lastName, startY + (i * lineHeight), colWidths.lastName);
+          });
+          
+          emailLines.forEach((line, i) => {
+            drawCenteredText(line, colPositions.email, startY + (i * lineHeight), colWidths.email);
+          });
+          
+          phoneLines.forEach((line, i) => {
+            drawCenteredText(line, colPositions.phone, startY + (i * lineHeight), colWidths.phone);
+          });
+          
+          sourceLines.forEach((line, i) => {
+            drawCenteredText(line, colPositions.source, startY + (i * lineHeight), colWidths.source);
+          });
+          
+          statusLines.forEach((line, i) => {
+            drawCenteredText(line, colPositions.status, startY + (i * lineHeight), colWidths.status);
+          });
+          
+          scoreLines.forEach((line, i) => {
+            drawCenteredText(line, colPositions.score, startY + (i * lineHeight), colWidths.score);
+          });
+          
+          travelCategoryLines.forEach((line, i) => {
+            drawCenteredText(line, colPositions.travelCategory, startY + (i * lineHeight), colWidths.travelCategory);
+          });
+          
+          // Travel category details - left align for better readability of multi-line content
+          let travelDetailsYOffset = 0;
+          travelCategoryDetailsLines.forEach((line) => {
+            const wrappedLines = splitText(line, colWidths.travelCategoryDetails, doc);
+            wrappedLines.forEach((wrappedLine) => {
+              doc.text(wrappedLine, colPositions.travelCategoryDetails, startY + (travelDetailsYOffset * lineHeight));
+              travelDetailsYOffset++;
+            });
+          });
+          
+          priorityLines.forEach((line, i) => {
+            drawCenteredText(line, colPositions.priority, startY + (i * lineHeight), colWidths.priority);
+          });
+          
+          assignedUserLines.forEach((line, i) => {
+            drawCenteredText(line, colPositions.assignedUser, startY + (i * lineHeight), colWidths.assignedUser);
+          });
+          
+          dateAddedLines.forEach((line, i) => {
+            drawCenteredText(line, colPositions.dateAdded, startY + (i * lineHeight), colWidths.dateAdded);
+          });
+          
+          // Move to next row based on max lines used
+          yPos += (maxLines * lineHeight) + 2;
+        });
+        
+        // Footer on last page
+        const totalPages = doc.internal.getNumberOfPages();
+        for (let i = 1; i <= totalPages; i++) {
+          doc.setPage(i);
+          doc.setFontSize(8);
+          doc.text(
+            `Page ${i} of ${totalPages}`,
+            14,
+            doc.internal.pageSize.height - 10
+          );
+          doc.text(
+            `Total Leads: ${exportData.length}`,
+            doc.internal.pageSize.width - 60,
+            doc.internal.pageSize.height - 10
+          );
+        }
+        
+        const pdfBuffer = Buffer.from(doc.output("arraybuffer"));
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="leads-${dateStr}.pdf"`,
+        );
+        res.send(pdfBuffer);
+      } else {
+        // Default: Export as CSV
+        const csvHeaders = [
+          "First Name",
+          "Last Name",
+          "Email",
+          "Phone",
+          "Source",
+          "Status",
+          "Score",
+          "Travel Category",
+          "Travel Category Details",
+          "Priority",
+          "Assigned User",
+          "Budget Range",
+          "Country",
+          "State",
+          "City",
+          "Notes",
+          "Date Added",
+        ];
+        
+        const csvRows = exportData.map((lead: any) => [
+          lead.firstName,
+          lead.lastName,
+          lead.email,
+          lead.phone,
+          lead.source,
+          lead.status,
+          lead.score,
+          lead.travelCategory,
+          lead.travelCategoryDetails,
+          lead.priority,
+          lead.assignedUserName,
+          lead.budgetRange,
+          lead.country,
+          lead.state,
+          lead.city,
+          lead.notes,
+          lead.dateAdded,
+        ]);
+
+        const csvContent = [csvHeaders, ...csvRows]
+          .map((row) =>
+            row
+              .map((field) => `"${field.toString().replace(/"/g, '""')}"`)
+              .join(","),
+          )
+          .join("\n");
+
+        res.setHeader("Content-Type", "text/csv");
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="leads-${dateStr}.csv"`,
+        );
+        res.send(csvContent);
+      }
+    } catch (error: any) {
+      console.error("Export leads error:", error);
+      res.status(500).json({ 
+        success: false,
+        message: error.message || "Internal server error" 
+      });
+    }
+  });
+
   app.get("/api/tenants/:tenantId/leads/:leadId", authenticateToken, async (req, res) => {
     try {
       const tenantId = parseInt(req.params.tenantId);
@@ -3353,6 +4563,615 @@ app.get("/api/tenants/:tenantId/all-customers-graph", authenticateToken, async (
     } catch (error: any) {
       console.error("Convert lead error:", error);
       return res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+  });
+
+  // Export invoices - Supports CSV, Excel, and PDF formats - MUST be before /invoices route to avoid route conflict
+  app.get("/api/tenants/:tenantId/invoices/export", authenticateToken, async (req, res) => {
+    try {
+      const { tenantId } = req.params;
+      const format = (req.query.format as string) || "csv"; // Default to CSV
+      const parsedTenantId = parseInt(tenantId);
+      
+      if (isNaN(parsedTenantId)) {
+        return res.status(400).json({ message: "Invalid tenant ID" });
+      }
+
+      // Fetch all invoices for the tenant (no pagination for export)
+      const invoices = await simpleStorage.getInvoicesByTenant(parsedTenantId, {
+        page: 1,
+        pageSize: 10000, // Export all invoices
+      });
+
+      const invoiceList = Array.isArray(invoices?.data) ? invoices.data : (Array.isArray(invoices) ? invoices : []);
+      const filteredInvoices = invoiceList.filter((inv: any) => inv && inv.id);
+
+      // Prepare data for export
+      const exportData = filteredInvoices.map((inv: any) => {
+        // Extract voucher/invoice number from line items if available
+        let voucherNumber = "";
+        
+        // Parse line items - they might be a JSON string or array
+        let lineItems: any[] = [];
+        if (inv.lineItems) {
+          if (typeof inv.lineItems === 'string') {
+            try {
+              lineItems = JSON.parse(inv.lineItems);
+            } catch (e) {
+              console.warn("Failed to parse lineItems JSON:", e);
+            }
+          } else if (Array.isArray(inv.lineItems)) {
+            lineItems = inv.lineItems;
+          }
+        }
+        
+        // Extract voucher/invoice numbers from line items
+        if (lineItems.length > 0) {
+          // Get all voucher/invoice numbers from line items
+          const numbers = lineItems
+            .map((item: any) => item.voucherNumber || item.voucher_number || item.invoiceNumber || item.invoice_number)
+            .filter((num: any) => num && num.toString().trim() !== "");
+          
+          // Use first available number, or join multiple with comma
+          if (numbers.length > 0) {
+            voucherNumber = numbers.join(", ");
+          }
+        }
+        
+        // Fallback to booking number or direct voucher_number field
+        if (!voucherNumber) {
+          voucherNumber = inv.bookingNumber || inv.booking_number || inv.voucher_number || inv.voucherNumber || "";
+        }
+        
+        return {
+          invoiceNumber: inv.invoice_number || inv.invoiceNumber || "",
+          customerName: inv.customer_name || inv.customerName || "",
+          customerEmail: inv.customer_email || inv.customerEmail || "",
+          voucherNumber: voucherNumber,
+          issueDate: inv.issue_date || inv.issueDate 
+            ? new Date(inv.issue_date || inv.issueDate).toLocaleDateString() 
+            : "",
+          dueDate: inv.due_date || inv.dueDate 
+            ? new Date(inv.due_date || inv.dueDate).toLocaleDateString() 
+            : "",
+          totalAmount: inv.total_amount || inv.totalAmount || "0",
+          amountPaid: inv.amount_paid || inv.amountPaid || inv.paidAmount || "0",
+          amountDue: inv.amount_due || inv.amountDue || "0",
+          currency: inv.currency || "",
+          status: inv.status || "",
+          dateAdded: inv.created_at || inv.createdAt 
+            ? new Date(inv.created_at || inv.createdAt).toLocaleDateString() 
+            : "",
+        };
+      });
+
+      const dateStr = new Date().toISOString().split("T")[0];
+
+      if (format === "xlsx" || format === "excel") {
+        // Export as Excel
+        const workbook = XLSX.utils.book_new();
+        const worksheet = XLSX.utils.json_to_sheet(exportData);
+        
+        // Set column widths for better readability
+        const colWidths = [
+          { wch: 15 }, // Invoice Number
+          { wch: 25 }, // Customer Name
+          { wch: 30 }, // Customer Email
+          { wch: 15 }, // Voucher Number
+          { wch: 15 }, // Issue Date
+          { wch: 15 }, // Due Date
+          { wch: 15 }, // Total Amount
+          { wch: 15 }, // Amount Paid
+          { wch: 15 }, // Amount Due
+          { wch: 10 }, // Currency
+          { wch: 15 }, // Status
+          { wch: 15 }, // Date Added
+        ];
+        worksheet['!cols'] = colWidths;
+        
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Invoices");
+        
+        const excelBuffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+        
+        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="invoices-${dateStr}.xlsx"`,
+        );
+        res.send(excelBuffer);
+      } else if (format === "pdf") {
+        // Export as PDF using jsPDF with manual text wrapping
+        const { jsPDF } = await import("jspdf");
+        const doc = new jsPDF();
+        
+        // Helper function to split text into multiple lines
+        // Helper function to split text into multiple lines (handles both word-based and character-based splitting)
+        const splitText = (text: string, maxWidth: number, doc: any): string[] => {
+          if (!text) return [""];
+          const textStr = text.toString();
+          const lines: string[] = [];
+          let currentLine = '';
+          
+          // First try word-based splitting
+          const words = textStr.split(' ');
+          
+          words.forEach(word => {
+            // Check if the word itself is too long (like long email addresses)
+            const wordWidth = doc.getTextWidth(word);
+            
+            if (wordWidth > maxWidth) {
+              // Word is too long, need to split by characters
+              if (currentLine) {
+                lines.push(currentLine);
+                currentLine = '';
+              }
+              
+              // Split long word character by character
+              let charLine = '';
+              for (let i = 0; i < word.length; i++) {
+                const testChar = charLine + word[i];
+                const testWidth = doc.getTextWidth(testChar);
+                
+                if (testWidth > maxWidth && charLine) {
+                  lines.push(charLine);
+                  charLine = word[i];
+                } else {
+                  charLine = testChar;
+                }
+              }
+              
+              if (charLine) {
+                currentLine = charLine;
+              }
+            } else {
+              // Word fits, try adding it to current line
+              const testLine = currentLine + (currentLine ? ' ' : '') + word;
+              const testWidth = doc.getTextWidth(testLine);
+              
+              if (testWidth > maxWidth && currentLine) {
+                lines.push(currentLine);
+                currentLine = word;
+              } else {
+                currentLine = testLine;
+              }
+            }
+          });
+          
+          if (currentLine) {
+            lines.push(currentLine);
+          }
+          
+          return lines.length > 0 ? lines : [textStr];
+        };
+        
+        // Calculate page dimensions
+        const pageWidth = doc.internal.pageSize.width;
+        const pageHeightFull = doc.internal.pageSize.height;
+        const pageHeight = pageHeightFull - 20;
+        
+        // Column widths (in mm)
+        const colWidths = {
+          invoiceNumber: 30,  // Increased width for long invoice numbers
+          customer: 38,  // Increased width for customer name + email
+          voucherNumber: 18,
+          issueDate: 18,
+          dueDate: 18,
+          totalAmount: 20,
+          amountPaid: 20,
+          status: 12,
+        };
+        
+        // Calculate total table width
+        const spacingBetweenCols = 2;
+        const totalTableWidth = Object.values(colWidths).reduce((sum, width) => sum + width, 0) + 
+                                (Object.keys(colWidths).length - 1) * spacingBetweenCols;
+        
+        // Calculate left margin to center the table
+        const leftMargin = (pageWidth - totalTableWidth) / 2;
+        
+        // Column positions (centered on page)
+        let currentX = leftMargin;
+        const colPositions: any = {};
+        colPositions.invoiceNumber = currentX;
+        currentX += colWidths.invoiceNumber + spacingBetweenCols;
+        colPositions.customer = currentX;
+        currentX += colWidths.customer + spacingBetweenCols;
+        colPositions.voucherNumber = currentX;
+        currentX += colWidths.voucherNumber + spacingBetweenCols;
+        colPositions.issueDate = currentX;
+        currentX += colWidths.issueDate + spacingBetweenCols;
+        colPositions.dueDate = currentX;
+        currentX += colWidths.dueDate + spacingBetweenCols;
+        colPositions.totalAmount = currentX;
+        currentX += colWidths.totalAmount + spacingBetweenCols;
+        colPositions.amountPaid = currentX;
+        currentX += colWidths.amountPaid + spacingBetweenCols;
+        colPositions.status = currentX;
+        
+        // Center the title
+        doc.setFontSize(16);
+        const titleWidth = doc.getTextWidth("Invoices Export");
+        doc.text("Invoices Export", (pageWidth - titleWidth) / 2, 15);
+        doc.setFontSize(8);
+        
+        let yPos = 25;
+        const lineHeight = 5;
+        let pageNum = 1;
+        
+        // Draw headers
+        doc.setFont(undefined, "bold");
+        doc.text("Invoice #", colPositions.invoiceNumber, yPos);
+        doc.text("Customer", colPositions.customer, yPos);
+        doc.text("Voucher #", colPositions.voucherNumber, yPos);
+        doc.text("Issue Date", colPositions.issueDate, yPos);
+        doc.text("Due Date", colPositions.dueDate, yPos);
+        doc.text("Total Amount", colPositions.totalAmount, yPos);
+        doc.text("Paid Amount", colPositions.amountPaid, yPos);
+        doc.text("Status", colPositions.status, yPos);
+        
+        yPos += lineHeight;
+        doc.line(leftMargin, yPos, leftMargin + totalTableWidth, yPos);
+        yPos += lineHeight;
+        
+        // Draw data rows with text wrapping
+        doc.setFont(undefined, "normal");
+        exportData.forEach((inv: any, index: number) => {
+          // Check if we need a new page
+          if (yPos > pageHeight) {
+            doc.addPage();
+            pageNum++;
+            yPos = 20;
+            
+            // Redraw headers on new page
+            doc.setFont(undefined, "bold");
+            doc.text("Invoice #", colPositions.invoiceNumber, yPos);
+            doc.text("Customer", colPositions.customer, yPos);
+            doc.text("Voucher #", colPositions.voucherNumber, yPos);
+            doc.text("Issue Date", colPositions.issueDate, yPos);
+            doc.text("Due Date", colPositions.dueDate, yPos);
+            doc.text("Total Amount", colPositions.totalAmount, yPos);
+            doc.text("Paid Amount", colPositions.amountPaid, yPos);
+            doc.text("Status", colPositions.status, yPos);
+            yPos += lineHeight;
+            doc.line(leftMargin, yPos, leftMargin + totalTableWidth, yPos);
+            yPos += lineHeight;
+            doc.setFont(undefined, "normal");
+          }
+          
+          const startY = yPos;
+          let maxLines = 1;
+          
+          // Split text for all fields that might need wrapping
+          const invoiceNumberLines = splitText(inv.invoiceNumber || "", colWidths.invoiceNumber, doc);
+          const customerText = `${inv.customerName || ""}${inv.customerEmail ? `, ${inv.customerEmail}` : ""}`;
+          const customerLines = splitText(customerText, colWidths.customer, doc);
+          const voucherNumberLines = splitText(inv.voucherNumber || "", colWidths.voucherNumber, doc);
+          const issueDateLines = splitText(inv.issueDate || "", colWidths.issueDate, doc);
+          const dueDateLines = splitText(inv.dueDate || "", colWidths.dueDate, doc);
+          const totalAmountText = `${inv.currency || ""} ${inv.totalAmount || "0"}`;
+          const totalAmountLines = splitText(totalAmountText, colWidths.totalAmount, doc);
+          const amountPaidText = `${inv.currency || ""} ${inv.amountPaid || "0"}`;
+          const amountPaidLines = splitText(amountPaidText, colWidths.amountPaid, doc);
+          const statusLines = splitText(inv.status || "", colWidths.status, doc);
+          
+          maxLines = Math.max(
+            invoiceNumberLines.length,
+            customerLines.length,
+            voucherNumberLines.length,
+            issueDateLines.length,
+            dueDateLines.length,
+            totalAmountLines.length,
+            amountPaidLines.length,
+            statusLines.length,
+            1
+          );
+          
+          // Draw wrapped text for each column
+          invoiceNumberLines.forEach((line, i) => {
+            doc.text(line, colPositions.invoiceNumber, startY + (i * lineHeight));
+          });
+          
+          customerLines.forEach((line, i) => {
+            doc.text(line, colPositions.customer, startY + (i * lineHeight));
+          });
+          
+          voucherNumberLines.forEach((line, i) => {
+            doc.text(line, colPositions.voucherNumber, startY + (i * lineHeight));
+          });
+          
+          issueDateLines.forEach((line, i) => {
+            doc.text(line, colPositions.issueDate, startY + (i * lineHeight));
+          });
+          
+          dueDateLines.forEach((line, i) => {
+            doc.text(line, colPositions.dueDate, startY + (i * lineHeight));
+          });
+          
+          totalAmountLines.forEach((line, i) => {
+            doc.text(line, colPositions.totalAmount, startY + (i * lineHeight));
+          });
+          
+          amountPaidLines.forEach((line, i) => {
+            doc.text(line, colPositions.amountPaid, startY + (i * lineHeight));
+          });
+          
+          statusLines.forEach((line, i) => {
+            doc.text(line, colPositions.status, startY + (i * lineHeight));
+          });
+          
+          // Move to next row based on max lines used
+          yPos += (maxLines * lineHeight) + 2;
+        });
+        
+        // Footer on last page
+        const totalPages = doc.internal.getNumberOfPages();
+        for (let i = 1; i <= totalPages; i++) {
+          doc.setPage(i);
+          doc.setFontSize(8);
+          doc.text(
+            `Page ${i} of ${totalPages}`,
+            leftMargin,
+            doc.internal.pageSize.height - 10
+          );
+          doc.text(
+            `Total Invoices: ${exportData.length}`,
+            doc.internal.pageSize.width - 60,
+            doc.internal.pageSize.height - 10
+          );
+        }
+        
+        const pdfBuffer = Buffer.from(doc.output("arraybuffer"));
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="invoices-${dateStr}.pdf"`,
+        );
+        res.send(pdfBuffer);
+      } else {
+        // Default: Export as CSV
+        const csvHeaders = [
+          "Invoice Number",
+          "Customer Name",
+          "Customer Email",
+          "Voucher Number",
+          "Issue Date",
+          "Due Date",
+          "Total Amount",
+          "Amount Paid",
+          "Amount Due",
+          "Currency",
+          "Status",
+          "Date Added",
+        ];
+        
+        const csvRows = exportData.map((inv: any) => [
+          inv.invoiceNumber,
+          inv.customerName,
+          inv.customerEmail,
+          inv.voucherNumber,
+          inv.issueDate,
+          inv.dueDate,
+          inv.totalAmount,
+          inv.amountPaid,
+          inv.amountDue,
+          inv.currency,
+          inv.status,
+          inv.dateAdded,
+        ]);
+
+        const csvContent = [csvHeaders, ...csvRows]
+          .map((row) =>
+            row
+              .map((field) => `"${field.toString().replace(/"/g, '""')}"`)
+              .join(","),
+          )
+          .join("\n");
+
+        res.setHeader("Content-Type", "text/csv");
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="invoices-${dateStr}.csv"`,
+        );
+        res.send(csvContent);
+      }
+    } catch (error: any) {
+      console.error("Export invoices error:", error);
+      res.status(500).json({ 
+        success: false,
+        message: error.message || "Internal server error" 
+      });
+    }
+  });
+
+  // Invoices Import endpoint
+  // Sample CSV download endpoint for invoices import
+  app.get("/api/tenants/:tenantId/invoices/import/sample", authenticateToken, async (req, res) => {
+    try {
+      const { tenantId } = req.params;
+      
+      // Standard columns for invoices
+      const standardColumns = [
+        "Invoice Number",
+        "Customer Name",
+        "Customer Email",
+        "Voucher Number",
+        "Issue Date",
+        "Due Date",
+        "Total Amount",
+        "Amount Paid",
+        "Currency",
+        "Status",
+      ];
+      
+      // Create CSV content with headers and one sample row
+      const csvHeaders = standardColumns.map(col => `"${col}"`).join(",");
+      const sampleRow = standardColumns.map((col) => {
+        const lowerCol = col.toLowerCase();
+        if (lowerCol.includes("invoice number") || lowerCol.includes("invoice_number")) {
+          return '"INV-001"';
+        } else if (lowerCol.includes("customer name") || lowerCol.includes("customer_name")) {
+          return '"John Doe"';
+        } else if (lowerCol.includes("customer email") || lowerCol.includes("customer_email") || lowerCol.includes("email")) {
+          return '"john.doe@example.com"';
+        } else if (lowerCol.includes("voucher number") || lowerCol.includes("voucher_number") || lowerCol.includes("voucher")) {
+          return '"VOUCH-001"';
+        } else if (lowerCol.includes("issue date") || lowerCol.includes("issue_date") || (lowerCol.includes("date") && !lowerCol.includes("due"))) {
+          return '"2025-01-15"';
+        } else if (lowerCol.includes("due date") || lowerCol.includes("due_date")) {
+          return '"2025-02-15"';
+        } else if (lowerCol.includes("total amount") || lowerCol.includes("total_amount") || (lowerCol.includes("total") && !lowerCol.includes("paid"))) {
+          return '"1000.00"';
+        } else if (lowerCol.includes("amount paid") || lowerCol.includes("amount_paid") || lowerCol.includes("paid")) {
+          return '"500.00"';
+        } else if (lowerCol.includes("currency")) {
+          return '"USD"';
+        } else if (lowerCol.includes("status")) {
+          return '"pending"';
+        } else {
+          return '""';
+        }
+      }).join(",");
+      
+      const csvContent = `${csvHeaders}\n${sampleRow}`;
+      
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="invoices-import-sample.csv"`,
+      );
+      res.send(csvContent);
+    } catch (error: any) {
+      console.error("Generate sample CSV error:", error);
+      res.status(500).json({ 
+        success: false,
+        message: error.message || "Internal server error" 
+      });
+    }
+  });
+
+  app.post("/api/tenants/:tenantId/invoices/import", upload.single("file"), authenticateToken, async (req, res) => {
+    console.log("📥 Invoices Import request received for tenant:", req.params.tenantId);
+
+    try {
+      const { tenantId } = req.params;
+      const userId = (req as any).user?.id;
+
+      if (req.file) {
+        const fileExtension = req.file.originalname.toLowerCase().split(".").pop();
+        console.log(`📄 Processing ${fileExtension} file: ${req.file.originalname}`);
+
+        let parsedData: any[] = [];
+
+        if (fileExtension === "csv") {
+          parsedData = await parseCsvFile(req.file.buffer);
+        } else if (fileExtension === "xlsx" || fileExtension === "xls") {
+          const XLSX = await import("xlsx");
+          const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+          const sheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[sheetName];
+          parsedData = XLSX.utils.sheet_to_json(worksheet);
+        } else {
+          return res.status(400).json({
+            success: false,
+            message: `Unsupported file format: ${fileExtension}. Supported formats: .csv, .xlsx, .xls`,
+          });
+        }
+
+        const importedInvoices = [];
+        let skippedCount = 0;
+
+        for (const row of parsedData) {
+          try {
+            const invoiceData: any = {
+              tenantId: parseInt(tenantId),
+              userId: userId,
+            };
+
+            Object.keys(row).forEach((key) => {
+              const lowerKey = key.toLowerCase().trim();
+              const value = row[key];
+
+              switch (lowerKey) {
+                case "invoice number":
+                case "invoice_number":
+                case "invoice":
+                  invoiceData.invoiceNumber = value?.toString().trim() || "";
+                  break;
+                case "customer name":
+                case "customer_name":
+                case "customer":
+                  invoiceData.customerName = value?.toString().trim() || "";
+                  break;
+                case "customer email":
+                case "customer_email":
+                case "email":
+                  invoiceData.customerEmail = value?.toString().trim() || "";
+                  break;
+                case "voucher number":
+                case "voucher_number":
+                case "voucher":
+                  invoiceData.voucherNumber = value?.toString().trim() || "";
+                  break;
+                case "issue date":
+                case "issue_date":
+                case "date":
+                  invoiceData.issueDate = value?.toString().trim() || new Date().toISOString().split("T")[0];
+                  break;
+                case "due date":
+                case "due_date":
+                  invoiceData.dueDate = value?.toString().trim() || "";
+                  break;
+                case "total amount":
+                case "total_amount":
+                case "amount":
+                case "total":
+                  invoiceData.totalAmount = parseFloat(value) || 0;
+                  break;
+                case "amount paid":
+                case "amount_paid":
+                case "paid":
+                  invoiceData.amountPaid = parseFloat(value) || 0;
+                  break;
+                case "currency":
+                  invoiceData.currency = value?.toString().trim() || "USD";
+                  break;
+                case "status":
+                  invoiceData.status = value?.toString().trim() || "pending";
+                  break;
+              }
+            });
+
+            if (!invoiceData.customerName && !invoiceData.customerEmail) {
+              skippedCount++;
+              continue;
+            }
+
+            const invoice = await simpleStorage.createInvoice(invoiceData);
+            importedInvoices.push(invoice);
+          } catch (error: any) {
+            console.log("⚠️ Skipped invalid invoice:", error.message);
+            skippedCount++;
+          }
+        }
+
+        return res.json({
+          success: true,
+          imported: importedInvoices.length,
+          skipped: skippedCount,
+          message: `Successfully imported ${importedInvoices.length} invoices`,
+        });
+      }
+
+      return res.status(400).json({ 
+        success: false,
+        message: "No file provided" 
+      });
+    } catch (error: any) {
+      console.error("❌ Import invoices error:", error);
+      res.status(500).json({ 
+        success: false,
+        message: error.message || "Internal server error" 
+      });
     }
   });
 
@@ -3861,6 +5680,468 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
       return res.status(500).json({ 
         error: "Internal server error", 
         message: error.message 
+      });
+    }
+  });
+
+  // Export estimates - Supports CSV, Excel, and PDF formats - MUST be before /estimates/:estimateId routes to avoid route conflict
+  app.get("/api/tenants/:tenantId/estimates/export", authenticateToken, async (req, res) => {
+    try {
+      const { tenantId } = req.params;
+      const format = (req.query.format as string) || "csv"; // Default to CSV
+      const parsedTenantId = parseInt(tenantId);
+      
+      if (isNaN(parsedTenantId)) {
+        return res.status(400).json({ message: "Invalid tenant ID" });
+      }
+
+      // Fetch all estimates for the tenant (no pagination for export)
+      const estimatesResult = await simpleStorage.getAllEstimatesByTenant({
+        tenantId: parsedTenantId,
+      });
+
+      const estimateList = Array.isArray(estimatesResult?.data) ? estimatesResult.data : (Array.isArray(estimatesResult) ? estimatesResult : []);
+      const filteredEstimates = estimateList.filter((est: any) => est && est.id);
+
+      // Prepare data for export
+      const exportData = filteredEstimates.map((est: any) => {
+        return {
+          estimateNumber: est.estimate_number || est.estimateNumber || "",
+          customerName: est.customer_name || est.customerName || "",
+          customerEmail: est.customer_email || est.customerEmail || "",
+          customerPhone: est.customer_phone || est.customerPhone || "",
+          date: est.created_at || est.createdAt 
+            ? new Date(est.created_at || est.createdAt).toLocaleDateString() 
+            : "",
+          validUntil: est.valid_until || est.validUntil 
+            ? new Date(est.valid_until || est.validUntil).toLocaleDateString() 
+            : "",
+          totalAmount: est.total_amount || est.totalAmount || "0",
+          subtotal: est.subtotal || "0",
+          discountAmount: est.discount_amount || est.discountAmount || "0",
+          taxAmount: est.tax_amount || est.taxAmount || "0",
+          currency: est.currency || "",
+          status: est.status || "",
+          dateAdded: est.created_at || est.createdAt 
+            ? new Date(est.created_at || est.createdAt).toLocaleDateString() 
+            : "",
+        };
+      });
+
+      const dateStr = new Date().toISOString().split("T")[0];
+
+      if (format === "xlsx" || format === "excel") {
+        // Export as Excel
+        const workbook = XLSX.utils.book_new();
+        const worksheet = XLSX.utils.json_to_sheet(exportData);
+        
+        // Set column widths for better readability
+        const colWidths = [
+          { wch: 20 }, // Estimate Number
+          { wch: 25 }, // Customer Name
+          { wch: 30 }, // Customer Email
+          { wch: 15 }, // Customer Phone
+          { wch: 15 }, // Date
+          { wch: 15 }, // Valid Until
+          { wch: 15 }, // Total Amount
+          { wch: 15 }, // Subtotal
+          { wch: 15 }, // Discount Amount
+          { wch: 15 }, // Tax Amount
+          { wch: 10 }, // Currency
+          { wch: 15 }, // Status
+          { wch: 15 }, // Date Added
+        ];
+        worksheet['!cols'] = colWidths;
+        
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Estimates");
+        
+        const excelBuffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+        
+        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="estimates-${dateStr}.xlsx"`,
+        );
+        res.send(excelBuffer);
+      } else if (format === "pdf") {
+        // Export as PDF using jsPDF with manual text wrapping
+        const { jsPDF } = await import("jspdf");
+        const doc = new jsPDF();
+        
+        // Helper function to split text into multiple lines
+        const splitText = (text: string, maxWidth: number, doc: any): string[] => {
+          const words = text.toString().split(' ');
+          const lines: string[] = [];
+          let currentLine = '';
+          
+          words.forEach(word => {
+            const testLine = currentLine + (currentLine ? ' ' : '') + word;
+            const testWidth = doc.getTextWidth(testLine);
+            
+            if (testWidth > maxWidth && currentLine) {
+              lines.push(currentLine);
+              currentLine = word;
+            } else {
+              currentLine = testLine;
+            }
+          });
+          
+          if (currentLine) {
+            lines.push(currentLine);
+          }
+          
+          return lines.length > 0 ? lines : [text.toString()];
+        };
+        
+        // Calculate page width for centering
+        const pageWidth = doc.internal.pageSize.width;
+        
+        // Set font and center the title
+        doc.setFontSize(16);
+        const titleWidth = doc.getTextWidth("Estimates Export");
+        doc.text("Estimates Export", (pageWidth - titleWidth) / 2, 15);
+        doc.setFontSize(8);
+        
+        // Column positions and widths
+        const colPositions = {
+          estimateNumber: 14,
+          customer: 45,
+          date: 95,
+          validUntil: 115,
+          totalAmount: 140,
+          status: 165,
+        };
+        
+        const colWidths = {
+          estimateNumber: 25,
+          customer: 45,
+          date: 15,
+          validUntil: 15,
+          totalAmount: 20,
+          status: 15,
+        };
+        
+        let yPos = 25;
+        const lineHeight = 5;
+        const pageHeight = doc.internal.pageSize.height - 20;
+        let pageNum = 1;
+        
+        // Draw headers
+        doc.setFont(undefined, "bold");
+        doc.text("Estimate #", colPositions.estimateNumber, yPos);
+        doc.text("Customer", colPositions.customer, yPos);
+        doc.text("Date", colPositions.date, yPos);
+        doc.text("Valid Until", colPositions.validUntil, yPos);
+        doc.text("Total Amount", colPositions.totalAmount, yPos);
+        doc.text("Status", colPositions.status, yPos);
+        
+        yPos += lineHeight;
+        doc.line(14, yPos, 200, yPos);
+        yPos += lineHeight;
+        
+        // Draw data rows with text wrapping
+        doc.setFont(undefined, "normal");
+        exportData.forEach((est: any, index: number) => {
+          // Check if we need a new page
+          if (yPos > pageHeight) {
+            doc.addPage();
+            pageNum++;
+            yPos = 20;
+            
+            // Redraw headers on new page
+            doc.setFont(undefined, "bold");
+            doc.text("Estimate #", colPositions.estimateNumber, yPos);
+            doc.text("Customer", colPositions.customer, yPos);
+            doc.text("Date", colPositions.date, yPos);
+            doc.text("Valid Until", colPositions.validUntil, yPos);
+            doc.text("Total Amount", colPositions.totalAmount, yPos);
+            doc.text("Status", colPositions.status, yPos);
+            yPos += lineHeight;
+            doc.line(14, yPos, 200, yPos);
+            yPos += lineHeight;
+            doc.setFont(undefined, "normal");
+          }
+          
+          const startY = yPos;
+          let maxLines = 1;
+          
+          // Split text for customer name and find max lines needed
+          const customerText = `${est.customerName || ""}${est.customerEmail ? `, ${est.customerEmail}` : ""}`;
+          const customerLines = splitText(customerText, colWidths.customer, doc);
+          
+          maxLines = Math.max(customerLines.length, 1);
+          
+          // Draw wrapped text
+          doc.text((est.estimateNumber || ""), colPositions.estimateNumber, yPos);
+          
+          customerLines.forEach((line, i) => {
+            doc.text(line, colPositions.customer, yPos + (i * lineHeight));
+          });
+          
+          doc.text((est.date || ""), colPositions.date, yPos);
+          doc.text((est.validUntil || ""), colPositions.validUntil, yPos);
+          doc.text(`${est.currency || ""} ${est.totalAmount || "0"}`, colPositions.totalAmount, yPos);
+          doc.text((est.status || ""), colPositions.status, yPos);
+          
+          // Move to next row based on max lines used
+          yPos += (maxLines * lineHeight) + 2;
+        });
+        
+        // Footer on last page
+        const totalPages = doc.internal.getNumberOfPages();
+        for (let i = 1; i <= totalPages; i++) {
+          doc.setPage(i);
+          doc.setFontSize(8);
+          doc.text(
+            `Page ${i} of ${totalPages}`,
+            14,
+            doc.internal.pageSize.height - 10
+          );
+          doc.text(
+            `Total Estimates: ${exportData.length}`,
+            doc.internal.pageSize.width - 60,
+            doc.internal.pageSize.height - 10
+          );
+        }
+        
+        const pdfBuffer = Buffer.from(doc.output("arraybuffer"));
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="estimates-${dateStr}.pdf"`,
+        );
+        res.send(pdfBuffer);
+      } else {
+        // Default: Export as CSV
+        const csvHeaders = [
+          "Estimate Number",
+          "Customer Name",
+          "Customer Email",
+          "Customer Phone",
+          "Date",
+          "Valid Until",
+          "Total Amount",
+          "Subtotal",
+          "Discount Amount",
+          "Tax Amount",
+          "Currency",
+          "Status",
+          "Date Added",
+        ];
+        
+        const csvRows = exportData.map((est: any) => [
+          est.estimateNumber,
+          est.customerName,
+          est.customerEmail,
+          est.customerPhone,
+          est.date,
+          est.validUntil,
+          est.totalAmount,
+          est.subtotal,
+          est.discountAmount,
+          est.taxAmount,
+          est.currency,
+          est.status,
+          est.dateAdded,
+        ]);
+
+        const csvContent = [csvHeaders, ...csvRows]
+          .map((row) =>
+            row
+              .map((field) => `"${field.toString().replace(/"/g, '""')}"`)
+              .join(","),
+          )
+          .join("\n");
+
+        res.setHeader("Content-Type", "text/csv");
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="estimates-${dateStr}.csv"`,
+        );
+        res.send(csvContent);
+      }
+    } catch (error: any) {
+      console.error("Export estimates error:", error);
+      res.status(500).json({ 
+        success: false,
+        message: error.message || "Internal server error" 
+      });
+    }
+  });
+
+  // Estimates Import endpoint
+  // Sample CSV download endpoint for estimates import
+  app.get("/api/tenants/:tenantId/estimates/import/sample", authenticateToken, async (req, res) => {
+    try {
+      const { tenantId } = req.params;
+      
+      // Standard columns for estimates
+      const standardColumns = [
+        "Customer Name",
+        "Customer Email",
+        "Customer Phone",
+        "Date",
+        "Valid Until",
+        "Total Amount",
+        "Currency",
+        "Status",
+      ];
+      
+      // Create CSV content with headers and one sample row
+      const csvHeaders = standardColumns.map(col => `"${col}"`).join(",");
+      const sampleRow = standardColumns.map((col) => {
+        const lowerCol = col.toLowerCase();
+        if (lowerCol.includes("customer name") || lowerCol.includes("customer_name")) {
+          return '"John Doe"';
+        } else if (lowerCol.includes("customer email") || lowerCol.includes("customer_email") || lowerCol.includes("email")) {
+          return '"john.doe@example.com"';
+        } else if (lowerCol.includes("customer phone") || lowerCol.includes("customer_phone") || lowerCol.includes("phone")) {
+          return '"+1234567890"';
+        } else if (lowerCol.includes("date") && !lowerCol.includes("valid")) {
+          return '"2025-01-15"';
+        } else if (lowerCol.includes("valid until") || lowerCol.includes("valid_until")) {
+          return '"2025-02-15"';
+        } else if (lowerCol.includes("total amount") || lowerCol.includes("total_amount") || lowerCol.includes("total")) {
+          return '"1500.00"';
+        } else if (lowerCol.includes("currency")) {
+          return '"USD"';
+        } else if (lowerCol.includes("status")) {
+          return '"draft"';
+        } else {
+          return '""';
+        }
+      }).join(",");
+      
+      const csvContent = `${csvHeaders}\n${sampleRow}`;
+      
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="estimates-import-sample.csv"`,
+      );
+      res.send(csvContent);
+    } catch (error: any) {
+      console.error("Generate sample CSV error:", error);
+      res.status(500).json({ 
+        success: false,
+        message: error.message || "Internal server error" 
+      });
+    }
+  });
+
+  app.post("/api/tenants/:tenantId/estimates/import", upload.single("file"), authenticateToken, async (req, res) => {
+    console.log("📥 Estimates Import request received for tenant:", req.params.tenantId);
+
+    try {
+      const { tenantId } = req.params;
+      const userId = (req as any).user?.id;
+
+      if (req.file) {
+        const fileExtension = req.file.originalname.toLowerCase().split(".").pop();
+        console.log(`📄 Processing ${fileExtension} file: ${req.file.originalname}`);
+
+        let parsedData: any[] = [];
+
+        if (fileExtension === "csv") {
+          parsedData = await parseCsvFile(req.file.buffer);
+        } else if (fileExtension === "xlsx" || fileExtension === "xls") {
+          const XLSX = await import("xlsx");
+          const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+          const sheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[sheetName];
+          parsedData = XLSX.utils.sheet_to_json(worksheet);
+        } else {
+          return res.status(400).json({
+            success: false,
+            message: `Unsupported file format: ${fileExtension}. Supported formats: .csv, .xlsx, .xls`,
+          });
+        }
+
+        const importedEstimates = [];
+        let skippedCount = 0;
+
+        for (const row of parsedData) {
+          try {
+            const estimateData: any = {
+              tenantId: parseInt(tenantId),
+              userId: userId,
+            };
+
+            Object.keys(row).forEach((key) => {
+              const lowerKey = key.toLowerCase().trim();
+              const value = row[key];
+
+              switch (lowerKey) {
+                case "customer name":
+                case "customer_name":
+                case "customer":
+                  estimateData.customerName = value?.toString().trim() || "";
+                  break;
+                case "customer email":
+                case "customer_email":
+                case "email":
+                  estimateData.customerEmail = value?.toString().trim() || "";
+                  break;
+                case "customer phone":
+                case "customer_phone":
+                case "phone":
+                  estimateData.customerPhone = value?.toString().trim() || "";
+                  break;
+                case "date":
+                case "estimate date":
+                case "estimate_date":
+                  estimateData.date = value?.toString().trim() || new Date().toISOString().split("T")[0];
+                  break;
+                case "valid until":
+                case "valid_until":
+                case "validuntil":
+                  estimateData.validUntil = value?.toString().trim() || "";
+                  break;
+                case "total amount":
+                case "total_amount":
+                case "amount":
+                case "total":
+                  estimateData.totalAmount = parseFloat(value) || 0;
+                  break;
+                case "currency":
+                  estimateData.currency = value?.toString().trim() || "USD";
+                  break;
+                case "status":
+                  estimateData.status = value?.toString().trim() || "draft";
+                  break;
+              }
+            });
+
+            if (!estimateData.customerName && !estimateData.customerEmail) {
+              skippedCount++;
+              continue;
+            }
+
+            const estimate = await simpleStorage.createEstimate(estimateData);
+            importedEstimates.push(estimate);
+          } catch (error: any) {
+            console.log("⚠️ Skipped invalid estimate:", error.message);
+            skippedCount++;
+          }
+        }
+
+        return res.json({
+          success: true,
+          imported: importedEstimates.length,
+          skipped: skippedCount,
+          message: `Successfully imported ${importedEstimates.length} estimates`,
+        });
+      }
+
+      return res.status(400).json({ 
+        success: false,
+        message: "No file provided" 
+      });
+    } catch (error: any) {
+      console.error("❌ Import estimates error:", error);
+      res.status(500).json({ 
+        success: false,
+        message: error.message || "Internal server error" 
       });
     }
   });
@@ -10099,37 +12380,418 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
     },
   );
 
-  // CSV import for leads (no auth for testing)
-  app.post("/api/tenants/:tenantId/leads/import", async (req, res) => {
-    console.log("CSV Import request received for tenant:", req.params.tenantId);
-    console.log("Request body:", req.body);
+  // Sample CSV download endpoint for leads import
+  app.get("/api/tenants/:tenantId/leads/import/sample", authenticateToken, async (req, res) => {
+    try {
+      const { tenantId } = req.params;
+      
+      // Get all lead types and their fields for this tenant
+      const leadTypes = await simpleStorage.getLeadTypesByTenant(parseInt(tenantId));
+      
+      // Collect all dynamic fields from all lead types
+      // Use a Map to store fieldLabel -> fieldName mapping
+      const dynamicFieldsMap = new Map<string, string>();
+      for (const leadType of leadTypes) {
+        try {
+          const fields = await simpleStorage.getLeadTypeFieldsByLeadType(leadType.id);
+          fields.forEach((field: any) => {
+            const fieldName = field.fieldName || field.field_name || field.name;
+            const fieldLabel = field.fieldLabel || field.field_label || field.label || fieldName;
+            // Use fieldLabel for CSV header, but store mapping to fieldName
+            if (fieldLabel && !dynamicFieldsMap.has(fieldLabel)) {
+              dynamicFieldsMap.set(fieldLabel, fieldName);
+            }
+          });
+        } catch (error) {
+          console.warn(`Failed to get fields for lead type ${leadType.id}:`, error);
+        }
+      }
+      
+      const allDynamicFields = Array.from(dynamicFieldsMap.keys());
+      
+      // Standard columns that are always available
+      const standardColumns = [
+        "First Name",
+        "Last Name",
+        "Email",
+        "Phone",
+        "Source",
+        "Status",
+        "Priority",
+        "Score",
+        "Travel Category",
+        "Budget Range",
+        "Country",
+        "State",
+        "City",
+        "Notes",
+        "Assigned User",
+      ];
+      
+      // Combine standard columns with dynamic fields
+      const allColumns = [...standardColumns, ...allDynamicFields];
+      
+      // Create CSV content with headers and one sample row
+      const csvHeaders = allColumns.map(col => `"${col}"`).join(",");
+      const sampleRow = allColumns.map((col, index) => {
+        // Provide sample values based on column name
+        const lowerCol = col.toLowerCase();
+        if (lowerCol.includes("first name") || lowerCol.includes("firstname")) {
+          return '"John"';
+        } else if (lowerCol.includes("last name") || lowerCol.includes("lastname")) {
+          return '"Doe"';
+        } else if (lowerCol.includes("email")) {
+          return '"john.doe@example.com"';
+        } else if (lowerCol.includes("phone")) {
+          return '"+1234567890"';
+        } else if (lowerCol.includes("source")) {
+          return '"Website"';
+        } else if (lowerCol.includes("status")) {
+          return '"new"';
+        } else if (lowerCol.includes("priority")) {
+          return '"medium"';
+        } else if (lowerCol.includes("score")) {
+          return '"50"';
+        } else if (lowerCol.includes("travel category")) {
+          return '"General Inquiry"';
+        } else if (lowerCol.includes("budget")) {
+          return '"$1000-$5000"';
+        } else if (lowerCol.includes("country")) {
+          return '"United States"';
+        } else if (lowerCol.includes("state")) {
+          return '"California"';
+        } else if (lowerCol.includes("city")) {
+          return '"Los Angeles"';
+        } else if (lowerCol.includes("notes")) {
+          return '"Sample notes"';
+        } else if (lowerCol.includes("assigned")) {
+          return '""';
+        } else {
+          // For dynamic fields, provide a generic sample value
+          return '"Sample Value"';
+        }
+      }).join(",");
+      
+      const csvContent = `${csvHeaders}\n${sampleRow}`;
+      
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="leads-import-sample.csv"`,
+      );
+      res.send(csvContent);
+    } catch (error: any) {
+      console.error("Generate sample CSV error:", error);
+      res.status(500).json({ 
+        success: false,
+        message: error.message || "Internal server error" 
+      });
+    }
+  });
 
-    // Add CORS headers explicitly
-    res.header("Access-Control-Allow-Origin", "*");
-    res.header("Access-Control-Allow-Methods", "POST, OPTIONS");
-    res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  // CSV import for leads (no auth for testing)
+  app.post("/api/tenants/:tenantId/leads/import", upload.single("file"), authenticateToken, async (req, res) => {
+    console.log("📥 Leads Import request received for tenant:", req.params.tenantId);
 
     try {
       const { tenantId } = req.params;
+      const userId = (req as any).user?.id;
 
-      // Parse CSV data from request body
+      // Handle file upload
+      if (req.file) {
+        const fileExtension = req.file.originalname
+          .toLowerCase()
+          .split(".")
+          .pop();
+        
+        console.log(`📄 Processing ${fileExtension} file: ${req.file.originalname}`);
+
+        let parsedData: any[] = [];
+
+        // Parse based on file type
+        if (fileExtension === "csv") {
+          parsedData = await parseCsvFile(req.file.buffer);
+        } else if (fileExtension === "xlsx" || fileExtension === "xls") {
+          parsedData = await parseExcelFile(req.file.buffer);
+        } else {
+          return res.status(400).json({
+            success: false,
+            message: `Unsupported file format: ${fileExtension}. Supported formats: .csv, .xlsx, .xls`,
+          });
+        }
+
+        // Get all lead types once for mapping
+        const leadTypes = await simpleStorage.getLeadTypesByTenant(parseInt(tenantId));
+        
+        // Create a map of lead type name -> lead type for quick lookup
+        const leadTypeMap = new Map<string, any>();
+        leadTypes.forEach((lt: any) => {
+          const name = (lt.name || "").toLowerCase().trim();
+          if (name) {
+            leadTypeMap.set(name, lt);
+          }
+        });
+
+        const importedLeads = [];
+        let skippedCount = 0;
+
+        for (const row of parsedData) {
+          try {
+            const leadData: any = {
+              tenantId: parseInt(tenantId),
+              userId: userId,
+            };
+
+            let travelCategoryName = "";
+            let selectedLeadType: any = null;
+
+            // First pass: Extract travel category and basic fields
+            Object.keys(row).forEach((key) => {
+              const lowerKey = key.toLowerCase().trim();
+              const value = row[key];
+
+              switch (lowerKey) {
+                case "firstname":
+                case "first_name":
+                case "first name":
+                  leadData.firstName = value?.toString().trim() || "";
+                  break;
+                case "lastname":
+                case "last_name":
+                case "last name":
+                  leadData.lastName = value?.toString().trim() || "";
+                  break;
+                case "email":
+                  leadData.email = value?.toString().trim() || "";
+                  break;
+                case "phone":
+                case "phone number":
+                  leadData.phone = value?.toString().trim() || "";
+                  break;
+                case "source":
+                  leadData.source = value?.toString().trim() || "";
+                  break;
+                case "status":
+                  leadData.status = value?.toString().trim() || "new";
+                  break;
+                case "notes":
+                case "note":
+                  leadData.notes = value?.toString().trim() || "";
+                  break;
+                case "budget_range":
+                case "budgetrange":
+                case "budget":
+                case "budget range":
+                  leadData.budgetRange = value?.toString().trim() || "";
+                  break;
+                case "priority":
+                  leadData.priority = value?.toString().trim() || "medium";
+                  break;
+                case "score":
+                  leadData.score = parseInt(value) || 0;
+                  break;
+                case "travel category":
+                case "travel_category":
+                case "travelcategory":
+                case "lead type":
+                case "lead_type":
+                case "leadtype":
+                  travelCategoryName = value?.toString().trim() || "";
+                  break;
+                case "country":
+                  leadData.country = value?.toString().trim() || "";
+                  break;
+                case "state":
+                  leadData.state = value?.toString().trim() || "";
+                  break;
+                case "city":
+                  leadData.city = value?.toString().trim() || "";
+                  break;
+              }
+            });
+
+            // Find the lead type by name (case-insensitive)
+            if (travelCategoryName) {
+              const lowerCategoryName = travelCategoryName.toLowerCase().trim();
+              selectedLeadType = leadTypeMap.get(lowerCategoryName);
+              if (selectedLeadType) {
+                leadData.leadTypeId = selectedLeadType.id;
+              }
+            }
+
+            // Get dynamic fields only for the selected lead type
+            const dynamicFieldsMap = new Map<string, string>(); // fieldLabel (lowercase) -> fieldName
+            const fieldNameToLabelMap = new Map<string, string>(); // fieldName -> fieldLabel (for reverse lookup)
+            if (selectedLeadType) {
+              try {
+                const fields = await simpleStorage.getLeadTypeFieldsByLeadType(selectedLeadType.id);
+                fields.forEach((field: any) => {
+                  const fieldName = field.fieldName || field.field_name || field.name;
+                  const fieldLabel = field.fieldLabel || field.field_label || field.label || fieldName;
+                  
+                  // Map field label (lowercase) to field name
+                  const lowerLabel = fieldLabel.toLowerCase().trim();
+                  if (fieldLabel && !dynamicFieldsMap.has(lowerLabel)) {
+                    dynamicFieldsMap.set(lowerLabel, fieldName);
+                  }
+                  
+                  // Map field name (lowercase) to field name
+                  const lowerName = fieldName.toLowerCase().trim();
+                  if (fieldName && !dynamicFieldsMap.has(lowerName)) {
+                    dynamicFieldsMap.set(lowerName, fieldName);
+                  }
+                  
+                  // Store reverse mapping for debugging
+                  fieldNameToLabelMap.set(fieldName, fieldLabel);
+                });
+                
+                console.log(`📋 Dynamic fields for lead type "${selectedLeadType.name}":`, Array.from(dynamicFieldsMap.entries()));
+              } catch (error) {
+                console.warn(`Failed to get fields for lead type ${selectedLeadType.id}:`, error);
+              }
+            }
+
+            // Initialize type_specific_data object for dynamic fields
+            const typeSpecificData: any = {};
+
+            // Second pass: Map dynamic fields (only for selected lead type)
+            Object.keys(row).forEach((key) => {
+              const lowerKey = key.toLowerCase().trim();
+              const value = row[key];
+
+              // Skip if already processed in first pass (standard fields)
+              if (["firstname", "first_name", "first name", "lastname", "last_name", "last name",
+                   "email", "phone", "phone number", "source", "status", "notes", "note",
+                   "budget_range", "budgetrange", "budget", "budget range", "priority", "score",
+                   "travel category", "travel_category", "travelcategory", "lead type", "lead_type",
+                   "leadtype", "country", "state", "city", "assigned user", "assigned_user", "assigneduser"].includes(lowerKey)) {
+                return;
+              }
+
+              // Skip empty values
+              if (value === null || value === undefined || value === "") {
+                return;
+              }
+
+              const trimmedValue = value?.toString().trim() || "";
+              
+              // Skip "Sample Value" placeholder and similar placeholder values
+              const lowerValue = trimmedValue.toLowerCase();
+              if (lowerValue === "sample value" || lowerValue === "sample" || lowerValue === "example" || lowerValue === "n/a" || lowerValue === "na") {
+                return;
+              }
+
+              // Check if this is a dynamic field for the selected lead type
+              let matchedFieldName: string | null = null;
+              
+              // Try exact match first (field label or field name)
+              if (dynamicFieldsMap.has(lowerKey)) {
+                matchedFieldName = dynamicFieldsMap.get(lowerKey) || null;
+              } else {
+                // Try partial matching for field labels
+                // Check if CSV column name matches any field label (case-insensitive)
+                for (const [label, fieldName] of dynamicFieldsMap.entries()) {
+                  // Normalize both for comparison (remove spaces, special chars)
+                  const normalizedKey = lowerKey.replace(/[^a-z0-9]/g, "");
+                  const normalizedLabel = label.replace(/[^a-z0-9]/g, "");
+                  
+                  // Check if normalized key matches normalized label or vice versa
+                  if (normalizedKey === normalizedLabel || 
+                      normalizedKey.includes(normalizedLabel) || 
+                      normalizedLabel.includes(normalizedKey)) {
+                    matchedFieldName = fieldName;
+                    break;
+                  }
+                  
+                  // Also try word-by-word matching
+                  const keyWords = lowerKey.split(/[\s\-_]+/);
+                  const labelWords = label.split(/[\s\-_]+/);
+                  const hasCommonWords = keyWords.some(kw => labelWords.includes(kw)) || 
+                                         labelWords.some(lw => keyWords.includes(lw));
+                  if (hasCommonWords && keyWords.length > 0 && labelWords.length > 0) {
+                    matchedFieldName = fieldName;
+                    break;
+                  }
+                }
+              }
+
+              if (matchedFieldName) {
+                typeSpecificData[matchedFieldName] = trimmedValue;
+                console.log(`✅ Mapped CSV column "${key}" -> field "${matchedFieldName}" with value "${trimmedValue}"`);
+              } else {
+                console.log(`⚠️ CSV column "${key}" with value "${trimmedValue}" did not match any dynamic field`);
+              }
+            });
+
+            // Store type_specific_data if it has any fields
+            // Pass as object, not stringified - createLead will handle JSON conversion
+            if (Object.keys(typeSpecificData).length > 0) {
+              leadData.typeSpecificData = typeSpecificData;
+            }
+
+            // Find customer by email or phone and add customer_id
+            if (leadData.email || leadData.phone) {
+              let customer = null;
+              
+              if (leadData.email) {
+                customer = await simpleStorage.getCustomerByEmail(leadData.email, parseInt(tenantId));
+              }
+              
+              if (!customer && leadData.phone) {
+                customer = await simpleStorage.getCustomerByPhone(leadData.phone, parseInt(tenantId));
+              }
+              
+              if (customer && customer.id) {
+                leadData.customerId = customer.id;
+              }
+            }
+
+            // Set name from firstName and lastName
+            if (leadData.firstName || leadData.lastName) {
+              leadData.name = `${leadData.firstName || ""} ${leadData.lastName || ""}`.trim();
+            }
+
+            // Validate required fields
+            if (!leadData.firstName && !leadData.email) {
+              skippedCount++;
+              continue;
+            }
+
+            const lead = await simpleStorage.createLead(leadData);
+            importedLeads.push(lead);
+          } catch (error: any) {
+            console.log("⚠️ Skipped invalid lead:", error.message);
+            skippedCount++;
+          }
+        }
+
+        return res.json({
+          success: true,
+          imported: importedLeads.length,
+          skipped: skippedCount,
+          message: `Successfully imported ${importedLeads.length} leads`,
+        });
+      }
+
+      // Fallback: Handle CSV data in request body (for backward compatibility)
       let csvData = "";
-
       if (req.body && typeof req.body === "string") {
         csvData = req.body;
       } else if (req.body && req.body.csvData) {
         csvData = req.body.csvData;
       } else {
-        console.log("No CSV data found in request");
-        return res.status(400).json({ message: "No CSV data provided" });
+        return res.status(400).json({ 
+          success: false,
+          message: "No file or CSV data provided" 
+        });
       }
 
-      // Parse CSV content
+      // Parse CSV content from body
       const lines = csvData.split("\n").filter((line) => line.trim());
       if (lines.length < 2) {
         return res
           .status(400)
-          .json({ message: "CSV must have headers and at least one data row" });
+          .json({ success: false, message: "CSV must have headers and at least one data row" });
       }
 
       const headers = lines[0]
@@ -10143,9 +12805,8 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
       for (const row of rows) {
         try {
           const values = row.split(",").map((v) => v.trim().replace(/"/g, ""));
-          const leadData: any = { tenantId: parseInt(tenantId) };
+          const leadData: any = { tenantId: parseInt(tenantId), userId: userId };
 
-          // Map CSV columns to lead fields
           headers.forEach((header, index) => {
             const value = values[index];
             switch (header) {
@@ -10192,28 +12853,35 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
             }
           });
 
-          // Validate required fields
-          if (!leadData.firstName || !leadData.email) {
+          if (leadData.firstName || leadData.lastName) {
+            leadData.name = `${leadData.firstName || ""} ${leadData.lastName || ""}`.trim();
+          }
+
+          if (!leadData.firstName && !leadData.email) {
             skippedCount++;
             continue;
           }
 
           const lead = await simpleStorage.createLead(leadData);
           importedLeads.push(lead);
-        } catch (error) {
-          console.log("Skipped invalid lead:", error);
+        } catch (error: any) {
+          console.log("⚠️ Skipped invalid lead:", error.message);
           skippedCount++;
         }
       }
 
-      res.json({
-        importedCount: importedLeads.length,
-        skippedCount,
-        leads: importedLeads,
+      return res.json({
+        success: true,
+        imported: importedLeads.length,
+        skipped: skippedCount,
+        message: `Successfully imported ${importedLeads.length} leads`,
       });
-    } catch (error) {
-      console.error("Import leads error:", error);
-      res.status(500).json({ message: "Internal server error" });
+    } catch (error: any) {
+      console.error("❌ Import leads error:", error);
+      res.status(500).json({ 
+        success: false,
+        message: error.message || "Internal server error" 
+      });
     }
   });
 
@@ -10396,68 +13064,6 @@ David,Brown,david.brown@example.com,555-0127,email_campaign,contacted,Prefers lu
     }
   });
 
-  // CSV export for leads
-  app.get("/api/tenants/:tenantId/leads/export", async (req, res) => {
-    try {
-      const { tenantId } = req.params;
-      const leads = await simpleStorage.getLeadsByTenant(parseInt(tenantId));
-
-      // Create CSV content with all fields
-      const csvHeaders = [
-        "First Name",
-        "Last Name",
-        "Email",
-        "Phone",
-        "Source",
-        "Status",
-        "Score",
-        "Priority",
-        "Budget Range",
-        "Country",
-        "State",
-        "City",
-        "Notes",
-        "Date Added",
-      ];
-      const csvRows = leads.map((lead: any) => [
-        lead.firstName || "",
-        lead.lastName || "",
-        lead.email || "",
-        lead.phone || "",
-        lead.source || "",
-        lead.status || "",
-        lead.score || "0",
-        lead.priority || "low",
-        lead.budgetRange || "",
-        lead.country || "",
-        lead.state || "",
-        lead.city || "",
-        lead.notes || "",
-        lead.createdAt ? new Date(lead.createdAt).toLocaleDateString() : "",
-      ]);
-
-      // Combine headers and rows
-      const csvContent = [csvHeaders, ...csvRows]
-        .map((row) =>
-          row
-            .map((field) => `"${field.toString().replace(/"/g, '""')}"`)
-            .join(","),
-        )
-        .join("\n");
-
-      // Set response headers for CSV download
-      res.setHeader("Content-Type", "text/csv");
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename="leads-${new Date().toISOString().split("T")[0]}.csv"`,
-      );
-      res.send(csvContent);
-    } catch (error) {
-      console.error("Export leads error:", error);
-      res.status(500).json({ message: "Internal server error" });
-    }
-  });
-
   // Travel package management routes
   app.get("/api/tenants/:tenantId/packages", async (req, res) => {
     try {
@@ -10469,6 +13075,501 @@ David,Brown,david.brown@example.com,555-0127,email_campaign,contacted,Prefers lu
     } catch (error) {
       console.error("Get packages error:", error);
       res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Export packages - Supports CSV, Excel, and PDF formats - MUST be before /:packageId route to avoid route conflict
+  app.get("/api/tenants/:tenantId/packages/export", authenticateToken, async (req, res) => {
+    try {
+      const { tenantId } = req.params;
+      const format = (req.query.format as string) || "csv"; // Default to CSV
+      const parsedTenantId = parseInt(tenantId);
+      
+      if (isNaN(parsedTenantId)) {
+        return res.status(400).json({ message: "Invalid tenant ID" });
+      }
+
+      const packages = await simpleStorage.getPackagesByTenant(parsedTenantId);
+      const filteredPackages = Array.isArray(packages) ? packages.filter((pkg: any) => pkg && pkg.id) : [];
+
+      // Prepare data for export
+      const exportData = filteredPackages.map((pkg: any) => {
+        const durationValue = pkg.duration || pkg.selectedDuration || "";
+        const formattedDuration = durationValue ? `${durationValue} days` : "";
+        
+        return {
+          name: pkg.name || "",
+          description: pkg.description || "",
+          destination: pkg.destination || `${pkg.region || ""}${pkg.country ? `, ${pkg.country}` : ""}${pkg.city ? `, ${pkg.city}` : ""}`.trim(),
+          duration: formattedDuration,
+          price: pkg.price || "0",
+          capacity: pkg.maxCapacity || pkg.max_capacity || pkg.noOfPax || pkg.capacity || "",
+          vendor: pkg.vendorName || pkg.vendor || "",
+          rating: pkg.rating || "0",
+          status: pkg.status || (pkg.isActive ? "Active" : "Inactive"),
+          packageType: pkg.packageTypeName || pkg.packageType || "",
+          dateAdded: pkg.createdAt || pkg.created_at 
+            ? new Date(pkg.createdAt || pkg.created_at).toLocaleDateString() 
+            : "",
+        };
+      });
+
+      const dateStr = new Date().toISOString().split("T")[0];
+
+      if (format === "xlsx" || format === "excel") {
+        // Export as Excel
+        const workbook = XLSX.utils.book_new();
+        const worksheet = XLSX.utils.json_to_sheet(exportData);
+        
+        // Set column widths for better readability
+        const colWidths = [
+          { wch: 25 }, // Name
+          { wch: 30 }, // Description
+          { wch: 35 }, // Destination
+          { wch: 12 }, // Duration
+          { wch: 15 }, // Price
+          { wch: 12 }, // Capacity
+          { wch: 25 }, // Vendor
+          { wch: 10 }, // Rating
+          { wch: 15 }, // Status
+          { wch: 20 }, // Package Type
+          { wch: 15 }, // Date Added
+        ];
+        worksheet['!cols'] = colWidths;
+        
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Packages");
+        
+        const excelBuffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+        
+        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="packages-${dateStr}.xlsx"`,
+        );
+        res.send(excelBuffer);
+      } else if (format === "pdf") {
+        // Export as PDF using jsPDF with manual text wrapping
+        const { jsPDF } = await import("jspdf");
+        const doc = new jsPDF();
+        
+        // Helper function to split text into multiple lines
+        const splitText = (text: string, maxWidth: number, doc: any): string[] => {
+          const words = text.toString().split(' ');
+          const lines: string[] = [];
+          let currentLine = '';
+          
+          words.forEach(word => {
+            const testLine = currentLine + (currentLine ? ' ' : '') + word;
+            const testWidth = doc.getTextWidth(testLine);
+            
+            if (testWidth > maxWidth && currentLine) {
+              lines.push(currentLine);
+              currentLine = word;
+            } else {
+              currentLine = testLine;
+            }
+          });
+          
+          if (currentLine) {
+            lines.push(currentLine);
+          }
+          
+          return lines.length > 0 ? lines : [text.toString()];
+        };
+        
+        // Calculate page width for centering
+        const pageWidth = doc.internal.pageSize.width;
+        
+        // Set font and center the title
+        doc.setFontSize(16);
+        const titleWidth = doc.getTextWidth("Travel Packages Export");
+        doc.text("Travel Packages Export", (pageWidth - titleWidth) / 2, 15);
+        doc.setFontSize(8);
+        
+        // Column positions and widths
+        const colPositions = {
+          name: 14,
+          destination: 50,
+          duration: 95,
+          price: 110,
+          capacity: 130,
+          vendor: 150,
+          rating: 180,
+          status: 195,
+        };
+        
+        const colWidths = {
+          name: 30,
+          destination: 40,
+          duration: 12,
+          price: 15,
+          capacity: 15,
+          vendor: 25,
+          rating: 10,
+          status: 15,
+        };
+        
+        let yPos = 25;
+        const lineHeight = 5;
+        const pageHeight = doc.internal.pageSize.height - 20;
+        let pageNum = 1;
+        
+        // Draw headers
+        doc.setFont(undefined, "bold");
+        doc.text("Name", colPositions.name, yPos);
+        doc.text("Destination", colPositions.destination, yPos);
+        doc.text("Duration", colPositions.duration, yPos);
+        doc.text("Price", colPositions.price, yPos);
+        doc.text("Capacity", colPositions.capacity, yPos);
+        doc.text("Vendor", colPositions.vendor, yPos);
+        doc.text("Rating", colPositions.rating, yPos);
+        doc.text("Status", colPositions.status, yPos);
+        
+        yPos += lineHeight;
+        doc.line(14, yPos, 200, yPos);
+        yPos += lineHeight;
+        
+        // Draw data rows with text wrapping
+        doc.setFont(undefined, "normal");
+        exportData.forEach((pkg: any, index: number) => {
+          // Check if we need a new page
+          if (yPos > pageHeight) {
+            doc.addPage();
+            pageNum++;
+            yPos = 20;
+            
+            // Redraw headers on new page
+            doc.setFont(undefined, "bold");
+            doc.text("Name", colPositions.name, yPos);
+            doc.text("Destination", colPositions.destination, yPos);
+            doc.text("Duration", colPositions.duration, yPos);
+            doc.text("Price", colPositions.price, yPos);
+            doc.text("Capacity", colPositions.capacity, yPos);
+            doc.text("Vendor", colPositions.vendor, yPos);
+            doc.text("Rating", colPositions.rating, yPos);
+            doc.text("Status", colPositions.status, yPos);
+            yPos += lineHeight;
+            doc.line(14, yPos, 200, yPos);
+            yPos += lineHeight;
+            doc.setFont(undefined, "normal");
+          }
+          
+          const startY = yPos;
+          let maxLines = 1;
+          
+          // Split text for each column and find max lines needed
+          const nameLines = splitText(pkg.name || "", colWidths.name, doc);
+          const destLines = splitText(pkg.destination || "", colWidths.destination, doc);
+          const vendorLines = splitText(pkg.vendor || "", colWidths.vendor, doc);
+          
+          maxLines = Math.max(nameLines.length, destLines.length, vendorLines.length, 1);
+          
+          // Draw wrapped text
+          nameLines.forEach((line, i) => {
+            doc.text(line, colPositions.name, yPos + (i * lineHeight));
+          });
+          
+          destLines.forEach((line, i) => {
+            doc.text(line, colPositions.destination, yPos + (i * lineHeight));
+          });
+          
+          doc.text((pkg.duration || ""), colPositions.duration, yPos);
+          doc.text((pkg.price?.toString() || "0"), colPositions.price, yPos);
+          doc.text((pkg.capacity?.toString() || ""), colPositions.capacity, yPos);
+          
+          vendorLines.forEach((line, i) => {
+            doc.text(line, colPositions.vendor, yPos + (i * lineHeight));
+          });
+          
+          doc.text((pkg.rating?.toString() || "0"), colPositions.rating, yPos);
+          doc.text((pkg.status || ""), colPositions.status, yPos);
+          
+          // Move to next row based on max lines used
+          yPos += (maxLines * lineHeight) + 2;
+        });
+        
+        // Footer on last page
+        const totalPages = doc.internal.getNumberOfPages();
+        for (let i = 1; i <= totalPages; i++) {
+          doc.setPage(i);
+          doc.setFontSize(8);
+          doc.text(
+            `Page ${i} of ${totalPages}`,
+            14,
+            doc.internal.pageSize.height - 10
+          );
+          doc.text(
+            `Total Packages: ${exportData.length}`,
+            doc.internal.pageSize.width - 60,
+            doc.internal.pageSize.height - 10
+          );
+        }
+        
+        const pdfBuffer = Buffer.from(doc.output("arraybuffer"));
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="packages-${dateStr}.pdf"`,
+        );
+        res.send(pdfBuffer);
+      } else {
+        // Default: Export as CSV
+        const csvHeaders = [
+          "Name",
+          "Description",
+          "Destination",
+          "Duration",
+          "Price",
+          "Capacity",
+          "Vendor",
+          "Rating",
+          "Status",
+          "Package Type",
+          "Date Added",
+        ];
+        
+        const csvRows = exportData.map((pkg: any) => [
+          pkg.name,
+          pkg.description,
+          pkg.destination,
+          pkg.duration,
+          pkg.price,
+          pkg.capacity,
+          pkg.vendor,
+          pkg.rating,
+          pkg.status,
+          pkg.packageType,
+          pkg.dateAdded,
+        ]);
+
+        const csvContent = [csvHeaders, ...csvRows]
+          .map((row) =>
+            row
+              .map((field) => `"${field.toString().replace(/"/g, '""')}"`)
+              .join(","),
+          )
+          .join("\n");
+
+        res.setHeader("Content-Type", "text/csv");
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="packages-${dateStr}.csv"`,
+        );
+        res.send(csvContent);
+      }
+    } catch (error: any) {
+      console.error("Export packages error:", error);
+      res.status(500).json({ 
+        success: false,
+        message: error.message || "Internal server error" 
+      });
+    }
+  });
+
+  // Travel Packages Import endpoint
+  // Sample CSV download endpoint for packages import
+  app.get("/api/tenants/:tenantId/packages/import/sample", authenticateToken, async (req, res) => {
+    try {
+      const { tenantId } = req.params;
+      
+      // Standard columns for travel packages
+      const standardColumns = [
+        "Name",
+        "Description",
+        "Destination",
+        "Duration",
+        "Price",
+        "Capacity",
+        "Max Capacity",
+        "Vendor",
+        "Vendor Name",
+        "Rating",
+        "Status",
+        "Region",
+        "Country",
+        "City",
+        "Package Type",
+        "Duration Type",
+        "Inclusions",
+        "Exclusions",
+        "Itinerary Description",
+        "Cancellation Policy",
+        "Cancellation Benefit",
+      ];
+      
+      // Create CSV content with headers and one sample row
+      const csvHeaders = standardColumns.map(col => `"${col}"`).join(",");
+      const sampleRow = standardColumns.map((col) => {
+        // Provide sample values based on column name
+        const lowerCol = col.toLowerCase();
+        if (lowerCol.includes("name") && !lowerCol.includes("vendor") && !lowerCol.includes("package type")) {
+          return '"Paris City Tour"';
+        } else if (lowerCol.includes("description")) {
+          return '"A wonderful tour of Paris"';
+        } else if (lowerCol.includes("destination")) {
+          return '"Paris, France"';
+        } else if (lowerCol.includes("duration")) {
+          return '"3"';
+        } else if (lowerCol.includes("price")) {
+          return '"1500.00"';
+        } else if (lowerCol.includes("capacity") || lowerCol.includes("max")) {
+          return '"10"';
+        } else if (lowerCol.includes("vendor")) {
+          return '"Travel Agency Inc"';
+        } else if (lowerCol.includes("rating")) {
+          return '"4.5"';
+        } else if (lowerCol.includes("status")) {
+          return '"active"';
+        } else if (lowerCol.includes("region")) {
+          return '"Europe"';
+        } else if (lowerCol.includes("country")) {
+          return '"France"';
+        } else if (lowerCol.includes("city")) {
+          return '"Paris"';
+        } else if (lowerCol.includes("package type")) {
+          return '"1"';
+        } else if (lowerCol.includes("duration type")) {
+          return '"with"';
+        } else if (lowerCol.includes("inclusions")) {
+          return '"Hotel, Breakfast, Guide"';
+        } else if (lowerCol.includes("exclusions")) {
+          return '"Lunch, Dinner"';
+        } else if (lowerCol.includes("itinerary")) {
+          return '"Day 1: Arrival, Day 2: City Tour"';
+        } else if (lowerCol.includes("cancellation")) {
+          return '"Free cancellation up to 24 hours"';
+        } else {
+          return '""';
+        }
+      }).join(",");
+      
+      const csvContent = `${csvHeaders}\n${sampleRow}`;
+      
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="packages-import-sample.csv"`,
+      );
+      res.send(csvContent);
+    } catch (error: any) {
+      console.error("Generate sample CSV error:", error);
+      res.status(500).json({ 
+        success: false,
+        message: error.message || "Internal server error" 
+      });
+    }
+  });
+
+  app.post("/api/tenants/:tenantId/packages/import", upload.single("file"), authenticateToken, async (req, res) => {
+    console.log("📥 Travel Packages Import request received for tenant:", req.params.tenantId);
+
+    try {
+      const { tenantId } = req.params;
+      const userId = (req as any).user?.id;
+
+      if (req.file) {
+        const fileExtension = req.file.originalname.toLowerCase().split(".").pop();
+        console.log(`📄 Processing ${fileExtension} file: ${req.file.originalname}`);
+
+        let parsedData: any[] = [];
+
+        if (fileExtension === "csv") {
+          parsedData = await parseCsvFile(req.file.buffer);
+        } else if (fileExtension === "xlsx" || fileExtension === "xls") {
+          const XLSX = await import("xlsx");
+          const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+          const sheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[sheetName];
+          parsedData = XLSX.utils.sheet_to_json(worksheet);
+        } else {
+          return res.status(400).json({
+            success: false,
+            message: `Unsupported file format: ${fileExtension}. Supported formats: .csv, .xlsx, .xls`,
+          });
+        }
+
+        const importedPackages = [];
+        let skippedCount = 0;
+
+        for (const row of parsedData) {
+          try {
+            const packageData: any = {
+              tenantId: parseInt(tenantId),
+            };
+
+            Object.keys(row).forEach((key) => {
+              const lowerKey = key.toLowerCase().trim();
+              const value = row[key];
+
+              switch (lowerKey) {
+                case "name":
+                case "package name":
+                case "package_name":
+                  packageData.name = value?.toString().trim() || "";
+                  break;
+                case "description":
+                  packageData.description = value?.toString().trim() || "";
+                  break;
+                case "destination":
+                  packageData.destination = value?.toString().trim() || "";
+                  break;
+                case "duration":
+                  packageData.duration = parseInt(value) || 0;
+                  break;
+                case "price":
+                case "amount":
+                  packageData.price = parseFloat(value) || 0;
+                  break;
+                case "capacity":
+                case "max capacity":
+                case "max_capacity":
+                  packageData.maxCapacity = parseInt(value) || 0;
+                  break;
+                case "vendor":
+                case "vendor name":
+                case "vendor_name":
+                  packageData.vendor = value?.toString().trim() || "";
+                  break;
+                case "rating":
+                  packageData.rating = parseFloat(value) || 0;
+                  break;
+                case "status":
+                  packageData.status = value?.toString().trim() || "active";
+                  break;
+              }
+            });
+
+            if (!packageData.name) {
+              skippedCount++;
+              continue;
+            }
+
+            const travelPackage = await simpleStorage.createPackage(packageData);
+            importedPackages.push(travelPackage);
+          } catch (error: any) {
+            console.log("⚠️ Skipped invalid package:", error.message);
+            skippedCount++;
+          }
+        }
+
+        return res.json({
+          success: true,
+          imported: importedPackages.length,
+          skipped: skippedCount,
+          message: `Successfully imported ${importedPackages.length} travel packages`,
+        });
+      }
+
+      return res.status(400).json({ 
+        success: false,
+        message: "No file provided" 
+      });
+    } catch (error: any) {
+      console.error("❌ Import packages error:", error);
+      res.status(500).json({ 
+        success: false,
+        message: error.message || "Internal server error" 
+      });
     }
   });
 
@@ -14194,6 +17295,50 @@ Please improve this email.`;
     }
   });
 
+  // User Dashboard Preferences Routes - User-specific dashboard component visibility
+  app.get("/api/user/dashboard/preferences", authenticateToken, async (req, res) => {
+    try {
+      const user = (req as any).user;
+      if (!user || !user.tenantId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const preferences = await simpleStorage.getDashboardPreferences(
+        user.tenantId,
+        user.id // Pass userId for user-specific preferences
+      );
+      res.json(preferences);
+    } catch (error) {
+      console.error("Get user dashboard preferences error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.put("/api/user/dashboard/preferences/:componentKey", authenticateToken, async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const { componentKey } = req.params;
+      const { isVisible } = req.body;
+
+      if (!user || !user.tenantId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const preference = await simpleStorage.upsertDashboardPreference({
+        componentKey,
+        tenantId: user.tenantId,
+        userId: user.id, // User-specific preference
+        isVisible: isVisible !== false,
+        customOrder: 0
+      });
+
+      res.json(preference);
+    } catch (error) {
+      console.error("Update user dashboard preference error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   // User Notifications Routes - Simplified API for frontend NotificationBell component
   app.get("/api/user/notifications", authenticateToken, async (req, res) => {
     try {
@@ -15173,6 +18318,556 @@ Please improve this email.`;
       }
     },
   );
+
+  // Export expenses - Supports CSV, Excel, and PDF formats - MUST be before /expenses route to avoid route conflict
+  app.get("/api/tenants/:tenantId/expenses/export", authenticateToken, async (req, res) => {
+    try {
+      const { tenantId } = req.params;
+      const format = (req.query.format as string) || "csv"; // Default to CSV
+      const parsedTenantId = parseInt(tenantId);
+      
+      if (isNaN(parsedTenantId)) {
+        return res.status(400).json({ message: "Invalid tenant ID" });
+      }
+
+      // Fetch all expenses for the tenant
+      const expenses = await sql`
+        SELECT 
+          e.id,
+          e.title,
+          e.description,
+          e.amount,
+          e.currency,
+          e.category,
+          e.subcategory,
+          e.expense_date as "expenseDate",
+          e.payment_method as "paymentMethod",
+          e.payment_reference as "paymentReference",
+          e.status,
+          e.tax_amount as "taxAmount",
+          e.tax_rate as "taxRate",
+          e.is_reimbursable as "isReimbursable",
+          e.is_recurring as "isRecurring",
+          e.recurring_frequency as "recurringFrequency",
+          e.tags,
+          e.notes,
+          e.created_at as "createdAt",
+          v.name as "vendorName",
+          lt.name as "leadTypeName"
+        FROM expenses e
+        LEFT JOIN vendors v ON e.vendor_id = v.id
+        LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+        WHERE e.tenant_id = ${parsedTenantId}
+        ORDER BY e.expense_date DESC, e.created_at DESC
+      `;
+
+      const filteredExpenses = Array.isArray(expenses) ? expenses.filter((exp: any) => exp && exp.id) : [];
+
+      // Prepare data for export
+      const exportData = filteredExpenses.map((exp: any) => ({
+        title: exp.title || "",
+        description: exp.description || "",
+        amount: exp.amount || "0",
+        currency: exp.currency || "",
+        category: exp.category || "",
+        subcategory: exp.subcategory || "",
+        expenseDate: exp.expenseDate 
+          ? new Date(exp.expenseDate).toLocaleDateString() 
+          : "",
+        paymentMethod: exp.paymentMethod || "",
+        paymentReference: exp.paymentReference || "",
+        status: exp.status || "",
+        taxAmount: exp.taxAmount || "0",
+        taxRate: exp.taxRate || "0",
+        isReimbursable: exp.isReimbursable ? "Yes" : "No",
+        isRecurring: exp.isRecurring ? "Yes" : "No",
+        recurringFrequency: exp.recurringFrequency || "",
+        vendor: exp.vendorName || "",
+        leadType: exp.leadTypeName || "",
+        tags: Array.isArray(exp.tags) ? exp.tags.join(", ") : (exp.tags || ""),
+        notes: exp.notes || "",
+        dateAdded: exp.createdAt 
+          ? new Date(exp.createdAt).toLocaleDateString() 
+          : "",
+      }));
+
+      const dateStr = new Date().toISOString().split("T")[0];
+
+      if (format === "xlsx" || format === "excel") {
+        // Export as Excel
+        const workbook = XLSX.utils.book_new();
+        const worksheet = XLSX.utils.json_to_sheet(exportData);
+        
+        // Set column widths for better readability
+        const colWidths = [
+          { wch: 25 }, // Title
+          { wch: 30 }, // Description
+          { wch: 15 }, // Amount
+          { wch: 10 }, // Currency
+          { wch: 20 }, // Category
+          { wch: 20 }, // Subcategory
+          { wch: 15 }, // Expense Date
+          { wch: 20 }, // Payment Method
+          { wch: 20 }, // Payment Reference
+          { wch: 15 }, // Status
+          { wch: 15 }, // Tax Amount
+          { wch: 12 }, // Tax Rate
+          { wch: 15 }, // Is Reimbursable
+          { wch: 15 }, // Is Recurring
+          { wch: 20 }, // Recurring Frequency
+          { wch: 25 }, // Vendor
+          { wch: 20 }, // Lead Type
+          { wch: 30 }, // Tags
+          { wch: 30 }, // Notes
+          { wch: 15 }, // Date Added
+        ];
+        worksheet['!cols'] = colWidths;
+        
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Expenses");
+        
+        const excelBuffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+        
+        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="expenses-${dateStr}.xlsx"`,
+        );
+        res.send(excelBuffer);
+      } else if (format === "pdf") {
+        // Export as PDF using jsPDF with manual text wrapping
+        const { jsPDF } = await import("jspdf");
+        const doc = new jsPDF();
+        
+        // Helper function to split text into multiple lines
+        const splitText = (text: string, maxWidth: number, doc: any): string[] => {
+          const words = text.toString().split(' ');
+          const lines: string[] = [];
+          let currentLine = '';
+          
+          words.forEach(word => {
+            const testLine = currentLine + (currentLine ? ' ' : '') + word;
+            const testWidth = doc.getTextWidth(testLine);
+            
+            if (testWidth > maxWidth && currentLine) {
+              lines.push(currentLine);
+              currentLine = word;
+            } else {
+              currentLine = testLine;
+            }
+          });
+          
+          if (currentLine) {
+            lines.push(currentLine);
+          }
+          
+          return lines.length > 0 ? lines : [text.toString()];
+        };
+        
+        // Set font
+        doc.setFontSize(16);
+        doc.text("Expenses Export", 14, 15);
+        doc.setFontSize(8);
+        
+        // Column positions and widths
+        const colPositions = {
+          title: 14,
+          amount: 60,
+          category: 85,
+          status: 115,
+          date: 140,
+          vendor: 165,
+        };
+        
+        const colWidths = {
+          title: 40,
+          amount: 20,
+          category: 25,
+          status: 20,
+          date: 20,
+          vendor: 30,
+        };
+        
+        let yPos = 25;
+        const lineHeight = 5;
+        const pageHeight = doc.internal.pageSize.height - 20;
+        let pageNum = 1;
+        
+        // Draw headers
+        doc.setFont(undefined, "bold");
+        doc.text("Title", colPositions.title, yPos);
+        doc.text("Amount", colPositions.amount, yPos);
+        doc.text("Category", colPositions.category, yPos);
+        doc.text("Status", colPositions.status, yPos);
+        doc.text("Date", colPositions.date, yPos);
+        doc.text("Vendor", colPositions.vendor, yPos);
+        
+        yPos += lineHeight;
+        doc.line(14, yPos, 200, yPos);
+        yPos += lineHeight;
+        
+        // Draw data rows with text wrapping
+        doc.setFont(undefined, "normal");
+        exportData.forEach((exp: any, index: number) => {
+          // Check if we need a new page
+          if (yPos > pageHeight) {
+            doc.addPage();
+            pageNum++;
+            yPos = 20;
+            
+            // Redraw headers on new page
+            doc.setFont(undefined, "bold");
+            doc.text("Title", colPositions.title, yPos);
+            doc.text("Amount", colPositions.amount, yPos);
+            doc.text("Category", colPositions.category, yPos);
+            doc.text("Status", colPositions.status, yPos);
+            doc.text("Date", colPositions.date, yPos);
+            doc.text("Vendor", colPositions.vendor, yPos);
+            yPos += lineHeight;
+            doc.line(14, yPos, 200, yPos);
+            yPos += lineHeight;
+            doc.setFont(undefined, "normal");
+          }
+          
+          const startY = yPos;
+          let maxLines = 1;
+          
+          // Split text for each column and find max lines needed
+          const titleLines = splitText(exp.title || "", colWidths.title, doc);
+          const vendorLines = splitText(exp.vendor || "", colWidths.vendor, doc);
+          
+          maxLines = Math.max(titleLines.length, vendorLines.length, 1);
+          
+          // Draw wrapped text
+          titleLines.forEach((line, i) => {
+            doc.text(line, colPositions.title, yPos + (i * lineHeight));
+          });
+          
+          doc.text(`${exp.currency || ""} ${exp.amount || "0"}`, colPositions.amount, yPos);
+          doc.text((exp.category || ""), colPositions.category, yPos);
+          doc.text((exp.status || ""), colPositions.status, yPos);
+          doc.text((exp.expenseDate || ""), colPositions.date, yPos);
+          
+          vendorLines.forEach((line, i) => {
+            doc.text(line, colPositions.vendor, yPos + (i * lineHeight));
+          });
+          
+          // Move to next row based on max lines used
+          yPos += (maxLines * lineHeight) + 2;
+        });
+        
+        // Footer on last page
+        const totalPages = doc.internal.getNumberOfPages();
+        for (let i = 1; i <= totalPages; i++) {
+          doc.setPage(i);
+          doc.setFontSize(8);
+          doc.text(
+            `Page ${i} of ${totalPages}`,
+            14,
+            doc.internal.pageSize.height - 10
+          );
+          doc.text(
+            `Total Expenses: ${exportData.length}`,
+            doc.internal.pageSize.width - 60,
+            doc.internal.pageSize.height - 10
+          );
+        }
+        
+        const pdfBuffer = Buffer.from(doc.output("arraybuffer"));
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="expenses-${dateStr}.pdf"`,
+        );
+        res.send(pdfBuffer);
+      } else {
+        // Default: Export as CSV
+        const csvHeaders = [
+          "Title",
+          "Description",
+          "Amount",
+          "Currency",
+          "Category",
+          "Subcategory",
+          "Expense Date",
+          "Payment Method",
+          "Payment Reference",
+          "Status",
+          "Tax Amount",
+          "Tax Rate",
+          "Is Reimbursable",
+          "Is Recurring",
+          "Recurring Frequency",
+          "Vendor",
+          "Lead Type",
+          "Tags",
+          "Notes",
+          "Date Added",
+        ];
+        
+        const csvRows = exportData.map((exp: any) => [
+          exp.title,
+          exp.description,
+          exp.amount,
+          exp.currency,
+          exp.category,
+          exp.subcategory,
+          exp.expenseDate,
+          exp.paymentMethod,
+          exp.paymentReference,
+          exp.status,
+          exp.taxAmount,
+          exp.taxRate,
+          exp.isReimbursable,
+          exp.isRecurring,
+          exp.recurringFrequency,
+          exp.vendor,
+          exp.leadType,
+          exp.tags,
+          exp.notes,
+          exp.dateAdded,
+        ]);
+
+        const csvContent = [csvHeaders, ...csvRows]
+          .map((row) =>
+            row
+              .map((field) => `"${field.toString().replace(/"/g, '""')}"`)
+              .join(","),
+          )
+          .join("\n");
+
+        res.setHeader("Content-Type", "text/csv");
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="expenses-${dateStr}.csv"`,
+        );
+        res.send(csvContent);
+      }
+    } catch (error: any) {
+      console.error("Export expenses error:", error);
+      res.status(500).json({ 
+        success: false,
+        message: error.message || "Internal server error" 
+      });
+    }
+  });
+
+  // Expenses Import endpoint
+  // Sample CSV download endpoint for expenses import
+  app.get("/api/tenants/:tenantId/expenses/import/sample", authenticateToken, async (req, res) => {
+    try {
+      const { tenantId } = req.params;
+      
+      // Standard columns for expenses
+      const standardColumns = [
+        "Title",
+        "Description",
+        "Amount",
+        "Currency",
+        "Category",
+        "Subcategory",
+        "Expense Date",
+        "Payment Method",
+        "Vendor",
+        "Status",
+        "Notes",
+      ];
+      
+      // Create CSV content with headers and one sample row
+      const csvHeaders = standardColumns.map(col => `"${col}"`).join(",");
+      const sampleRow = standardColumns.map((col) => {
+        const lowerCol = col.toLowerCase();
+        if (lowerCol.includes("title")) {
+          return '"Office Supplies"';
+        } else if (lowerCol.includes("description")) {
+          return '"Purchase of office stationery"';
+        } else if (lowerCol.includes("amount") && !lowerCol.includes("total")) {
+          return '"250.00"';
+        } else if (lowerCol.includes("currency")) {
+          return '"USD"';
+        } else if (lowerCol.includes("category") && !lowerCol.includes("sub")) {
+          return '"purchase"';
+        } else if (lowerCol.includes("subcategory") || lowerCol.includes("sub category")) {
+          return '"Office Supplies"';
+        } else if (lowerCol.includes("expense date") || lowerCol.includes("expense_date") || lowerCol.includes("date")) {
+          return '"2025-01-15"';
+        } else if (lowerCol.includes("payment method") || lowerCol.includes("payment_method")) {
+          return '"credit_card"';
+        } else if (lowerCol.includes("vendor")) {
+          return '"Office Depot"';
+        } else if (lowerCol.includes("status")) {
+          return '"approved"';
+        } else if (lowerCol.includes("notes")) {
+          return '"Monthly office supplies purchase"';
+        } else {
+          return '""';
+        }
+      }).join(",");
+      
+      const csvContent = `${csvHeaders}\n${sampleRow}`;
+      
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="expenses-import-sample.csv"`,
+      );
+      res.send(csvContent);
+    } catch (error: any) {
+      console.error("Generate sample CSV error:", error);
+      res.status(500).json({ 
+        success: false,
+        message: error.message || "Internal server error" 
+      });
+    }
+  });
+
+  app.post("/api/tenants/:tenantId/expenses/import", upload.single("file"), authenticateToken, async (req, res) => {
+    console.log("📥 Expenses Import request received for tenant:", req.params.tenantId);
+
+    try {
+      const { tenantId } = req.params;
+      const userId = (req as any).user?.id;
+
+      if (req.file) {
+        const fileExtension = req.file.originalname.toLowerCase().split(".").pop();
+        console.log(`📄 Processing ${fileExtension} file: ${req.file.originalname}`);
+
+        let parsedData: any[] = [];
+
+        if (fileExtension === "csv") {
+          parsedData = await parseCsvFile(req.file.buffer);
+        } else if (fileExtension === "xlsx" || fileExtension === "xls") {
+          const XLSX = await import("xlsx");
+          const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+          const sheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[sheetName];
+          parsedData = XLSX.utils.sheet_to_json(worksheet);
+        } else {
+          return res.status(400).json({
+            success: false,
+            message: `Unsupported file format: ${fileExtension}. Supported formats: .csv, .xlsx, .xls`,
+          });
+        }
+
+        const importedExpenses = [];
+        let skippedCount = 0;
+
+        for (const row of parsedData) {
+          try {
+            const expenseData: any = {
+              tenantId: parseInt(tenantId),
+              userId: userId,
+            };
+
+            Object.keys(row).forEach((key) => {
+              const lowerKey = key.toLowerCase().trim();
+              const value = row[key];
+
+              switch (lowerKey) {
+                case "title":
+                case "expense title":
+                case "expense_title":
+                  expenseData.title = value?.toString().trim() || "";
+                  break;
+                case "description":
+                  expenseData.description = value?.toString().trim() || "";
+                  break;
+                case "amount":
+                case "total amount":
+                case "total_amount":
+                  expenseData.amount = parseFloat(value) || 0;
+                  break;
+                case "currency":
+                  expenseData.currency = value?.toString().trim() || "USD";
+                  break;
+                case "category":
+                  expenseData.category = value?.toString().trim() || "purchase";
+                  break;
+                case "subcategory":
+                case "sub category":
+                case "sub_category":
+                  expenseData.subcategory = value?.toString().trim() || "";
+                  break;
+                case "expense date":
+                case "expense_date":
+                case "date":
+                  expenseData.expenseDate = value?.toString().trim() || new Date().toISOString().split("T")[0];
+                  break;
+                case "payment method":
+                case "payment_method":
+                  expenseData.paymentMethod = value?.toString().trim() || "other";
+                  break;
+                case "vendor":
+                case "vendor name":
+                case "vendor_name":
+                  expenseData.vendor = value?.toString().trim() || "";
+                  break;
+                case "status":
+                  expenseData.status = value?.toString().trim() || "approved";
+                  break;
+                case "notes":
+                case "note":
+                  expenseData.notes = value?.toString().trim() || "";
+                  break;
+              }
+            });
+
+            if (!expenseData.title || !expenseData.amount) {
+              skippedCount++;
+              continue;
+            }
+
+            // Create expense using direct SQL (similar to the create endpoint)
+            const expenseSql = await import("postgres");
+            const { default: sql } = expenseSql;
+            const expenseResult = await sql`
+              INSERT INTO expenses (
+                tenant_id, created_by, title, description, amount, currency,
+                category, subcategory, expense_date, payment_method,
+                status, notes
+              ) VALUES (
+                ${parseInt(tenantId)},
+                ${userId || 1},
+                ${expenseData.title},
+                ${expenseData.description || null},
+                ${expenseData.amount},
+                ${expenseData.currency || "USD"},
+                ${expenseData.category || "purchase"},
+                ${expenseData.subcategory || null},
+                ${expenseData.expenseDate || new Date().toISOString()},
+                ${expenseData.paymentMethod || "other"},
+                ${expenseData.status || "approved"},
+                ${expenseData.notes || null}
+              )
+              RETURNING id
+            `;
+
+            importedExpenses.push({ id: expenseResult[0].id, ...expenseData });
+          } catch (error: any) {
+            console.log("⚠️ Skipped invalid expense:", error.message);
+            skippedCount++;
+          }
+        }
+
+        return res.json({
+          success: true,
+          imported: importedExpenses.length,
+          skipped: skippedCount,
+          message: `Successfully imported ${importedExpenses.length} expenses`,
+        });
+      }
+
+      return res.status(400).json({ 
+        success: false,
+        message: "No file provided" 
+      });
+    } catch (error: any) {
+      console.error("❌ Import expenses error:", error);
+      res.status(500).json({ 
+        success: false,
+        message: error.message || "Internal server error" 
+      });
+    }
+  });
 
   // Expense management routes
   app.get(
@@ -21397,39 +25092,39 @@ Please improve this email.`;
           `📊 Customer Analytics: Generating analytics for customer ${customerId} in tenant ${tenantId}`,
         );
 
-        // Get customer's bookings and related data
-        const [customerBookings, customerInvoices, allCustomers] =
+        // Get customer's invoices and related data
+        const [customerInvoicesResult, allCustomers] =
           await Promise.all([
-            simpleStorage.getBookingsByTenant(parseInt(tenantId)),
-            simpleStorage.getInvoicesByTenant(parseInt(tenantId)),
+            simpleStorage.getInvoicesByTenant(parseInt(tenantId), {
+              customerId: parseInt(customerId),
+              page: 1,
+              pageSize: 10000, // Get all invoices for this customer
+            }),
             simpleStorage.getCustomersByTenant({
               tenantId: parseInt(tenantId),
             }),
           ]);
 
-        // Filter data for this specific customer
-        const customerSpecificBookings = customerBookings.filter(
-          (booking) => booking.customerId === parseInt(customerId),
-        );
+        // Extract invoices array from paginated response
+        const customerInvoices = Array.isArray(customerInvoicesResult)
+          ? customerInvoicesResult
+          : customerInvoicesResult?.data || [];
 
+        // Filter data for this specific customer (double-check filter)
         const customerSpecificInvoices = customerInvoices.filter(
           (invoice) => invoice.customerId === parseInt(customerId),
         );
 
-        // Calculate analytics metrics
-        const totalBookings = customerSpecificBookings.length;
-        const totalRevenue = customerSpecificBookings.reduce(
-          (sum, booking) => sum + (Number(booking.totalAmount) || 0),
-          0,
-        );
-        const avgBookingValue =
-          totalBookings > 0 ? totalRevenue / totalBookings : 0;
-
-        // Payment analytics from invoices
+        // Calculate analytics metrics based on invoices
+        const totalInvoices = customerSpecificInvoices.length;
         const totalInvoiceAmount = customerSpecificInvoices.reduce(
           (sum, invoice) => sum + (Number(invoice.totalAmount) || 0),
           0,
         );
+        const avgInvoiceValue =
+          totalInvoices > 0 ? totalInvoiceAmount / totalInvoices : 0;
+
+        // Payment analytics from invoices
         const totalPaidAmount = customerSpecificInvoices.reduce(
           (sum, invoice) => sum + (Number(invoice.paidAmount) || 0),
           0,
@@ -21446,7 +25141,7 @@ Please improve this email.`;
           {},
         );
 
-        // Monthly trend analysis (last 6 months)
+        // Monthly trend analysis (last 6 months) based on invoices
         const monthlyTrends = [];
         for (let i = 5; i >= 0; i--) {
           const date = new Date();
@@ -21454,22 +25149,22 @@ Please improve this email.`;
           const month = date.toLocaleDateString("en-US", { month: "short" });
           const year = date.getFullYear();
 
-          const monthBookings = customerSpecificBookings.filter((booking) => {
-            const bookingDate = new Date(booking.createdAt);
+          const monthInvoices = customerSpecificInvoices.filter((invoice) => {
+            const invoiceDate = new Date(invoice.issueDate || invoice.createdAt);
             return (
-              bookingDate.getMonth() === date.getMonth() &&
-              bookingDate.getFullYear() === year
+              invoiceDate.getMonth() === date.getMonth() &&
+              invoiceDate.getFullYear() === year
             );
           });
 
-          const monthRevenue = monthBookings.reduce(
-            (sum, booking) => sum + (Number(booking.totalAmount) || 0),
+          const monthRevenue = monthInvoices.reduce(
+            (sum, invoice) => sum + (Number(invoice.totalAmount) || 0),
             0,
           );
 
           monthlyTrends.push({
             month,
-            bookings: monthBookings.length,
+            invoices: monthInvoices.length,
             revenue: monthRevenue,
           });
         }
@@ -21485,12 +25180,12 @@ Please improve this email.`;
           (Date.now() - customerSince.getTime()) / (1000 * 60 * 60 * 24),
         );
 
-        // Recent activity (last 30 days)
+        // Recent activity (last 30 days) based on invoices
         const thirtyDaysAgo = new Date();
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-        const recentBookings = customerSpecificBookings.filter(
-          (booking) => new Date(booking.createdAt) >= thirtyDaysAgo,
+        const recentInvoices = customerSpecificInvoices.filter(
+          (invoice) => new Date(invoice.issueDate || invoice.createdAt) >= thirtyDaysAgo,
         );
 
         // Convert payment status to array format for easier frontend consumption
@@ -21507,38 +25202,38 @@ Please improve this email.`;
 
         const analytics = {
           summary: {
-            totalBookings,
-            totalRevenue,
-            avgBookingValue,
+            totalInvoices,
+            totalRevenue: totalInvoiceAmount,
+            avgInvoiceValue,
             totalInvoiceAmount,
             totalPaidAmount,
             totalDueAmount,
             daysSinceJoined,
-            recentBookings: recentBookings.length,
+            recentInvoices: recentInvoices.length,
           },
           paymentStatus: paymentStatus, // Keep original object format for compatibility
           paymentStatusArray, // Add array format for easier chart consumption
           monthlyTrends,
           recentActivity: {
-            bookings: recentBookings.length,
-            revenue: recentBookings.reduce(
-              (sum, b) => sum + (Number(b.totalAmount) || 0),
+            invoices: recentInvoices.length,
+            revenue: recentInvoices.reduce(
+              (sum, inv) => sum + (Number(inv.totalAmount) || 0),
               0,
             ),
           },
           customerRank: {
             // Calculate customer rank by revenue among all customers
-            revenue: totalRevenue,
-            bookings: totalBookings,
+            revenue: totalInvoiceAmount,
+            invoices: totalInvoices,
           },
         };
 
         console.log(
           `📊 Customer Analytics: Generated analytics for customer ${customerId}:`,
           {
-            totalBookings,
-            totalRevenue,
-            avgBookingValue,
+            totalInvoices,
+            totalRevenue: totalInvoiceAmount,
+            avgInvoiceValue,
             totalDueAmount,
           },
         );

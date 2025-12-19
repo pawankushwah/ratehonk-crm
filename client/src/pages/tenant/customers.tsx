@@ -5,6 +5,7 @@ import { useDebounce } from "@/hooks/use-debounce";
 import { Layout } from "@/components/layout/layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -55,6 +56,11 @@ import {
   ChevronDown,
   Phone,
   Target,
+  Download,
+  FileText,
+  FileSpreadsheet,
+  Upload,
+  FileDown,
 } from "lucide-react";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useToast } from "@/hooks/use-toast";
@@ -148,11 +154,273 @@ export default function Customers() {
     null
   );
   const [isZoomDialogOpen, setIsZoomDialogOpen] = useState(false);
+  
+  // Import/Export state
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
   const [customerToCall, setCustomerToCall] = useState<Customer | null>(null);
   const [followUpDialogOpen, setFollowUpDialogOpen] = useState(false);
   const [selectedCustomerForFollowUp, setSelectedCustomerForFollowUp] = useState<Customer | null>(null);
   const queryClient = useQueryClient();
   const { toast } = useToast();
+
+  // Export customers handler - CSV
+  const handleExportCustomersCSV = async () => {
+    if (!tenant?.id) {
+      toast({
+        title: "Error",
+        description: "Tenant ID not found",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(`/api/tenants/${tenant.id}/customers/export?format=csv`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to export customers");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `customers-${new Date().toISOString().split("T")[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast({
+        title: "Success",
+        description: "Customers exported to CSV successfully",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to export customers",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Export customers handler - Excel
+  const handleExportCustomersExcel = async () => {
+    if (!tenant?.id) {
+      toast({
+        title: "Error",
+        description: "Tenant ID not found",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(`/api/tenants/${tenant.id}/customers/export?format=xlsx`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to export customers");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `customers-${new Date().toISOString().split("T")[0]}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast({
+        title: "Success",
+        description: "Customers exported to Excel successfully",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to export customers",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Export customers handler - PDF
+  const handleExportCustomersPDF = async () => {
+    if (!tenant?.id) {
+      toast({
+        title: "Error",
+        description: "Tenant ID not found",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(`/api/tenants/${tenant.id}/customers/export?format=pdf`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to export customers");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `customers-${new Date().toISOString().split("T")[0]}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast({
+        title: "Success",
+        description: "Customers exported to PDF successfully",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to export customers",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Import handlers
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const validExtensions = [".csv", ".xlsx", ".xls"];
+      const fileExtension = "." + file.name.split(".").pop()?.toLowerCase();
+      
+      if (!validExtensions.includes(fileExtension)) {
+        toast({
+          title: "Error",
+          description: "Please select a CSV or Excel file (.csv, .xlsx, .xls)",
+          variant: "destructive",
+        });
+        return;
+      }
+      setImportFile(file);
+    }
+  };
+
+  const handleDownloadSampleFile = async () => {
+    if (!tenant?.id) {
+      toast({
+        title: "Error",
+        description: "Tenant ID not found",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(`/api/tenants/${tenant.id}/customers/import/sample`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to download sample file");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "customers-import-sample.csv";
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast({
+        title: "Success",
+        description: "Sample file downloaded successfully",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to download sample file",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleImportCustomers = async () => {
+    if (!importFile || !tenant?.id) {
+      toast({
+        title: "Error",
+        description: "Please select a file to import",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsImporting(true);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", importFile);
+      formData.append("tenantId", tenant.id.toString());
+
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(`/api/tenants/${tenant.id}/customers/import`, {
+        method: "POST",
+        body: formData,
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.message || "Failed to import customers");
+      }
+
+      toast({
+        title: "Success",
+        description: `Successfully imported ${result.imported || 0} customers`,
+      });
+
+      // Refresh customers list
+      queryClient.invalidateQueries({
+        queryKey: ["customers", tenant.id],
+      });
+
+      setImportDialogOpen(false);
+      setImportFile(null);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to import customers",
+        variant: "destructive",
+      });
+    } finally {
+      setIsImporting(false);
+    }
+  };
 
   // Check if user has permission to view this page
   if (!canView("customers")) {
@@ -533,6 +801,42 @@ export default function Customers() {
 
             {/* Right Side - Add Customer Button */}
             <div className="flex gap-3">
+              <Button
+                variant="outline"
+                className="bg-white"
+                onClick={() => setImportDialogOpen(true)}
+                title="Import Customers"
+              >
+                <Upload className="h-4 w-4 mr-2" />
+                Import
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className="bg-white"
+                    title="Export Customers"
+                  >
+                    <Download className="h-4 w-4 mr-2" />
+                    Export
+                    <ChevronDown className="h-4 w-4 ml-2" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={handleExportCustomersPDF}>
+                    <FileText className="h-4 w-4 mr-2" />
+                    Export as PDF
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleExportCustomersCSV}>
+                    <FileText className="h-4 w-4 mr-2" />
+                    Export as CSV
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleExportCustomersExcel}>
+                    <FileSpreadsheet className="h-4 w-4 mr-2" />
+                    Export as Excel
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
               <Button
                 variant="outline"
                 onClick={() => setShowAnalytics(!showAnalytics)}
@@ -1025,6 +1329,63 @@ export default function Customers() {
           }
         />
       )}
+
+      {/* Import Dialog */}
+      <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Import Customers</DialogTitle>
+            <DialogDescription>
+              Upload a CSV or Excel file to import customers. The file should contain columns: Name, First Name, Last Name, Email, Phone, Address, City, State, Country, Postal Code, Company, Customer Type, Status, Notes, etc.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <Label htmlFor="import-file">Select File</Label>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleDownloadSampleFile}
+                  className="text-xs"
+                >
+                  <FileDown className="h-3 w-3 mr-1" />
+                  Download Sample CSV
+                </Button>
+              </div>
+              <Input
+                id="import-file"
+                type="file"
+                accept=".csv,.xlsx,.xls"
+                onChange={handleFileSelect}
+                className="mt-2"
+              />
+              {importFile && (
+                <p className="text-sm text-gray-500 mt-2">
+                  Selected: {importFile.name}
+                </p>
+              )}
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setImportDialogOpen(false);
+                setImportFile(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleImportCustomers}
+              disabled={!importFile || isImporting}
+            >
+              {isImporting ? "Importing..." : "Import"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Layout>
   );
 }
