@@ -2152,10 +2152,11 @@ async getAllLeadsByTenant(
     }
   }
 
-  async updateLead(leadId: number, tenantId: number, leadData: any) {
+  async updateLead(leadId: number, tenantId: number, leadData: any, userId?: number) {
     console.log("🔍 SimpleStorage.updateLead called with:", {
       leadId,
       leadData,
+      userId,
     });
 
     // First get the existing lead data

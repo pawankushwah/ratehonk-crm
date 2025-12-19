@@ -125,32 +125,30 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
     },
   });
 
-  // Upload file handlers
-  const handleGetUploadParameters = async (file: { name: string; type: string; size: number }) => {
-    const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
-    const response = await apiRequest("POST", "/api/objects/upload");
-    const data = await response.json();
-    
-    // Include filename in URL as query parameter for PUT handler
-    const uploadUrl = data.uploadURL || data.uploadUrl || "/api/objects/store";
-    const urlWithFilename = `${uploadUrl}?filename=${encodeURIComponent(file.name)}`;
-    
-    return {
-      method: "PUT" as const,
-      url: urlWithFilename,
-      headers: token ? {
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": file.type || "application/octet-stream",
-      } : {
-        "Content-Type": file.type || "application/octet-stream",
-      },
-    };
-  };
+  // No longer needed - using XHRUpload plugin which handles everything
 
   const handleUploadComplete = async (result: UploadResult<Record<string, unknown>, Record<string, unknown>>) => {
+    console.log("📁 Upload complete result:", result);
+    
+    if (result.failed.length > 0) {
+      console.error("📁 Upload failed:", result.failed);
+      toast({
+        title: "Upload Failed",
+        description: result.failed.map((f: any) => f.error?.message || "Unknown error").join(", "),
+        variant: "destructive",
+      });
+      return;
+    }
+
     if (result.successful.length > 0) {
       const uploadedFile = result.successful[0];
       const file = uploadedFile.data as File;
+      
+      console.log("📁 Uploaded file details:", {
+        file: file.name,
+        uploadedFile: uploadedFile,
+        response: (uploadedFile as any).response,
+      });
       
       // Determine file type based on MIME type
       let fileType = "file";
@@ -159,18 +157,197 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
       else if (file.type.includes("pdf") || file.type.includes("document") || file.type.includes("text")) fileType = "document";
 
       // Get the object path from the upload response
-      // The ObjectUploader should return the response from /api/objects/store
-      const objectPath = (uploadedFile as any).response?.objectPath || 
-                        (uploadedFile as any).response?.publicUrl ||
-                        (uploadedFile as any).uploadURL ||
-                        uploadedFile.id ||
-                        `/uploads/${Date.now()}-${file.name}`;
+      // XHRUpload plugin stores response in uploadedFile.response.body
+      // But sometimes it's also in uploadedFile.response directly
+      let responseBody = (uploadedFile as any).response?.body;
+      const fullResponse = (uploadedFile as any).response;
+      
+      console.log("📁 Response body from upload:", responseBody);
+      console.log("📁 Full response:", fullResponse);
+      console.log("📁 Response status:", fullResponse?.status);
+      
+      // If response.body is empty or invalid, try to get it from other places
+      if (!responseBody || Object.keys(responseBody).length === 0 || !responseBody.objectPath) {
+        console.warn("⚠️ Response body is empty or missing objectPath, trying alternative sources...");
+        
+        // Try response directly (some XHRUpload versions store it here)
+        if (fullResponse && typeof fullResponse === 'object' && fullResponse.objectPath) {
+          responseBody = fullResponse;
+          console.log("✅ Found response data in response object directly");
+        }
+        // Try response.response (XMLHttpRequest response property)
+        else if (fullResponse?.response && typeof fullResponse.response === 'object') {
+          responseBody = fullResponse.response;
+          console.log("✅ Found response data in response.response");
+        }
+        // Try to parse responseText if available
+        else if (fullResponse?.responseText) {
+          try {
+            responseBody = JSON.parse(fullResponse.responseText);
+            console.log("✅ Parsed response from responseText");
+          } catch (e) {
+            console.error("❌ Failed to parse responseText:", e);
+          }
+        }
+      }
+      
+      const responseData = typeof responseBody === 'object' && responseBody !== null ? responseBody : {};
+      
+      // Extract objectPath from response - prioritize publicUrl as it's the correct path
+      const objectPath = responseData.publicUrl || 
+                        responseData.objectPath ||
+                        responseData.location ||
+                        responseData.url ||
+                        null;
+      
+      if (!objectPath) {
+        console.error("❌ No objectPath found in response after all attempts!");
+        console.error("❌ Full uploadedFile object:", uploadedFile);
+        console.error("❌ Response body:", responseBody);
+        console.error("❌ Full response:", fullResponse);
+        
+        // Last resort: Check the actual file object structure
+        console.log("📁 Checking file object structure:");
+        console.log("📁 uploadedFile keys:", Object.keys(uploadedFile));
+        console.log("📁 uploadedFile.response keys:", uploadedFile.response ? Object.keys(uploadedFile.response) : []);
+        console.log("📁 uploadedFile.data:", (uploadedFile as any).data);
+        console.log("📁 uploadedFile.source:", (uploadedFile as any).source);
+        console.log("📁 uploadedFile.meta:", (uploadedFile as any).meta);
+        console.log("📁 uploadedFile.xhrUpload:", (uploadedFile as any).xhrUpload);
+        
+        // Try to find response in xhrUpload property
+        const xhrUpload = (uploadedFile as any).xhrUpload;
+        if (xhrUpload?.response) {
+          try {
+            const xhrResponse = typeof xhrUpload.response === 'string' 
+              ? JSON.parse(xhrUpload.response)
+              : xhrUpload.response;
+            console.log("✅ Found response in xhrUpload.response:", xhrResponse);
+            
+            const xhrObjectPath = xhrResponse.publicUrl || xhrResponse.objectPath || xhrResponse.url;
+            if (xhrObjectPath) {
+              console.log("✅ Using objectPath from xhrUpload:", xhrObjectPath);
+              // Update responseData with the correct values
+              Object.assign(responseData, xhrResponse);
+              const finalObjectPath = xhrResponse.publicUrl || xhrResponse.objectPath || xhrObjectPath;
+              
+              // Continue with saving file metadata using this path
+              console.log("✅ Proceeding with objectPath from xhrUpload:", finalObjectPath);
+              
+              try {
+                await apiRequest(
+                  "POST",
+                  "/api/customer-files",
+                  {
+                    customerId: parseInt(customerId),
+                    tenantId: tenant?.id,
+                    fileName: xhrResponse.fileName || file.name,
+                    fileType,
+                    mimeType: xhrResponse.mimeType || file.type,
+                    fileSize: xhrResponse.fileSize || file.size,
+                    objectPath: finalObjectPath,
+                    uploadedBy: user?.id,
+                    isPublic: false,
+                  }
+                );
+
+                queryClient.invalidateQueries({ queryKey: ["customer-files", customerId, tenant?.id] });
+                toast({
+                  title: "Success",
+                  description: "File uploaded successfully",
+                });
+                return; // Success - exit early
+              } catch (error) {
+                console.error("Error saving file metadata:", error);
+                toast({
+                  title: "Error",
+                  description: "Failed to save file metadata",
+                  variant: "destructive",
+                });
+                return;
+              }
+            }
+          } catch (e) {
+            console.error("❌ Failed to parse xhrUpload.response:", e);
+          }
+        }
+        
+        // Try to access response from the file's internal XHR object
+        const fileXhr = (uploadedFile as any).xhrUpload?.xhr;
+        if (fileXhr) {
+          try {
+            let xhrResponseText = fileXhr.responseText || fileXhr.response;
+            if (typeof xhrResponseText === 'string' && xhrResponseText.trim().length > 0) {
+              const parsed = JSON.parse(xhrResponseText);
+              console.log("✅ Found response in file.xhrUpload.xhr.responseText:", parsed);
+              
+              const xhrObjectPath = parsed.publicUrl || parsed.objectPath || parsed.url;
+              if (xhrObjectPath) {
+                Object.assign(responseData, parsed);
+                const finalObjectPath = parsed.publicUrl || parsed.objectPath || xhrObjectPath;
+                
+                console.log("✅ Using objectPath from xhr.responseText:", finalObjectPath);
+                
+                try {
+                  await apiRequest(
+                    "POST",
+                    "/api/customer-files",
+                    {
+                      customerId: parseInt(customerId),
+                      tenantId: tenant?.id,
+                      fileName: parsed.fileName || file.name,
+                      fileType,
+                      mimeType: parsed.mimeType || file.type,
+                      fileSize: parsed.fileSize || file.size,
+                      objectPath: finalObjectPath,
+                      uploadedBy: user?.id,
+                      isPublic: false,
+                    }
+                  );
+
+                  queryClient.invalidateQueries({ queryKey: ["customer-files", customerId, tenant?.id] });
+                  toast({
+                    title: "Success",
+                    description: "File uploaded successfully",
+                  });
+                  return; // Success - exit early
+                } catch (error) {
+                  console.error("Error saving file metadata:", error);
+                  toast({
+                    title: "Error",
+                    description: "Failed to save file metadata",
+                    variant: "destructive",
+                  });
+                  return;
+                }
+              }
+            }
+          } catch (e) {
+            console.error("❌ Failed to parse xhr.responseText:", e);
+          }
+        }
+        
+        // If still no path, show error and refresh
+        toast({
+          title: "Upload Warning",
+          description: "File uploaded successfully but response parsing failed. Please refresh the page to see the file.",
+          variant: "destructive",
+        });
+        
+        // Refresh the file list
+        queryClient.invalidateQueries({ queryKey: ["customer-files", customerId, tenant?.id] });
+        return;
+      }
+      
+      console.log("✅ Using objectPath:", objectPath);
 
       console.log("📁 Upload complete, saving file metadata:", {
         fileName: file.name,
         fileSize: file.size,
         fileType,
         objectPath,
+        responseData,
+        fullResponse: (uploadedFile as any).response,
       });
 
       try {
@@ -308,7 +485,7 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
             <ObjectUploader
               maxNumberOfFiles={10}
               maxFileSize={50 * 1024 * 1024} // 50MB
-              onGetUploadParameters={handleGetUploadParameters}
+              endpoint="/api/objects/store"
               onComplete={handleUploadComplete}
               buttonClassName="bg-cyan-600 hover:bg-cyan-700 text-white"
             >
@@ -331,7 +508,7 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
             <ObjectUploader
               maxNumberOfFiles={10}
               maxFileSize={50 * 1024 * 1024}
-              onGetUploadParameters={handleGetUploadParameters}
+              endpoint="/api/objects/store"
               onComplete={handleUploadComplete}
               buttonClassName="bg-cyan-600 hover:bg-cyan-700 text-white"
             >

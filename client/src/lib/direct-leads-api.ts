@@ -167,6 +167,90 @@ export const directLeadsApi = {
     }
   },
 
+  // Get all leads for Kanban board (no pagination)
+  async getKanbanLeads(
+    tenantId: number,
+    filters?: {
+      startDate?: string;
+      endDate?: string;
+      filterType?: string;
+      search?: string;
+      status?: string;
+      priority?: string;
+      type?: string;
+      source?: string;
+      typeSpecificFilters?: string;
+    },
+  ): Promise<{ data: any[]; total: number }> {
+    try {
+      const queryParams = new URLSearchParams();
+
+      // Date filters
+      if (filters?.startDate) {
+        queryParams.append("dateFrom", filters.startDate);
+      }
+      if (filters?.endDate) {
+        queryParams.append("dateTo", filters.endDate);
+      }
+
+      // Search filter
+      if (filters?.search) {
+        queryParams.append("search", filters.search);
+      }
+
+      // Status filter
+      if (filters?.status && filters.status !== "all") {
+        queryParams.append("status", filters.status);
+      }
+
+      // Priority filter
+      if (filters?.priority && filters.priority !== "all") {
+        queryParams.append("priority", filters.priority);
+      }
+
+      // Type filter
+      if (filters?.type && filters.type !== "all") {
+        queryParams.append("type", filters.type);
+      }
+
+      // Source filter
+      if (filters?.source && filters.source !== "all") {
+        queryParams.append("source", filters.source);
+      }
+
+      // Dynamic type-specific filters
+      if (filters?.typeSpecificFilters) {
+        queryParams.append("typeSpecificFilters", filters.typeSpecificFilters);
+      }
+
+      const url = `/api/leads/kanban${queryParams.toString() ? `?${queryParams.toString()}` : ""}`;
+      console.log("🔍 KANBAN API: Fetching all leads from:", url);
+
+      const response = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("auth_token")}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!response.ok) {
+        console.error("🔍 KANBAN API: Request failed with status:", response.status);
+        throw new Error(`Failed to fetch kanban leads: ${response.statusText}`);
+      }
+
+      const responseData = await response.json();
+      console.log("🔍 KANBAN API: Response -", responseData.data?.length || 0, "leads, total:", responseData.total || 0);
+      
+      return {
+        data: responseData.data || [],
+        total: responseData.total || 0,
+      };
+    } catch (error) {
+      console.error("🔍 KANBAN API: Error:", error);
+      return { data: [], total: 0 };
+    }
+  },
+
   // Create lead using working PUT endpoint
   async createLead(tenantId: number, data: any): Promise<any> {
     try {

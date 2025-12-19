@@ -1,0 +1,2 @@
+"Invoice Number","Customer Name","Customer Email","Voucher Number","Issue Date","Due Date","Total Amount","Amount Paid","Currency","Status"
+"INV-001","John Doe","john.doe@example.com","VOUCH-001","2025-01-15","2025-02-15","1000.00","500.00","USD","pending"
