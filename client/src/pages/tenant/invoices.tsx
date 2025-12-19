@@ -45,6 +45,10 @@ import {
   TrendingUp,
   DollarSign,
   Target,
+  FileSpreadsheet,
+  ChevronDown,
+  Upload,
+  FileDown,
 } from "lucide-react";
 import {
   Sheet,
@@ -86,6 +90,12 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Command,
   CommandEmpty,
@@ -167,6 +177,266 @@ export default function Invoices() {
   const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false);
   const [followUpDialogOpen, setFollowUpDialogOpen] = useState(false);
   const [selectedInvoiceForFollowUp, setSelectedInvoiceForFollowUp] = useState<any>(null);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+
+  // Import handlers
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const validExtensions = [".csv", ".xlsx", ".xls"];
+      const fileExtension = "." + file.name.split(".").pop()?.toLowerCase();
+      
+      if (!validExtensions.includes(fileExtension)) {
+        toast({
+          title: "Error",
+          description: "Please select a CSV or Excel file (.csv, .xlsx, .xls)",
+          variant: "destructive",
+        });
+        return;
+      }
+      setImportFile(file);
+    }
+  };
+
+  const handleDownloadSampleFile = async () => {
+    if (!tenant?.id) {
+      toast({
+        title: "Error",
+        description: "Tenant ID not found",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(`/api/tenants/${tenant.id}/invoices/import/sample`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to download sample file");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "invoices-import-sample.csv";
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast({
+        title: "Success",
+        description: "Sample file downloaded successfully",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to download sample file",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleImportInvoices = async () => {
+    if (!importFile || !tenant?.id) {
+      toast({
+        title: "Error",
+        description: "Please select a file to import",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsImporting(true);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", importFile);
+      formData.append("tenantId", tenant.id.toString());
+
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(`/api/tenants/${tenant.id}/invoices/import`, {
+        method: "POST",
+        body: formData,
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.message || "Failed to import invoices");
+      }
+
+      toast({
+        title: "Success",
+        description: `Successfully imported ${result.imported || 0} invoices`,
+      });
+
+      // Refresh invoices list
+      queryClient.invalidateQueries({
+        queryKey: ["invoices", tenant.id],
+      });
+
+      setImportDialogOpen(false);
+      setImportFile(null);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to import invoices",
+        variant: "destructive",
+      });
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  // Export invoices handler - CSV
+  const handleExportInvoicesCSV = async () => {
+    if (!tenant?.id) {
+      toast({
+        title: "Error",
+        description: "Tenant ID not found",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(`/api/tenants/${tenant.id}/invoices/export?format=csv`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to export invoices");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `invoices-${new Date().toISOString().split("T")[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast({
+        title: "Success",
+        description: "Invoices exported to CSV successfully",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to export invoices",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Export invoices handler - Excel
+  const handleExportInvoicesExcel = async () => {
+    if (!tenant?.id) {
+      toast({
+        title: "Error",
+        description: "Tenant ID not found",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(`/api/tenants/${tenant.id}/invoices/export?format=xlsx`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to export invoices");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `invoices-${new Date().toISOString().split("T")[0]}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast({
+        title: "Success",
+        description: "Invoices exported to Excel successfully",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to export invoices",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Export invoices handler - PDF
+  const handleExportInvoicesPDF = async () => {
+    if (!tenant?.id) {
+      toast({
+        title: "Error",
+        description: "Tenant ID not found",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(`/api/tenants/${tenant.id}/invoices/export?format=pdf`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to export invoices");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `invoices-${new Date().toISOString().split("T")[0]}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast({
+        title: "Success",
+        description: "Invoices exported to PDF successfully",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to export invoices",
+        variant: "destructive",
+      });
+    }
+  };
   const [lineItems, setLineItems] = useState([
     {
       travelCategory: "",
@@ -1924,6 +2194,40 @@ export default function Invoices() {
             </p>
           </div>
           <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setImportDialogOpen(true)}
+              title="Import Invoices"
+            >
+              <Upload className="h-4 w-4 mr-2" />
+              Import
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  title="Export Invoices"
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Export
+                  <ChevronDown className="h-4 w-4 ml-2" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={handleExportInvoicesPDF}>
+                  <FileText className="h-4 w-4 mr-2" />
+                  Export as PDF
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleExportInvoicesCSV}>
+                  <FileText className="h-4 w-4 mr-2" />
+                  Export as CSV
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleExportInvoicesExcel}>
+                  <FileSpreadsheet className="h-4 w-4 mr-2" />
+                  Export as Excel
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <InvoiceAnalyticsSheet
               isAnalyticsOpen={isAnalyticsOpen}
               setIsAnalyticsOpen={setIsAnalyticsOpen}
@@ -3582,6 +3886,63 @@ export default function Invoices() {
           }
         />
       )}
+
+      {/* Import Dialog */}
+      <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Import Invoices</DialogTitle>
+            <DialogDescription>
+              Upload a CSV or Excel file to import invoices. The file should contain columns: Invoice Number, Customer Name, Customer Email, Voucher Number, Issue Date, Due Date, Total Amount, Amount Paid, Currency, Status, etc.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <Label htmlFor="import-file">Select File</Label>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleDownloadSampleFile}
+                  className="text-xs"
+                >
+                  <FileDown className="h-3 w-3 mr-1" />
+                  Download Sample CSV
+                </Button>
+              </div>
+              <Input
+                id="import-file"
+                type="file"
+                accept=".csv,.xlsx,.xls"
+                onChange={handleFileSelect}
+                className="mt-2"
+              />
+              {importFile && (
+                <p className="text-sm text-gray-500 mt-2">
+                  Selected: {importFile.name}
+                </p>
+              )}
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setImportDialogOpen(false);
+                setImportFile(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleImportInvoices}
+              disabled={!importFile || isImporting}
+            >
+              {isImporting ? "Importing..." : "Import"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Layout>
   );
 }

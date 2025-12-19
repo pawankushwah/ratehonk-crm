@@ -40,6 +40,10 @@ import {
   Search,
   MessageCircle,
   Pencil,
+  FileSpreadsheet,
+  ChevronDown,
+  Upload,
+  FileDown,
 } from "lucide-react";
 import {
   Dialog,
@@ -59,6 +63,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { Layout } from "@/components/layout/layout";
 import { EstimatePreview } from "@/components/estimates/estimate-preview";
@@ -166,6 +176,268 @@ export default function Estimates() {
   const [showAnalyticsSheet, setShowAnalyticsSheet] = useState(false);
   const [viewMode, setViewMode] = useState<"card" | "list">("card");
   const previewRef = useRef<{ downloadPDF: () => void } | null>(null);
+
+  // Import state
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+
+  // Import handlers
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const validExtensions = [".csv", ".xlsx", ".xls"];
+      const fileExtension = "." + file.name.split(".").pop()?.toLowerCase();
+      
+      if (!validExtensions.includes(fileExtension)) {
+        toast({
+          title: "Error",
+          description: "Please select a CSV or Excel file (.csv, .xlsx, .xls)",
+          variant: "destructive",
+        });
+        return;
+      }
+      setImportFile(file);
+    }
+  };
+
+  const handleDownloadSampleFile = async () => {
+    if (!tenant?.id) {
+      toast({
+        title: "Error",
+        description: "Tenant ID not found",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(`/api/tenants/${tenant.id}/estimates/import/sample`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to download sample file");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "estimates-import-sample.csv";
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast({
+        title: "Success",
+        description: "Sample file downloaded successfully",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to download sample file",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleImportEstimates = async () => {
+    if (!importFile || !tenant?.id) {
+      toast({
+        title: "Error",
+        description: "Please select a file to import",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsImporting(true);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", importFile);
+      formData.append("tenantId", tenant.id.toString());
+
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(`/api/tenants/${tenant.id}/estimates/import`, {
+        method: "POST",
+        body: formData,
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.message || "Failed to import estimates");
+      }
+
+      toast({
+        title: "Success",
+        description: `Successfully imported ${result.imported || 0} estimates`,
+      });
+
+      // Refresh estimates list
+      queryClient.invalidateQueries({
+        queryKey: ["estimates", tenant.id],
+      });
+
+      setImportDialogOpen(false);
+      setImportFile(null);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to import estimates",
+        variant: "destructive",
+      });
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  // Export estimates handler - CSV
+  const handleExportEstimatesCSV = async () => {
+    if (!tenant?.id) {
+      toast({
+        title: "Error",
+        description: "Tenant ID not found",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(`/api/tenants/${tenant.id}/estimates/export?format=csv`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to export estimates");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `estimates-${new Date().toISOString().split("T")[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast({
+        title: "Success",
+        description: "Estimates exported to CSV successfully",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to export estimates",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Export estimates handler - Excel
+  const handleExportEstimatesExcel = async () => {
+    if (!tenant?.id) {
+      toast({
+        title: "Error",
+        description: "Tenant ID not found",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(`/api/tenants/${tenant.id}/estimates/export?format=xlsx`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to export estimates");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `estimates-${new Date().toISOString().split("T")[0]}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast({
+        title: "Success",
+        description: "Estimates exported to Excel successfully",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to export estimates",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Export estimates handler - PDF
+  const handleExportEstimatesPDF = async () => {
+    if (!tenant?.id) {
+      toast({
+        title: "Error",
+        description: "Tenant ID not found",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(`/api/tenants/${tenant.id}/estimates/export?format=pdf`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to export estimates");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `estimates-${new Date().toISOString().split("T")[0]}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast({
+        title: "Success",
+        description: "Estimates exported to PDF successfully",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to export estimates",
+        variant: "destructive",
+      });
+    }
+  };
 
   // Sorting state
   const [sortColumn, setSortColumn] = useState<string | null>(null);
@@ -1183,6 +1455,46 @@ export default function Estimates() {
               </p>
             </div>
             <div className="flex gap-3">
+              {/* Import Button */}
+              <Button
+                variant="outline"
+                size="lg"
+                onClick={() => setImportDialogOpen(true)}
+                title="Import Estimates"
+                className="gap-2"
+              >
+                <Upload className="w-4 h-4" />
+                Import
+              </Button>
+              {/* Export Dropdown */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="lg"
+                    title="Export Estimates"
+                    className="gap-2"
+                  >
+                    <Download className="w-4 h-4" />
+                    Export
+                    <ChevronDown className="w-4 h-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={handleExportEstimatesPDF}>
+                    <FileText className="h-4 w-4 mr-2" />
+                    Export as PDF
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleExportEstimatesCSV}>
+                    <FileText className="h-4 w-4 mr-2" />
+                    Export as CSV
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleExportEstimatesExcel}>
+                    <FileSpreadsheet className="h-4 w-4 mr-2" />
+                    Export as Excel
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
               {/* Analytics Button */}
               <Sheet
                 open={showAnalyticsSheet}
@@ -2006,6 +2318,63 @@ export default function Estimates() {
           )}
         </div>
       </div>
+
+      {/* Import Dialog */}
+      <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Import Estimates</DialogTitle>
+            <DialogDescription>
+              Upload a CSV or Excel file to import estimates. The file should contain columns: Customer Name, Customer Email, Customer Phone, Date, Valid Until, Total Amount, Currency, Status, etc.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <Label htmlFor="import-file">Select File</Label>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleDownloadSampleFile}
+                  className="text-xs"
+                >
+                  <FileDown className="h-3 w-3 mr-1" />
+                  Download Sample CSV
+                </Button>
+              </div>
+              <Input
+                id="import-file"
+                type="file"
+                accept=".csv,.xlsx,.xls"
+                onChange={handleFileSelect}
+                className="mt-2"
+              />
+              {importFile && (
+                <p className="text-sm text-gray-500 mt-2">
+                  Selected: {importFile.name}
+                </p>
+              )}
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setImportDialogOpen(false);
+                setImportFile(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleImportEstimates}
+              disabled={!importFile || isImporting}
+            >
+              {isImporting ? "Importing..." : "Import"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Layout>
   );
 }

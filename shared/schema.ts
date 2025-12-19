@@ -123,10 +123,12 @@ export const tenantGroupPreferences = pgTable("tenant_group_preferences", {
 });
 
 // Dashboard visibility preferences for customizable dashboard components
+// Supports both tenant-level (user_id IS NULL) and user-level (user_id IS NOT NULL) preferences
 export const dashboardPreferences = pgTable("dashboard_preferences", {
   id: serial("id").primaryKey(),
   tenantId: integer("tenant_id").notNull(),
-  componentKey: text("component_key").notNull(), // e.g., "metrics-cards", "bookings-chart", "leads-chart", "recent-activities"
+  userId: integer("user_id"), // NULL for tenant-level, user ID for user-level preferences
+  componentKey: text("component_key").notNull(), // e.g., "dashboard.revenue", "dashboard.revenue-chart", etc.
   isVisible: boolean("is_visible").notNull().default(true),
   customOrder: integer("custom_order").default(0),
   createdAt: timestamp("created_at").defaultNow().notNull(),

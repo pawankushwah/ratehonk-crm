@@ -642,15 +642,18 @@ export class SimpleStorage {
         createdAt: customer.createdAt?.toISOString() || "",
       };
 
+      // Create customer activity (fire and forget - don't block on error)
       this.createCustomerActivity({
         tenantId: tenantId,
         customerId: customer.id,
-        userId: customerData.userId,
+        userId: customerData.userId || null,
         activityType: 1,
         activityTitle: "Customer Created",
-        activityDescription: `Customer Created: ${customer.name} by ${customerData.userId} for tenant ${tenantId} with phone ${customer.phone} and email ${customer.email} and address ${customer.address} and country ${customer.country} and state ${customer.state} and city ${customer.city} and pincode ${customer.pincode} and notes ${customer.notes} and preferences ${customer.preferences} and tags ${customer.tags} and company ${customer.company} and created_at ${customer.created_at} and updated_at ${customer.updated_at}`,
+        activityDescription: `Customer Created: ${customer.name || 'Unknown'}${customerData.userId ? ` by user ${customerData.userId}` : ''} for tenant ${tenantId}`,
         activityStatus: 1,
         activityDate: new Date().toISOString(),
+      }).catch((error) => {
+        console.error("❌ Failed to create customer activity (non-blocking):", error);
       });
 
       return transformedCustomer;
@@ -1951,9 +1954,28 @@ async getAllLeadsByTenant(
         finalUserId = await this.autoAssignLead(tenantId, finalLeadTypeId, preferredRoleId);
       }
 
+      // Handle type_specific_data - ensure it's a JSON object, not a string
+      // postgres.js automatically converts JavaScript objects to JSONB
+      let typeSpecificDataJson: any = null;
+      if (typeSpecificData) {
+        if (typeof typeSpecificData === 'string') {
+          // If it's already a string, try to parse it
+          try {
+            typeSpecificDataJson = JSON.parse(typeSpecificData);
+          } catch (e) {
+            // If parsing fails, use null
+            console.warn("Failed to parse typeSpecificData string:", e);
+            typeSpecificDataJson = null;
+          }
+        } else {
+          // If it's already an object, use it directly
+          typeSpecificDataJson = typeSpecificData;
+        }
+      }
+
       const [lead] = await sql`
         INSERT INTO leads (tenant_id, lead_type_id, first_name, last_name, name, email,phone,source,status,notes,budget_range,priority,country,state,city,type_specific_data,assigned_user_id,created_by)
-        VALUES (${tenantId}, ${finalLeadTypeId}, ${finalFirstName}, ${finalLastName}, ${finalName}, ${email || ""}, ${phone || null}, ${source || null}, ${status || "new"}, ${notes || null}, ${budgetRange || null}, ${priority || "medium"}, ${country || null}, ${state || null},${city || null},${typeSpecificData ? JSON.stringify(typeSpecificData) : {}}, ${finalUserId || null}, ${userId || null})
+        VALUES (${tenantId}, ${finalLeadTypeId}, ${finalFirstName}, ${finalLastName}, ${finalName}, ${email || ""}, ${phone || null}, ${source || null}, ${status || "new"}, ${notes || null}, ${budgetRange || null}, ${priority || "medium"}, ${country || null}, ${state || null},${city || null},${typeSpecificDataJson}, ${finalUserId || null}, ${userId || null})
         RETURNING 
           id,
           tenant_id as "tenantId",
@@ -2050,9 +2072,18 @@ async getAllLeadsByTenant(
 
   async getLeadById(leadId: number, tenantId: number) {
     try {
+      // Validate inputs
+      const validLeadId = parseInt(String(leadId), 10);
+      const validTenantId = parseInt(String(tenantId), 10);
+
+      if (isNaN(validLeadId) || isNaN(validTenantId)) {
+        console.error("🔍 Invalid leadId or tenantId:", { leadId, tenantId, validLeadId, validTenantId });
+        return null;
+      }
+
       console.log("🔍 SimpleStorage.getLeadById called with:", {
-        leadId,
-        tenantId,
+        leadId: validLeadId,
+        tenantId: validTenantId,
       });
 
       const leadResults = await sql`
@@ -2087,7 +2118,7 @@ async getAllLeadsByTenant(
           lt.color as "leadTypeColor"
         FROM leads l
         LEFT JOIN lead_types lt ON l.lead_type_id = lt.id
-        WHERE l.id = ${leadId} AND l.tenant_id = ${tenantId}
+        WHERE l.id = ${validLeadId} AND l.tenant_id = ${validTenantId}
       `;
 
       if (leadResults.length === 0) {
@@ -2103,7 +2134,7 @@ async getAllLeadsByTenant(
           dfv.field_value
         FROM dynamic_field_values dfv
         JOIN dynamic_fields df ON dfv.field_id = df.id
-        WHERE dfv.lead_id = ${leadId} AND df.tenant_id = ${tenantId} AND df.show_in_leads = true
+        WHERE dfv.lead_id = ${validLeadId} AND df.tenant_id = ${validTenantId} AND df.show_in_leads = true
       `;
 
       const dynamicData: Record<string, any> = {};
@@ -11142,14 +11173,24 @@ RateHonk CRM Team`,
 
   async createCustomerActivity(data: any) {
     try {
+      // Ensure all required fields are not undefined (convert to null if undefined)
+      const tenantId = data.tenantId ?? null;
+      const customerId = data.customerId ?? null;
+      const userId = data.userId ?? null;
+      const activityType = data.activityType ?? null;
+      const activityTitle = data.activityTitle ?? null;
+      const activityDescription = data.activityDescription ?? null;
+      const activityStatus = data.activityStatus ?? 1;
+      const activityDate = data.activityDate ?? sql`NOW()`;
+
       const [activity] = await sql`
         INSERT INTO customer_activities (
           tenant_id, customer_id, user_id, activity_type, 
           activity_title, activity_description, activity_status, activity_date
         ) VALUES (
-          ${data.tenantId}, ${data.customerId}, ${data.userId}, 
-          ${data.activityType}, ${data.activityTitle}, ${data.activityDescription || null},
-          ${data.activityStatus || 1}, ${data.activityDate || sql`NOW()`}
+          ${tenantId}, ${customerId}, ${userId}, 
+          ${activityType}, ${activityTitle}, ${activityDescription},
+          ${activityStatus}, ${activityDate}
         )
         RETURNING 
           id,

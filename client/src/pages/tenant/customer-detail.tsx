@@ -369,25 +369,25 @@ export default function CustomerDetail() {
 
     // Use API data if available, fallback to client-side calculations
     const summary = analytics.summary || {};
-    const totalBookings = summary.totalBookings ?? (bookings || []).length;
+    const totalInvoices = summary.totalInvoices ?? (invoicesData || []).length;
     const totalRevenue =
       summary.totalRevenue ??
-      (bookings || []).reduce(
-        (sum, booking) => sum + (Number(booking.totalAmount) || 0),
+      (invoicesData || []).reduce(
+        (sum, invoice) => sum + (Number(invoice.totalAmount) || 0),
         0,
       );
-    const avgBookingValue =
-      summary.avgBookingValue ??
-      (totalBookings > 0 ? totalRevenue / totalBookings : 0);
+    const avgInvoiceValue =
+      summary.avgInvoiceValue ??
+      (totalInvoices > 0 ? totalRevenue / totalInvoices : 0);
     const totalDueAmount = summary.totalDueAmount ?? 0;
 
-    // Use API payment status data if available, fallback to bookings
+    // Use API payment status data if available, fallback to invoices
     const paymentStatusData =
       analytics.paymentStatusArray ||
       Object.entries(
         analytics.paymentStatus ||
-          (bookings || []).reduce((acc, booking) => {
-            const status = booking.paymentStatus || "pending";
+          (invoicesData || []).reduce((acc, invoice) => {
+            const status = invoice.paymentStatus || "pending";
             acc[status] = (acc[status] || 0) + 1;
             return acc;
           }, {}),
@@ -405,26 +405,26 @@ export default function CustomerDetail() {
     // Use API monthly trends if available, fallback to client calculation
     const monthlyData = analytics.monthlyTrends || [];
 
-    // If no API data, calculate from bookings as fallback
-    if (monthlyData.length === 0 && bookings && bookings.length > 0) {
+    // If no API data, calculate from invoices as fallback
+    if (monthlyData.length === 0 && invoicesData && invoicesData.length > 0) {
       for (let i = 5; i >= 0; i--) {
         const date = new Date();
         date.setMonth(date.getMonth() - i);
         const month = date.toLocaleDateString("en-US", { month: "short" });
 
-        const monthBookings = bookings.filter((booking) => {
-          const bookingDate = new Date(booking.createdAt);
+        const monthInvoices = invoicesData.filter((invoice) => {
+          const invoiceDate = new Date(invoice.issueDate || invoice.createdAt);
           return (
-            bookingDate.getMonth() === date.getMonth() &&
-            bookingDate.getFullYear() === date.getFullYear()
+            invoiceDate.getMonth() === date.getMonth() &&
+            invoiceDate.getFullYear() === date.getFullYear()
           );
         });
 
         monthlyData.push({
           month,
-          bookings: monthBookings.length,
-          revenue: monthBookings.reduce(
-            (sum, b) => sum + (Number(b.totalAmount) || 0),
+          invoices: monthInvoices.length,
+          revenue: monthInvoices.reduce(
+            (sum, inv) => sum + (Number(inv.totalAmount) || 0),
             0,
           ),
         });
@@ -462,9 +462,9 @@ export default function CustomerDetail() {
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-600">Total Bookings</p>
+                  <p className="text-sm text-gray-600">Total Invoices</p>
                   <p className="text-2xl font-bold text-gray-900">
-                    {totalBookings}
+                    {totalInvoices}
                   </p>
                 </div>
                 <Package className="h-8 w-8 text-blue-600" />
@@ -537,14 +537,14 @@ export default function CustomerDetail() {
                     <YAxis className="text-sm" />
                     <Tooltip
                       formatter={(value: number, name: string) => [
-                        name === "bookings"
-                          ? `${value} bookings`
+                        name === "invoices"
+                          ? `${value} invoices`
                           : `$${value.toLocaleString()}`,
-                        name === "bookings" ? "Bookings" : "Revenue",
+                        name === "invoices" ? "Invoices" : "Revenue",
                       ]}
                     />
                     <Bar
-                      dataKey="bookings"
+                      dataKey="invoices"
                       fill="#3b82f6"
                       radius={[4, 4, 0, 0]}
                     />

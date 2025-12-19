@@ -42,6 +42,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -53,6 +54,8 @@ import {
   Search,
   Filter,
   Download,
+  Upload,
+  FileDown,
   Grid3X3,
   List,
   Calendar,
@@ -76,6 +79,9 @@ import {
   Grid,
   CalendarDays,
   X,
+  FileText,
+  FileSpreadsheet,
+  ChevronDown,
 } from "lucide-react";
 import {
   FaGoogle,
@@ -442,6 +448,11 @@ export default function Leads() {
   const [isZoomDialogOpen, setIsZoomDialogOpen] = useState(false);
   const [leadToCall, setLeadToCall] = useState<Lead | null>(null);
 
+  // Import/Export state
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
@@ -729,6 +740,261 @@ export default function Leads() {
       });
     },
   });
+
+  // Export leads handler - CSV
+  const handleExportLeadsCSV = async () => {
+    if (!tenant?.id) {
+      toast({
+        title: "Error",
+        description: "Tenant ID not found",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(`/api/tenants/${tenant.id}/leads/export?format=csv`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to export leads");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `leads-${new Date().toISOString().split("T")[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast({
+        title: "Success",
+        description: "Leads exported to CSV successfully",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to export leads",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Export leads handler - Excel
+  const handleExportLeadsExcel = async () => {
+    if (!tenant?.id) {
+      toast({
+        title: "Error",
+        description: "Tenant ID not found",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(`/api/tenants/${tenant.id}/leads/export?format=xlsx`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to export leads");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `leads-${new Date().toISOString().split("T")[0]}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast({
+        title: "Success",
+        description: "Leads exported to Excel successfully",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to export leads",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Export leads handler - PDF
+  const handleExportLeadsPDF = async () => {
+    if (!tenant?.id) {
+      toast({
+        title: "Error",
+        description: "Tenant ID not found",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(`/api/tenants/${tenant.id}/leads/export?format=pdf`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to export leads");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `leads-${new Date().toISOString().split("T")[0]}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast({
+        title: "Success",
+        description: "Leads exported to PDF successfully",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to export leads",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Import leads handler
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      const fileExtension = file.name.split(".").pop()?.toLowerCase();
+      if (!["csv", "xlsx", "xls"].includes(fileExtension || "")) {
+        toast({
+          title: "Invalid file",
+          description: "Please select a CSV or Excel file",
+          variant: "destructive",
+        });
+        return;
+      }
+      setImportFile(file);
+    }
+  };
+
+  const handleDownloadSampleFile = async () => {
+    if (!tenant?.id) {
+      toast({
+        title: "Error",
+        description: "Tenant ID not found",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(`/api/tenants/${tenant.id}/leads/import/sample`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to download sample file");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "leads-import-sample.csv";
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast({
+        title: "Success",
+        description: "Sample file downloaded successfully",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to download sample file",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleImportLeads = async () => {
+    if (!importFile || !tenant?.id) {
+      toast({
+        title: "Error",
+        description: "Please select a file to import",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsImporting(true);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", importFile);
+      formData.append("tenantId", tenant.id.toString());
+
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(`/api/tenants/${tenant.id}/leads/import`, {
+        method: "POST",
+        body: formData,
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.message || "Failed to import leads");
+      }
+
+      toast({
+        title: "Success",
+        description: `Successfully imported ${result.imported || 0} leads`,
+      });
+
+      // Refresh leads list
+      queryClient.invalidateQueries({
+        queryKey: ["leads", tenant.id],
+      });
+
+      setImportDialogOpen(false);
+      setImportFile(null);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to import leads",
+        variant: "destructive",
+      });
+    } finally {
+      setIsImporting(false);
+    }
+  };
 
   const updateLeadMutation = useMutation({
     mutationFn: async ({ id, data }: { id: number; data: any }) => {
@@ -1047,11 +1313,42 @@ export default function Leads() {
                   <Filter className="h-4 w-4" />
                 </Button>
               </Link>
-              <Link href="/lead-sync">
-                <Button variant="outline" size="icon" className="bg-white">
-                  <Download className="h-4 w-4" />
-                </Button>
-              </Link>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className="bg-white"
+                    title="Export Leads"
+                  >
+                    <Download className="h-4 w-4 mr-2" />
+                    Export
+                    <ChevronDown className="h-4 w-4 ml-2" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={handleExportLeadsPDF}>
+                    <FileText className="h-4 w-4 mr-2" />
+                    Export as PDF
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleExportLeadsCSV}>
+                    <FileText className="h-4 w-4 mr-2" />
+                    Export as CSV
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleExportLeadsExcel}>
+                    <FileSpreadsheet className="h-4 w-4 mr-2" />
+                    Export as Excel
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <Button
+                variant="outline"
+                className="bg-white"
+                onClick={() => setImportDialogOpen(true)}
+                title="Import Leads"
+              >
+                <Upload className="h-4 w-4 mr-2" />
+                Import
+              </Button>
               <Link href="/leads/create">
                 <Button
                   className="
@@ -2199,6 +2496,63 @@ export default function Leads() {
           }
         />
       )}
+
+      {/* Import Dialog */}
+      <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Import Leads</DialogTitle>
+            <DialogDescription>
+              Upload a CSV or Excel file to import leads. The file should contain columns: First Name, Last Name, Email, Phone, Source, Status, Priority, etc.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <Label htmlFor="import-file">Select File</Label>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleDownloadSampleFile}
+                  className="text-xs"
+                >
+                  <FileDown className="h-3 w-3 mr-1" />
+                  Download Sample CSV
+                </Button>
+              </div>
+              <Input
+                id="import-file"
+                type="file"
+                accept=".csv,.xlsx,.xls"
+                onChange={handleFileSelect}
+                className="mt-2"
+              />
+              {importFile && (
+                <p className="text-sm text-gray-500 mt-2">
+                  Selected: {importFile.name}
+                </p>
+              )}
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setImportDialogOpen(false);
+                setImportFile(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleImportLeads}
+              disabled={!importFile || isImporting}
+            >
+              {isImporting ? "Importing..." : "Import"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Layout>
   );
 }

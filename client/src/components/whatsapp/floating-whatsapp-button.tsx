@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
-import { MessageCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/components/auth/auth-provider";
+import { FaWhatsapp } from "react-icons/fa";
 
 export function FloatingWhatsAppButton() {
   const [, setLocation] = useLocation();
@@ -95,7 +95,7 @@ export function FloatingWhatsAppButton() {
       data-testid="button-floating-whatsapp"
       title="Open WhatsApp Live Chat"
     >
-      <MessageCircle className="h-6 w-6" />
+      <FaWhatsapp className="h-6 w-6" />
     </Button>
   );
 }

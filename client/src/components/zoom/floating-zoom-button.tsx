@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Phone } from "lucide-react";
+import { Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ZoomPhoneEmbed } from "./zoom-phone-embed";
 
@@ -15,7 +15,7 @@ export function FloatingZoomButton() {
         data-testid="button-floating-zoom-call"
         title="Open Zoom Phone"
       >
-        <Phone className="h-6 w-6" />
+        <Video className="h-6 w-6" />
       </Button>
 
       {/* Zoom Phone Dialog */}

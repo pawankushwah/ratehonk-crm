@@ -2,6 +2,7 @@
 import { Link } from "wouter";
 import { Layout } from "@/components/layout/layout";
 import { DashboardCustomizationDialog } from "@/components/dashboard-customization-dialog";
+import { DashboardSettingsPanel } from "@/components/dashboard-settings-panel";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
@@ -62,6 +63,39 @@ export default function TenantDashboard() {
   }, []);
   const { user, tenant } = useAuth();
   const { canView, isLoading: permissionsLoading } = usePermissions();
+
+  // Fetch user dashboard preferences
+  const { data: userPreferences } = useQuery({
+    queryKey: ['/api/user/dashboard/preferences'],
+    enabled: !!user?.id && !!tenant?.id,
+  });
+
+  // Create a map of user preferences for quick lookup
+  const userPreferencesMap = useMemo(() => {
+    const map = new Map();
+    if (userPreferences && Array.isArray(userPreferences)) {
+      userPreferences.forEach((pref: any) => {
+        map.set(pref.component_key, pref.is_visible);
+      });
+    }
+    return map;
+  }, [userPreferences]);
+
+  // Helper function to check both role permission AND user preference
+  const canViewComponent = (permissionKey: string, componentKey?: string) => {
+    // First check role-based permission (skip for shortcuts which don't have specific permission)
+    if (permissionKey !== "dashboard" && !canView(permissionKey)) {
+      return false;
+    }
+    
+    // Then check user preference (if set)
+    const key = componentKey || permissionKey;
+    const userPref = userPreferencesMap.get(key);
+    
+    // If user preference is explicitly set to false, hide it
+    // If user preference is true or not set, show it (respecting role permission)
+    return userPref !== false;
+  };
   const [dateFilter, setDateFilter] = useState<{
     period: string;
     startDate?: Date;
@@ -106,6 +140,7 @@ export default function TenantDashboard() {
   
  
   const [isCustomizationOpen, setIsCustomizationOpen] = useState(false);
+  const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(false);
   const getQueryParams = () => {
     const params: any = {};
     if (dateFilter.period && dateFilter.period !== "custom") {
@@ -463,11 +498,12 @@ export default function TenantDashboard() {
                     Dashboard
                   </h1>
                   <div className="flex gap-2 sm:gap-3 ml-auto mt-3 sm:mt-0">
-                    <div className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-lg border border-gray-200 bg-white shadow-sm">
-                      <Link href="/dynamic-fields">
-                        <Settings className="h-4 w-4 sm:h-5 sm:w-5 text-gray-600" />
-                      </Link>
-                    </div>
+                    <button
+                      onClick={() => setIsSettingsPanelOpen(true)}
+                      className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-lg border border-gray-200 bg-white shadow-sm hover:bg-gray-50 transition-colors cursor-pointer"
+                    >
+                      <Settings className="h-4 w-4 sm:h-5 sm:w-5 text-gray-600" />
+                    </button>
                     <div className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-lg border border-gray-200 bg-white shadow-sm">
                       <Link href="/support">
                         <HelpCircle className="h-4 w-4 sm:h-5 sm:w-5 text-gray-600" />
@@ -487,7 +523,7 @@ export default function TenantDashboard() {
                 className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6"
                 data-testid="metric-cards-container"
               >
-                {canView("dashboard.revenue") && (
+                {canViewComponent("dashboard.revenue") && (
                   <div data-testid="metric-card-revenue">
                     <MetricCard
                       
@@ -510,7 +546,7 @@ export default function TenantDashboard() {
                     />
                   </div>
                 )}
-                {canView("dashboard.bookings") && (
+                {canViewComponent("dashboard.bookings") && (
                   <div data-testid="metric-card-bookings">
                     <Link href={`/invoices`}>
                       <MetricCard
@@ -534,7 +570,7 @@ export default function TenantDashboard() {
                     </Link>
                   </div>
                 )}
-                {canView("dashboard.customers") && (
+                {canViewComponent("dashboard.customers") && (
                   <div data-testid="metric-card-customers">
                     <Link href={`/customers`}>
                       <MetricCard
@@ -558,7 +594,7 @@ export default function TenantDashboard() {
                     </Link>
                   </div>
                 )}
-                {canView("dashboard.leads") && (
+                {canViewComponent("dashboard.leads") && (
                   <div data-testid="metric-card-leads">
                     <Link href={`/leads`}>
                       <MetricCard
@@ -584,51 +620,53 @@ export default function TenantDashboard() {
               </div>
               
               {/* Shortcuts Link */}
-              <div className="mt-6 lg:mt-10 mb-4">
-                <ShortcutsDialog>
-                  <button className="flex items-center gap-2 text-blue-600 hover:text-blue-700 font-medium transition-colors">
-                    <Zap className="h-4 w-4" />
-                    <span className="text-lg">Shortcuts</span>
-                    <ChevronRight className="h-5 w-5" />
-                  </button>
-                </ShortcutsDialog>
-              </div>
+              {canViewComponent("dashboard", "shortcuts") && (
+                <div className="mt-6 lg:mt-10 mb-4">
+                  <ShortcutsDialog>
+                    <button className="flex items-center gap-2 text-blue-600 hover:text-blue-700 font-medium transition-colors">
+                      <Zap className="h-4 w-4" />
+                      <span className="text-lg">Shortcuts</span>
+                      <ChevronRight className="h-5 w-5" />
+                    </button>
+                  </ShortcutsDialog>
+                </div>
+              )}
 
               {/* Revenue Chart and Profit/Loss Card - grouped together */}
-              {(canView("dashboard.revenue-chart") || canView("dashboard.profit-loss")) && (
+              {(canViewComponent("dashboard.revenue-chart") || canViewComponent("dashboard.profit-loss")) && (
                 <div
                   className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 h-fit mt-6 lg:mt-10"
                   data-testid="dashboard-main-content"
                 >
-                  {canView("dashboard.revenue-chart") && <RevenueChart />}
-                  {canView("dashboard.profit-loss") && <ProfitLossCard />}
+                  {canViewComponent("dashboard.revenue-chart") && <RevenueChart />}
+                  {canViewComponent("dashboard.profit-loss") && <ProfitLossCard />}
                 </div>
               )}
               
               {/* Expense Chart and Service Booking - grouped together */}
-              {(canView("dashboard.expense-chart") || canView("dashboard.service-booking")) && (
+              {(canViewComponent("dashboard.expense-chart") || canViewComponent("dashboard.service-booking")) && (
                 <div
                   className="grid grid-cols-1 lg:grid-cols-12 gap-6 sm:gap-8 mt-6 sm:mt-10"
                   data-testid="dashboard-main-content"
                 >
-                  {canView("dashboard.expense-chart") && <ExpensePieChart />}
-                  {canView("dashboard.service-booking") && <ServiceBookingScatter />}
+                  {canViewComponent("dashboard.expense-chart") && <ExpensePieChart />}
+                  {canViewComponent("dashboard.service-booking") && <ServiceBookingScatter />}
                 </div>
               )}
               
               {/* Service Provider and Vendor Booking - grouped together */}
-              {(canView("dashboard.service-provider") || canView("dashboard.vendor-booking")) && (
+              {(canViewComponent("dashboard.service-provider") || canViewComponent("dashboard.vendor-booking")) && (
                 <div
                   className="grid grid-cols-1 lg:grid-cols-12 gap-6 sm:gap-8 mt-6 sm:mt-10"
                   data-testid="dashboard-main-content"
                 >
-                  {canView("dashboard.service-provider") && <ServiceProviderChart />}
-                  {canView("dashboard.vendor-booking") && <ConsolidatedVendorBookingChart />}
+                  {canViewComponent("dashboard.service-provider") && <ServiceProviderChart />}
+                  {canViewComponent("dashboard.vendor-booking") && <ConsolidatedVendorBookingChart />}
                 </div>
               )}
 
               {/* Invoice Status Bar */}
-              {canView("dashboard.invoice-status") && (
+              {canViewComponent("dashboard.invoice-status") && (
                 <div
                   className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 h-fit mt-6 lg:mt-10"
                   data-testid="dashboard-main-content"
@@ -638,7 +676,7 @@ export default function TenantDashboard() {
               )}
               
               {/* Marketing SEO Bar */}
-              {canView("dashboard.marketing-seo") && (
+              {canViewComponent("dashboard.marketing-seo") && (
                 <div
                   className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 h-fit mt-6 lg:mt-10"
                   data-testid="dashboard-main-content"
@@ -652,10 +690,10 @@ export default function TenantDashboard() {
               customersArray={customersArray}
               invoicesArray={invoicesArray}
               contactsArray={contactsArray}
-              canViewFollowUps={canView("dashboard.sidebar-followups")}
-              canViewCustomers={canView("dashboard.sidebar-customers")}
-              canViewInvoices={canView("dashboard.sidebar-bookings")}
-              canViewContacts={canView("dashboard.sidebar-contacts")}
+              canViewFollowUps={canViewComponent("dashboard.sidebar-followups")}
+              canViewCustomers={canViewComponent("dashboard.sidebar-customers")}
+              canViewInvoices={canViewComponent("dashboard.sidebar-bookings")}
+              canViewContacts={canViewComponent("dashboard.sidebar-contacts")}
             />
           </div>
         </div>
@@ -663,6 +701,10 @@ export default function TenantDashboard() {
       <DashboardCustomizationDialog
         open={isCustomizationOpen}
         onOpenChange={setIsCustomizationOpen}
+      />
+      <DashboardSettingsPanel
+        open={isSettingsPanelOpen}
+        onOpenChange={setIsSettingsPanelOpen}
       />
     </Layout>
   );
