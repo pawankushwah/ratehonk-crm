@@ -1932,8 +1932,82 @@ app.get("/api/All-leads", authenticateToken, async (req, res) => {
     console.error("❌ Enhanced leads API error:", error);
     res.status(500).json({ error: error.message });
   }
-});
+  });
 
+  // Kanban board endpoint - returns ALL leads without pagination
+  app.get("/api/leads/kanban", authenticateToken, async (req, res) => {
+    try {
+      const tenantId = req.user.tenantId;
+      const userId = req.user.id;
+      if (!tenantId) {
+        return res
+          .status(400)
+          .json({ error: "Tenant ID not found in user session" });
+      }
+
+      // Check if user is owner/superadmin (has role with isDefault = true)
+      let isOwner = false;
+      if (req.user.roleId) {
+        const userRole = await simpleStorage.getRoleById(req.user.roleId, tenantId);
+        isOwner = userRole?.is_default === true;
+      }
+      // Also check if user role is tenant_admin (legacy check)
+      if (!isOwner && req.user.role === "tenant_admin") {
+        isOwner = true;
+      }
+
+      // Get user IDs by role hierarchy (role-based filtering, not user reporting hierarchy)
+      let teamUserIds: number[] | undefined = undefined;
+      if (!isOwner && req.user.roleId) {
+        // Get all users with current role + all child roles (recursively)
+        teamUserIds = await simpleStorage.getUsersByRoleHierarchy(req.user.roleId, tenantId);
+        console.log(`👥 Kanban API - User ${userId} (role ${req.user.roleId}) - users in role hierarchy:`, teamUserIds);
+      }
+
+      const {
+        search = "",
+        status = "",
+        priority = "",
+        type = "",
+        source = "",
+        dateFrom = "",
+        dateTo = "",
+        sortBy = "created_at",
+        sortOrder = "desc",
+        typeSpecificFilters = "",
+      } = req.query;
+
+      // Use getLeadsByTenant with a very high limit to get all leads (or no limit if supported)
+      // For Kanban, we want ALL leads, so set limit to a very high number
+      const result = await simpleStorage.getLeadsByTenant({
+        tenantId,
+        teamUserIds: isOwner ? undefined : teamUserIds, // Filter by team if not owner
+        limit: 10000, // Very high limit to get all leads
+        offset: 0, // Start from beginning
+        search: String(search),
+        status: String(status),
+        priority: String(priority),
+        type: String(type),
+        source: String(source),
+        dateFrom: String(dateFrom),
+        dateTo: String(dateTo),
+        sortBy: String(sortBy),
+        sortOrder: String(sortOrder),
+        typeSpecificFilters: String(typeSpecificFilters),
+      });
+
+      console.log(`📊 Kanban API - Returning ${result?.data?.length || 0} leads (total: ${result?.total || 0})`);
+
+      // Return all leads without pagination metadata
+      res.json({
+        data: result?.data || [],
+        total: result?.total || 0,
+      });
+    } catch (error: any) {
+      console.error("❌ Kanban leads API error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
 
   app.get("/api/customers", authenticateToken, async (req, res) => {
     try {
@@ -24622,27 +24696,40 @@ Please improve this email.`;
   app.get("/uploads/:filename", (req, res) => {
     let filename = decodeURIComponent(req.params.filename); // Decode URL-encoded filename
     
+    console.log("📁 File request - Original filename param:", req.params.filename);
+    console.log("📁 File request - Decoded filename:", filename);
+    
     // Security: prevent path traversal - allow alphanumeric, dash, underscore, dot, parentheses, and timezone offset (+/-)
     // But sanitize to prevent directory traversal by removing any path separators
     filename = filename.replace(/[\/\\]/g, ''); // Remove any path separators
-    // Allow timestamp, timezone offset (like +0530 or -0500), dashes, underscores, dots, parentheses, and alphanumeric
-    if (!/^[0-9]+[+-][0-9]{4}-[a-zA-Z0-9._()\s-]+$/.test(filename)) {
-      // Also allow older format without timezone for backward compatibility
-      if (!/^[0-9]+-[a-zA-Z0-9._()\s-]+$/.test(filename) && !/^[a-zA-Z0-9._()\s-]+$/.test(filename)) {
-        return res.status(403).json({ message: "Invalid filename" });
-      }
+    
+    // Updated regex to match: timestamp-randomSuffix-sanitizedFilename
+    // Format: {timestamp}-{randomSuffix}-{filename}
+    // Example: 1766120022634-abc123-WhatsApp_Image_2025-12-17_at_10.41.03_AM.jpeg
+    const timestampRandomSuffixPattern = /^[0-9]+-[a-zA-Z0-9]+-[a-zA-Z0-9._()\s-]+$/;
+    const timestampPattern = /^[0-9]+-[a-zA-Z0-9._()\s-]+$/;
+    const simplePattern = /^[a-zA-Z0-9._()\s-]+$/;
+    
+    if (!timestampRandomSuffixPattern.test(filename) && 
+        !timestampPattern.test(filename) && 
+        !simplePattern.test(filename)) {
+      console.error("❌ Invalid filename format:", filename);
+      return res.status(403).json({ message: "Invalid filename format" });
     }
     
     const filePath = path.join(process.cwd(), "uploads", filename);
+    console.log("📁 Looking for file at:", filePath);
     
     // Security: ensure the resolved path is within the uploads directory
     const safePath = path.normalize(filePath);
     const uploadsDir = path.join(process.cwd(), "uploads");
     if (!safePath.startsWith(path.normalize(uploadsDir))) {
+      console.error("❌ Path traversal attempt detected:", safePath);
       return res.status(403).json({ message: "Access denied" });
     }
     
     if (fs.existsSync(safePath) && fs.statSync(safePath).isFile()) {
+      console.log("✅ File found, serving:", safePath);
       // Set appropriate content type based on file extension
       const ext = path.extname(filename).toLowerCase();
       const contentTypes: Record<string, string> = {
@@ -24659,7 +24746,19 @@ Please improve this email.`;
       res.setHeader('Content-Type', contentType);
       res.sendFile(safePath);
     } else {
-      res.status(404).json({ message: "File not found" });
+      console.error("❌ File not found:", safePath);
+      console.error("❌ File exists check:", fs.existsSync(safePath));
+      if (fs.existsSync(safePath)) {
+        console.error("❌ Is file:", fs.statSync(safePath).isFile());
+      }
+      // List files in uploads directory for debugging
+      try {
+        const files = fs.readdirSync(uploadsDir);
+        console.log("📁 Files in uploads directory:", files.slice(0, 10));
+      } catch (e) {
+        console.error("❌ Could not list uploads directory:", e);
+      }
+      res.status(404).json({ message: "File not found", requestedFilename: filename });
     }
   });
 
@@ -25093,7 +25192,7 @@ Please improve this email.`;
         );
 
         // Get customer's invoices and related data
-        const [customerInvoicesResult, allCustomers] =
+        const [customerInvoicesResult, allCustomersResult] =
           await Promise.all([
             simpleStorage.getInvoicesByTenant(parseInt(tenantId), {
               customerId: parseInt(customerId),
@@ -25102,6 +25201,7 @@ Please improve this email.`;
             }),
             simpleStorage.getCustomersByTenant({
               tenantId: parseInt(tenantId),
+              limit: 10000, // Get all customers to find the specific one
             }),
           ]);
 
@@ -25109,6 +25209,11 @@ Please improve this email.`;
         const customerInvoices = Array.isArray(customerInvoicesResult)
           ? customerInvoicesResult
           : customerInvoicesResult?.data || [];
+
+        // Extract customers array from paginated response
+        const allCustomers = Array.isArray(allCustomersResult)
+          ? allCustomersResult
+          : allCustomersResult?.data || [];
 
         // Filter data for this specific customer (double-check filter)
         const customerSpecificInvoices = customerInvoices.filter(
@@ -25354,14 +25459,18 @@ Please improve this email.`;
       console.log("📁 File saved to:", filePath);
       console.log("📁 Public URL:", publicUrl);
       console.log("📁 File size:", req.file.size, "bytes");
+      console.log("📁 Actual filename on disk:", `${timestamp}-${randomSuffix}-${sanitizedFilename}`);
 
       res.json({
         success: true,
         objectPath,
         publicUrl,
         fileName: sanitizedFilename,
+        originalFileName: req.file.originalname, // Include original filename
         mimeType: req.file.mimetype,
         fileSize: req.file.size,
+        // Include the actual filename for reference
+        actualFileName: `${timestamp}-${randomSuffix}-${sanitizedFilename}`,
       });
     } catch (error: any) {
       console.error("❌ File storage error:", error);
@@ -25420,14 +25529,22 @@ Please improve this email.`;
       console.log("📁 File saved to:", filePath);
       console.log("📁 Public URL:", publicUrl);
       console.log("📁 File size:", fileBuffer.length, "bytes");
+      console.log("📁 Actual filename on disk:", `${timestamp}-${randomSuffix}-${sanitizedFilename}`);
 
+      // Return response in format compatible with Uppy AwsS3 plugin
+      // The plugin expects a 'location' field for successful uploads
       res.json({
         success: true,
         objectPath,
         publicUrl,
+        location: publicUrl, // Uppy AwsS3 plugin expects 'location' field
+        url: publicUrl, // Alternative field name
         fileName: sanitizedFilename,
+        originalFileName: filename, // Include original filename
         mimeType: contentType,
         fileSize: fileBuffer.length,
+        // Include the actual filename for reference
+        actualFileName: `${timestamp}-${randomSuffix}-${sanitizedFilename}`,
       });
     } catch (error: any) {
       console.error("❌ Raw file upload error:", error);

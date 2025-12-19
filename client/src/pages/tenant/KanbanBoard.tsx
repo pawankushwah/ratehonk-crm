@@ -99,10 +99,12 @@ console.log("Leads in KanbanBoard:", leads);
     setDragging({ leadId });
   };
 
-  const handleDrop = (status: string) => {
+  const handleDrop = async (status: string) => {
     if (dragging.leadId === null) return;
-    onStatusChange(dragging.leadId, status);
+    const leadId = dragging.leadId;
     setDragging({ leadId: null });
+    // Call the status change handler (which will update API and refresh)
+    await onStatusChange(leadId, status);
   };
 
   const handleAddClick = (status: string) => {
@@ -127,10 +129,7 @@ console.log("Leads in KanbanBoard:", leads);
 
   return (
     <div className="mt-8 px-4">
-      {/* <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5"> */}
-      {/* <div className="flex overflow-x-auto space-x-4 scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-gray-100"> */}
-      {/* <div className="flex space-x-4 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100"> */}
-      <div className="flex space-x-4 overflow-x-auto overflow-y-hidden pb-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
+      <div className="flex space-x-4 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100 items-start">
         {leadStatuses.map((status) => {
           const leadsInStatus = leads.filter(
             (lead) => lead.status === status.value
@@ -144,12 +143,14 @@ console.log("Leads in KanbanBoard:", leads);
               onDrop={() => handleDrop(status.value)}
             >
               {/* Header */}
-              <div className="flex justify-between items-center px-3 pt-3 pb-2">
+              <div className="flex justify-between items-center px-3 pt-3 pb-2 flex-shrink-0">
                 <div className="flex items-center gap-2">
                   <h3 className="text-[#101828] font-medium text-[15px]">
                     {status.label}
                   </h3>
-                  <img src={countIcon} alt="Count" className="w-6 h-6" />
+                  <span className="text-[#101828] font-medium text-[15px]">
+                    {leadsInStatus.length}
+                  </span>
                 </div>
                 <img
                   src={AddIcon}
@@ -160,10 +161,10 @@ console.log("Leads in KanbanBoard:", leads);
               </div>
 
               {/* Color Bar */}
-              <div className={`h-1 w-full rounded-t ${status.color}`}></div>
+              <div className={`h-1 w-full rounded-t ${status.color} flex-shrink-0`}></div>
 
-              {/* Leads List */}
-              <CardContent className="space-y-3 p-3 overflow-hidden">
+              {/* Leads List - Auto-growing height */}
+              <CardContent className="space-y-3 p-3 flex-1 overflow-y-auto min-h-0 max-h-[calc(100vh-250px)]">
                 {leadsInStatus.length > 0 ? (
                   leadsInStatus.map((lead) => {
                     const statusConfig = getStatusBadge(lead.status);

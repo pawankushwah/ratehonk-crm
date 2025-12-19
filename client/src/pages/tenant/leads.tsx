@@ -590,6 +590,70 @@ export default function Leads() {
     setDynamicFilters({});
   }, [typeFilter]);
 
+  // Separate query for Kanban view (all leads, no pagination)
+  const { data: kanbanLeads = [], isLoading: isLoadingKanban } = useQuery<Lead[]>({
+    queryKey: [
+      "kanban-leads",
+      tenant?.id,
+      searchTerm,
+      statusFilter,
+      dateFilter,
+      priorityFilter,
+      typeFilter,
+      sourceFilter,
+      customDateFrom,
+      customDateTo,
+      dynamicFilters,
+    ],
+    enabled: !!tenant?.id && viewMode === "grid", // Only fetch when in Kanban view
+    queryFn: async ({ queryKey }) => {
+      const [
+        ,
+        tenantId,
+        search,
+        status,
+        date,
+        priority,
+        type,
+        source,
+        ,
+        ,
+        dynFilters,
+      ] = queryKey;
+
+      const dateFilters = buildDateFilters(date);
+      const allFilters = {
+        ...dateFilters,
+        search: search?.trim() || undefined,
+        status: status !== "all" ? status : undefined,
+        priority: priority !== "all" ? priority : undefined,
+        type: type !== "all" ? type : undefined,
+        source: source !== "all" ? source : undefined,
+        // Add dynamic type-specific filters
+        ...(dynFilters && Object.keys(dynFilters).length > 0
+          ? { typeSpecificFilters: JSON.stringify(dynFilters) }
+          : {}),
+      };
+
+      // Remove undefined values
+      Object.keys(allFilters).forEach(
+        (key) => allFilters[key] === undefined && delete allFilters[key],
+      );
+
+      console.log("🔍 Kanban API - Fetching all leads with filters:", allFilters);
+
+      const result = await directLeadsApi.getKanbanLeads(tenantId!, allFilters);
+      
+      console.log("🔍 Kanban API - Response:", result.data?.length || 0, "leads");
+      
+      return result.data || [];
+    },
+    refetchOnWindowFocus: true,
+    refetchOnMount: true,
+    refetchInterval: 30000,
+  });
+
+  // Regular query for table/list view (with pagination)
   const { data: leads = [], isLoading } = useQuery<Lead[]>({
     queryKey: [
       "leads",
@@ -605,8 +669,9 @@ export default function Leads() {
       currentPage,
       itemsPerPage,
       dynamicFilters,
+      viewMode, // Include viewMode to separate queries
     ],
-    enabled: !!tenant?.id,
+    enabled: !!tenant?.id && viewMode !== "grid", // Don't fetch when in Kanban view
     queryFn: async ({ queryKey }) => {
       const [
         ,
@@ -1166,8 +1231,16 @@ export default function Leads() {
       await directLeadsApi.updateLead(tenant?.id!, leadId, {
         status: newStatus,
       });
+      // Invalidate both regular leads query and kanban leads query
       queryClient.invalidateQueries({
         queryKey: [`leads-tenant-${tenant?.id}`],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["kanban-leads", tenant?.id],
+      });
+      // Also invalidate the main leads query
+      queryClient.invalidateQueries({
+        queryKey: ["leads"],
       });
       toast({
         title: "Status Updated",
@@ -2386,7 +2459,7 @@ export default function Leads() {
           {/*KanbanBoard table  */}
           {viewMode === "grid" && (
             <KanbanBoard
-              leads={leads}
+              leads={kanbanLeads}
               onStatusChange={handleStatusChange}
               onViewLead={handleEdit}
             />
