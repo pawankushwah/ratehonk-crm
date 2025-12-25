@@ -1414,7 +1414,7 @@ export class SimpleStorage {
         }
       }
 
-      if (search) {
+      if (search && search.trim() !== "") {
         whereClauses = sql`${whereClauses} AND (
           LOWER(l.first_name || ' ' || l.last_name) LIKE ${"%" + search.toLowerCase() + "%"}
           OR LOWER(l.email) LIKE ${"%" + search.toLowerCase() + "%"}
@@ -1422,26 +1422,26 @@ export class SimpleStorage {
         )`;
       }
 
-      if (status && status !== "all") {
+      if (status && status !== "" && status !== "all") {
         whereClauses = sql`${whereClauses} AND l.status = ${status}`;
       }
 
-      if (priority) {
+      if (priority && priority !== "") {
         whereClauses = sql`${whereClauses} AND l.priority = ${priority}`;
       }
 
-      if (type) {
+      if (type && type !== "") {
         const typeId = parseInt(String(type), 10);
         if (!isNaN(typeId)) {
           whereClauses = sql`${whereClauses} AND l.lead_type_id = ${typeId}`;
         }
       }
 
-      if (source) {
+      if (source && source !== "") {
         whereClauses = sql`${whereClauses} AND l.source = ${source}`;
       }
 
-      if (dateFrom && dateTo) {
+      if (dateFrom && dateTo && dateFrom !== "" && dateTo !== "") {
         whereClauses = sql`${whereClauses} AND l.created_at BETWEEN ${dateFrom} AND ${dateTo}`;
       }
 
@@ -5380,6 +5380,7 @@ async getAllLeadsByTenant(
         taxAmount: parseFloat(inv.tax_amount || "0"),
         discountAmount: parseFloat(inv.discount_amount || "0"),
         totalAmount: parseFloat(inv.total_amount),
+        paidAmount: parseFloat(inv.paid_amount || inv.amount_paid || "0"),
 
         notes: inv.notes,
         additionalNotes: inv.additional_notes,
@@ -6565,16 +6566,31 @@ async getAllLeadsByTenant(
         priority: task.priority,
         type: task.type,
         dueDate: task.due_date,
+        endDate: task.end_date,
         completedAt: task.completed_at,
         assignedTo: task.assigned_to,
         assignedToId: task.assigned_to_id,
+        reportingUserId: task.reporting_user_id,
         customerId: task.customer_id,
         customerName: task.customer_name,
         leadId: task.lead_id,
         leadName: task.lead_name,
+        createdBy: task.created_by,
         createdAt: task.created_at,
         updatedAt: task.updated_at,
-        tags: task.tags ? JSON.parse(task.tags) : [],
+        tags: (() => {
+          try {
+            if (!task.tags) return [];
+            if (typeof task.tags === 'string') {
+              const parsed = JSON.parse(task.tags);
+              return Array.isArray(parsed) ? parsed : [];
+            }
+            return Array.isArray(task.tags) ? task.tags : [];
+          } catch (e) {
+            console.error("Error parsing tags:", e);
+            return [];
+          }
+        })(),
         notes: task.notes,
         estimatedDuration: task.estimated_duration,
         actualDuration: task.actual_duration,
@@ -6596,13 +6612,16 @@ async getAllLeadsByTenant(
           priority,
           type,
           due_date,
+          end_date,
           assigned_to,
           assigned_to_id,
+          reporting_user_id,
           customer_id,
           lead_id,
           tags,
           notes,
           estimated_duration,
+          created_by,
           created_at,
           updated_at
         ) VALUES (
@@ -6613,13 +6632,16 @@ async getAllLeadsByTenant(
           ${taskData.priority || "medium"},
           ${taskData.type || "general"},
           ${taskData.dueDate},
+          ${taskData.endDate || null},
           ${taskData.assignedTo},
           ${taskData.assignedToId},
+          ${taskData.reportingUserId || null},
           ${taskData.customerId || null},
           ${taskData.leadId || null},
           ${taskData.tags ? JSON.stringify(taskData.tags) : null},
           ${taskData.notes || null},
           ${taskData.estimatedDuration || null},
+          ${taskData.createdByUserId || taskData.createdBy || null},
           NOW(),
           NOW()
         )
@@ -6634,13 +6656,28 @@ async getAllLeadsByTenant(
         priority: newTask.priority,
         type: newTask.type,
         dueDate: newTask.due_date,
+        endDate: newTask.end_date,
         assignedTo: newTask.assigned_to,
         assignedToId: newTask.assigned_to_id,
+        reportingUserId: newTask.reporting_user_id,
         customerId: newTask.customer_id,
         leadId: newTask.lead_id,
+        createdBy: newTask.created_by,
         createdAt: newTask.created_at,
         updatedAt: newTask.updated_at,
-        tags: newTask.tags ? JSON.parse(newTask.tags) : [],
+        tags: (() => {
+          try {
+            if (!newTask.tags) return [];
+            if (typeof newTask.tags === 'string') {
+              const parsed = JSON.parse(newTask.tags);
+              return Array.isArray(parsed) ? parsed : [];
+            }
+            return Array.isArray(newTask.tags) ? newTask.tags : [];
+          } catch (e) {
+            console.error("Error parsing tags:", e);
+            return [];
+          }
+        })(),
         notes: newTask.notes,
         estimatedDuration: newTask.estimated_duration,
       };
@@ -6652,44 +6689,129 @@ async getAllLeadsByTenant(
 
   async updateTask(taskId: number, updateData: any) {
     try {
-      const updateFields: any = {
-        updated_at: "NOW()",
-      };
+      // Build dynamic update query - only update fields that are provided
+      const updateParts: string[] = [];
+      const values: any[] = [];
+      let paramIndex = 1;
 
-      if (updateData.title) updateFields.title = updateData.title;
-      if (updateData.description)
-        updateFields.description = updateData.description;
-      if (updateData.status) {
-        updateFields.status = updateData.status;
+      if (updateData.title !== undefined) {
+        updateParts.push(`title = $${paramIndex}`);
+        values.push(updateData.title);
+        paramIndex++;
+      }
+      if (updateData.description !== undefined) {
+        updateParts.push(`description = $${paramIndex}`);
+        values.push(updateData.description);
+        paramIndex++;
+      }
+      if (updateData.status !== undefined) {
+        updateParts.push(`status = $${paramIndex}`);
+        values.push(updateData.status);
+        paramIndex++;
         if (updateData.status === "completed") {
-          updateFields.completed_at = "NOW()";
+          updateParts.push(`completed_at = NOW()`);
+        } else if (updateData.status !== "completed") {
+          updateParts.push(`completed_at = NULL`);
         }
       }
-      if (updateData.priority) updateFields.priority = updateData.priority;
-      if (updateData.dueDate) updateFields.due_date = updateData.dueDate;
-      if (updateData.notes) updateFields.notes = updateData.notes;
-      if (updateData.actualDuration)
-        updateFields.actual_duration = updateData.actualDuration;
-      if (updateData.tags) updateFields.tags = JSON.stringify(updateData.tags);
+      if (updateData.priority !== undefined) {
+        updateParts.push(`priority = $${paramIndex}`);
+        values.push(updateData.priority);
+        paramIndex++;
+      }
+      if (updateData.dueDate !== undefined) {
+        updateParts.push(`due_date = $${paramIndex}`);
+        values.push(updateData.dueDate);
+        paramIndex++;
+      }
+      if (updateData.endDate !== undefined) {
+        updateParts.push(`end_date = $${paramIndex}`);
+        values.push(updateData.endDate);
+        paramIndex++;
+      }
+      if (updateData.assignedToId !== undefined) {
+        updateParts.push(`assigned_to_id = $${paramIndex}`);
+        values.push(updateData.assignedToId);
+        paramIndex++;
+      }
+      if (updateData.assignedTo !== undefined) {
+        updateParts.push(`assigned_to = $${paramIndex}`);
+        values.push(updateData.assignedTo);
+        paramIndex++;
+      }
+      if (updateData.reportingUserId !== undefined) {
+        updateParts.push(`reporting_user_id = $${paramIndex}`);
+        values.push(updateData.reportingUserId);
+        paramIndex++;
+      }
+      if (updateData.customerId !== undefined) {
+        updateParts.push(`customer_id = $${paramIndex}`);
+        values.push(updateData.customerId);
+        paramIndex++;
+      }
+      if (updateData.leadId !== undefined) {
+        updateParts.push(`lead_id = $${paramIndex}`);
+        values.push(updateData.leadId);
+        paramIndex++;
+      }
+      if (updateData.notes !== undefined) {
+        updateParts.push(`notes = $${paramIndex}`);
+        values.push(updateData.notes);
+        paramIndex++;
+      }
+      if (updateData.actualDuration !== undefined) {
+        updateParts.push(`actual_duration = $${paramIndex}`);
+        values.push(updateData.actualDuration);
+        paramIndex++;
+      }
+      if (updateData.estimatedDuration !== undefined) {
+        updateParts.push(`estimated_duration = $${paramIndex}`);
+        values.push(updateData.estimatedDuration);
+        paramIndex++;
+      }
+      if (updateData.tags !== undefined) {
+        updateParts.push(`tags = $${paramIndex}`);
+        values.push(updateData.tags ? JSON.stringify(updateData.tags) : null);
+        paramIndex++;
+      }
 
-      const [updatedTask] = await sql`
-        UPDATE tasks 
-        SET 
-          title = COALESCE(${updateData.title}, title),
-          description = COALESCE(${updateData.description}, description),
-          status = COALESCE(${updateData.status}, status),
-          priority = COALESCE(${updateData.priority}, priority),
-          due_date = COALESCE(${updateData.dueDate}, due_date),
-          notes = COALESCE(${updateData.notes}, notes),
-          actual_duration = COALESCE(${updateData.actualDuration}, actual_duration),
-          tags = COALESCE(${updateData.tags ? JSON.stringify(updateData.tags) : null}, tags),
-          completed_at = CASE WHEN ${updateData.status} = 'completed' THEN NOW() ELSE completed_at END,
-          updated_at = NOW()
-        WHERE id = ${taskId}
-        RETURNING *
-      `;
+      // Always update updated_at
+      updateParts.push(`updated_at = NOW()`);
 
-      return updatedTask;
+      if (updateParts.length === 0) {
+        // No fields to update, just return the current task
+        const [currentTask] = await sql`SELECT * FROM tasks WHERE id = ${taskId}`;
+        return currentTask;
+      }
+
+      values.push(taskId);
+      const query = `UPDATE tasks SET ${updateParts.join(', ')} WHERE id = $${paramIndex} RETURNING *`;
+      
+      const [updatedTask] = await sql.unsafe(query, values);
+
+      return {
+        id: updatedTask.id,
+        title: updatedTask.title,
+        description: updatedTask.description,
+        status: updatedTask.status,
+        priority: updatedTask.priority,
+        type: updatedTask.type,
+        dueDate: updatedTask.due_date,
+        endDate: updatedTask.end_date,
+        completedAt: updatedTask.completed_at,
+        assignedTo: updatedTask.assigned_to,
+        assignedToId: updatedTask.assigned_to_id,
+        reportingUserId: updatedTask.reporting_user_id,
+        customerId: updatedTask.customer_id,
+        leadId: updatedTask.lead_id,
+        createdBy: updatedTask.created_by,
+        createdAt: updatedTask.created_at,
+        updatedAt: updatedTask.updated_at,
+        tags: updatedTask.tags ? (typeof updatedTask.tags === 'string' ? JSON.parse(updatedTask.tags) : updatedTask.tags) : [],
+        notes: updatedTask.notes,
+        estimatedDuration: updatedTask.estimated_duration,
+        actualDuration: updatedTask.actual_duration,
+      };
     } catch (error) {
       console.error("Error updating task:", error);
       throw error;
@@ -13610,6 +13732,327 @@ async getDashboardMetrics(
       return { success: true, migrated };
     } catch (error) {
       console.error("❌ Migration error:", error);
+      throw error;
+    }
+  }
+
+  // ========================================
+  // BUSINESS TARGETS & PERFORMANCE TRACKING
+  // ========================================
+
+  async getBusinessTargets(tenantId: number, userId?: number | null) {
+    try {
+      let query = sql`
+        SELECT 
+          bt.*,
+          u.first_name || ' ' || u.last_name as user_name,
+          creator.first_name || ' ' || creator.last_name as created_by_name
+        FROM business_targets bt
+        LEFT JOIN users u ON bt.user_id = u.id
+        LEFT JOIN users creator ON bt.created_by = creator.id
+        WHERE bt.tenant_id = ${tenantId}
+      `;
+      
+      if (userId !== null && userId !== undefined) {
+        query = sql`
+          SELECT 
+            bt.*,
+            u.first_name || ' ' || u.last_name as user_name,
+            creator.first_name || ' ' || creator.last_name as created_by_name
+          FROM business_targets bt
+          LEFT JOIN users u ON bt.user_id = u.id
+          LEFT JOIN users creator ON bt.created_by = creator.id
+          WHERE bt.tenant_id = ${tenantId} AND (bt.user_id = ${userId} OR bt.user_id IS NULL)
+        `;
+      }
+      
+      query = sql`${query} ORDER BY bt.period_start DESC, bt.created_at DESC`;
+      
+      const targets = await query;
+      
+      return targets.map((t: any) => ({
+        id: t.id,
+        tenantId: t.tenant_id,
+        userId: t.user_id,
+        userName: t.user_name,
+        targetType: t.target_type,
+        targetName: t.target_name,
+        targetValue: parseFloat(t.target_value || 0),
+        currentValue: parseFloat(t.current_value || 0),
+        periodType: t.period_type,
+        periodStart: t.period_start,
+        periodEnd: t.period_end,
+        status: t.status,
+        createdBy: t.created_by,
+        createdByName: t.created_by_name,
+        createdAt: t.created_at,
+        updatedAt: t.updated_at,
+        achievementPercentage: t.target_value > 0 
+          ? Math.min(100, (parseFloat(t.current_value || 0) / parseFloat(t.target_value)) * 100)
+          : 0,
+      }));
+    } catch (error) {
+      console.error("Error fetching business targets:", error);
+      throw error;
+    }
+  }
+
+  async createBusinessTarget(targetData: any) {
+    try {
+      const [newTarget] = await sql`
+        INSERT INTO business_targets (
+          tenant_id,
+          user_id,
+          target_type,
+          target_name,
+          target_value,
+          current_value,
+          period_type,
+          period_start,
+          period_end,
+          status,
+          created_by,
+          created_at,
+          updated_at
+        ) VALUES (
+          ${targetData.tenantId},
+          ${targetData.userId || null},
+          ${targetData.targetType},
+          ${targetData.targetName},
+          ${targetData.targetValue},
+          ${targetData.currentValue || 0},
+          ${targetData.periodType},
+          ${targetData.periodStart},
+          ${targetData.periodEnd},
+          ${targetData.status || 'active'},
+          ${targetData.createdBy},
+          NOW(),
+          NOW()
+        )
+        RETURNING *
+      `;
+
+      return {
+        id: newTarget.id,
+        tenantId: newTarget.tenant_id,
+        userId: newTarget.user_id,
+        targetType: newTarget.target_type,
+        targetName: newTarget.target_name,
+        targetValue: parseFloat(newTarget.target_value || 0),
+        currentValue: parseFloat(newTarget.current_value || 0),
+        periodType: newTarget.period_type,
+        periodStart: newTarget.period_start,
+        periodEnd: newTarget.period_end,
+        status: newTarget.status,
+        createdBy: newTarget.created_by,
+        createdAt: newTarget.created_at,
+        updatedAt: newTarget.updated_at,
+      };
+    } catch (error) {
+      console.error("Error creating business target:", error);
+      throw error;
+    }
+  }
+
+  async updateBusinessTarget(targetId: number, updateData: any) {
+    try {
+      const updateFields: any = {
+        updated_at: sql`NOW()`,
+      };
+
+      if (updateData.targetName !== undefined) updateFields.target_name = updateData.targetName;
+      if (updateData.targetValue !== undefined) updateFields.target_value = updateData.targetValue;
+      if (updateData.currentValue !== undefined) updateFields.current_value = updateData.currentValue;
+      if (updateData.periodStart !== undefined) updateFields.period_start = updateData.periodStart;
+      if (updateData.periodEnd !== undefined) updateFields.period_end = updateData.periodEnd;
+      if (updateData.status !== undefined) updateFields.status = updateData.status;
+
+      const [updatedTarget] = await sql`
+        UPDATE business_targets
+        SET ${sql(updateFields)}
+        WHERE id = ${targetId}
+        RETURNING *
+      `;
+
+      return {
+        id: updatedTarget.id,
+        tenantId: updatedTarget.tenant_id,
+        userId: updatedTarget.user_id,
+        targetType: updatedTarget.target_type,
+        targetName: updatedTarget.target_name,
+        targetValue: parseFloat(updatedTarget.target_value || 0),
+        currentValue: parseFloat(updatedTarget.current_value || 0),
+        periodType: updatedTarget.period_type,
+        periodStart: updatedTarget.period_start,
+        periodEnd: updatedTarget.period_end,
+        status: updatedTarget.status,
+        createdAt: updatedTarget.created_at,
+        updatedAt: updatedTarget.updated_at,
+      };
+    } catch (error) {
+      console.error("Error updating business target:", error);
+      throw error;
+    }
+  }
+
+  async getPerformanceReports(tenantId: number, userId?: number | null, period: string = 'monthly') {
+    try {
+      let query = sql`
+        SELECT 
+          pr.*,
+          u.first_name || ' ' || u.last_name as user_name,
+          creator.first_name || ' ' || creator.last_name as created_by_name
+        FROM performance_reports pr
+        LEFT JOIN users u ON pr.user_id = u.id
+        LEFT JOIN users creator ON pr.created_by = creator.id
+        WHERE pr.tenant_id = ${tenantId} AND pr.report_period = ${period}
+      `;
+      
+      if (userId !== null && userId !== undefined) {
+        query = sql`
+          SELECT 
+            pr.*,
+            u.first_name || ' ' || u.last_name as user_name,
+            creator.first_name || ' ' || creator.last_name as created_by_name
+          FROM performance_reports pr
+          LEFT JOIN users u ON pr.user_id = u.id
+          LEFT JOIN users creator ON pr.created_by = creator.id
+          WHERE pr.tenant_id = ${tenantId} AND pr.user_id = ${userId} AND pr.report_period = ${period}
+        `;
+      }
+      
+      query = sql`${query} ORDER BY pr.period_start DESC`;
+      
+      const reports = await query;
+      
+      return reports.map((r: any) => ({
+        id: r.id,
+        tenantId: r.tenant_id,
+        userId: r.user_id,
+        userName: r.user_name,
+        reportPeriod: r.report_period,
+        periodStart: r.period_start,
+        periodEnd: r.period_end,
+        revenueGenerated: parseFloat(r.revenue_generated || 0),
+        bookingsCount: r.bookings_count || 0,
+        leadsConverted: r.leads_converted || 0,
+        tasksCompleted: r.tasks_completed || 0,
+        tasksAssigned: r.tasks_assigned || 0,
+        customerSatisfactionScore: r.customer_satisfaction_score ? parseFloat(r.customer_satisfaction_score) : null,
+        notes: r.notes,
+        createdBy: r.created_by,
+        createdByName: r.created_by_name,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+      }));
+    } catch (error) {
+      console.error("Error fetching performance reports:", error);
+      throw error;
+    }
+  }
+
+  async generatePerformanceReport(reportData: any) {
+    try {
+      const { tenantId, userId, reportPeriod, periodStart, periodEnd } = reportData;
+      
+      // Calculate actual performance metrics from database
+      const [invoices, bookings, leads, tasks] = await Promise.all([
+        sql`
+          SELECT COALESCE(SUM(paid_amount), 0) as revenue
+          FROM invoices
+          WHERE tenant_id = ${tenantId}
+            AND created_by = ${userId}
+            AND created_at >= ${periodStart}
+            AND created_at <= ${periodEnd}
+        `,
+        sql`
+          SELECT COUNT(*) as count
+          FROM bookings
+          WHERE tenant_id = ${tenantId}
+            AND created_by = ${userId}
+            AND created_at >= ${periodStart}
+            AND created_at <= ${periodEnd}
+        `,
+        sql`
+          SELECT COUNT(*) as count
+          FROM leads
+          WHERE tenant_id = ${tenantId}
+            AND assigned_user_id = ${userId}
+            AND status = 'converted'
+            AND created_at >= ${periodStart}
+            AND created_at <= ${periodEnd}
+        `,
+        sql`
+          SELECT 
+            COUNT(*) FILTER (WHERE status = 'completed') as completed,
+            COUNT(*) as assigned
+          FROM tasks
+          WHERE tenant_id = ${tenantId}
+            AND assigned_to_id = ${userId}
+            AND created_at >= ${periodStart}
+            AND created_at <= ${periodEnd}
+        `,
+      ]);
+
+      const revenueGenerated = parseFloat(invoices[0]?.revenue || 0);
+      const bookingsCount = parseInt(bookings[0]?.count || 0);
+      const leadsConverted = parseInt(leads[0]?.count || 0);
+      const tasksCompleted = parseInt(tasks[0]?.completed || 0);
+      const tasksAssigned = parseInt(tasks[0]?.assigned || 0);
+
+      const [newReport] = await sql`
+        INSERT INTO performance_reports (
+          tenant_id,
+          user_id,
+          report_period,
+          period_start,
+          period_end,
+          revenue_generated,
+          bookings_count,
+          leads_converted,
+          tasks_completed,
+          tasks_assigned,
+          notes,
+          created_by,
+          created_at,
+          updated_at
+        ) VALUES (
+          ${tenantId},
+          ${userId},
+          ${reportPeriod},
+          ${periodStart},
+          ${periodEnd},
+          ${revenueGenerated},
+          ${bookingsCount},
+          ${leadsConverted},
+          ${tasksCompleted},
+          ${tasksAssigned},
+          ${reportData.notes || null},
+          ${reportData.createdBy},
+          NOW(),
+          NOW()
+        )
+        RETURNING *
+      `;
+
+      return {
+        id: newReport.id,
+        tenantId: newReport.tenant_id,
+        userId: newReport.user_id,
+        reportPeriod: newReport.report_period,
+        periodStart: newReport.period_start,
+        periodEnd: newReport.period_end,
+        revenueGenerated: parseFloat(newReport.revenue_generated || 0),
+        bookingsCount: newReport.bookings_count || 0,
+        leadsConverted: newReport.leads_converted || 0,
+        tasksCompleted: newReport.tasks_completed || 0,
+        tasksAssigned: newReport.tasks_assigned || 0,
+        notes: newReport.notes,
+        createdAt: newReport.created_at,
+        updatedAt: newReport.updated_at,
+      };
+    } catch (error) {
+      console.error("Error generating performance report:", error);
       throw error;
     }
   }

@@ -3,8 +3,9 @@ import { useAuth } from "@/components/auth/auth-provider";
 import { FollowUpCard } from "./FollowUpCard";
 import { CreateFollowUpDialog } from "./CreateFollowUpDialog";
 import { Button } from "@/components/ui/button";
-import { Plus } from "lucide-react";
+import { Plus, ChevronRight } from "lucide-react";
 import { useState } from "react";
+import { Link } from "wouter";
 
 interface FollowUpListProps {
   limit?: number;
@@ -85,11 +86,25 @@ export function FollowUpList({
         )}
 
         {followUps.length > 0 ? (
-          <div className="space-y-2">
-            {followUps.map((followUp: any) => (
-              <FollowUpCard key={followUp.id} followUp={followUp} />
-            ))}
-          </div>
+          <>
+            <div className="space-y-2">
+              {followUps.map((followUp: any) => (
+                <FollowUpCard key={followUp.id} followUp={followUp} />
+              ))}
+            </div>
+            {limit && followUps.length >= limit && (
+              <Link href="/follow-ups">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full mt-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                >
+                  See More
+                  <ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+              </Link>
+            )}
+          </>
         ) : (
           <div className="text-xs text-gray-400 text-center py-4">
             No follow-ups

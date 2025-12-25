@@ -13,6 +13,7 @@ import { gmailService } from "./gmail-service";
 // Removed unifiedSocialService import - using SocialServiceFactory instead
 import { LinkedInService } from "./linkedin-service";
 import { SocialServiceFactory } from "./social-service-factory";
+import { FacebookService } from "./facebook-service";
 import { registerSocialRoutes } from "./social-routes";
 import { registerZoomRoutes } from "./zoom-routes";
 import {
@@ -771,14 +772,37 @@ const authenticateToken = async (req: any, res: any, next: any) => {
     }
 
     console.log("🔑 Token found, verifying...");
-    const decoded = jwt.verify(token, JWT_SECRET) as any;
-    console.log("✅ Token decoded, userId:", decoded.userId);
+    let decoded: any;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET) as any;
+      console.log("✅ Token decoded, userId:", decoded.userId);
+    } catch (jwtError: any) {
+      console.error("❌ JWT verification failed:", jwtError.message);
+      return res.status(403).json({ message: "Invalid or expired token" });
+    }
 
-    const user = await simpleStorage.getUser(decoded.userId);
-    console.log(
-      "👤 User lookup result:",
-      user ? `found - tenant: ${user.tenantId}` : "not found",
-    );
+    let user;
+    try {
+      user = await simpleStorage.getUser(decoded.userId);
+      console.log(
+        "👤 User lookup result:",
+        user ? `found - tenant: ${user.tenantId}` : "not found",
+      );
+    } catch (dbError: any) {
+      console.error("❌ Database error during user lookup:", dbError.message);
+      // If it's a connection timeout, return a more specific error
+      if (dbError.code === 'CONNECT_TIMEOUT' || dbError.errno === 'CONNECT_TIMEOUT') {
+        return res.status(503).json({ 
+          message: "Database connection timeout. Please try again later.",
+          error: "Database unavailable"
+        });
+      }
+      // For other database errors, still return 500
+      return res.status(500).json({ 
+        message: "Database error during authentication",
+        error: dbError.message 
+      });
+    }
 
     if (!user) {
       console.log("❌ User not found in database");
@@ -799,9 +823,13 @@ const authenticateToken = async (req: any, res: any, next: any) => {
 
     console.log("✅ User authenticated successfully:", req.user);
     next();
-  } catch (error) {
+  } catch (error: any) {
     console.error("Authentication error:", error);
-    return res.status(403).json({ message: "Invalid or expired token" });
+    // Only return 403 for JWT-related errors, not database errors
+    if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
+      return res.status(403).json({ message: "Invalid or expired token" });
+    }
+    return res.status(500).json({ message: "Authentication error", error: error.message });
   }
 };
 
@@ -1813,21 +1841,24 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
       const calculatedOffset =
         Number(offset) || (Number(page) - 1) * Number(limit);
 
+      // Ensure teamUserIds is either undefined or a valid array (not empty array if undefined)
+      const finalTeamUserIds = isOwner ? undefined : (teamUserIds && teamUserIds.length > 0 ? teamUserIds : undefined);
+
       const result = await simpleStorage.getLeadsByTenant({
         tenantId,
-        teamUserIds: isOwner ? undefined : teamUserIds, // Filter by team if not owner
-        limit: Number(limit),
-        offset: calculatedOffset,
-        search: String(search),
-        status: String(status),
-        priority: String(priority),
-        type: String(type),
-        source: String(source),
-        dateFrom: String(dateFrom),
-        dateTo: String(dateTo),
-        sortBy: String(sortBy),
-        sortOrder: String(sortOrder),
-        typeSpecificFilters: String(typeSpecificFilters),
+        teamUserIds: finalTeamUserIds, // Filter by team if not owner
+        limit: Number(limit) || 50,
+        offset: calculatedOffset || 0,
+        search: search ? String(search) : "",
+        status: status ? String(status) : "",
+        priority: priority ? String(priority) : "",
+        type: type ? String(type) : "",
+        source: source ? String(source) : "",
+        dateFrom: dateFrom ? String(dateFrom) : "",
+        dateTo: dateTo ? String(dateTo) : "",
+        sortBy: sortBy ? String(sortBy) : "created_at",
+        sortOrder: sortOrder ? String(sortOrder) : "desc",
+        typeSpecificFilters: typeSpecificFilters ? String(typeSpecificFilters) : "",
       });
 
       const limitNum = Number(limit);
@@ -3918,7 +3949,16 @@ app.get("/api/tenants/:tenantId/all-customers-graph", authenticateToken, async (
   app.get("/api/tenants/:tenantId/leads", authenticateToken, async (req, res) => {
     try {
       const tenantId = parseInt(req.params.tenantId);
-      const leads = await simpleStorage.getLeadsByTenant(tenantId);
+      if (isNaN(tenantId)) {
+        return res.status(400).json({
+          message: "Invalid tenant ID",
+        });
+      }
+      const leads = await simpleStorage.getLeadsByTenant({
+        tenantId,
+        limit: 1000, // Set a reasonable default limit
+        offset: 0,
+      });
       return res.json(leads);
     } catch (error: any) {
       console.error("Get leads error:", error);
@@ -7827,14 +7867,10 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
     try {
       const tenantId = parseInt(req.params.tenantId);
 
-      // Check if credentials are configured
-      const [credentials] = await sql`
-        SELECT * FROM facebook_credentials WHERE tenant_id = ${tenantId}
-      `;
-
-      // Check if there's an active integration
+      // Check if credentials are configured using social_integrations table
       const [integration] = await sql`
-        SELECT * FROM facebook_integrations WHERE tenant_id = ${tenantId} AND is_active = true
+        SELECT * FROM social_integrations 
+        WHERE tenant_id = ${tenantId} AND platform = 'facebook'
       `;
 
       // Get connected pages count
@@ -7843,18 +7879,23 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
         WHERE tenant_id = ${tenantId} AND is_active = true
       `;
 
-      // Get total leads count
+      // Get total leads count from leads table where source contains Facebook
       const totalLeads = await sql`
-        SELECT COUNT(*) as count FROM facebook_leads WHERE tenant_id = ${tenantId}
+        SELECT COUNT(*) as count FROM leads 
+        WHERE tenant_id = ${tenantId} AND source LIKE '%Facebook%'
       `;
 
+      const isConfigured = !!(integration?.appId && integration?.appSecret);
+      const isConnected = !!(integration?.accessToken && isConfigured);
+
       res.json({
-        configured: !!credentials,
-        connected: !!integration,
-        appId: credentials?.app_id || null,
+        configured: isConfigured,
+        connected: isConnected,
+        isConnected: isConnected, // Also include isConnected for frontend compatibility
+        appId: integration?.appId || null,
         connectedPages: parseInt(connectedPages[0]?.count || "0"),
         totalLeads: parseInt(totalLeads[0]?.count || "0"),
-        lastSync: integration?.last_sync || null,
+        lastSync: integration?.lastSync || null,
       });
     } catch (error: any) {
       console.error("Error getting Facebook status:", error);
@@ -7867,16 +7908,183 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
     try {
       const tenantId = parseInt(req.params.tenantId);
 
+      // First check if integration exists and has access token
+      const [integration] = await sql`
+        SELECT * FROM social_integrations 
+        WHERE tenant_id = ${tenantId} AND platform = 'facebook' AND access_token IS NOT NULL
+      `;
+
+      if (!integration) {
+        return res.json([]);
+      }
+
+      // Get pages from database
       const pages = await sql`
         SELECT * FROM facebook_pages 
         WHERE tenant_id = ${tenantId} AND is_active = true
         ORDER BY created_at DESC
       `;
 
-      res.json(pages);
+      // If no pages in database, try to get from Facebook API using settings stored in integration
+      if (pages.length === 0 && integration.settings) {
+        const settings = typeof integration.settings === 'string' 
+          ? JSON.parse(integration.settings) 
+          : integration.settings;
+        
+        if (settings?.pages && Array.isArray(settings.pages)) {
+          // Return pages from settings (from OAuth flow)
+          return res.json(settings.pages.map((p: any) => ({
+            id: p.id || p.pageId,
+            pageId: p.id || p.pageId,
+            pageName: p.name || p.pageName,
+            followersCount: p.followers_count || p.fan_count || 0,
+            isActive: p.selected !== false,
+          })));
+        }
+      }
+
+      res.json(pages.map((p: any) => ({
+        id: p.id,
+        pageId: p.page_id || p.pageId,
+        pageName: p.page_name || p.pageName,
+        followersCount: p.followers_count || p.followersCount || 0,
+        isActive: p.is_active !== false,
+      })));
     } catch (error: any) {
       console.error("Error getting Facebook pages:", error);
       res.status(500).json({ error: "Failed to get Facebook pages" });
+    }
+  });
+
+  // Get lead forms for a specific page
+  app.get("/api/tenants/:tenantId/facebook/pages/:pageId/lead-forms", async (req, res) => {
+    try {
+      const { tenantId, pageId } = req.params;
+
+      // Get integration to access Facebook API
+      const [integration] = await sql`
+        SELECT * FROM social_integrations 
+        WHERE tenant_id = ${parseInt(tenantId)} AND platform = 'facebook' AND access_token IS NOT NULL
+      `;
+
+      if (!integration) {
+        return res.status(400).json({ error: "Facebook integration not connected" });
+      }
+
+      // Get page access token
+      const [page] = await sql`
+        SELECT page_access_token FROM facebook_pages 
+        WHERE tenant_id = ${parseInt(tenantId)} AND page_id = ${pageId} AND is_active = true
+      `;
+
+      const pageAccessToken = page?.page_access_token || integration.accessToken;
+
+      // Fetch lead forms from Facebook Graph API
+      try {
+        const facebookService = await SocialServiceFactory.getFacebookService(parseInt(tenantId));
+        const forms = await facebookService.getPageLeadForms(pageAccessToken, pageId);
+
+        res.json(forms.map((f: any) => ({
+          id: f.id,
+          formId: f.id,
+          formName: f.name,
+          pageId: pageId,
+          pageName: page?.page_name || '',
+          totalLeads: f.leads_count || 0,
+          isActive: f.status === 'ACTIVE',
+        })));
+      } catch (apiError: any) {
+        console.error("Error fetching lead forms from Facebook API:", apiError);
+        // Return empty array if API fails
+        res.json([]);
+      }
+    } catch (error: any) {
+      console.error("Error getting Facebook lead forms:", error);
+      res.status(500).json({ error: "Failed to get Facebook lead forms" });
+    }
+  });
+
+  // Sync leads from a specific form
+  app.post("/api/tenants/:tenantId/facebook/pages/:pageId/lead-forms/:formId/sync", async (req, res) => {
+    try {
+      const { tenantId, pageId, formId } = req.params;
+
+      // Get integration
+      const [integration] = await sql`
+        SELECT * FROM social_integrations 
+        WHERE tenant_id = ${parseInt(tenantId)} AND platform = 'facebook' AND access_token IS NOT NULL
+      `;
+
+      if (!integration) {
+        return res.status(400).json({ error: "Facebook integration not connected" });
+      }
+
+      // Get page access token
+      const [page] = await sql`
+        SELECT page_access_token FROM facebook_pages 
+        WHERE tenant_id = ${parseInt(tenantId)} AND page_id = ${pageId} AND is_active = true
+      `;
+
+      const pageAccessToken = page?.page_access_token || integration.accessToken;
+
+      // Fetch leads from Facebook Graph API
+      const facebookService = await SocialServiceFactory.getFacebookService(parseInt(tenantId));
+      const leads = await facebookService.getLeadFormLeads(pageAccessToken, formId);
+
+      let importedCount = 0;
+
+      // Import leads into leads table
+      for (const leadData of leads) {
+        try {
+          // Get detailed lead information
+          const leadDetails = await facebookService.getLeadDetails(pageAccessToken, leadData.id);
+          
+          // Parse lead data from Facebook format
+          const fieldData = leadDetails.field_data || leadData.field_data || [];
+          const firstName = fieldData.find((f: any) => f.name === 'first_name')?.values?.[0] || '';
+          const lastName = fieldData.find((f: any) => f.name === 'last_name')?.values?.[0] || '';
+          const email = fieldData.find((f: any) => f.name === 'email')?.values?.[0] || '';
+          const phone = fieldData.find((f: any) => f.name === 'phone_number')?.values?.[0] || '';
+
+          if (!email && !phone) {
+            continue; // Skip if no contact info
+          }
+
+          const newLead = {
+            tenantId: parseInt(tenantId),
+            firstName: firstName || 'Facebook',
+            lastName: lastName || 'Lead',
+            name: `${firstName} ${lastName}`.trim() || 'Facebook Lead',
+            email: email || null,
+            phone: phone || null,
+            source: `Facebook Lead Form - ${formId}`,
+            status: 'new',
+            notes: `Imported from Facebook Lead Form on ${new Date(leadDetails.created_time || leadData.created_time).toLocaleString()}`,
+          };
+
+          await simpleStorage.createLead(newLead);
+          importedCount++;
+        } catch (error) {
+          console.error("Error importing Facebook lead:", error);
+        }
+      }
+
+      // Update last sync time
+      await sql`
+        UPDATE social_integrations 
+        SET last_sync = NOW() 
+        WHERE tenant_id = ${parseInt(tenantId)} AND platform = 'facebook'
+      `;
+
+      res.json({
+        imported: importedCount,
+        importedCount: importedCount,
+        total: leads.length,
+        message: `Successfully imported ${importedCount} leads from Facebook Lead Form`,
+      });
+    } catch (error: any) {
+      console.error("Error syncing Facebook leads:", error);
+      res.status(500).json({ error: "Failed to sync Facebook leads" });
     }
   });
 
@@ -8221,6 +8429,7 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
       res.json({
         userId,
         directSubordinates: subordinates,
+        subordinates: subordinates, // Add alias for compatibility
         allSubordinateIds: allSubordinates,
         teamSize: allSubordinates.length + 1, // +1 for the user themselves
       });
@@ -14505,12 +14714,30 @@ David,Brown,david.brown@example.com,555-0127,email_campaign,contacted,Prefers lu
           return res.status(400).json({ message: "Invalid tenant ID" });
         }
 
+        // Get Google OAuth credentials from environment
+        const googleClientId = process.env.GOOGLE_CLIENT_ID;
+        const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET;
+        const baseUrl = getBaseUrl();
+        const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${baseUrl}/api/gmail/callback`;
+
+        // Validate that client ID and secret are present
+        if (!googleClientId || !googleClientSecret) {
+          console.error("Gmail OAuth error: Missing Google OAuth credentials");
+          return res.status(400).json({ 
+            message: "Google OAuth credentials not configured. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in your environment variables.",
+            error: "MISSING_CREDENTIALS"
+          });
+        }
+
+        console.log("🔧 Gmail OAuth - Client ID:", googleClientId.substring(0, 20) + "...");
+        console.log("🔧 Gmail OAuth - Redirect URI:", redirectUri);
+
         // Gmail auth URL generation using embedded OAuth client
         const { google } = await import("googleapis");
         const oAuth2Client = new google.auth.OAuth2(
-          process.env.GOOGLE_CLIENT_ID,
-          process.env.GOOGLE_CLIENT_SECRET,
-          process.env.GOOGLE_REDIRECT_URI,
+          googleClientId,
+          googleClientSecret,
+          redirectUri,
         );
 
         const authUrl = oAuth2Client.generateAuthUrl({
@@ -14526,12 +14753,16 @@ David,Brown,david.brown@example.com,555-0127,email_campaign,contacted,Prefers lu
           include_granted_scopes: true,
         });
 
+        console.log("✅ Gmail OAuth URL generated successfully");
         res.json({ authUrl });
-      } catch (error) {
+      } catch (error: any) {
         console.error("Gmail connect error:", error);
         res
           .status(500)
-          .json({ message: "Failed to initiate Gmail connection" });
+          .json({ 
+            message: error.message || "Failed to initiate Gmail connection",
+            error: error.message
+          });
       }
     },
   );
@@ -15519,60 +15750,323 @@ Please improve this email.`;
   app.get("/api/tenants/:tenantId/facebook/auth", async (req, res) => {
     try {
       const { tenantId } = req.params;
-      const redirectUri = `${req.protocol}://${req.get("host")}/api/tenants/${tenantId}/facebook/callback`;
+      const redirectUri = `${req.protocol}://${req.get("host")}/fb/callback`;
 
-      // Generate mock auth URL (in production, use FacebookService)
-      const authUrl = `https://www.facebook.com/v19.0/dialog/oauth?client_id=FACEBOOK_APP_ID&redirect_uri=${encodeURIComponent(redirectUri)}&scope=email,pages_read_engagement,pages_manage_posts,business_management,instagram_basic,leads_retrieval&response_type=code&state=${tenantId}`;
+      // Get integration to check if configured
+      // Use sql.unsafe to avoid cached plan issues after migration
+      let [integrationRow] = await sql.unsafe(`
+        SELECT id, tenant_id, platform, app_id, app_secret, is_active FROM social_integrations 
+        WHERE tenant_id = $1 AND platform = 'facebook'
+      `, [parseInt(tenantId)]);
+      
+      // Map database column names to camelCase
+      let integration = null;
+      if (integrationRow) {
+        integration = {
+          id: integrationRow.id,
+          tenantId: integrationRow.tenant_id,
+          platform: integrationRow.platform,
+          appId: integrationRow.app_id,
+          appSecret: integrationRow.app_secret,
+          isActive: integrationRow.is_active,
+        };
+      }
+
+      // If not in database, check .env and auto-create integration
+      if (!integration || !integration.appId || !integration.appSecret) {
+        const envAppId = process.env.FACEBOOK_APP_ID || process.env.FB_APP_ID;
+        const envAppSecret = process.env.FACEBOOK_APP_SECRET || process.env.FB_APP_SECRET;
+
+        if (envAppId && envAppSecret) {
+          console.log("📝 Auto-creating Facebook integration from .env for tenant:", tenantId);
+          // Check if record exists - use sql.unsafe to avoid cached plan issues
+          const [existingRow] = await sql.unsafe(`
+            SELECT id FROM social_integrations 
+            WHERE tenant_id = $1 AND platform = 'facebook'
+          `, [parseInt(tenantId)]);
+          const existing = existingRow ? { id: existingRow.id } : null;
+          
+          if (existing) {
+            // Update existing record - only update app_id and app_secret
+            // Use sql.unsafe to avoid cached plan issues after migration
+            const [updated] = await sql.unsafe(`
+              UPDATE social_integrations 
+              SET app_id = $1, app_secret = $2
+              WHERE tenant_id = $3 AND platform = 'facebook'
+              RETURNING id, tenant_id, platform, app_id, app_secret, is_active
+            `, [envAppId, envAppSecret, parseInt(tenantId)]);
+            integration = {
+              id: updated.id,
+              tenantId: updated.tenant_id,
+              platform: updated.platform,
+              appId: updated.app_id,
+              appSecret: updated.app_secret,
+              isActive: updated.is_active,
+            };
+            console.log("✅ Facebook integration updated from .env");
+          } else {
+            // Insert new record - use sql.unsafe to avoid cached plan issues
+            const [newIntegration] = await sql.unsafe(`
+              INSERT INTO social_integrations (tenant_id, platform, app_id, app_secret, is_active)
+              VALUES ($1, 'facebook', $2, $3, true)
+              RETURNING id, tenant_id, platform, app_id, app_secret, is_active
+            `, [parseInt(tenantId), envAppId, envAppSecret]);
+            integration = {
+              id: newIntegration.id,
+              tenantId: newIntegration.tenant_id,
+              platform: newIntegration.platform,
+              appId: newIntegration.app_id,
+              appSecret: newIntegration.app_secret,
+              isActive: newIntegration.is_active,
+            };
+            console.log("✅ Facebook integration created from .env");
+          }
+        } else {
+          return res.status(400).json({ 
+            error: "Facebook credentials not configured. Please configure App ID and App Secret in Social Integrations settings or set FACEBOOK_APP_ID and FACEBOOK_APP_SECRET in .env file." 
+          });
+        }
+      }
+
+      // Get FacebookService directly using raw SQL to avoid schema column issues
+      // Use sql.unsafe to avoid cached plan issues after migration
+      const [fbIntegration] = await sql.unsafe(`
+        SELECT app_id, app_secret FROM social_integrations 
+        WHERE tenant_id = $1 AND platform = 'facebook' AND is_active = true
+      `, [parseInt(tenantId)]);
+
+      if (!fbIntegration?.app_id || !fbIntegration?.app_secret) {
+        return res.status(400).json({ 
+          error: "Facebook credentials not found. Please check your configuration." 
+        });
+      }
+
+      // Create FacebookService directly
+      const facebookService = new FacebookService(fbIntegration.app_id, fbIntegration.app_secret);
+      const authUrl = facebookService.getAuthUrl(parseInt(tenantId), redirectUri);
 
       res.json({ authUrl });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Facebook auth URL error:", error);
-      res.status(500).json({ message: "Failed to generate Facebook auth URL" });
+      res.status(500).json({ 
+        message: error.message || "Failed to generate Facebook auth URL" 
+      });
     }
   });
 
-  app.get("/api/tenants/:tenantId/facebook/callback", async (req, res) => {
+  // Facebook OAuth callback handler (shortened path for Facebook URL length limits)
+  app.get("/fb/callback", async (req, res) => {
     try {
-      const { tenantId } = req.params;
-      const { code, state } = req.query;
+      const { code, state, error } = req.query;
 
-      if (state !== tenantId) {
-        return res.status(400).json({ message: "Invalid state parameter" });
+      if (error) {
+        console.error("Facebook OAuth error:", error);
+        return res.redirect(`/social-integrations?error=facebook_oauth_error&message=${encodeURIComponent(error as string)}`);
       }
 
-      console.log(
-        `Facebook OAuth callback for tenant ${tenantId} with code: ${code}`,
+      if (!code) {
+        console.error("Facebook OAuth error: No authorization code received");
+        return res.redirect(`/social-integrations?error=facebook_oauth_no_code`);
+      }
+
+      const tenantId = state ? parseInt(state as string) : null;
+      if (!tenantId) {
+        console.error("Facebook OAuth error: No tenant ID in state");
+        return res.redirect(`/social-integrations?error=facebook_oauth_no_tenant`);
+      }
+
+      console.log(`🔧 Processing Facebook OAuth callback for tenant: ${tenantId}`);
+
+      // Get integration to retrieve app credentials
+      const [integrationRow] = await sql.unsafe(`
+        SELECT id, tenant_id, platform, app_id, app_secret FROM social_integrations 
+        WHERE tenant_id = $1 AND platform = 'facebook'
+      `, [tenantId]);
+
+      if (!integrationRow || !integrationRow.app_id || !integrationRow.app_secret) {
+        console.error("Facebook integration not found or not configured");
+        return res.redirect(`/social-integrations?error=facebook_not_configured`);
+      }
+
+      // Create FacebookService and exchange code for token
+      const facebookService = new FacebookService(integrationRow.app_id, integrationRow.app_secret);
+      const redirectUri = `${req.protocol}://${req.get("host")}/fb/callback`;
+      
+      const tokenData = await facebookService.exchangeCodeForToken(code as string, redirectUri);
+      const longLivedToken = await facebookService.getLongLivedToken(tokenData.access_token);
+      
+      // Get user info and pages
+      const userInfo = await facebookService.getUser(longLivedToken.access_token);
+      const userPages = await facebookService.getUserPages(longLivedToken.access_token);
+
+      // Update integration with tokens and user info
+      await sql.unsafe(`
+        UPDATE social_integrations 
+        SET 
+          access_token = $1,
+          refresh_token = $2,
+          token_expires_at = $3,
+          settings = jsonb_build_object(
+            'userId', $4,
+            'userName', $5,
+            'userEmail', $6,
+            'pages', $7::jsonb
+          ),
+          updated_at = NOW()
+        WHERE tenant_id = $8 AND platform = 'facebook'
+      `, [
+        longLivedToken.access_token,
+        longLivedToken.access_token, // Facebook doesn't provide refresh token, use access token
+        longLivedToken.expires_in ? new Date(Date.now() + longLivedToken.expires_in * 1000) : null,
+        userInfo.id,
+        userInfo.name,
+        userInfo.email || null,
+        JSON.stringify(userPages),
+        tenantId
+      ]);
+
+      console.log(`✅ Facebook OAuth successful for tenant: ${tenantId}`);
+
+      // Redirect to social integrations page with success
+      res.redirect(`/social-integrations?facebook=connected`);
+    } catch (error: any) {
+      console.error("Facebook OAuth callback error:", error);
+      res.redirect(`/social-integrations?error=facebook_callback_error&message=${encodeURIComponent(error.message || 'Unknown error')}`);
+    }
+  });
+
+  // Legacy callback route for backward compatibility
+  app.get("/api/tenants/:tenantId/facebook/callback", async (req, res) => {
+    const { tenantId } = req.params;
+    const { code, state } = req.query;
+    // Redirect to main callback handler (shortened path)
+    res.redirect(`/fb/callback?code=${code}&state=${state || tenantId}`);
+  });
+
+  // Connect Facebook pages after selection
+  app.post("/api/tenants/:tenantId/facebook/connect-pages", async (req, res) => {
+    try {
+      const { tenantId } = req.params;
+      const { pageIds, leadFormIds } = req.body;
+
+      if (!pageIds || !Array.isArray(pageIds) || pageIds.length === 0) {
+        return res.status(400).json({ message: "At least one page must be selected" });
+      }
+
+      // Get integration
+      const [integration] = await sql`
+        SELECT * FROM social_integrations 
+        WHERE tenant_id = ${parseInt(tenantId)} AND platform = 'facebook' AND access_token IS NOT NULL
+      `;
+
+      if (!integration) {
+        return res.status(400).json({ message: "Facebook integration not connected" });
+      }
+
+      // Get Facebook service
+      const facebookService = await SocialServiceFactory.getFacebookService(parseInt(tenantId));
+      const userPages = await facebookService.getUserPages(integration.accessToken);
+
+      // Filter to only selected pages
+      const selectedPages = userPages.filter((page: any) =>
+        pageIds.includes(page.id)
       );
 
-      // Mock successful connection (in production, use FacebookService to exchange code for token)
-      const mockIntegration = {
-        id: Date.now(),
-        tenantId: parseInt(tenantId),
-        facebookUserId: "mock_user_123",
-        userName: "John Doe",
-        userEmail: "john@example.com",
-        pages: [
-          {
-            id: "page_123",
-            name: "Sample Travel Agency",
-            followers: 1250,
-            isInstagramConnected: true,
-          },
-        ],
-        permissions: [
-          "pages_read_engagement",
-          "pages_manage_posts",
-          "business_management",
-          "instagram_basic",
-        ],
-        connectedAt: new Date().toISOString(),
-      };
+      // Get integration ID for foreign key (use social_integrations id)
+      const integrationId = integration.id;
 
-      // Redirect back to social integrations page with success
-      res.redirect(`/social-integrations?facebook_connected=true`);
-    } catch (error) {
-      console.error("Facebook callback error:", error);
-      res.redirect(`/social-integrations?facebook_error=true`);
+      // Save pages to database
+      for (const page of selectedPages) {
+        try {
+          await sql`
+            INSERT INTO facebook_pages (
+              tenant_id, integration_id, page_id, page_name, page_access_token, 
+              followers_count, is_active, created_at, updated_at
+            )
+            VALUES (
+              ${parseInt(tenantId)}, 
+              ${integrationId},
+              ${page.id}, 
+              ${page.name}, 
+              ${page.access_token},
+              ${page.fan_count || 0},
+              true,
+              NOW(),
+              NOW()
+            )
+            ON CONFLICT (tenant_id, page_id) 
+            DO UPDATE SET
+              page_name = EXCLUDED.page_name,
+              page_access_token = EXCLUDED.page_access_token,
+              followers_count = EXCLUDED.followers_count,
+              is_active = true,
+              updated_at = NOW()
+          `;
+        } catch (error: any) {
+          // If conflict on integration_id, try without it or update existing
+          if (error.message?.includes('integration_id') || error.code === '23503') {
+            // Try updating existing page or inserting without integration_id constraint
+            await sql`
+              INSERT INTO facebook_pages (
+                tenant_id, page_id, page_name, page_access_token, 
+                followers_count, is_active, created_at, updated_at
+              )
+              VALUES (
+                ${parseInt(tenantId)}, 
+                ${page.id}, 
+                ${page.name}, 
+                ${page.access_token},
+                ${page.fan_count || 0},
+                true,
+                NOW(),
+                NOW()
+              )
+              ON CONFLICT (tenant_id, page_id) 
+              DO UPDATE SET
+                page_name = EXCLUDED.page_name,
+                page_access_token = EXCLUDED.page_access_token,
+                followers_count = EXCLUDED.followers_count,
+                is_active = true,
+                updated_at = NOW()
+            `;
+          } else {
+            throw error;
+          }
+        }
+      }
+
+      // Update integration settings with selected pages and forms
+      const settings = typeof integration.settings === 'string' 
+        ? JSON.parse(integration.settings) 
+        : integration.settings || {};
+      
+      await sql`
+        UPDATE social_integrations 
+        SET 
+          is_active = true,
+          settings = ${JSON.stringify({
+            ...settings,
+            selectedPageIds: pageIds,
+            selectedLeadFormIds: leadFormIds || [],
+          })},
+          updated_at = NOW()
+        WHERE tenant_id = ${parseInt(tenantId)} AND platform = 'facebook'
+      `;
+
+      res.json({
+        success: true,
+        message: `Successfully connected ${selectedPages.length} page(s)`,
+        pages: selectedPages.map((p: any) => ({
+          id: p.id,
+          pageId: p.id,
+          pageName: p.name,
+          followersCount: p.fan_count || 0,
+          isActive: true,
+        })),
+      });
+    } catch (error: any) {
+      console.error("Facebook connect pages error:", error);
+      res.status(500).json({ message: error.message || "Failed to connect pages" });
     }
   });
 
@@ -16260,16 +16754,16 @@ Please improve this email.`;
           handleError instanceof Error ? handleError.message : handleError,
         );
         return res.redirect(
-          `/email-settings?gmail=error&reason=handle_error&details=${encodeURIComponent(String(handleError))}`,
+          `/gmail-settings?gmail=error&reason=handle_error&details=${encodeURIComponent(String(handleError))}`,
         );
       }
 
       if (success === true) {
         console.log("✅ Gmail callback successful for tenant:", tenantId);
-        res.redirect(`/email-settings?gmail=connected`);
+        res.redirect(`/gmail-settings?gmail=connected`);
       } else {
         console.error("❌ Gmail callback returned false for tenant:", tenantId);
-        res.redirect(`/email-settings?gmail=error&reason=auth_failed`);
+        res.redirect(`/gmail-settings?gmail=error&reason=auth_failed`);
       }
     } catch (error) {
       console.error("💥 Gmail callback error:", error);
@@ -16280,7 +16774,7 @@ Please improve this email.`;
       const errorMessage =
         error instanceof Error ? error.message : "unknown error";
       res.redirect(
-        `/email-settings?gmail=error&reason=server_error&details=${encodeURIComponent(errorMessage)}`,
+        `/gmail-settings?gmail=error&reason=server_error&details=${encodeURIComponent(errorMessage)}`,
       );
     }
   });
@@ -16777,40 +17271,109 @@ Please improve this email.`;
           return res.status(403).json({ message: "Access denied" });
         }
 
-        // Direct simple query
-        const emails = await sql`
-        SELECT id, subject, from_email, from_name, received_at, is_read 
-        FROM gmail_emails 
-        WHERE tenant_id = ${tenantId}
-        ORDER BY received_at DESC
-        LIMIT 20
-      `;
+        const page = parseInt(req.query.page as string) || 1;
+        const search = (req.query.search as string) || "";
+        const limit = 20;
+        const offset = (page - 1) * limit;
 
-        const total = await sql`
-        SELECT COUNT(*) as count FROM gmail_emails WHERE tenant_id = ${tenantId}
-      `;
+        // Build query with search filter
+        let emails;
+        let total;
+        
+        if (search) {
+          const searchPattern = `%${search}%`;
+          emails = await sql`
+            SELECT 
+              id, 
+              gmail_message_id,
+              thread_id,
+              subject, 
+              from_email, 
+              from_name,
+              to_email,
+              to_name,
+              body_text,
+              body_html,
+              received_at, 
+              is_read,
+              is_important,
+              has_attachments,
+              labels
+            FROM gmail_emails 
+            WHERE tenant_id = ${tenantId}
+            AND (
+              subject ILIKE ${searchPattern}
+              OR from_email ILIKE ${searchPattern}
+              OR from_name ILIKE ${searchPattern}
+              OR body_text ILIKE ${searchPattern}
+            )
+            ORDER BY received_at DESC 
+            LIMIT ${limit} OFFSET ${offset}
+          `;
+          
+          total = await sql`
+            SELECT COUNT(*) as count FROM gmail_emails 
+            WHERE tenant_id = ${tenantId}
+            AND (
+              subject ILIKE ${searchPattern}
+              OR from_email ILIKE ${searchPattern}
+              OR from_name ILIKE ${searchPattern}
+              OR body_text ILIKE ${searchPattern}
+            )
+          `;
+        } else {
+          emails = await sql`
+            SELECT 
+              id, 
+              gmail_message_id,
+              thread_id,
+              subject, 
+              from_email, 
+              from_name,
+              to_email,
+              to_name,
+              body_text,
+              body_html,
+              received_at, 
+              is_read,
+              is_important,
+              has_attachments,
+              labels
+            FROM gmail_emails 
+            WHERE tenant_id = ${tenantId}
+            ORDER BY received_at DESC 
+            LIMIT ${limit} OFFSET ${offset}
+          `;
+          
+          total = await sql`
+            SELECT COUNT(*) as count FROM gmail_emails 
+            WHERE tenant_id = ${tenantId}
+          `;
+        }
 
         const response = {
           emails: emails.map((email) => ({
             id: email.id,
-            subject: email.subject,
+            subject: email.subject || 'No Subject',
             fromEmail: email.from_email,
             fromName: email.from_name,
+            toEmail: email.to_email,
+            toName: email.to_name,
             receivedAt: email.received_at,
             isRead: email.is_read,
+            isImportant: email.is_important || false,
+            hasAttachments: email.has_attachments || false,
             tenantId: parseInt(tenantId),
-            gmailMessageId: "",
-            threadId: "",
-            toEmail: "",
-            bodyText: "",
-            bodyHtml: "",
-            isImportant: false,
-            labels: [],
+            gmailMessageId: email.gmail_message_id || "",
+            threadId: email.thread_id || "",
+            bodyText: email.body_text || "",
+            bodyHtml: email.body_html || "",
+            labels: email.labels ? (typeof email.labels === 'string' ? JSON.parse(email.labels) : email.labels) : [],
             attachments: [],
           })),
           total: parseInt(total[0].count),
-          page: 1,
-          totalPages: Math.ceil(parseInt(total[0].count) / 20),
+          page: page,
+          hasMore: emails.length === limit,
         };
 
         console.log(
@@ -19913,10 +20476,68 @@ Please improve this email.`;
         const taskData = {
           ...req.body,
           tenantId: parseInt(tenantId),
-          createdBy: `${req.user.firstName} ${req.user.lastName}`,
+          createdBy: req.user.id, // Use user ID, not name
           createdByUserId: req.user.id,
         };
         const task = await simpleStorage.createTask(taskData);
+        
+        // Send email notification if requested
+        if (taskData.sendEmailNotification) {
+          try {
+            // Get assigned user details
+            const [assignedUser] = await sql`
+              SELECT email, first_name, last_name FROM users WHERE id = ${task.assignedToId}
+            `;
+            
+            // Get reporting user details if exists
+            let reportingUser = null;
+            if (task.reportingUserId) {
+              const [reportingUserData] = await sql`
+                SELECT email, first_name, last_name FROM users WHERE id = ${task.reportingUserId}
+              `;
+              reportingUser = reportingUserData;
+            }
+            
+            // Send email to assigned user if different from creator
+            if (assignedUser?.email && task.assignedToId !== req.user.id) {
+              await emailService.sendTaskAssignmentEmail({
+                to: assignedUser.email,
+                assignedUserName: `${assignedUser.first_name} ${assignedUser.last_name}`,
+                createdByName: `${req.user.firstName} ${req.user.lastName}`,
+                taskTitle: task.title,
+                taskDescription: task.description || undefined,
+                dueDate: task.dueDate,
+                endDate: task.endDate || undefined,
+                priority: task.priority,
+                taskType: task.type,
+                taskId: task.id,
+                tenantId: parseInt(tenantId),
+              });
+            }
+            
+            // Send email to reporting user if exists and different from creator and assigned user
+            if (reportingUser?.email && task.reportingUserId !== req.user.id && task.reportingUserId !== task.assignedToId) {
+              await emailService.sendTaskAssignmentEmail({
+                to: reportingUser.email,
+                assignedUserName: `${assignedUser?.first_name} ${assignedUser?.last_name}`,
+                createdByName: `${req.user.firstName} ${req.user.lastName}`,
+                taskTitle: task.title,
+                taskDescription: task.description || undefined,
+                dueDate: task.dueDate,
+                endDate: task.endDate || undefined,
+                priority: task.priority,
+                taskType: task.type,
+                taskId: task.id,
+                tenantId: parseInt(tenantId),
+                isReportingUser: true,
+              });
+            }
+          } catch (emailError) {
+            console.error("Error sending task assignment email:", emailError);
+            // Don't fail the request if email fails
+          }
+        }
+        
         res.status(201).json(task);
       } catch (error) {
         console.error("Create task error:", error);
@@ -19930,11 +20551,179 @@ Please improve this email.`;
     authenticateToken,
     async (req, res) => {
       try {
-        const { taskId } = req.params;
-        const task = await simpleStorage.updateTask(parseInt(taskId), req.body);
-        res.json(task);
+        const { taskId, tenantId } = req.params;
+        // Get current task to compare changes
+        const currentTasks = await simpleStorage.getTasksByTenant(parseInt(tenantId));
+        const taskToUpdate = currentTasks.find((t: any) => t.id === parseInt(taskId));
+        
+        const updatedTask = await simpleStorage.updateTask(parseInt(taskId), req.body);
+        
+        // Send email notifications if status changed or task was updated
+        const statusChanged = taskToUpdate && taskToUpdate.status !== updatedTask.status;
+        const taskUpdated = Object.keys(req.body).length > 0;
+        
+        if (statusChanged || taskUpdated) {
+          try {
+            // Get assigned user details
+            const [assignedUser] = await sql`
+              SELECT email, first_name, last_name FROM users WHERE id = ${updatedTask.assignedToId}
+            `;
+            
+            // Get reporting user details if exists
+            let reportingUser = null;
+            if (updatedTask.reportingUserId) {
+              const [reportingUserData] = await sql`
+                SELECT email, first_name, last_name FROM users WHERE id = ${updatedTask.reportingUserId}
+              `;
+              reportingUser = reportingUserData;
+            }
+            
+            // Send email to assigned user if different from updater
+            if (assignedUser?.email && updatedTask.assignedToId !== req.user.id) {
+              await emailService.sendTaskUpdateEmail({
+                to: assignedUser.email,
+                assignedUserName: `${assignedUser.first_name} ${assignedUser.last_name}`,
+                updatedByName: `${req.user.firstName} ${req.user.lastName}`,
+                taskTitle: updatedTask.title,
+                taskDescription: updatedTask.description || undefined,
+                dueDate: updatedTask.dueDate,
+                endDate: updatedTask.endDate || undefined,
+                priority: updatedTask.priority,
+                taskType: updatedTask.type,
+                taskId: updatedTask.id,
+                tenantId: parseInt(tenantId),
+                oldStatus: taskToUpdate?.status,
+                newStatus: updatedTask.status,
+                statusChanged: statusChanged || false,
+              });
+            }
+            
+            // Send email to reporting user if exists and different from updater and assigned user
+            if (reportingUser?.email && updatedTask.reportingUserId !== req.user.id && updatedTask.reportingUserId !== updatedTask.assignedToId) {
+              await emailService.sendTaskUpdateEmail({
+                to: reportingUser.email,
+                assignedUserName: `${assignedUser?.first_name} ${assignedUser?.last_name}`,
+                updatedByName: `${req.user.firstName} ${req.user.lastName}`,
+                taskTitle: updatedTask.title,
+                taskDescription: updatedTask.description || undefined,
+                dueDate: updatedTask.dueDate,
+                endDate: updatedTask.endDate || undefined,
+                priority: updatedTask.priority,
+                taskType: updatedTask.type,
+                taskId: updatedTask.id,
+                tenantId: parseInt(tenantId),
+                oldStatus: taskToUpdate?.status,
+                newStatus: updatedTask.status,
+                statusChanged: statusChanged || false,
+                isReportingUser: true,
+              });
+            }
+          } catch (emailError) {
+            console.error("Error sending task update email:", emailError);
+            // Don't fail the request if email fails
+          }
+        }
+        
+        res.json(updatedTask);
       } catch (error) {
         console.error("Update task error:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    },
+  );
+
+  // ========================================
+  // BUSINESS TARGETS & PERFORMANCE TRACKING
+  // ========================================
+
+  // Get business targets for a tenant/user
+  app.get(
+    "/api/tenants/:tenantId/business-targets",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        const { tenantId } = req.params;
+        const userId = req.query.userId ? parseInt(req.query.userId as string) : null;
+        const targets = await simpleStorage.getBusinessTargets(parseInt(tenantId), userId);
+        res.json(targets);
+      } catch (error) {
+        console.error("Get business targets error:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    },
+  );
+
+  // Create business target
+  app.post(
+    "/api/tenants/:tenantId/business-targets",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        const { tenantId } = req.params;
+        const targetData = {
+          ...req.body,
+          tenantId: parseInt(tenantId),
+          createdBy: req.user.id,
+        };
+        const target = await simpleStorage.createBusinessTarget(targetData);
+        res.status(201).json(target);
+      } catch (error) {
+        console.error("Create business target error:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    },
+  );
+
+  // Update business target
+  app.patch(
+    "/api/tenants/:tenantId/business-targets/:targetId",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        const { targetId } = req.params;
+        const target = await simpleStorage.updateBusinessTarget(parseInt(targetId), req.body);
+        res.json(target);
+      } catch (error) {
+        console.error("Update business target error:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    },
+  );
+
+  // Get performance reports
+  app.get(
+    "/api/tenants/:tenantId/performance-reports",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        const { tenantId } = req.params;
+        const userId = req.query.userId ? parseInt(req.query.userId as string) : null;
+        const period = req.query.period as string || 'monthly';
+        const reports = await simpleStorage.getPerformanceReports(parseInt(tenantId), userId, period);
+        res.json(reports);
+      } catch (error) {
+        console.error("Get performance reports error:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    },
+  );
+
+  // Generate/Update performance report
+  app.post(
+    "/api/tenants/:tenantId/performance-reports",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        const { tenantId } = req.params;
+        const reportData = {
+          ...req.body,
+          tenantId: parseInt(tenantId),
+          createdBy: req.user.id,
+        };
+        const report = await simpleStorage.generatePerformanceReport(reportData);
+        res.status(201).json(report);
+      } catch (error) {
+        console.error("Generate performance report error:", error);
         res.status(500).json({ message: "Internal server error" });
       }
     },
@@ -19959,8 +20748,8 @@ Please improve this email.`;
   // USER MANAGEMENT SYSTEM API ROUTES
   // ========================================
 
-  // Assignment Management Routes - WORKING VERSION WITHOUT MIDDLEWARE
-  app.get("/api/tenants/:tenantId/assignable-users", async (req, res) => {
+  // Assignment Management Routes - Get assignable users for assignments
+  app.get("/api/tenants/:tenantId/assignable-users", authenticateToken, async (req, res) => {
     try {
       const { tenantId } = req.params;
       console.log(`🔍 Getting assignable users for tenant ${tenantId}`);
@@ -20440,13 +21229,23 @@ Please improve this email.`;
     async (req, res) => {
       try {
         const { tenantId } = req.params;
-        const followUps = await simpleStorage.getFollowUpsByTenant(
+        const userId = (req.user as any)?.id;
+        const userRole = (req.user as any)?.role;
+        
+        // Use general_follow_ups instead of old follow_ups table
+        // For non-owners, show follow-ups assigned to or created by the user
+        const result = await simpleStorage.getGeneralFollowUpsByTenant(
           parseInt(tenantId),
+          {
+            userId: userRole !== "owner" && userRole !== "tenant_admin" ? userId : undefined,
+            limit: 1000, // Get all follow-ups
+            offset: 0,
+          }
         );
-        res.json(followUps);
-      } catch (error) {
+        res.json(result.data || []);
+      } catch (error: any) {
         console.error("Get follow-ups error:", error);
-        res.status(500).json({ message: "Internal server error" });
+        res.status(500).json({ message: "Internal server error", error: error.message });
       }
     },
   );
@@ -25427,12 +26226,19 @@ Please improve this email.`;
       console.log("📁 File storage request received (POST - multipart/form-data)");
       console.log("📁 Request file:", req.file ? "present" : "missing");
       console.log("📁 Request files:", req.files ? "present" : "missing");
+      console.log("📁 Request body:", req.body);
+      console.log("📁 CustomerId from body:", req.body.customerId);
+      console.log("📁 TenantId from body:", req.body.tenantId);
 
       if (!req.file) {
         return res
           .status(400)
           .json({ success: false, message: "No file uploaded" });
       }
+
+      // Get customerId and tenantId from request body (form data)
+      const customerId = req.body.customerId;
+      const tenantId = req.body.tenantId || (req as any).user?.tenantId;
 
       // Generate a unique object path
       const timestamp = Date.now();
@@ -25471,6 +26277,9 @@ Please improve this email.`;
         fileSize: req.file.size,
         // Include the actual filename for reference
         actualFileName: `${timestamp}-${randomSuffix}-${sanitizedFilename}`,
+        // Include customerId and tenantId in response if provided
+        ...(customerId && { customerId }),
+        ...(tenantId && { tenantId }),
       });
     } catch (error: any) {
       console.error("❌ File storage error:", error);
@@ -26637,6 +27446,8 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
         id,
         issue_date AS "issueDate",
         total_amount AS "totalAmount",
+        paid_amount AS "paidAmount",
+        status,
         TO_CHAR(issue_date, 'YYYY-MM') AS "month"
       FROM invoices
       WHERE tenant_id = ${tenantId}
@@ -26649,7 +27460,19 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
 
     invoices.forEach((inv) => {
       const month = inv.month;
-      const revenue = Number(inv.totalAmount || 0);
+      const paidAmount = Number(inv.paidAmount || 0);
+      const totalAmount = Number(inv.totalAmount || 0);
+      const status = (inv.status || '').toLowerCase();
+      
+      // Only count actual revenue received (paid amounts)
+      // For fully paid invoices, use totalAmount; for partially paid, use paidAmount
+      let revenue = 0;
+      if (status === 'paid') {
+        revenue = totalAmount; // Fully paid invoice
+      } else if (status === 'partially_paid' || status === 'partial' || paidAmount > 0) {
+        revenue = paidAmount; // Partially paid invoice - only count what's been paid
+      }
+      // Don't count pending, overdue, or draft invoices as revenue
 
       if (!invoiceMonthData[month]) {
         invoiceMonthData[month] = { revenue: 0 };
@@ -26673,6 +27496,7 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
         SUM(amount)::numeric AS total
       FROM expenses
       WHERE tenant_id = ${tenantId}
+        AND status = 'approved'
         AND ${expenseDateFilter}
       GROUP BY 1
       ORDER BY 1 ASC

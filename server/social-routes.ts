@@ -77,12 +77,17 @@ export function registerSocialRoutes(app: Express) {
     try {
       const { platform, tenantId } = req.params;
       
+      // Prevent matching callback routes
+      if (tenantId === 'callback') {
+        return res.status(404).json({ success: false, message: 'Not found' });
+      }
+      
       console.log(`🔧 Starting ${platform} OAuth for tenant:`, tenantId);
       
       // Get service instance with tenant-specific credentials
       const service = await getSocialService(platform, parseInt(tenantId));
       
-      const redirectUri = `${req.protocol}://${req.get('host')}/api/auth/${platform}/${tenantId}/callback`;
+      const redirectUri = `${req.protocol}://${req.get('host')}/api/auth/${platform}/callback`;
       const authUrl = service.getAuthUrl(parseInt(tenantId), redirectUri);
       
       res.json({
@@ -90,6 +95,7 @@ export function registerSocialRoutes(app: Express) {
         authUrl
       });
     } catch (error: any) {
+      const platform = req.params.platform || 'unknown';
       console.error(`${platform} OAuth initialization error:`, error);
       res.status(500).json({ 
         success: false, 

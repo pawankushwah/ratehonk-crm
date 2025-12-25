@@ -593,6 +593,297 @@ class EmailService {
       return false;
     }
   }
+
+  async sendTaskAssignmentEmail(data: {
+    to: string;
+    assignedUserName: string;
+    createdByName: string;
+    taskTitle: string;
+    taskDescription?: string;
+    dueDate: string;
+    endDate?: string;
+    priority: string;
+    taskType: string;
+    taskId: number;
+    tenantId: number;
+    isReportingUser?: boolean;
+  }) {
+    try {
+      const baseUrl = getBaseUrl();
+      const taskUrl = `${baseUrl}/tasks`;
+      const priorityColors: Record<string, string> = {
+        low: '#6B7280',
+        medium: '#3B82F6',
+        high: '#F59E0B',
+        urgent: '#EF4444'
+      };
+      const priorityColor = priorityColors[data.priority] || '#3B82F6';
+      
+      const taskTypeLabels: Record<string, string> = {
+        follow_up: 'Follow Up',
+        call: 'Phone Call',
+        email: 'Email',
+        meeting: 'Meeting',
+        quote: 'Send Quote',
+        booking: 'Process Booking',
+        general: 'General Task'
+      };
+      const taskTypeLabel = taskTypeLabels[data.taskType] || data.taskType;
+
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+            <h2 style="color: #333; margin-top: 0;">${data.isReportingUser ? 'Task Notification' : 'New Task Assigned'}</h2>
+            <p>Hello ${data.isReportingUser ? 'Manager' : data.assignedUserName},</p>
+            <p>${data.isReportingUser ? `A new task has been assigned to ${data.assignedUserName}:` : 'A new task has been assigned to you:'}</p>
+          </div>
+
+          <div style="background-color: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
+            <table style="width: 100%; border-collapse: collapse;">
+              <tr>
+                <td style="padding: 10px 0;">
+                  <strong>Task Title:</strong> ${data.taskTitle}
+                </td>
+              </tr>
+              ${data.taskDescription ? `
+              <tr>
+                <td style="padding: 10px 0;">
+                  <strong>Description:</strong><br>
+                  <div style="margin-top: 5px; color: #666;">${data.taskDescription}</div>
+                </td>
+              </tr>
+              ` : ''}
+              <tr>
+                <td style="padding: 10px 0;">
+                  <strong>Task Type:</strong> ${taskTypeLabel}
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 10px 0;">
+                  <strong>Due Date:</strong> ${new Date(data.dueDate).toLocaleString()}
+                </td>
+              </tr>
+              ${data.endDate ? `
+              <tr>
+                <td style="padding: 10px 0;">
+                  <strong>End Date:</strong> ${new Date(data.endDate).toLocaleString()}
+                </td>
+              </tr>
+              ` : ''}
+              <tr>
+                <td style="padding: 10px 0;">
+                  <strong>Priority:</strong> 
+                  <span style="background-color: ${priorityColor}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; text-transform: uppercase;">
+                    ${data.priority}
+                  </span>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 10px 0;">
+                  <strong>Assigned By:</strong> ${data.createdByName}
+                </td>
+              </tr>
+            </table>
+          </div>
+
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${taskUrl}" style="background-color: #3B82F6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">
+              View Task in Dashboard
+            </a>
+          </div>
+
+          <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0; color: #666; font-size: 12px;">
+            <p>This is an automated notification from RateHonk CRM.</p>
+            <p>If you have any questions, please contact your system administrator.</p>
+          </div>
+        </body>
+        </html>
+      `;
+
+      const mailOptions = {
+        from: process.env.EMAIL_FROM || "noreply@ratehonk.com",
+        to: data.to,
+        subject: `New Task Assigned: ${data.taskTitle}`,
+        html: html,
+      };
+
+      console.log("📧 Sending task assignment email:", {
+        to: data.to,
+        taskTitle: data.taskTitle,
+      });
+
+      const result = await this.transporter.sendMail(mailOptions);
+      console.log("✅ Task assignment email sent:", result.messageId);
+      return true;
+    } catch (error: any) {
+      console.error("❌ Error sending task assignment email:", error);
+      return false;
+    }
+  }
+
+  async sendTaskUpdateEmail(data: {
+    to: string;
+    assignedUserName: string;
+    updatedByName: string;
+    taskTitle: string;
+    taskDescription?: string;
+    dueDate: string;
+    endDate?: string;
+    priority: string;
+    taskType: string;
+    taskId: number;
+    tenantId: number;
+    oldStatus?: string;
+    newStatus: string;
+    statusChanged: boolean;
+    isReportingUser?: boolean;
+  }) {
+    try {
+      const baseUrl = getBaseUrl();
+      const taskUrl = `${baseUrl}/tasks`;
+      const priorityColors: Record<string, string> = {
+        low: '#6B7280',
+        medium: '#3B82F6',
+        high: '#F59E0B',
+        urgent: '#EF4444'
+      };
+      const priorityColor = priorityColors[data.priority] || '#3B82F6';
+      
+      const taskTypeLabels: Record<string, string> = {
+        follow_up: 'Follow Up',
+        call: 'Phone Call',
+        email: 'Email',
+        meeting: 'Meeting',
+        quote: 'Send Quote',
+        booking: 'Process Booking',
+        general: 'General Task'
+      };
+      const taskTypeLabel = taskTypeLabels[data.taskType] || data.taskType;
+
+      const statusLabels: Record<string, string> = {
+        pending: 'Pending',
+        in_progress: 'In Progress',
+        completed: 'Completed',
+        cancelled: 'Cancelled',
+        overdue: 'Overdue'
+      };
+
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+            <h2 style="color: #333; margin-top: 0;">Task Updated</h2>
+            <p>Hello ${data.isReportingUser ? 'Manager' : data.assignedUserName},</p>
+            <p>${data.isReportingUser ? `A task assigned to ${data.assignedUserName} has been updated:` : 'A task assigned to you has been updated:'}</p>
+            ${data.statusChanged && data.oldStatus ? `
+            <p style="background-color: #fff3cd; padding: 10px; border-radius: 5px; margin-top: 10px;">
+              <strong>Status Changed:</strong> ${statusLabels[data.oldStatus] || data.oldStatus} → ${statusLabels[data.newStatus] || data.newStatus}
+            </p>
+            ` : ''}
+          </div>
+
+          <div style="background-color: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
+            <table style="width: 100%; border-collapse: collapse;">
+              <tr>
+                <td style="padding: 10px 0;">
+                  <strong>Task Title:</strong> ${data.taskTitle}
+                </td>
+              </tr>
+              ${data.taskDescription ? `
+              <tr>
+                <td style="padding: 10px 0;">
+                  <strong>Description:</strong><br>
+                  <div style="margin-top: 5px; color: #666;">${data.taskDescription}</div>
+                </td>
+              </tr>
+              ` : ''}
+              <tr>
+                <td style="padding: 10px 0;">
+                  <strong>Task Type:</strong> ${taskTypeLabel}
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 10px 0;">
+                  <strong>Due Date:</strong> ${new Date(data.dueDate).toLocaleString()}
+                </td>
+              </tr>
+              ${data.endDate ? `
+              <tr>
+                <td style="padding: 10px 0;">
+                  <strong>End Date:</strong> ${new Date(data.endDate).toLocaleString()}
+                </td>
+              </tr>
+              ` : ''}
+              <tr>
+                <td style="padding: 10px 0;">
+                  <strong>Priority:</strong> 
+                  <span style="background-color: ${priorityColor}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; text-transform: uppercase;">
+                    ${data.priority}
+                  </span>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 10px 0;">
+                  <strong>Current Status:</strong> 
+                  <span style="background-color: ${data.newStatus === 'completed' ? '#10B981' : data.newStatus === 'in_progress' ? '#3B82F6' : '#6B7280'}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; text-transform: uppercase;">
+                    ${statusLabels[data.newStatus] || data.newStatus}
+                  </span>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 10px 0;">
+                  <strong>Updated By:</strong> ${data.updatedByName}
+                </td>
+              </tr>
+            </table>
+          </div>
+
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${taskUrl}" style="background-color: #3B82F6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">
+              View Task in Dashboard
+            </a>
+          </div>
+
+          <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0; color: #666; font-size: 12px;">
+            <p>This is an automated notification from RateHonk CRM.</p>
+            <p>If you have any questions, please contact your system administrator.</p>
+          </div>
+        </body>
+        </html>
+      `;
+
+      const mailOptions = {
+        from: process.env.EMAIL_FROM || "noreply@ratehonk.com",
+        to: data.to,
+        subject: `Task Updated${data.statusChanged ? ` - Status Changed` : ''}: ${data.taskTitle}`,
+        html: html,
+      };
+
+      console.log("📧 Sending task update email:", {
+        to: data.to,
+        taskTitle: data.taskTitle,
+        statusChanged: data.statusChanged,
+      });
+
+      const result = await this.transporter.sendMail(mailOptions);
+      console.log("✅ Task update email sent:", result.messageId);
+      return true;
+    } catch (error: any) {
+      console.error("❌ Error sending task update email:", error);
+      return false;
+    }
+  }
 }
 
 export const emailService = new EmailService();

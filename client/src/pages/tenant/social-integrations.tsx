@@ -19,8 +19,6 @@ import { useAuth } from "@/components/auth/auth-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { Celebration } from "@/components/ui/celebration";
-import { DemoCelebration } from "@/components/ui/demo-celebration";
-import { ZoomAccountManager } from "@/components/zoom/zoom-account-manager";
 
 interface SocialIntegration {
   id?: number;
@@ -223,73 +221,9 @@ export default function SocialIntegrations() {
     enabled: !!tenant?.id,
   });
 
-  const platforms = [
-    {
-      id: "facebook",
-      name: "Facebook Lead Ads",
-      icon: Facebook,
-      description: "Automatically fetch and store leads from Facebook Lead Ads campaigns directly into your CRM",
-      color: "bg-blue-100 text-blue-800",
-      isOAuth: true,
-      features: ["Automatic Lead Import", "Facebook Lead Forms", "Real-time Sync", "Duplicate Detection", "Lead Source Tracking", "Campaign Analytics"],
-      fields: [],
-      status: facebookStatus as any,
-      credentials: { appId: "App ID", appSecret: "App Secret" }
-    },
-    {
-      id: "instagram",
-      name: "Instagram Business",
-      icon: Instagram,
-      description: "Instagram Business API integration for lead forms, posts, and business insights",
-      color: "bg-pink-100 text-pink-800",
-      isOAuth: true,
-      features: ["Instagram Business", "Lead Forms", "Content Publishing", "Business Insights", "Stories Management"],
-      fields: [],
-      status: instagramStatus as any,
-      credentials: { appId: "App ID", appSecret: "App Secret" }
-    },
-    {
-      id: "linkedin",
-      name: "LinkedIn Business Suite",
-      icon: Linkedin,
-      description: "Complete LinkedIn Business Suite with Sales Navigator, message logging, InMail, and CRM integration",
-      color: "bg-blue-100 text-blue-800",
-      isOAuth: true,
-      features: ["Sales Navigator", "Message Logging", "InMail Messaging", "Lead Generation", "CRM Integration", "Connection Management"],
-      fields: [],
-      status: linkedinStatus as any,
-      credentials: { clientId: "Client ID", clientSecret: "Client Secret" }
-    },
-    {
-      id: "twitter",
-      name: "Twitter/X Business",
-      icon: function TwitterIcon(props: any) { return <div {...props} className="w-5 h-5 bg-black text-white rounded-sm flex items-center justify-center text-xs font-bold">X</div>; },
-      description: "Twitter API v2 integration for brand mentions, engagement tracking, and lead identification",
-      color: "bg-gray-100 text-gray-800",
-      isOAuth: true,
-      features: ["Brand Mentions", "Engagement Tracking", "Tweet Analytics", "Audience Insights", "Lead Discovery"],
-      fields: [],
-      status: twitterStatus as any,
-      credentials: { clientId: "Client ID", clientSecret: "Client Secret" }
-    },
-    {
-      id: "tiktok",
-      name: "TikTok for Business",
-      icon: function TikTokIcon(props: any) { 
-        return (
-          <div {...props} className="w-5 h-5 bg-gradient-to-r from-pink-500 to-purple-600 rounded-sm flex items-center justify-center text-white text-xs font-bold">
-            TT
-          </div>
-        ); 
-      },
-      description: "TikTok Business API integration for video engagement, comments analysis, and lead discovery",
-      color: "bg-purple-100 text-purple-800",
-      isOAuth: true,
-      features: ["Video Analytics", "Comment Engagement", "Business Profile", "Content Publishing", "Audience Insights"],
-      fields: [],
-      status: tiktokStatus as any,
-      credentials: { clientId: "Client Key", clientSecret: "Client Secret" }
-    }
+  const platforms: any[] = [
+    // Facebook is shown separately in the highlight card above
+    // Add other platforms here if needed in the future
   ];
 
   const getIntegrationForPlatform = (platformId: string) => {
@@ -463,28 +397,65 @@ export default function SocialIntegrations() {
     );
   };
 
-  // Facebook OAuth integration mutation
+  // Facebook OAuth integration mutation with popup
   const connectFacebookMutation = useMutation({
     mutationFn: async () => {
-      const response = await apiRequest("GET", `/api/auth/facebook/${tenant?.id}`);
+      const response = await apiRequest("GET", `/api/tenants/${tenant?.id}/facebook/auth`);
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.message || "Failed to get Facebook auth URL");
+        throw new Error(errorData.message || errorData.error || "Failed to get Facebook auth URL");
       }
       return response.json();
     },
     onSuccess: (data: any) => {
+      if (!data.authUrl) {
+        toast({
+          title: "Facebook Connection Failed",
+          description: "No auth URL received from server",
+          variant: "destructive",
+        });
+        return;
+      }
+
       // Store callback data for celebration
       sessionStorage.setItem('pendingFacebookConnection', JSON.stringify({
         platform: 'facebook',
         timestamp: Date.now()
       }));
-      // Redirect to Facebook OAuth
-      if (data.authUrl) {
-        window.location.href = data.authUrl;
-      } else {
-        throw new Error("No auth URL received from server");
-      }
+
+      // Open Facebook OAuth in popup window
+      const width = 600;
+      const height = 700;
+      const left = (window.screen.width - width) / 2;
+      const top = (window.screen.height - height) / 2;
+
+      const popup = window.open(
+        data.authUrl,
+        'Facebook OAuth',
+        `width=${width},height=${height},left=${left},top=${top},toolbar=no,menubar=no,scrollbars=yes,resizable=yes`
+      );
+
+      // Listen for popup to close or receive message
+      const checkPopup = setInterval(() => {
+        if (popup?.closed) {
+          clearInterval(checkPopup);
+          // Check if connection was successful by checking URL params
+          const urlParams = new URLSearchParams(window.location.search);
+          if (urlParams.get('facebook') === 'connected') {
+            fetchFacebookPagesForSelection();
+          }
+        }
+      }, 500);
+
+      // Also listen for postMessage from popup (if implemented)
+      const messageListener = (event: MessageEvent) => {
+        if (event.data.type === 'FACEBOOK_OAUTH_SUCCESS') {
+          clearInterval(checkPopup);
+          window.removeEventListener('message', messageListener);
+          fetchFacebookPagesForSelection();
+        }
+      };
+      window.addEventListener('message', messageListener);
     },
     onError: (error: any) => {
       let errorMessage = error.message || "Failed to initiate Facebook connection";
@@ -1317,7 +1288,11 @@ export default function SocialIntegrations() {
               </>
             )}
           </Button>
-          <Button variant="outline" className="flex-1">
+          <Button 
+            variant="outline" 
+            className="flex-1"
+            onClick={() => window.location.href = '/facebook-manage'}
+          >
             <Settings className="h-4 w-4 mr-2" />
             Manage Pages
           </Button>
@@ -1407,12 +1382,10 @@ export default function SocialIntegrations() {
         </div>
 
         <Tabs defaultValue="platforms" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="platforms">Available Platforms</TabsTrigger>
-            <TabsTrigger value="zoom">Zoom Phone</TabsTrigger>
             <TabsTrigger value="settings">Sync Settings</TabsTrigger>
             <TabsTrigger value="webhooks">Webhooks</TabsTrigger>
-            <TabsTrigger value="demo">Demo</TabsTrigger>
           </TabsList>
 
           <TabsContent value="platforms">
@@ -1465,7 +1438,7 @@ export default function SocialIntegrations() {
                           </Button>
                           <Button 
                             variant="outline"
-                            onClick={() => setSelectedPlatform('facebook')}
+                            onClick={() => window.location.href = '/facebook-manage'}
                           >
                             <Settings className="h-4 w-4 mr-2" />
                             Manage Integration
@@ -1473,11 +1446,21 @@ export default function SocialIntegrations() {
                         </div>
                       ) : (
                         <Button 
-                          onClick={() => setSelectedPlatform('facebook')}
+                          onClick={() => connectFacebookMutation.mutate()}
+                          disabled={connectFacebookMutation.isPending}
                           className="bg-blue-600 hover:bg-blue-700"
                         >
-                          <Facebook className="h-4 w-4 mr-2" />
-                          Connect Facebook Lead Ads
+                          {connectFacebookMutation.isPending ? (
+                            <>
+                              <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                              Connecting...
+                            </>
+                          ) : (
+                            <>
+                              <Facebook className="h-4 w-4 mr-2" />
+                              Connect Facebook Lead Ads
+                            </>
+                          )}
                         </Button>
                       )}
                     </div>
@@ -1565,10 +1548,6 @@ export default function SocialIntegrations() {
                 );
               })}
             </div>
-          </TabsContent>
-
-          <TabsContent value="zoom">
-            <ZoomAccountManager />
           </TabsContent>
 
           <TabsContent value="settings">
@@ -1671,20 +1650,6 @@ export default function SocialIntegrations() {
                     </div>
                   </div>
                 </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="demo">
-            <Card>
-              <CardHeader>
-                <CardTitle>Interactive Celebration Demo</CardTitle>
-                <p className="text-sm text-gray-600">
-                  Preview the celebration animations that users see when connecting social media accounts
-                </p>
-              </CardHeader>
-              <CardContent>
-                <DemoCelebration />
               </CardContent>
             </Card>
           </TabsContent>

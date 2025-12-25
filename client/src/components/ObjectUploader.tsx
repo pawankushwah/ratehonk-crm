@@ -12,6 +12,8 @@ interface ObjectUploaderProps {
   maxNumberOfFiles?: number;
   maxFileSize?: number;
   endpoint?: string;
+  customerId?: string | number;
+  tenantId?: string | number;
   onComplete?: (
     result: UploadResult<Record<string, unknown>, Record<string, unknown>>
   ) => void;
@@ -51,6 +53,8 @@ export function ObjectUploader({
   maxNumberOfFiles = 1,
   maxFileSize = 10485760, // 10MB default
   endpoint = "/api/objects/store",
+  customerId,
+  tenantId,
   onComplete,
   buttonClassName,
   children,
@@ -65,6 +69,22 @@ export function ObjectUploader({
       autoProceed: false,
     });
 
+    // Set meta on files when they're added to include customerId and tenantId
+    uppyInstance.on('file-added', (file) => {
+      const metaUpdates: Record<string, string> = {};
+      if (customerId !== undefined) {
+        metaUpdates.customerId = customerId.toString();
+      }
+      if (tenantId !== undefined) {
+        metaUpdates.tenantId = tenantId.toString();
+      }
+      if (Object.keys(metaUpdates).length > 0) {
+        // Merge with existing meta instead of replacing
+        const currentMeta = file.meta || {};
+        uppyInstance.setFileMeta(file.id, { ...currentMeta, ...metaUpdates });
+      }
+    });
+
     // Use XHR Upload plugin for simple, reliable multipart/form-data uploads
     uppyInstance.use(XHRUpload, {
       endpoint: endpoint,
@@ -72,6 +92,11 @@ export function ObjectUploader({
       fieldName: "file",
       formData: true,
       bundle: false,
+      // Include meta fields in form data (allowedMetaFields should be an array of strings)
+      allowedMetaFields: customerId || tenantId ? [
+        ...(customerId ? ['customerId'] : []),
+        ...(tenantId ? ['tenantId'] : []),
+      ] : [],
       // Don't set responseType - let XHRUpload handle it automatically
       // Setting it might interfere with how XHRUpload processes the response
       headers: () => {
@@ -187,6 +212,9 @@ export function ObjectUploader({
           mimeType: parsed.mimeType,
           fileSize: parsed.fileSize,
           status: status,
+          // Include customerId and tenantId from parsed response or props
+          customerId: parsed.customerId || customerId,
+          tenantId: parsed.tenantId || tenantId,
         };
         
         console.log("📁 Final response data being returned:", responseData);

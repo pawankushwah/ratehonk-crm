@@ -90,6 +90,7 @@ export default function InvoiceCreate() {
 
   const [selectedBookingId, setSelectedBookingId] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
+  const [redirectTo, setRedirectTo] = useState<string | null>(null);
   const [discountAmount, setDiscountAmount] = useState("");
   const [amountPaid, setAmountPaid] = useState("");
   const [existingPaidAmount, setExistingPaidAmount] = useState(0); // Store original paid amount for edit mode
@@ -199,6 +200,25 @@ export default function InvoiceCreate() {
       return Array.isArray(result) ? result : [];
     },
   });
+
+  // Read URL query params for customerId and redirectTo (works in both create and edit mode)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const customerIdParam = params.get("customerId");
+    const redirectToParam = params.get("redirectTo");
+    
+    // In create mode, auto-select customer from URL
+    if (!isEditMode && customerIdParam) {
+      console.log("🔍 Auto-selecting customer from URL:", customerIdParam);
+      setSelectedCustomerId(customerIdParam);
+    }
+    
+    // Always read redirectTo from URL (for both create and edit mode)
+    if (redirectToParam) {
+      console.log("🔍 Storing redirect URL:", redirectToParam);
+      setRedirectTo(redirectToParam);
+    }
+  }, [isEditMode]);
 
   // Refetch invoice settings when page loads
   useEffect(() => {
@@ -784,7 +804,12 @@ export default function InvoiceCreate() {
         }
       }
 
-      navigate("/invoices");
+      // Redirect to customer detail page if we came from there, otherwise go to invoices list
+      if (redirectTo) {
+        navigate(redirectTo);
+      } else {
+        navigate("/invoices");
+      }
     },
     onError: () => {
       toast({
@@ -826,7 +851,12 @@ export default function InvoiceCreate() {
       queryClient.invalidateQueries({
         queryKey: [`/api/tenants/${tenant?.id}/invoices/${invoiceId}`],
       });
-      navigate("/invoices");
+      // Redirect to customer detail page if we came from there, otherwise go to invoices list
+      if (redirectTo) {
+        navigate(redirectTo);
+      } else {
+        navigate("/invoices");
+      }
     },
     onError: () => {
       toast({

@@ -49,6 +49,7 @@ export function ConsolidatedVendorBookingChart() {
 
     return Object.keys(countMap).map((vendor, idx) => ({
       name: vendor,
+      count: countMap[vendor],
       percentage: Number(((countMap[vendor] / total) * 100).toFixed(2)),
       color: colorPalette[idx % colorPalette.length],
     }));
@@ -59,9 +60,9 @@ export function ConsolidatedVendorBookingChart() {
   const dummyHoverPalette = ["#2F80ED", "#F66D44", "#219653"]; 
 
   const dummyData = [
-    { name: "Category 0", percentage: 40 },
-    { name: "Category 1", percentage: 30 },
-    { name: "Category 2", percentage: 30 },
+    { name: "Category 0", percentage: 40, count: 0 },
+    { name: "Category 1", percentage: 30, count: 0 },
+    { name: "Category 2", percentage: 30, count: 0 },
   ];
 
   const usingDummy = vendorData.length === 0;
@@ -83,7 +84,7 @@ export function ConsolidatedVendorBookingChart() {
       return (
         <div className="bg-white shadow-lg rounded-md p-2 border text-xs text-black">
           <p className="font-semibold">{item.name}</p>
-          <p>{item.percentage}%</p>
+          <p>{usingDummy ? "0" : item.count?.toLocaleString() || "0"} bookings</p>
         </div>
       );
     }
@@ -204,7 +205,7 @@ export function ConsolidatedVendorBookingChart() {
 
                   <div>
                     <p className="font-medium">{v.name}</p>
-                    <p className="text-gray-500 text-[11px]"> {usingDummy ? "0" : `${v.percentage}%`}%</p>
+                    <p className="text-gray-500 text-[11px]">{usingDummy ? "0" : (v.count?.toLocaleString() || "0")} bookings</p>
                   </div>
                 </div>
               ))}

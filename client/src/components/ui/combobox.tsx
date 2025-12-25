@@ -18,6 +18,7 @@ import {
 export interface ComboboxOption {
   value: string;
   label: string;
+  email?: string;
   icon?: React.ReactNode;
 }
 
@@ -64,14 +65,15 @@ export function Combobox({
     }
   }, []);
 
-  // Filter options based on search query
+  // Filter options based on search query (search by label, email, and value)
   const filteredOptions = React.useMemo(() => {
     if (!searchQuery) return options;
     
     const query = searchQuery.toLowerCase();
     return options.filter((option) => 
       option.label.toLowerCase().includes(query) || 
-      option.value.toLowerCase().includes(query)
+      option.value.toLowerCase().includes(query) ||
+      (option.email && option.email.toLowerCase().includes(query))
     );
   }, [options, searchQuery]);
 
@@ -96,7 +98,14 @@ export function Combobox({
         >
           <span className="flex items-center gap-2 flex-1 text-left truncate">
             {selectedOption?.icon}
-            {selectedOption?.label || placeholder}
+            <span className="truncate">
+              {selectedOption?.label || placeholder}
+              {selectedOption?.email && (
+                <span className="text-gray-500 dark:text-gray-400 ml-2">
+                  ({selectedOption.email})
+                </span>
+              )}
+            </span>
           </span>
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 text-gray-400" />
         </button>
@@ -161,10 +170,17 @@ export function Combobox({
                       value === option.value && "bg-cyan-50 dark:bg-cyan-950/30"
                     )}
                   >
-                    <span className="flex items-center gap-2 flex-1 font-medium text-gray-900 dark:text-gray-100">
-                      {option.icon}
-                      {option.label}
-                    </span>
+                    <div className="flex flex-col gap-0.5 flex-1">
+                      <span className="flex items-center gap-2 font-medium text-gray-900 dark:text-gray-100">
+                        {option.icon}
+                        {option.label}
+                      </span>
+                      {option.email && (
+                        <span className="text-xs text-gray-500 dark:text-gray-400 ml-6">
+                          {option.email}
+                        </span>
+                      )}
+                    </div>
                     <Check
                       className={cn(
                         "ml-auto h-4 w-4 text-cyan-600 dark:text-cyan-400",

@@ -37,7 +37,8 @@ import {
   Bot,
   Wand2,
   Lightbulb,
-  RotateCcw
+  RotateCcw,
+  Paperclip
 } from "lucide-react";
 import type { GmailEmail, GmailIntegration } from "@shared/schema";
 
@@ -52,8 +53,10 @@ export default function GmailEmails() {
   const [composeData, setComposeData] = useState({
     to: "",
     subject: "",
-    body: ""
+    body: "",
+    attachments: [] as Array<{ name: string; url: string; size: number; type: string }>
   });
+  const [attachmentFiles, setAttachmentFiles] = useState<File[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [allEmails, setAllEmails] = useState<GmailEmail[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
@@ -230,15 +233,16 @@ export default function GmailEmails() {
   // AI compose email mutation
   const aiComposeMutation = useMutation({
     mutationFn: async (data: { prompt: string; context?: string; tone: string; length: string }) => {
-      return await apiRequest("POST", `/api/gmail/ai-compose/${tenant?.id}`, data);
+      const response = await apiRequest("POST", `/api/gmail/ai-compose/${tenant?.id}`, data);
+      return await response.json();
     },
     onSuccess: (data: any) => {
       if (data?.email) {
-        setComposeData({
-          to: composeData.to,
-          subject: data.email.subject || "",
-          body: data.email.body || ""
-        });
+        setComposeData(prev => ({
+          ...prev,
+          subject: data.email.subject || prev.subject,
+          body: data.email.body || prev.body
+        }));
         setShowAIComposer(false);
         setAiPrompt("");
         setAiContext("");
@@ -262,19 +266,20 @@ export default function GmailEmails() {
   // AI improve email mutation
   const aiImproveMutation = useMutation({
     mutationFn: async (data: { subject: string; body: string; improvementType: string }) => {
-      return await apiRequest("POST", `/api/gmail/ai-improve/${tenant?.id}`, data);
+      const response = await apiRequest("POST", `/api/gmail/ai-improve/${tenant?.id}`, data);
+      return await response.json();
     },
     onSuccess: (data: any) => {
-      if (data?.improvement) {
-        if (composeMode) {
-          setComposeData({
-            to: composeData.to,
-            subject: data.improvement.improvedSubject || composeData.subject,
-            body: data.improvement.improvedBody || composeData.body
-          });
-        } else if (replyMode) {
-          setReplyText(data.improvement.improvedBody || replyText);
-        }
+        if (data?.improvement) {
+          if (composeMode) {
+            setComposeData(prev => ({
+              ...prev,
+              subject: data.improvement.improvedSubject || prev.subject,
+              body: data.improvement.improvedBody || prev.body
+            }));
+          } else if (replyMode) {
+            setReplyText(data.improvement.improvedBody || replyText);
+          }
         setShowAIImprovement(false);
         toast({
           title: "Email Improved",
@@ -293,6 +298,31 @@ export default function GmailEmails() {
     }
   });
 
+  // Upload attachments mutation
+  const uploadAttachmentsMutation = useMutation({
+    mutationFn: async (files: File[]) => {
+      const formData = new FormData();
+      files.forEach(file => {
+        formData.append('attachments', file);
+      });
+      
+      const token = localStorage.getItem("auth_token");
+      const response = await fetch("/api/email-attachments/upload", {
+        method: "POST",
+        headers: {
+          ...(token && { Authorization: `Bearer ${token}` }),
+        },
+        body: formData,
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Upload failed: ${response.statusText}`);
+      }
+      
+      return await response.json();
+    },
+  });
+
   // Compose email mutation
   const composeMutation = useMutation({
     mutationFn: async (emailData: { to: string; subject: string; body: string }) => {
@@ -304,7 +334,8 @@ export default function GmailEmails() {
         description: "Email sent successfully"
       });
       setComposeMode(false);
-      setComposeData({ to: "", subject: "", body: "" });
+      setComposeData({ to: "", subject: "", body: "", attachments: [] });
+      setAttachmentFiles([]);
     },
     onError: (error: any) => {
       console.log("🔍 Compose Error Details:", error);
@@ -347,7 +378,7 @@ export default function GmailEmails() {
     });
   };
 
-  const handleCompose = () => {
+  const handleCompose = async () => {
     if (!composeData.to.trim() || !composeData.subject.trim() || !composeData.body.trim()) {
       toast({
         title: "Error",
@@ -357,7 +388,57 @@ export default function GmailEmails() {
       return;
     }
 
-    composeMutation.mutate(composeData);
+    // Upload attachments first if any
+    let uploadedAttachments = composeData.attachments;
+    if (attachmentFiles.length > 0) {
+      try {
+        const uploadResult = await uploadAttachmentsMutation.mutateAsync(attachmentFiles);
+        uploadedAttachments = uploadResult.files || [];
+      } catch (error) {
+        toast({
+          title: "Upload Failed",
+          description: "Failed to upload attachments. Email will be sent without attachments.",
+          variant: "destructive"
+        });
+      }
+    }
+
+    composeMutation.mutate({
+      ...composeData,
+      attachments: uploadedAttachments
+    });
+  };
+
+  const handleAttachmentAdd = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      const files = Array.from(e.target.files);
+      setAttachmentFiles(prev => [...prev, ...files]);
+      
+      // Preview attachments
+      files.forEach(file => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          setComposeData(prev => ({
+            ...prev,
+            attachments: [...prev.attachments, {
+              name: file.name,
+              url: reader.result as string,
+              size: file.size,
+              type: file.type
+            }]
+          }));
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+  };
+
+  const handleAttachmentRemove = (index: number) => {
+    setAttachmentFiles(prev => prev.filter((_, i) => i !== index));
+    setComposeData(prev => ({
+      ...prev,
+      attachments: prev.attachments.filter((_, i) => i !== index)
+    }));
   };
 
   const formatDate = (date: string) => {
@@ -367,6 +448,26 @@ export default function GmailEmails() {
   const getEmailPreview = (email: GmailEmail) => {
     const text = email.bodyText || email.bodyHtml?.replace(/<[^>]*>/g, '') || '';
     return text.substring(0, 120) + (text.length > 120 ? '...' : '');
+  };
+
+  // Helper function to decode HTML entities and clean HTML
+  const processHtmlContent = (html: string): string => {
+    if (!html) return '';
+    
+    // Create a temporary div to decode HTML entities
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = html;
+    let decodedHtml = tempDiv.textContent || tempDiv.innerText || html;
+    
+    // If it was already decoded, use original
+    if (decodedHtml === html && html.includes('<')) {
+      decodedHtml = html;
+    } else if (decodedHtml !== html) {
+      // If it was decoded, we need to use the original HTML
+      decodedHtml = html;
+    }
+    
+    return decodedHtml;
   };
 
   if (statusLoading) {
@@ -605,16 +706,140 @@ export default function GmailEmails() {
                 </CardHeader>
                 <CardContent className="space-y-6">
                   {/* Email Content */}
-                  <div className="prose prose-sm max-w-none break-words overflow-hidden email-content">
-                    {selectedEmail.bodyHtml ? (
+                  <div className="email-content-wrapper" style={{ minHeight: '200px', width: '100%' }}>
+                    {selectedEmail.bodyHtml ? (() => {
+                      // Process HTML content - decode if needed
+                      let htmlContent = processHtmlContent(selectedEmail.bodyHtml);
+                      
+                      // Check if it's a full HTML document
+                      const isFullDocument = htmlContent.includes('<!DOCTYPE') || htmlContent.includes('<html');
+                      
+                      if (isFullDocument) {
+                        // Try to extract body content
+                        const bodyMatch = htmlContent.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+                        if (bodyMatch && bodyMatch[1]) {
+                          htmlContent = bodyMatch[1];
+                        } else {
+                          // If no body tag, try to extract content between html tags
+                          const htmlMatch = htmlContent.match(/<html[^>]*>([\s\S]*?)<\/html>/i);
+                          if (htmlMatch && htmlMatch[1]) {
+                            // Remove head tag content if present
+                            htmlContent = htmlMatch[1].replace(/<head[^>]*>[\s\S]*?<\/head>/gi, '');
+                          }
+                        }
+                      }
+                      
+                      // Create a complete HTML document for iframe
+                      const fullHtmlDoc = `
+                        <!DOCTYPE html>
+                        <html>
+                        <head>
+                          <meta charset="utf-8">
+                          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                          <style>
+                            * {
+                              box-sizing: border-box;
+                            }
+                            body {
+                              margin: 0;
+                              padding: 16px;
+                              font-family: 'Roboto', 'RobotoDraft', 'Helvetica', 'Arial', sans-serif;
+                              font-size: 14px;
+                              line-height: 1.5;
+                              color: #202124;
+                              background-color: #fff;
+                            }
+                            img {
+                              max-width: 100%;
+                              height: auto;
+                              display: block;
+                            }
+                            a {
+                              color: #1a73e8;
+                              text-decoration: none;
+                            }
+                            a:hover {
+                              text-decoration: underline;
+                            }
+                            table {
+                              border-collapse: collapse;
+                              width: 100%;
+                              max-width: 100%;
+                            }
+                            td, th {
+                              padding: 8px;
+                            }
+                            p {
+                              margin: 0 0 12px 0;
+                            }
+                            div {
+                              max-width: 100%;
+                            }
+                          </style>
+                        </head>
+                        <body>
+                          ${htmlContent}
+                        </body>
+                        </html>
+                      `;
+                      
+                      return (
+                        <iframe
+                          srcDoc={fullHtmlDoc}
+                          className="gmail-email-content"
+                          style={{
+                            width: '100%',
+                            minHeight: '400px',
+                            border: 'none',
+                            backgroundColor: '#fff',
+                            borderRadius: '4px',
+                            overflow: 'auto'
+                          }}
+                          sandbox="allow-same-origin"
+                          title="Email content"
+                          onLoad={(e) => {
+                            // Auto-resize iframe to content height
+                            const iframe = e.currentTarget;
+                            try {
+                              const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+                              if (iframeDoc) {
+                                const height = Math.max(
+                                  iframeDoc.body.scrollHeight,
+                                  iframeDoc.body.offsetHeight,
+                                  iframeDoc.documentElement.clientHeight,
+                                  iframeDoc.documentElement.scrollHeight,
+                                  iframeDoc.documentElement.offsetHeight
+                                );
+                                iframe.style.height = `${height + 32}px`;
+                              }
+                            } catch (err) {
+                              // Cross-origin or other error, use default height
+                              console.log('Could not auto-resize iframe:', err);
+                            }
+                          }}
+                        />
+                      );
+                    })() : selectedEmail.bodyText ? (
                       <div 
-                        dangerouslySetInnerHTML={{ __html: selectedEmail.bodyHtml }} 
-                        className="gmail-email-content max-w-full overflow-hidden"
-                      />
-                    ) : (
-                      <pre className="whitespace-pre-wrap font-sans text-sm break-words overflow-hidden max-w-full gmail-email-content">
+                        className="gmail-email-content max-w-full whitespace-pre-wrap"
+                        style={{
+                          padding: '16px',
+                          backgroundColor: '#fff',
+                          color: '#202124',
+                          fontSize: '14px',
+                          lineHeight: '1.5',
+                          fontFamily: 'Roboto, RobotoDraft, Helvetica, Arial, sans-serif',
+                          whiteSpace: 'pre-wrap',
+                          wordWrap: 'break-word',
+                          borderRadius: '4px'
+                        }}
+                      >
                         {selectedEmail.bodyText}
-                      </pre>
+                      </div>
+                    ) : (
+                      <div className="text-muted-foreground text-center py-8">
+                        No content available for this email
+                      </div>
                     )}
                   </div>
 
@@ -715,7 +940,8 @@ export default function GmailEmails() {
                     size="sm"
                     onClick={() => {
                       setComposeMode(false);
-                      setComposeData({ to: "", subject: "", body: "" });
+                      setComposeData({ to: "", subject: "", body: "", attachments: [] });
+                      setAttachmentFiles([]);
                     }}
                   >
                     <X className="h-4 w-4" />
@@ -745,11 +971,53 @@ export default function GmailEmails() {
                     placeholder="Type your message..."
                     value={composeData.body}
                     onChange={(e) => setComposeData(prev => ({ ...prev, body: e.target.value }))}
-                    rows={8}
+                    rows={10}
                   />
                 </div>
+                
+                {/* Attachments */}
+                {composeData.attachments.length > 0 && (
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Attachments</label>
+                    <div className="space-y-2">
+                      {composeData.attachments.map((attachment, index) => (
+                        <div key={index} className="flex items-center justify-between p-2 bg-muted rounded-md">
+                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                            <Paperclip className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                            <span className="text-sm truncate">{attachment.name}</span>
+                            <span className="text-xs text-muted-foreground">
+                              ({(attachment.size / 1024).toFixed(1)} KB)
+                            </span>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleAttachmentRemove(index)}
+                            className="flex-shrink-0"
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="space-y-2">
                   <div className="flex gap-2">
+                    <label className="cursor-pointer">
+                      <input
+                        type="file"
+                        multiple
+                        onChange={handleAttachmentAdd}
+                        className="hidden"
+                        accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"
+                      />
+                      <Button variant="outline" type="button" className="flex items-center gap-2">
+                        <Paperclip className="w-4 h-4" />
+                        Attach Files
+                      </Button>
+                    </label>
                     <Button 
                       variant="outline" 
                       onClick={() => setShowAIComposer(true)}
@@ -786,10 +1054,10 @@ export default function GmailEmails() {
                   <div className="flex flex-col sm:flex-row items-center gap-2">
                     <Button 
                       onClick={handleCompose}
-                      disabled={composeMutation.isPending || !composeData.to.trim() || !composeData.subject.trim() || !composeData.body.trim()}
-                      className="flex items-center gap-2 w-full sm:w-auto"
+                      disabled={composeMutation.isPending || uploadAttachmentsMutation.isPending || !composeData.to.trim() || !composeData.subject.trim() || !composeData.body.trim()}
+                      className="flex items-center gap-2 w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white"
                     >
-                      {composeMutation.isPending ? (
+                      {composeMutation.isPending || uploadAttachmentsMutation.isPending ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
                       ) : (
                         <Send className="h-4 w-4" />
@@ -800,7 +1068,8 @@ export default function GmailEmails() {
                       variant="outline"
                       onClick={() => {
                         setComposeMode(false);
-                        setComposeData({ to: "", subject: "", body: "" });
+                        setComposeData({ to: "", subject: "", body: "", attachments: [] });
+                        setAttachmentFiles([]);
                       }}
                       className="w-full sm:w-auto"
                     >

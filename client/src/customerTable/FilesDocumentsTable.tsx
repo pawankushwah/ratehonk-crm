@@ -157,34 +157,78 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
       else if (file.type.includes("pdf") || file.type.includes("document") || file.type.includes("text")) fileType = "document";
 
       // Get the object path from the upload response
-      // XHRUpload plugin stores response in uploadedFile.response.body
+      // XHRUpload plugin stores response in uploadedFile.response.body (from getResponseData)
       // But sometimes it's also in uploadedFile.response directly
       let responseBody = (uploadedFile as any).response?.body;
       const fullResponse = (uploadedFile as any).response;
       
+      console.log("📁 Uploaded file object:", uploadedFile);
+      console.log("📁 Uploaded file keys:", Object.keys(uploadedFile));
       console.log("📁 Response body from upload:", responseBody);
       console.log("📁 Full response:", fullResponse);
+      console.log("📁 Response keys:", fullResponse ? Object.keys(fullResponse) : []);
       console.log("📁 Response status:", fullResponse?.status);
       
+      // Also check if response is stored directly (without .body)
+      if (!responseBody && fullResponse && typeof fullResponse === 'object') {
+        // Check if the response data is directly in the response object
+        if (fullResponse.publicUrl || fullResponse.objectPath || fullResponse.success) {
+          responseBody = fullResponse;
+          console.log("✅ Found response data directly in response object");
+        }
+      }
+      
+      // Also check if response is stored directly (without .body) - do this FIRST
+      if (!responseBody && fullResponse && typeof fullResponse === 'object') {
+        // Check if the response data is directly in the response object (not in .body)
+        if (fullResponse.publicUrl || fullResponse.objectPath || fullResponse.success) {
+          responseBody = fullResponse;
+          console.log("✅ Found response data directly in response object (not in .body)");
+        }
+      }
+      
+      // Check if response.body has valid data (check for publicUrl OR objectPath)
+      const hasValidPath = responseBody && (
+        responseBody.publicUrl || 
+        responseBody.objectPath || 
+        responseBody.location || 
+        responseBody.url
+      );
+      
       // If response.body is empty or invalid, try to get it from other places
-      if (!responseBody || Object.keys(responseBody).length === 0 || !responseBody.objectPath) {
-        console.warn("⚠️ Response body is empty or missing objectPath, trying alternative sources...");
+      if (!responseBody || Object.keys(responseBody).length === 0 || !hasValidPath) {
+        console.warn("⚠️ Response body is empty or missing path, trying alternative sources...");
         
         // Try response directly (some XHRUpload versions store it here)
-        if (fullResponse && typeof fullResponse === 'object' && fullResponse.objectPath) {
-          responseBody = fullResponse;
-          console.log("✅ Found response data in response object directly");
+        if (fullResponse && typeof fullResponse === 'object' && fullResponse !== responseBody) {
+          const hasPath = fullResponse.publicUrl || fullResponse.objectPath || fullResponse.location || fullResponse.url;
+          if (hasPath) {
+            responseBody = fullResponse;
+            console.log("✅ Found response data in response object directly");
+          }
         }
+        
         // Try response.response (XMLHttpRequest response property)
-        else if (fullResponse?.response && typeof fullResponse.response === 'object') {
-          responseBody = fullResponse.response;
-          console.log("✅ Found response data in response.response");
+        if ((!responseBody || Object.keys(responseBody).length === 0) && fullResponse?.response) {
+          if (typeof fullResponse.response === 'object') {
+            const hasPath = fullResponse.response.publicUrl || fullResponse.response.objectPath || 
+                           fullResponse.response.location || fullResponse.response.url;
+            if (hasPath) {
+              responseBody = fullResponse.response;
+              console.log("✅ Found response data in response.response");
+            }
+          }
         }
+        
         // Try to parse responseText if available
-        else if (fullResponse?.responseText) {
+        if ((!responseBody || Object.keys(responseBody).length === 0) && fullResponse?.responseText) {
           try {
-            responseBody = JSON.parse(fullResponse.responseText);
-            console.log("✅ Parsed response from responseText");
+            const parsed = JSON.parse(fullResponse.responseText);
+            const hasPath = parsed.publicUrl || parsed.objectPath || parsed.location || parsed.url;
+            if (hasPath) {
+              responseBody = parsed;
+              console.log("✅ Parsed response from responseText");
+            }
           } catch (e) {
             console.error("❌ Failed to parse responseText:", e);
           }
@@ -351,32 +395,54 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
       });
 
       try {
-        await apiRequest(
+        // Use customerId from response if available, otherwise use the prop
+        const finalCustomerId = responseData.customerId || customerId;
+        const finalTenantId = responseData.tenantId || tenant?.id;
+        
+        console.log("📁 Saving file metadata with:", {
+          customerId: finalCustomerId,
+          tenantId: finalTenantId,
+          fileName: responseData.fileName || responseData.originalFileName || file.name,
+          fileType,
+          mimeType: responseData.mimeType || file.type,
+          fileSize: responseData.fileSize || file.size,
+          objectPath: objectPath,
+        });
+        
+        const saveResponse = await apiRequest(
           "POST",
           "/api/customer-files",
           {
-            customerId: parseInt(customerId),
-            tenantId: tenant?.id,
-            fileName: file.name,
+            customerId: parseInt(finalCustomerId),
+            tenantId: finalTenantId,
+            fileName: responseData.fileName || responseData.originalFileName || file.name,
             fileType,
-            mimeType: file.type,
-            fileSize: file.size,
+            mimeType: responseData.mimeType || file.type,
+            fileSize: responseData.fileSize || file.size,
             objectPath: objectPath,
             uploadedBy: user?.id,
             isPublic: false,
           }
         );
+        
+        const saveResult = await saveResponse.json();
+        console.log("📁 Save file response:", saveResult);
 
         queryClient.invalidateQueries({ queryKey: ["customer-files", customerId, tenant?.id] });
         toast({
           title: "Success",
           description: "File uploaded successfully",
         });
-      } catch (error) {
-        console.error("Error saving file metadata:", error);
+      } catch (error: any) {
+        console.error("❌ Error saving file metadata:", error);
+        console.error("❌ Error details:", {
+          message: error?.message,
+          response: error?.response,
+          status: error?.status,
+        });
         toast({
           title: "Error",
-          description: "Failed to save file metadata",
+          description: error?.message || "Failed to save file metadata",
           variant: "destructive",
         });
       }
@@ -486,6 +552,8 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
               maxNumberOfFiles={10}
               maxFileSize={50 * 1024 * 1024} // 50MB
               endpoint="/api/objects/store"
+              customerId={customerId}
+              tenantId={tenant?.id}
               onComplete={handleUploadComplete}
               buttonClassName="bg-cyan-600 hover:bg-cyan-700 text-white"
             >
@@ -509,6 +577,8 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
               maxNumberOfFiles={10}
               maxFileSize={50 * 1024 * 1024}
               endpoint="/api/objects/store"
+              customerId={customerId}
+              tenantId={tenant?.id}
               onComplete={handleUploadComplete}
               buttonClassName="bg-cyan-600 hover:bg-cyan-700 text-white"
             >

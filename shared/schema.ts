@@ -857,15 +857,55 @@ export const tasks = pgTable("tasks", {
   priority: text("priority").notNull().default("medium"), // low, medium, high, urgent
   type: text("type").notNull().default("general"), // follow_up, call, email, meeting, quote, booking, general
   dueDate: timestamp("due_date").notNull(),
+  endDate: timestamp("end_date"), // End date for task completion window
   completedAt: timestamp("completed_at"),
   assignedTo: text("assigned_to").notNull(), // User full name for display
   assignedToId: integer("assigned_to_id").notNull().references(() => users.id),
+  reportingUserId: integer("reporting_user_id").references(() => users.id), // Reporting manager/supervisor of assigned user
   customerId: integer("customer_id").references(() => customers.id),
   leadId: integer("lead_id").references(() => leads.id),
   tags: json("tags").$type<string[]>().default([]),
   notes: text("notes"),
   estimatedDuration: integer("estimated_duration"), // in minutes
   actualDuration: integer("actual_duration"), // in minutes
+  createdBy: integer("created_by").notNull().references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Business Targets/Goals table for sales and performance tracking
+export const businessTargets = pgTable("business_targets", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+  userId: integer("user_id").references(() => users.id), // null = team/company target
+  targetType: text("target_type").notNull(), // revenue, bookings, leads, customers, tasks_completed
+  targetName: text("target_name").notNull(),
+  targetValue: decimal("target_value", { precision: 15, scale: 2 }).notNull(), // Amount or count
+  currentValue: decimal("current_value", { precision: 15, scale: 2 }).default("0"), // Current achievement
+  periodType: text("period_type").notNull(), // daily, weekly, monthly, quarterly, yearly
+  periodStart: timestamp("period_start").notNull(),
+  periodEnd: timestamp("period_end").notNull(),
+  status: text("status").notNull().default("active"), // active, completed, cancelled
+  createdBy: integer("created_by").notNull().references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Performance Reports table for tracking employee performance
+export const performanceReports = pgTable("performance_reports", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+  userId: integer("user_id").notNull().references(() => users.id),
+  reportPeriod: text("report_period").notNull(), // monthly, quarterly, yearly
+  periodStart: timestamp("period_start").notNull(),
+  periodEnd: timestamp("period_end").notNull(),
+  revenueGenerated: decimal("revenue_generated", { precision: 15, scale: 2 }).default("0"),
+  bookingsCount: integer("bookings_count").default(0),
+  leadsConverted: integer("leads_converted").default(0),
+  tasksCompleted: integer("tasks_completed").default(0),
+  tasksAssigned: integer("tasks_assigned").default(0),
+  customerSatisfactionScore: decimal("customer_satisfaction_score", { precision: 5, scale: 2 }),
+  notes: text("notes"),
   createdBy: integer("created_by").notNull().references(() => users.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),

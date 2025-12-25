@@ -2071,7 +2071,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!code || !state) {
         console.log("Missing OAuth parameters - redirecting to error");
         return res.redirect(
-          "/tenant/email-settings?gmail=error&message=Missing OAuth parameters",
+          "/gmail-settings?gmail=error&message=Missing OAuth parameters",
         );
       }
 
@@ -2086,17 +2086,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (success) {
         console.log("Gmail OAuth successful - redirecting to success");
-        res.redirect("/tenant/email-settings?gmail=connected");
+        res.redirect("/gmail-settings?gmail=connected");
       } else {
         console.log("Gmail OAuth failed - redirecting to error");
         res.redirect(
-          "/tenant/email-settings?gmail=error&message=OAuth callback failed",
+          "/gmail-settings?gmail=error&message=OAuth callback failed",
         );
       }
     } catch (error) {
       console.error("Gmail callback error:", error);
       res.redirect(
-        "/tenant/email-settings?gmail=error&message=OAuth callback error",
+        "/gmail-settings?gmail=error&message=OAuth callback error",
       );
     }
   });
@@ -2995,7 +2995,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Create Facebook service with tenant-specific credentials using SocialServiceFactory
         const tenantFacebookService =
           await SocialServiceFactory.getFacebookService(tenantId);
-        const redirectUri = `${req.protocol}://${req.get("host")}/api/auth/facebook/callback`;
+        const redirectUri = `${req.protocol}://${req.get("host")}/fb/callback`;
 
         const authUrl = tenantFacebookService.getAuthUrl(tenantId, redirectUri);
         res.json({ authUrl });
@@ -3011,8 +3011,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     },
   );
 
-  // Facebook OAuth callback
-  app.get("/api/auth/facebook/callback", async (req, res) => {
+  // Facebook OAuth callback (shortened path for Facebook URL length limits)
+  app.get("/fb/callback", async (req, res) => {
     try {
       const { code, state } = req.query;
       const tenantId = parseInt(state as string);
@@ -3022,20 +3022,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Get tenant-specific Facebook app credentials
-      const integration = await storage.getSocialIntegration(
+      let integration = await storage.getSocialIntegration(
         tenantId,
         "facebook",
       );
+      
+      // If not in database, check .env and auto-create integration
       if (!integration || !integration.appId || !integration.appSecret) {
-        return res.redirect(
-          "/social-integrations?error=facebook_app_not_configured",
-        );
+        const envAppId = process.env.FACEBOOK_APP_ID || process.env.FB_APP_ID;
+        const envAppSecret = process.env.FACEBOOK_APP_SECRET || process.env.FB_APP_SECRET;
+
+        if (envAppId && envAppSecret) {
+          console.log("📝 Auto-creating Facebook integration from .env for tenant:", tenantId);
+          // Auto-create integration from .env values using SocialServiceFactory
+          integration = await SocialServiceFactory.saveSocialIntegration(tenantId, "facebook", {
+            appId: envAppId,
+            appSecret: envAppSecret,
+          });
+          console.log("✅ Facebook integration auto-created from .env");
+        } else {
+          return res.redirect(
+            "/social-integrations?error=facebook_app_not_configured",
+          );
+        }
       }
 
       // Create Facebook service with tenant-specific credentials using SocialServiceFactory
       const tenantFacebookService =
         await SocialServiceFactory.getFacebookService(tenantId);
-      const redirectUri = `${req.protocol}://${req.get("host")}/api/auth/facebook/callback`;
+      const redirectUri = `${req.protocol}://${req.get("host")}/fb/callback`;
 
       // Exchange code for access token
       const tokenData = await tenantFacebookService.exchangeCodeForToken(
