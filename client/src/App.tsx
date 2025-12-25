@@ -32,6 +32,7 @@ import LeadSync from "@/pages/tenant/lead-sync";
 import SocialIntegrations from "@/pages/tenant/social-integrations";
 import UnifiedSocialDashboard from "@/pages/tenant/unified-social-dashboard";
 import FacebookBusinessSuite from "@/pages/tenant/facebook-business-suite";
+import ZoomSettings from "@/pages/tenant/zoom-settings";
 // import LinkedInBusinessSuite from "@/pages/tenant/linkedin-business-suite";
 import EmailCampaigns from "@/pages/tenant/email-campaigns";
 import EmailAutomations from "@/pages/tenant/email-automations";
@@ -40,6 +41,7 @@ import EmailSegments from "@/pages/tenant/email-segments";
 import EmailSettings from "@/pages/tenant/email-settings";
 import EmailTest from "@/pages/tenant/email-test";
 import GmailEmails from "@/pages/tenant/gmail-emails";
+import GmailSettings from "@/pages/tenant/gmail-settings";
 import Settings from "@/pages/tenant/settings";
 import Support from "@/pages/tenant/support";
 import Subscription from "@/pages/tenant/subscription";
@@ -54,7 +56,9 @@ import Invoices from "@/pages/tenant/invoices";
 import InvoiceCreate from "@/pages/tenant/invoice-create";
 import Communications from "@/pages/tenant/communications";
 import Tasks from "@/pages/tenant/tasks";
+import FollowUps from "@/pages/tenant/follow-ups";
 import Shortcuts from "@/pages/tenant/shortcuts";
+import ComingSoon from "@/pages/tenant/coming-soon";
 import Reports from "@/pages/tenant/reports";
 import SaasDashboard from "@/pages/saas/dashboard";
 import LeadAnalytics from "@/pages/tenant/lead-analytics";
@@ -268,6 +272,12 @@ function Router() {
           </ProtectedRoute>
         </Route>
 
+        <Route path="/zoom-settings">
+          <ProtectedRoute>
+            <ZoomSettings />
+          </ProtectedRoute>
+        </Route>
+
         <Route path="/unified-social-dashboard">
           <ProtectedRoute>
             <UnifiedSocialDashboard />
@@ -319,6 +329,12 @@ function Router() {
         <Route path="/gmail-emails">
           <ProtectedRoute>
             <GmailEmails />
+          </ProtectedRoute>
+        </Route>
+
+        <Route path="/gmail-settings">
+          <ProtectedRoute>
+            <GmailSettings />
           </ProtectedRoute>
         </Route>
 
@@ -490,9 +506,21 @@ function Router() {
           </ProtectedRoute>
         </Route>
 
+        <Route path="/follow-ups">
+          <ProtectedRoute>
+            <FollowUps />
+          </ProtectedRoute>
+        </Route>
+
         <Route path="/shortcuts">
           <ProtectedRoute>
             <Shortcuts />
+          </ProtectedRoute>
+        </Route>
+
+        <Route path="/coming-soon/:platform?">
+          <ProtectedRoute>
+            <ComingSoon />
           </ProtectedRoute>
         </Route>
 

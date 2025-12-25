@@ -26,12 +26,12 @@ import {
   Zap,
   ArrowLeft,
   Facebook,
-  Instagram,
   Linkedin,
   Youtube,
   Github,
   Globe,
   Video,
+  Phone,
 } from "lucide-react";
 import { FaGoogle, FaWhatsapp } from "react-icons/fa";
 import { MENU_ITEMS } from "@shared/permissions";
@@ -204,7 +204,7 @@ const WhatsAppIcon = ({ className }: { className?: string }) => (
 // Custom Zoom icon component
 const ZoomIcon = ({ className }: { className?: string }) => (
   <div className={className || 'h-10 w-10 flex items-center justify-center'}>
-    <Video className="h-full w-full" style={{ color: '#2D8CFF' }} />
+    <Phone className="h-full w-full" style={{ color: '#2D8CFF' }} />
   </div>
 );
 
@@ -220,7 +220,7 @@ const TikTokIcon = ({ className }: { className?: string }) => (
 const socialLinks = [
   {
     name: "Gmail",
-    href: "/gmail-emails",
+    href: "/gmail-settings",
     icon: GmailIcon,
     isCustom: true,
   },
@@ -232,22 +232,15 @@ const socialLinks = [
     isCustom: false,
   },
   {
-    name: "Instagram",
-    href: "/social-integrations",
-    icon: Instagram,
-    color: "text-pink-600",
-    isCustom: false,
-  },
-  {
     name: "LinkedIn",
-    href: "/social-integrations",
+    href: "/coming-soon/linkedin",
     icon: Linkedin,
     color: "text-blue-700",
     isCustom: false,
   },
   {
     name: "Twitter",
-    href: "/social-integrations",
+    href: "/coming-soon/twitter",
     icon: TwitterIcon,
     isCustom: true,
   },
@@ -259,13 +252,13 @@ const socialLinks = [
   },
   {
     name: "Zoom",
-    href: "/settings", // Zoom settings are typically in main settings
+    href: "/zoom-settings",
     icon: ZoomIcon,
     isCustom: true,
   },
   {
     name: "TikTok",
-    href: "/social-integrations",
+    href: "/coming-soon/tiktok",
     icon: TikTokIcon,
     isCustom: true,
   },

@@ -31,6 +31,12 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   ChevronRight,
   ChevronLeft,
   ChevronDown,
@@ -111,7 +117,8 @@ import { ZoomPhoneEmbed } from "@/components/zoom/zoom-phone-embed";
 import { CallLogsSection } from "@/components/customer/call-logs-section";
 import { WhatsAppMessageDialog } from "@/components/customer/whatsapp-message-dialog";
 import { ModernTemplate, InvoiceData } from "@/components/invoices/invoice-templates";
-import { CustomerEditForm } from "@/components/forms/customer-edit-form";
+import { EnhancedCustomerForm } from "@/components/customer/enhanced-customer-form";
+import { FaWhatsapp } from "react-icons/fa";
 
 // Consulation Form Types and Constants
 type ConsulationFieldType =
@@ -231,6 +238,86 @@ export default function CustomerDetail() {
   const [isViewInvoiceOpen, setIsViewInvoiceOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
   const [isEditCustomerOpen, setIsEditCustomerOpen] = useState(false);
+  const [formValidationErrors, setFormValidationErrors] = useState<Record<string, string>>({});
+
+  // Customer mutations
+  const createCustomerMutation = useMutation({
+    mutationFn: async (data: any) => {
+      return directCustomersApi.createCustomer(tenant?.id!, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: [`customer-detail-${customerId}`],
+      });
+      toast({
+        title: "Success",
+        description: "Customer created successfully",
+      });
+      setIsEditCustomerOpen(false);
+      setFormValidationErrors({});
+    },
+    onError: (error: any) => {
+      if (error?.validationErrors && Object.keys(error.validationErrors).length > 0) {
+        setFormValidationErrors(error.validationErrors);
+        const errorMessages = Object.values(error.validationErrors).join(", ");
+        toast({
+          title: "Validation Error",
+          description: errorMessages,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Error",
+          description: error?.message || "Failed to create customer",
+          variant: "destructive",
+        });
+        setFormValidationErrors({});
+      }
+    },
+  });
+
+  const updateCustomerMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: number; data: any }) => {
+      return directCustomersApi.updateCustomer(tenant?.id!, id, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: [`customer-detail-${customerId}`],
+      });
+      setIsEditCustomerOpen(false);
+      setFormValidationErrors({});
+      toast({
+        title: "Success",
+        description: "Customer updated successfully",
+      });
+    },
+    onError: (error: any) => {
+      if (error?.validationErrors && Object.keys(error.validationErrors).length > 0) {
+        setFormValidationErrors(error.validationErrors);
+        const errorMessages = Object.values(error.validationErrors).join(", ");
+        toast({
+          title: "Validation Error",
+          description: errorMessages,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Error",
+          description: error?.message || "Failed to update customer",
+          variant: "destructive",
+        });
+        setFormValidationErrors({});
+      }
+    },
+  });
+
+  const onSubmit = (data: any) => {
+    if (customer) {
+      updateCustomerMutation.mutate({ id: customer.id, data });
+    } else {
+      createCustomerMutation.mutate(data);
+    }
+  };
 
   // Helper functions for activity display
   const getActivityIcon = (activityType: number) => {
@@ -2075,7 +2162,7 @@ export default function CustomerDetail() {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => navigate(`/invoice-create/${invoice.id}`)}
+                onClick={() => navigate(`/invoice-create/${invoice.id}?customerId=${customerId}&redirectTo=/customers/${customerId}`)}
                 title="Edit Invoice"
               >
                 <Edit className="h-4 w-4" />
@@ -3275,48 +3362,48 @@ export default function CustomerDetail() {
                     title="Send WhatsApp Message"
                     data-testid="button-send-whatsapp"
                   >
-                    <MessageCircle className="h-4 w-4 mr-2" />
+                    <FaWhatsapp className="h-4 w-4 mr-2" />
                     Send WhatsApp
                   </Button>
                 )}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm" className="bg-white">
+                      <MoreHorizontal className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => setIsConsulationFormOpen(true)}>
+                      <ClipboardList className="h-4 w-4 mr-2" />
+                      Set Consultation Form
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setIsPaymentFormOpen(true)}>
+                      <CreditCard className="h-4 w-4 mr-2" />
+                      Set Payment Form
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => setShowSendFormOptions(true)}
+                      disabled={isSendingConsulationForm || !canSendConsulationForm}
+                      title={
+                        canSendConsulationForm
+                          ? "Send form via email, WhatsApp, or both"
+                          : "Customer needs an email or phone number"
+                      }
+                    >
+                      {isSendingConsulationForm ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Send className="h-4 w-4 mr-2" />
+                      )}
+                      Send Form
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 <Button 
                   variant="outline" 
                   size="sm"
-                  onClick={() => setIsConsulationFormOpen(true)}
-                  className="bg-white"
+                  onClick={() => setIsEditCustomerOpen(true)}
                 >
-                  <ClipboardList className="h-4 w-4 mr-2" />
-                  Set Consulation Form
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setIsPaymentFormOpen(true)}
-                  className="bg-white"
-                >
-                  <CreditCard className="h-4 w-4 mr-2" />
-                  Set Payment Form
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="flex items-center"
-                  onClick={() => setShowSendFormOptions(true)}
-                  disabled={isSendingConsulationForm || !canSendConsulationForm}
-                  title={
-                    canSendConsulationForm
-                      ? "Send form via email, WhatsApp, or both"
-                      : "Customer needs an email or phone number"
-                  }
-                >
-                  {isSendingConsulationForm ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <ClipboardList className="h-4 w-4 mr-2" />
-                  )}
-                  Send Form
-                </Button>
-                <Button variant="outline" size="sm">
                   <Settings className="h-4 w-4 mr-2" />
                   Edit
                 </Button>
@@ -3515,7 +3602,7 @@ export default function CustomerDetail() {
                     {activeTab === "invoice" && (
                       <Button
                         size="sm"
-                        onClick={() => navigate(`/invoice-create?customerId=${customerId}`)}
+                        onClick={() => navigate(`/invoice-create?customerId=${customerId}&redirectTo=/customers/${customerId}`)}
                         className="bg-cyan-600 hover:bg-cyan-700"
                         data-testid="button-create-invoice"
                       >
@@ -4062,6 +4149,12 @@ export default function CustomerDetail() {
         consulationStorageKey={consulationStorageKey}
         onDefaultValuesChange={setConsulationDefaultValues}
         formType="consulation"
+        onSaveAndSend={() => {
+          setIsConsulationFormOpen(false);
+          setSelectedFormType('consulation');
+          setShowSendFormOptions(true);
+        }}
+        canSendForm={canSendConsulationForm}
       />
 
       {/* Payment Form Dialog */}
@@ -4076,6 +4169,12 @@ export default function CustomerDetail() {
         consulationStorageKey={paymentStorageKey}
         onDefaultValuesChange={setPaymentDefaultValues}
         formType="payment"
+        onSaveAndSend={() => {
+          setIsPaymentFormOpen(false);
+          setSelectedFormType('payment');
+          setShowSendFormOptions(true);
+        }}
+        canSendForm={canSendConsulationForm}
       />
 
       {/* Image Viewing Dialog for Submission Images */}
@@ -4187,27 +4286,33 @@ export default function CustomerDetail() {
       </Dialog>
 
       {/* Customer Edit Dialog */}
-      <Dialog open={isEditCustomerOpen} onOpenChange={setIsEditCustomerOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <Dialog open={isEditCustomerOpen} onOpenChange={(open) => {
+        setIsEditCustomerOpen(open);
+        if (!open) {
+          setFormValidationErrors({}); // Clear errors when dialog closes
+        }
+      }}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Edit Customer</DialogTitle>
             <DialogDescription>
-              Update customer information below.
+              Update the customer information below.
             </DialogDescription>
           </DialogHeader>
           {customer && (
-            <CustomerEditForm
+            <EnhancedCustomerForm
               customer={customer}
-              tenantId={tenant?.id?.toString() || ""}
-              onSuccess={() => {
+              tenantId={tenant?.id!}
+              onSubmit={onSubmit}
+              onCancel={() => {
                 setIsEditCustomerOpen(false);
-                queryClient.invalidateQueries({ queryKey: [`customer-detail-${customerId}`] });
-                toast({
-                  title: "Success",
-                  description: "Customer updated successfully",
-                });
+                setFormValidationErrors({}); // Clear errors when dialog closes
               }}
-              onCancel={() => setIsEditCustomerOpen(false)}
+              isLoading={
+                createCustomerMutation.isPending ||
+                updateCustomerMutation.isPending
+              }
+              serverErrors={formValidationErrors}
             />
           )}
         </DialogContent>
@@ -4228,6 +4333,8 @@ interface ConsulationFormDialogProps {
   consulationStorageKey?: string | null;
   onDefaultValuesChange?: (values: Record<string, string>) => void;
   formType?: "consulation" | "payment";
+  onSaveAndSend?: () => void;
+  canSendForm?: boolean;
 }
 
 function ConsulationFormDialog({
@@ -4241,6 +4348,8 @@ function ConsulationFormDialog({
   consulationStorageKey,
   onDefaultValuesChange,
   formType = "consulation",
+  onSaveAndSend,
+  canSendForm = false,
 }: ConsulationFormDialogProps) {
   const { toast } = useToast();
   const [newFieldLabel, setNewFieldLabel] = useState("");
@@ -5086,7 +5195,7 @@ function ConsulationFormDialog({
     }
   };
 
-  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>, shouldSendAfterSave = false) => {
     event.preventDefault();
     if (fields.length === 0) {
       toast({
@@ -5113,7 +5222,13 @@ function ConsulationFormDialog({
       description:
         `Your ${formType === "payment" ? "payment" : "consulation"} form layout has been saved successfully.`,
     });
-    onOpenChange(false);
+    
+    // If shouldSendAfterSave is true, don't close the dialog yet - let onSaveAndSend handle it
+    if (!shouldSendAfterSave) {
+      onOpenChange(false);
+    } else {
+      // For save & send, we'll close after the save completes
+    }
 
     // Process save in background (fire and forget)
     (async () => {
@@ -5271,6 +5386,14 @@ function ConsulationFormDialog({
           }
         } else {
           throw new Error(data?.message || "Failed to save form");
+        }
+        
+        // If shouldSendAfterSave is true, trigger the send form dialog after save completes
+        if (shouldSendAfterSave && onSaveAndSend) {
+          // Small delay to ensure state is updated and dialog closes
+          setTimeout(() => {
+            onSaveAndSend();
+          }, 300);
         }
       } catch (error: any) {
         console.error("Error saving consulation form in background:", error);
@@ -6194,7 +6317,7 @@ function ConsulationFormDialog({
                   </CardTitle>
               </CardHeader>
               <CardContent>
-                <form className="grid grid-cols-1 md:grid-cols-2 gap-6" onSubmit={handleSubmit}>
+                <form className="grid grid-cols-1 md:grid-cols-2 gap-6" onSubmit={(e) => handleSubmit(e, false)}>
                   {fields.length === 0 ? (
                     <p className="text-sm text-gray-500">
                       Add fields on the left to preview the consulation form.
@@ -6354,7 +6477,7 @@ function ConsulationFormDialog({
                               Click image names to view. These are default values that will be pre-filled in the form.
                             </p>
                           </div>
-                        ) : field.type === "file" && (defaultFileUrls[field.id]?.length > 0 || defaultFileFiles[field.id]?.length > 0) ? (
+                        ) : (field.type === "file" && (defaultFileUrls[field.id]?.length > 0 || defaultFileFiles[field.id]?.length > 0) ? (
                           <div className="space-y-2">
                             <div className="text-sm text-gray-600 font-medium">
                               Default Files ({(defaultFileUrls[field.id]?.length || 0) + (defaultFileFiles[field.id]?.length || 0)}):
@@ -6488,17 +6611,44 @@ function ConsulationFormDialog({
                           </div>
                         ) : (
                           renderFieldInput(field)
-                        )}
+                        ))}
                       </div>
                     ))
                   )}
-                  <Button
-                    type="submit"
-                    className="w-full"
-                    disabled={fields.length === 0}
-                  >
-                    Save {formType === "payment" ? "Payment" : "Consulation"} Form
-                  </Button>
+                  <div className="flex gap-2 md:col-span-2">
+                    <Button
+                      type="submit"
+                      variant="outline"
+                      className="flex-1"
+                      disabled={fields.length === 0}
+                    >
+                      Save {formType === "payment" ? "Payment" : "Consulation"} Form
+                    </Button>
+                    {onSaveAndSend && (
+                      <Button
+                        type="button"
+                        className="flex-1"
+                        disabled={fields.length === 0 || !canSendForm}
+                        onClick={async (e) => {
+                          e.preventDefault();
+                          const form = e.currentTarget.closest('form');
+                          if (form) {
+                            // Create a synthetic form event
+                            const syntheticEvent = {
+                              preventDefault: () => {},
+                              currentTarget: form,
+                              target: form,
+                            } as React.FormEvent<HTMLFormElement>;
+                            await handleSubmit(syntheticEvent, true);
+                          }
+                        }}
+                        title={!canSendForm ? "Customer needs an email or phone number to send form" : undefined}
+                      >
+                        <Send className="h-4 w-4 mr-2" />
+                        Save & Send
+                      </Button>
+                    )}
+                  </div>
                 </form>
               </CardContent>
             </Card>

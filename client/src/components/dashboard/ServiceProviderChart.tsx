@@ -39,11 +39,13 @@ export function ServiceProviderChart() {
     const topTen = list.slice(0, 10);
     const otherList = list.slice(10);
     const otherValue = otherList.reduce((sum, item) => sum + item.value, 0);
+    const otherCount = otherList.reduce((sum, item) => sum + (item.count || 0), 0);
 
     return [
       ...topTen,
       {
         name: "Other",
+        count: otherCount,
         value: Number(otherValue.toFixed(2)),
         color: "#D1D5DB",
       },
@@ -88,6 +90,7 @@ export function ServiceProviderChart() {
 
     const mapped = sorted.map((item, index) => ({
       name: item.name,
+      count: item.count,
       value: Number(((item.count / total) * 100).toFixed(2)),
       color: colors[index % colors.length],
     }));
@@ -99,9 +102,9 @@ export function ServiceProviderChart() {
   const dummyHover = ["#6C63FF", "#A393FF", "#9A8CFF"];
 
   const dummyData = [
-    { name: "Category 0", value: 40 },
-    { name: "Category 1", value: 30 },
-    { name: "Category 2", value: 30 },
+    { name: "Category 0", value: 40, count: 0 },
+    { name: "Category 1", value: 30, count: 0 },
+    { name: "Category 2", value: 30, count: 0 },
   ];
 
   const usingDummy = providerData.length === 0;
@@ -122,7 +125,7 @@ export function ServiceProviderChart() {
       return (
         <div className="bg-white shadow-lg rounded-md px-3 py-2 text-xs border border-gray-200">
           <p className="font-semibold">{item.name}</p>
-          <p>{item.value}%</p>
+          <p>{usingDummy ? "0" : (item.count?.toLocaleString() || "0")} bookings</p>
         </div>
       );
     }
@@ -234,7 +237,7 @@ export function ServiceProviderChart() {
                   ></div>
                   <div>
                     <p className="font-medium">{item.name}</p>
-                   <p className="text-gray-500">{usingDummy ? "0%" : `${item.value}%`}</p>
+                   <p className="text-gray-500">{usingDummy ? "0" : (item.count?.toLocaleString() || "0")} bookings</p>
                   </div>
                 </div>
               ))}

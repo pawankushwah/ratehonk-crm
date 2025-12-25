@@ -63,7 +63,22 @@ function groupInvoicesByDate(invoices: any[]) {
     if (!d) return;
 
     const key = formatYMDLocal(d);
-    map[key] = (map[key] || 0) + Number(inv.totalAmount || 0);
+    // Use paidAmount instead of totalAmount to only count actual revenue received
+    // For partially paid invoices, use the paid amount; for fully paid, use totalAmount
+    const paidAmount = Number(inv.paidAmount || inv.paid_amount || 0);
+    const totalAmount = Number(inv.totalAmount || 0);
+    const status = (inv.status || '').toLowerCase();
+    
+    // Only count revenue from paid invoices or partially paid invoices (use paid amount)
+    let revenue = 0;
+    if (status === 'paid') {
+      revenue = totalAmount; // Fully paid invoice
+    } else if (status === 'partially_paid' || status === 'partial' || paidAmount > 0) {
+      revenue = paidAmount; // Partially paid invoice - only count what's been paid
+    }
+    // Don't count pending, overdue, or draft invoices as revenue
+    
+    map[key] = (map[key] || 0) + revenue;
   });
   return map;
 }
