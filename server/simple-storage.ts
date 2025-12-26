@@ -78,6 +78,16 @@ export class SimpleStorage {
     }
   }
 
+  async getAllTenants() {
+    try {
+      const tenants = await sql`SELECT * FROM tenants ORDER BY created_at DESC`;
+      return tenants;
+    } catch (error) {
+      console.error("Error getting all tenants:", error);
+      throw error;
+    }
+  }
+
   async createTenant(tenant: any) {
     try {
       const [newTenant] = await sql`

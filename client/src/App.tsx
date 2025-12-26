@@ -5,6 +5,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/components/auth/auth-provider";
+import { SaasAuthProvider, useSaasAuth } from "@/components/auth/saas-auth-provider";
 import { FloatingWhatsAppButton } from "@/components/whatsapp/floating-whatsapp-button";
 import { FloatingZoomButton } from "@/components/zoom/floating-zoom-button";
 // Basic page imports
@@ -61,6 +62,14 @@ import Shortcuts from "@/pages/tenant/shortcuts";
 import ComingSoon from "@/pages/tenant/coming-soon";
 import Reports from "@/pages/tenant/reports";
 import SaasDashboard from "@/pages/saas/dashboard";
+import SaasLogin from "@/pages/saas/login";
+import SaasTenants from "@/pages/saas/tenants";
+import SaasPlans from "@/pages/saas/plans";
+import SaasSubscriptions from "@/pages/saas/subscriptions";
+import SaasBilling from "@/pages/saas/billing";
+import SaasAnalytics from "@/pages/saas/analytics";
+import SaasReports from "@/pages/saas/reports";
+import SaasSettings from "@/pages/saas/settings";
 import LeadAnalytics from "@/pages/tenant/lead-analytics";
 import AutomationWorkflows from "@/pages/tenant/automation-workflows";
 import BookingRecommendations from "@/pages/tenant/booking-recommendations";
@@ -116,7 +125,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 }
 
 function PublicRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, loading } = useAuth();
+  const { isAuthenticated, loading, user } = useAuth();
   const [location] = useLocation();
 
   if (loading) {
@@ -130,8 +139,64 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
   // Allow login component to handle its own navigation flow
   // Don't auto-redirect if we're on the login or register page and authenticated
   // This allows the login/register pages to handle their own redirects (e.g., to /dashboard)
-  if (isAuthenticated && location !== "/login" && location !== "/register") {
+  if (isAuthenticated && location !== "/login" && location !== "/register" && location !== "/saas/login") {
+    // Redirect SaaS owners to SaaS dashboard, others to tenant dashboard
+    if (user?.role === "saas_owner") {
+      return <Redirect to="/saas/dashboard" />;
+    }
     return <Redirect to="/dashboard" />;
+  }
+
+  return <>{children}</>;
+}
+
+function RootRedirect() {
+  const { user } = useAuth();
+  const { user: saasUser } = useSaasAuth();
+  
+  // Redirect SaaS owners to SaaS dashboard, others to tenant dashboard
+  if (saasUser) {
+    return <Redirect to="/saas/dashboard" />;
+  }
+  if (user?.role === "saas_owner") {
+    return <Redirect to="/saas/dashboard" />;
+  }
+  return <Redirect to="/dashboard" />;
+}
+
+function SaasProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, loading } = useSaasAuth();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <Redirect to="/saas/login" />;
+  }
+
+  return <>{children}</>;
+}
+
+function SaasPublicRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, loading } = useSaasAuth();
+  const [location] = useLocation();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
+  // Redirect if already authenticated
+  if (isAuthenticated && location === "/saas/login") {
+    return <Redirect to="/saas/dashboard" />;
   }
 
   return <>{children}</>;
@@ -193,7 +258,7 @@ function Router() {
         {/* Protected routes */}
         <Route path="/">
           <ProtectedRoute>
-            <Redirect to="/dashboard" />
+            <RootRedirect />
           </ProtectedRoute>
         </Route>
 
@@ -651,22 +716,58 @@ function Router() {
         </Route>
 
         {/* SaaS Owner routes */}
+        <Route path="/saas/login">
+          <SaasPublicRoute>
+            <SaasLogin />
+          </SaasPublicRoute>
+        </Route>
+
         <Route path="/saas/dashboard">
-          <ProtectedRoute>
+          <SaasProtectedRoute>
             <SaasDashboard />
-          </ProtectedRoute>
+          </SaasProtectedRoute>
         </Route>
 
         <Route path="/saas/tenants">
-          <ProtectedRoute>
-            <SaasDashboard />
-          </ProtectedRoute>
+          <SaasProtectedRoute>
+            <SaasTenants />
+          </SaasProtectedRoute>
         </Route>
 
         <Route path="/saas/plans">
-          <ProtectedRoute>
-            <SaasDashboard />
-          </ProtectedRoute>
+          <SaasProtectedRoute>
+            <SaasPlans />
+          </SaasProtectedRoute>
+        </Route>
+
+        <Route path="/saas/subscriptions">
+          <SaasProtectedRoute>
+            <SaasSubscriptions />
+          </SaasProtectedRoute>
+        </Route>
+
+        <Route path="/saas/billing">
+          <SaasProtectedRoute>
+            <SaasBilling />
+          </SaasProtectedRoute>
+        </Route>
+
+        <Route path="/saas/analytics">
+          <SaasProtectedRoute>
+            <SaasAnalytics />
+          </SaasProtectedRoute>
+        </Route>
+
+        <Route path="/saas/reports">
+          <SaasProtectedRoute>
+            <SaasReports />
+          </SaasProtectedRoute>
+        </Route>
+
+        <Route path="/saas/settings">
+          <SaasProtectedRoute>
+            <SaasSettings />
+          </SaasProtectedRoute>
         </Route>
 
         {/* Fallback routes */}
@@ -698,9 +799,11 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <AuthProvider>
-          <Toaster />
-          <AuthenticatedFloatingButtons />
-          <Router />
+          <SaasAuthProvider>
+            <Toaster />
+            <AuthenticatedFloatingButtons />
+            <Router />
+          </SaasAuthProvider>
         </AuthProvider>
       </TooltipProvider>
     </QueryClientProvider>
