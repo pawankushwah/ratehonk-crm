@@ -28028,6 +28028,411 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
     },
   );
 
+  // ========================================
+  // SaaS OWNER ADMIN PANEL API ROUTES
+  // ========================================
+
+  // SaaS Dashboard Stats
+  // ========================================
+  // SaaS OWNER AUTHENTICATION API
+  // ========================================
+
+  // SaaS Owner Login (separate from tenant login)
+  app.post("/api/saas/auth/login", async (req, res) => {
+    try {
+      console.log("SaaS login attempt for:", req.body.email);
+      const { email, password } = req.body;
+
+      if (!email || !password) {
+        return res
+          .status(400)
+          .json({ message: "Email and password are required" });
+      }
+
+      // Find user
+      const user = await simpleStorage.getUserByEmail(email);
+
+      if (!user) {
+        return res.status(401).json({ message: "Invalid credentials" });
+      }
+
+      // Only allow SaaS owners to login through this endpoint
+      if (user.role !== "saas_owner") {
+        return res.status(403).json({ message: "Access denied. This login is for SaaS owners only." });
+      }
+
+      // Check password
+      if (!password || !user.password) {
+        return res.status(401).json({ message: "Invalid credentials" });
+      }
+
+      const passwordValid = await bcrypt.compare(
+        String(password),
+        String(user.password),
+      );
+
+      if (!passwordValid) {
+        return res.status(401).json({ message: "Invalid credentials" });
+      }
+
+      // Generate JWT token
+      const token = jwt.sign({ userId: user.id, role: "saas_owner" }, JWT_SECRET);
+
+      console.log("SaaS login successful for user:", user.email);
+      res.json({
+        user: {
+          id: user.id,
+          email: user.email,
+          role: user.role,
+          firstName: user.first_name || "",
+          lastName: user.last_name || "",
+          isActive: user.is_active,
+        },
+        token,
+      });
+    } catch (error: any) {
+      console.error("SaaS login error:", error);
+      res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+  });
+
+  // SaaS Owner Token Verification Middleware
+  const authenticateSaasToken = async (req: any, res: any, next: any) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return res.status(401).json({ message: "No token provided" });
+      }
+
+      const token = authHeader.substring(7);
+      const decoded = jwt.verify(token, JWT_SECRET) as any;
+
+      // Verify user is SaaS owner
+      const user = await simpleStorage.getUser(decoded.userId);
+      if (!user || user.role !== "saas_owner") {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      req.user = user;
+      next();
+    } catch (error) {
+      return res.status(401).json({ message: "Invalid token" });
+    }
+  };
+
+  // SaaS Dashboard Analytics API
+  app.get("/api/saas/dashboard", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const { period, startDate, endDate } = req.query;
+      
+      // Get all tenants
+      const tenants = await simpleStorage.getAllTenants();
+      const activeTenants = tenants.filter((t: any) => t.is_active);
+      
+      // Get all subscriptions
+      const subscriptions = await sql`
+        SELECT ts.*, t.company_name as tenant_name, sp.name as plan_name, sp.monthly_price, sp.yearly_price
+        FROM tenant_subscriptions ts
+        LEFT JOIN tenants t ON ts.tenant_id = t.id
+        LEFT JOIN subscription_plans sp ON ts.plan_id = sp.id
+        ORDER BY ts.created_at DESC
+      `;
+
+      const activeTrials = subscriptions.filter((s: any) => s.status === "trial");
+      const activeSubscriptions = subscriptions.filter((s: any) => s.status === "active");
+      
+      // Calculate monthly recurring revenue (MRR)
+      let monthlyRevenue = 0;
+      activeSubscriptions.forEach((sub: any) => {
+        const planPrice = sub.billing_cycle === "yearly" 
+          ? parseFloat(sub.yearly_price || 0) / 12
+          : parseFloat(sub.monthly_price || 0);
+        monthlyRevenue += planPrice;
+      });
+
+      // Calculate annual recurring revenue (ARR)
+      const arrSubscriptions = subscriptions.filter((s: any) => s.status === "active" && s.billing_cycle === "yearly");
+      let annualRevenue = 0;
+      arrSubscriptions.forEach((sub: any) => {
+        annualRevenue += parseFloat(sub.yearly_price || 0);
+      });
+
+      // Tenant growth over time (last 6 months)
+      const tenantGrowth = await sql`
+        SELECT 
+          TO_CHAR(created_at, 'Mon YYYY') AS month,
+          COUNT(*) as new_tenants
+        FROM tenants
+        WHERE created_at >= NOW() - INTERVAL '6 months'
+        GROUP BY TO_CHAR(created_at, 'Mon YYYY'), DATE_TRUNC('month', created_at)
+        ORDER BY DATE_TRUNC('month', created_at)
+      `;
+
+      // Revenue trend over time (last 6 months)
+      const revenueTrend = await sql`
+        SELECT 
+          TO_CHAR(ts.created_at, 'Mon YYYY') AS month,
+          COUNT(DISTINCT ts.id) as subscriptions,
+          COALESCE(SUM(
+            CASE 
+              WHEN ts.billing_cycle = 'yearly' THEN sp.yearly_price / 12
+              ELSE sp.monthly_price
+            END
+          ), 0) as mrr
+        FROM tenant_subscriptions ts
+        LEFT JOIN subscription_plans sp ON ts.plan_id = sp.id
+        WHERE ts.status = 'active' 
+          AND ts.created_at >= NOW() - INTERVAL '6 months'
+        GROUP BY TO_CHAR(ts.created_at, 'Mon YYYY'), DATE_TRUNC('month', ts.created_at)
+        ORDER BY DATE_TRUNC('month', ts.created_at)
+      `;
+
+      // Subscription status breakdown
+      const statusBreakdown = await sql`
+        SELECT 
+          status,
+          COUNT(*) as count
+        FROM tenant_subscriptions
+        GROUP BY status
+      `;
+
+      // Plan distribution
+      const planDistribution = await sql`
+        SELECT 
+          sp.name as plan_name,
+          COUNT(ts.id) as subscription_count,
+          SUM(CASE WHEN ts.billing_cycle = 'yearly' THEN sp.yearly_price / 12 ELSE sp.monthly_price END) as mrr
+        FROM subscription_plans sp
+        LEFT JOIN tenant_subscriptions ts ON sp.id = ts.plan_id AND ts.status = 'active'
+        WHERE sp.is_active = true
+        GROUP BY sp.id, sp.name
+        ORDER BY subscription_count DESC
+      `;
+
+      // Calculate growth rate (month over month tenant growth)
+      let growthRate = 0;
+      if (tenantGrowth.length >= 2) {
+        const currentMonth = parseInt(tenantGrowth[tenantGrowth.length - 1].new_tenants);
+        const previousMonth = parseInt(tenantGrowth[tenantGrowth.length - 2].new_tenants);
+        if (previousMonth > 0) {
+          growthRate = ((currentMonth - previousMonth) / previousMonth) * 100;
+        }
+      }
+
+      res.json({
+        metrics: {
+          totalTenants: tenants.length,
+          activeTenants: activeTenants.length,
+          monthlyRevenue: Math.round(monthlyRevenue * 100) / 100,
+          annualRevenue: Math.round(annualRevenue * 100) / 100,
+          activeTrials: activeTrials.length,
+          activeSubscriptions: activeSubscriptions.length,
+          growthRate: Math.round(growthRate * 100) / 100,
+        },
+        charts: {
+          tenantGrowth: tenantGrowth.map((t: any) => ({
+            month: t.month,
+            tenants: parseInt(t.new_tenants),
+          })),
+          revenueTrend: revenueTrend.map((r: any) => ({
+            month: r.month,
+            mrr: parseFloat(r.mrr || 0),
+            subscriptions: parseInt(r.subscriptions),
+          })),
+          statusBreakdown: statusBreakdown.map((s: any) => ({
+            status: s.status,
+            count: parseInt(s.count),
+          })),
+          planDistribution: planDistribution.map((p: any) => ({
+            planName: p.plan_name,
+            subscriptions: parseInt(p.subscription_count || 0),
+            mrr: parseFloat(p.mrr || 0),
+          })),
+        },
+        recentTenants: tenants.slice(0, 5).map((t: any) => ({
+          id: t.id,
+          companyName: t.company_name,
+          contactEmail: t.contact_email,
+          isActive: t.is_active,
+          createdAt: t.created_at,
+        })),
+      });
+    } catch (error: any) {
+      console.error("SaaS dashboard error:", error);
+      res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+  });
+
+  // Update SaaS tenants endpoint to use SaaS auth
+  app.get("/api/saas/tenants", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const tenants = await simpleStorage.getAllTenants();
+      res.json(tenants);
+    } catch (error: any) {
+      console.error("Get tenants error:", error);
+      res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+  });
+
+  // Update SaaS tenant create/update/delete endpoints to use SaaS auth
+  app.post("/api/saas/tenants", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const tenant = await simpleStorage.createTenant({
+        companyName: req.body.companyName,
+        subdomain: req.body.subdomain,
+        contactEmail: req.body.contactEmail,
+        contactPhone: req.body.contactPhone,
+        address: req.body.address,
+        isActive: req.body.isActive !== false,
+      });
+
+      res.status(201).json(tenant);
+    } catch (error: any) {
+      console.error("Create tenant error:", error);
+      res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+  });
+
+  app.put("/api/saas/tenants/:tenantId", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId);
+      const tenant = await simpleStorage.updateTenant(tenantId, {
+        company_name: req.body.companyName,
+        subdomain: req.body.subdomain,
+        contact_email: req.body.contactEmail,
+        contact_phone: req.body.contactPhone,
+        address: req.body.address,
+        is_active: req.body.isActive,
+      });
+
+      res.json(tenant);
+    } catch (error: any) {
+      console.error("Update tenant error:", error);
+      res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+  });
+
+  app.delete("/api/saas/tenants/:tenantId", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId);
+      await sql`DELETE FROM tenants WHERE id = ${tenantId}`;
+      
+      res.json({ message: "Tenant deleted successfully" });
+    } catch (error: any) {
+      console.error("Delete tenant error:", error);
+      res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+  });
+
+  // Update SaaS subscriptions endpoint to use SaaS auth
+  app.get("/api/saas/subscriptions", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const subscriptions = await sql`
+        SELECT 
+          ts.*,
+          t.company_name as tenant_name,
+          sp.name as plan_name,
+          sp.monthly_price,
+          sp.yearly_price
+        FROM tenant_subscriptions ts
+        LEFT JOIN tenants t ON ts.tenant_id = t.id
+        LEFT JOIN subscription_plans sp ON ts.plan_id = sp.id
+        ORDER BY ts.created_at DESC
+      `;
+
+      res.json(subscriptions);
+    } catch (error: any) {
+      console.error("Get subscriptions error:", error);
+      res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+  });
+
+  app.post("/api/saas/subscriptions", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const { tenantId, planId, status, billingCycle, paymentGateway } = req.body;
+      
+      // Calculate period dates
+      const currentPeriodStart = new Date();
+      const currentPeriodEnd = new Date();
+      if (billingCycle === "yearly") {
+        currentPeriodEnd.setFullYear(currentPeriodEnd.getFullYear() + 1);
+      } else {
+        currentPeriodEnd.setMonth(currentPeriodEnd.getMonth() + 1);
+      }
+
+      const subscription = await simpleStorage.createTenantSubscription({
+        tenantId,
+        planId,
+        status: status || "trial",
+        billingCycle: billingCycle || "monthly",
+        paymentGateway: paymentGateway || "stripe",
+        currentPeriodStart,
+        currentPeriodEnd,
+        nextBillingDate: currentPeriodEnd,
+        trialEndsAt: status === "trial" ? currentPeriodEnd : null,
+      });
+
+      res.status(201).json(subscription);
+    } catch (error: any) {
+      console.error("Create subscription error:", error);
+      res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+  });
+
+  app.put("/api/saas/subscriptions/:subscriptionId", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const subscriptionId = parseInt(req.params.subscriptionId);
+      const subscription = await simpleStorage.updateTenantSubscription(subscriptionId, req.body);
+
+      res.json(subscription);
+    } catch (error: any) {
+      console.error("Update subscription error:", error);
+      res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+  });
+
+  // Update SaaS plans endpoints to use SaaS auth
+  app.post("/api/saas/plans", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const [plan] = await sql`
+        INSERT INTO subscription_plans (name, description, monthly_price, yearly_price, max_users, max_customers, features, is_active)
+        VALUES (${req.body.name}, ${req.body.description || null}, ${req.body.monthlyPrice}, 
+                ${req.body.yearlyPrice}, ${req.body.maxUsers}, ${req.body.maxCustomers}, 
+                ${JSON.stringify(req.body.features || [])}, ${req.body.isActive !== false})
+        RETURNING *
+      `;
+
+      res.status(201).json(plan);
+    } catch (error: any) {
+      console.error("Create plan error:", error);
+      res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+  });
+
+  app.put("/api/saas/plans/:planId", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const planId = parseInt(req.params.planId);
+      const [plan] = await sql`
+        UPDATE subscription_plans
+        SET name = ${req.body.name},
+            description = ${req.body.description || null},
+            monthly_price = ${req.body.monthlyPrice},
+            yearly_price = ${req.body.yearlyPrice},
+            max_users = ${req.body.maxUsers},
+            max_customers = ${req.body.maxCustomers},
+            features = ${JSON.stringify(req.body.features || [])},
+            is_active = ${req.body.isActive !== false}
+        WHERE id = ${planId}
+        RETURNING *
+      `;
+
+      res.json(plan);
+    } catch (error: any) {
+      console.error("Update plan error:", error);
+      res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+  });
+
   return createServer(app);
 }
 
