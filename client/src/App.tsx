@@ -44,6 +44,8 @@ import EmailTest from "@/pages/tenant/email-test";
 import GmailEmails from "@/pages/tenant/gmail-emails";
 import GmailSettings from "@/pages/tenant/gmail-settings";
 import Settings from "@/pages/tenant/settings";
+import ConsultationFormsPage from "@/pages/tenant/consultation-forms";
+import PaymentsPage from "@/pages/tenant/payments";
 import Support from "@/pages/tenant/support";
 import Subscription from "@/pages/tenant/subscription";
 import Bookings from "@/pages/tenant/bookings";
@@ -65,6 +67,7 @@ import SaasDashboard from "@/pages/saas/dashboard";
 import SaasLogin from "@/pages/saas/login";
 import SaasTenants from "@/pages/saas/tenants";
 import SaasPlans from "@/pages/saas/plans";
+import SaasPlanForm from "@/pages/saas/plan-form";
 import SaasSubscriptions from "@/pages/saas/subscriptions";
 import SaasBilling from "@/pages/saas/billing";
 import SaasAnalytics from "@/pages/saas/analytics";
@@ -403,6 +406,18 @@ function Router() {
           </ProtectedRoute>
         </Route>
 
+        <Route path="/consultation-forms">
+          <ProtectedRoute>
+            <ConsultationFormsPage />
+          </ProtectedRoute>
+        </Route>
+
+        <Route path="/payments">
+          <ProtectedRoute>
+            <PaymentsPage />
+          </ProtectedRoute>
+        </Route>
+
         <Route path="/bookings/create">
           <ProtectedRoute>
             <BookingCreate />
@@ -737,6 +752,18 @@ function Router() {
         <Route path="/saas/plans">
           <SaasProtectedRoute>
             <SaasPlans />
+          </SaasProtectedRoute>
+        </Route>
+
+        <Route path="/saas/plans/:planId">
+          <SaasProtectedRoute>
+            <SaasPlanForm />
+          </SaasProtectedRoute>
+        </Route>
+
+        <Route path="/saas/plans/new">
+          <SaasProtectedRoute>
+            <SaasPlanForm />
           </SaasProtectedRoute>
         </Route>
 

@@ -165,6 +165,20 @@ const DASHBOARD_COMPONENTS: Omit<DashboardComponent, 'isVisible' | 'hasPermissio
     permissionKey: "dashboard.sidebar-contacts"
   },
   {
+    key: "dashboard.sidebar-consultation-forms",
+    label: "Sidebar - Consultation Forms",
+    description: "Consultation forms sent list in sidebar",
+    icon: FileText,
+    permissionKey: "dashboard.sidebar-consultation-forms"
+  },
+  {
+    key: "dashboard.sidebar-payments",
+    label: "Sidebar - Payments",
+    description: "Payments list in sidebar",
+    icon: CreditCard,
+    permissionKey: "dashboard.sidebar-payments"
+  },
+  {
     key: "shortcuts",
     label: "Shortcuts Section",
     description: "Quick shortcuts navigation",

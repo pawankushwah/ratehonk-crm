@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useDebounce } from "@/hooks/use-debounce";
+import { SubscriptionGuard } from "@/components/subscription/SubscriptionGuard";
 import { Layout } from "@/components/layout/layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -702,8 +703,9 @@ export default function Customers() {
   const totalPages = Math.ceil(totalItems / itemsPerPage);
 
   return (
-    <Layout>
-      <div className="flex-1 bg-[#F6F6F6] p-1 mt-0">
+    <SubscriptionGuard requiredMenuItem="customers">
+      <Layout>
+        <div className="flex-1 bg-[#F6F6F6] p-1 mt-0">
         {/* Main Card Container */}
         <div className=" rounded-lg shadow-sm mx-2 my-2">
           {/* Header */}
@@ -1387,5 +1389,6 @@ export default function Customers() {
         </DialogContent>
       </Dialog>
     </Layout>
+    </SubscriptionGuard>
   );
 }

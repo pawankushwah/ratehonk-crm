@@ -52,20 +52,22 @@ export function FollowUpList({
   if (isLoading) {
     return (
       <div className="space-y-2">
-        {showAddButton && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full"
-            onClick={() => setCreateDialogOpen(true)}
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            Add Follow-Up
-          </Button>
-        )}
         <div className="text-xs text-gray-400 text-center py-4">
           Loading follow-ups...
         </div>
+        {showAddButton && (
+          <div className="flex justify-end mt-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 w-8 p-0 rounded-full"
+              onClick={() => setCreateDialogOpen(true)}
+              title="Add Follow-Up"
+            >
+              <Plus className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
       </div>
     );
   }
@@ -73,18 +75,6 @@ export function FollowUpList({
   return (
     <>
       <div className="space-y-2">
-        {showAddButton && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full"
-            onClick={() => setCreateDialogOpen(true)}
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            Add Follow-Up
-          </Button>
-        )}
-
         {followUps.length > 0 ? (
           <div className="space-y-2">
             {followUps.map((followUp: any) => (
@@ -96,16 +86,19 @@ export function FollowUpList({
             No follow-ups
           </div>
         )}
-        <Link href="/follow-ups">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="w-full mt-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-          >
-            See More
-            <ChevronRight className="h-4 w-4 ml-1" />
-          </Button>
-        </Link>
+        {showAddButton && (
+          <div className="flex justify-end mt-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 w-8 p-0 rounded-full"
+              onClick={() => setCreateDialogOpen(true)}
+              title="Add Follow-Up"
+            >
+              <Plus className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
       </div>
 
       <CreateFollowUpDialog

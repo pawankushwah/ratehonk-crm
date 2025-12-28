@@ -17,6 +17,9 @@ import {
   Settings,
 } from "lucide-react";
 import { Link } from "wouter";
+import { WhatsAppSettingsPanel } from "@/components/whatsapp/WhatsAppSettingsPanel";
+import { WhatsAppDevicesPanel } from "@/components/whatsapp/WhatsAppDevicesPanel";
+import { WhatsAppSetupPanel } from "@/components/whatsapp/WhatsAppSetupPanel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -120,6 +123,9 @@ export default function WhatsAppMessaging() {
     { title: "", rows: [{ title: "", description: "" }] },
   ]);
   const [buttons, setButtons] = useState<string[]>([""]);
+  const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(false);
+  const [isDevicesPanelOpen, setIsDevicesPanelOpen] = useState(false);
+  const [isSetupPanelOpen, setIsSetupPanelOpen] = useState(false);
 
   // Text message form state
   const [selectedDevice, setSelectedDevice] = useState<string>("");
@@ -1759,41 +1765,38 @@ export default function WhatsAppMessaging() {
             
             {/* Quick Navigation Links */}
             <div className="flex items-center gap-2">
-              <Link href="/whatsapp-setup">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-9 w-9"
-                  title="WhatsApp Setup"
-                  data-testid="link-whatsapp-setup"
-                >
-                  <Wrench className="h-4 w-4" />
-                </Button>
-              </Link>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-9 w-9"
+                title="WhatsApp Setup"
+                data-testid="button-whatsapp-setup"
+                onClick={() => setIsSetupPanelOpen(true)}
+              >
+                <Wrench className="h-4 w-4" />
+              </Button>
               
-              <Link href="/whatsapp-devices">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-9 w-9"
-                  title="WhatsApp Devices"
-                  data-testid="link-whatsapp-devices"
-                >
-                  <Smartphone className="h-4 w-4" />
-                </Button>
-              </Link>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-9 w-9"
+                title="WhatsApp Devices"
+                data-testid="button-whatsapp-devices"
+                onClick={() => setIsDevicesPanelOpen(true)}
+              >
+                <Smartphone className="h-4 w-4" />
+              </Button>
               
-              <Link href="/settings?tab=whatsapp">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-9 w-9"
-                  title="WhatsApp Settings"
-                  data-testid="link-whatsapp-settings"
-                >
-                  <Settings className="h-4 w-4" />
-                </Button>
-              </Link>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-9 w-9"
+                title="WhatsApp Settings"
+                data-testid="button-whatsapp-settings"
+                onClick={() => setIsSettingsPanelOpen(true)}
+              >
+                <Settings className="h-4 w-4" />
+              </Button>
             </div>
           </div>
         </div>
@@ -1831,6 +1834,19 @@ export default function WhatsAppMessaging() {
           </div>
         </div>
       </div>
+
+      <WhatsAppSettingsPanel
+        open={isSettingsPanelOpen}
+        onOpenChange={setIsSettingsPanelOpen}
+      />
+      <WhatsAppDevicesPanel
+        open={isDevicesPanelOpen}
+        onOpenChange={setIsDevicesPanelOpen}
+      />
+      <WhatsAppSetupPanel
+        open={isSetupPanelOpen}
+        onOpenChange={setIsSetupPanelOpen}
+      />
     </Layout>
   );
 }

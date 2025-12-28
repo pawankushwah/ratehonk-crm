@@ -25,6 +25,25 @@ import { Download } from "lucide-react";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useInvoicesForGraph } from "@/hooks/useDashboardData";
 import { DateFilter } from "../ui/date-filter";
+import { useQuery } from "@tanstack/react-query";
+
+// Helper function to get currency symbol
+const getCurrencySymbol = (currencyCode: string): string => {
+  const symbols: Record<string, string> = {
+    USD: "$",
+    EUR: "€",
+    GBP: "£",
+    INR: "₹",
+    AUD: "A$",
+    CAD: "C$",
+    JPY: "¥",
+    CNY: "¥",
+    SGD: "S$",
+    HKD: "HK$",
+    NZD: "NZ$",
+  };
+  return symbols[currencyCode] || currencyCode;
+};
 
 
 
@@ -249,36 +268,7 @@ function buildChartDataFromInvoiceMap(
 
 
 
-const CustomTooltip = ({ active, payload }: any) => {
-  if (!active || !payload || !payload.length) return null;
-
-  const row = payload[0].payload;
-  const value = Number(payload[0].value ?? 0);
-
-  const formattedDate = new Date(row.fullDate).toLocaleDateString("en-US", {
-    weekday: "short",
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-
-  return (
-    <div
-      style={{
-        background: "white",
-        padding: "8px 12px",
-        borderRadius: "6px",
-        boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
-      }}
-    >
-      <div style={{ marginBottom: 4 }}>
-        <strong>{formattedDate}</strong>
-      </div>
-      <div>C$ {value.toLocaleString()}</div>
-      <div style={{ color: "#6B7280", fontSize: 12 }}>{formatShort(value)}</div>
-    </div>
-  );
-};
+// CustomTooltip will be defined inside the component to access currencySymbol
 
 
 
@@ -296,6 +286,61 @@ export function RevenueChart() {
     customDateFrom,
     customDateTo
   );
+
+  // Fetch invoice settings to get currency
+  const { data: invoiceSettings } = useQuery({
+    queryKey: ["/api/invoice-settings", tenant?.id],
+    queryFn: async () => {
+      if (!tenant?.id) return null;
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(
+        `/api/invoice-settings/${tenant.id}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      if (!response.ok) return { defaultCurrency: "USD" };
+      return await response.json();
+    },
+    enabled: !!tenant?.id,
+  });
+
+  const currentCurrency = invoiceSettings?.defaultCurrency || "USD";
+  const currencySymbol = getCurrencySymbol(currentCurrency);
+
+  const CustomTooltip = ({ active, payload }: any) => {
+    if (!active || !payload || !payload.length) return null;
+
+    const row = payload[0].payload;
+    const value = Number(payload[0].value ?? 0);
+
+    const formattedDate = new Date(row.fullDate).toLocaleDateString("en-US", {
+      weekday: "short",
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+
+    return (
+      <div
+        style={{
+          background: "white",
+          padding: "8px 12px",
+          borderRadius: "6px",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+        }}
+      >
+        <div style={{ marginBottom: 4 }}>
+          <strong>{formattedDate}</strong>
+        </div>
+        <div>{currencySymbol} {value.toLocaleString()}</div>
+        <div style={{ color: "#6B7280", fontSize: 12 }}>{formatShort(value)}</div>
+      </div>
+    );
+  };
 
   const invoiceMap = useMemo(() => groupInvoicesByDate(invoices), [invoices]);
 
@@ -379,7 +424,7 @@ const barColor = usingDummy ? "#D1D5DB" : "#0A64A0";
         </div>
 
         <p className="text-2xl sm:text-3xl font-semibold mt-3 text-black">
-          C$ {formatShort(totalCurrent)}
+          {currencySymbol} {formatShort(totalCurrent)}
         </p>
 
         {dateFilter === "this_month" && (

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useSubscriptionFeatures } from "@/lib/subscription-check";
 import { RateHonkLogoSmall } from "@/components/ui/ratehonk-logo";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -1316,15 +1317,34 @@ export function AppSidebar({
   });
 
   // Fetch tenant settings to get company logo
+  // Only fetch if we have a tenant and user is not SaaS owner
+  const isSaasAdmin = user?.role === "saas_owner" || 
+    (typeof window !== 'undefined' && window.location.pathname.startsWith('/saas/'));
+  
   const { data: tenantSettings } = useQuery({
     queryKey: ["/api/tenant/settings"],
-    enabled: !!tenant,
+    enabled: !!tenant && !isSaasAdmin,
   });
 
-  // Build dynamic menu structure based on preferences
+  // Check subscription features (only for tenant users, not SaaS owners)
+  // Skip subscription check if user is SaaS owner or we're in SaaS admin area
+  const subscriptionCheck = useSubscriptionFeatures();
+  const hasSubscriptionAccess = isSaasAdmin
+    ? () => true // SaaS owners have access to everything
+    : subscriptionCheck.hasAccess;
+  const subscriptionLoading = isSaasAdmin
+    ? false 
+    : subscriptionCheck.isLoading;
+
+  // Build dynamic menu structure based on preferences and subscription
   const visibleMenuItems = useMemo(() => {
     const items = Object.entries(allMenuItems)
       .filter(([itemId]) => {
+        // First check subscription access
+        if (!subscriptionLoading && !hasSubscriptionAccess(itemId)) {
+          return false; // Hide if subscription doesn't allow
+        }
+        // Then check tenant preferences
         const preference = (preferences as any[]).find(
           (p: any) => p.menuItemId === itemId
         );
@@ -1344,7 +1364,7 @@ export function AppSidebar({
       .sort((a, b) => a.order - b.order);
 
     return items;
-  }, [preferences]);
+  }, [preferences, hasSubscriptionAccess, subscriptionLoading]);
 
   // Group items by their group name and sort by order
   const groupedItems = useMemo(() => {

@@ -4560,59 +4560,69 @@ async getAllLeadsByTenant(
     try {
       // Build update query dynamically, only including defined fields (not undefined)
       // Note: null values are allowed, but undefined values are not
-      const updateParts: any[] = [];
+      const setClauses: string[] = [];
+      const values: any[] = [];
+      let paramIndex = 1;
       
       if (tenantData.company_name !== undefined) {
-        updateParts.push(sql`company_name = ${tenantData.company_name ?? null}`);
+        setClauses.push(`company_name = $${paramIndex}`);
+        values.push(tenantData.company_name ?? null);
+        paramIndex++;
       }
       if (tenantData.contact_email !== undefined) {
-        updateParts.push(sql`contact_email = ${tenantData.contact_email ?? null}`);
+        setClauses.push(`contact_email = $${paramIndex}`);
+        values.push(tenantData.contact_email ?? null);
+        paramIndex++;
       }
       if (tenantData.contact_phone !== undefined) {
-        updateParts.push(sql`contact_phone = ${tenantData.contact_phone ?? null}`);
+        setClauses.push(`contact_phone = $${paramIndex}`);
+        values.push(tenantData.contact_phone ?? null);
+        paramIndex++;
       }
       if (tenantData.address !== undefined) {
-        updateParts.push(sql`address = ${tenantData.address ?? null}`);
+        setClauses.push(`address = $${paramIndex}`);
+        values.push(tenantData.address ?? null);
+        paramIndex++;
       }
       if (tenantData.subdomain !== undefined) {
-        updateParts.push(sql`subdomain = ${tenantData.subdomain ?? null}`);
+        setClauses.push(`subdomain = $${paramIndex}`);
+        values.push(tenantData.subdomain ?? null);
+        paramIndex++;
       }
       if (tenantData.logo !== undefined) {
-        updateParts.push(sql`logo = ${tenantData.logo ?? null}`);
+        setClauses.push(`logo = $${paramIndex}`);
+        values.push(tenantData.logo ?? null);
+        paramIndex++;
       }
-      if (tenantData.timezone !== undefined) {
-        updateParts.push(sql`timezone = ${tenantData.timezone ?? null}`);
-      }
-      if (tenantData.currency !== undefined) {
-        updateParts.push(sql`currency = ${tenantData.currency ?? null}`);
-      }
-      if (tenantData.date_format !== undefined) {
-        updateParts.push(sql`date_format = ${tenantData.date_format ?? null}`);
-      }
+      // Note: timezone, currency, and date_format are not stored in tenants table
+      // They may need to be stored in tenant_settings table or added via migration
       if (tenantData.zoom_account_id !== undefined) {
-        updateParts.push(sql`zoom_account_id = ${tenantData.zoom_account_id ?? null}`);
+        setClauses.push(`zoom_account_id = $${paramIndex}`);
+        values.push(tenantData.zoom_account_id ?? null);
+        paramIndex++;
       }
       if (tenantData.zoom_client_id !== undefined) {
-        updateParts.push(sql`zoom_client_id = ${tenantData.zoom_client_id ?? null}`);
+        setClauses.push(`zoom_client_id = $${paramIndex}`);
+        values.push(tenantData.zoom_client_id ?? null);
+        paramIndex++;
       }
       if (tenantData.zoom_client_secret !== undefined) {
-        updateParts.push(sql`zoom_client_secret = ${tenantData.zoom_client_secret ?? null}`);
+        setClauses.push(`zoom_client_secret = $${paramIndex}`);
+        values.push(tenantData.zoom_client_secret ?? null);
+        paramIndex++;
       }
 
-      if (updateParts.length === 0) {
+      if (setClauses.length === 0) {
         // No updates to make, return current tenant
         const [tenant] = await sql`SELECT * FROM tenants WHERE id = ${tenantId}`;
         return tenant;
       }
-
-      // Build the query using sql template tag
-      const updateClause = sql.join(updateParts, sql`, `);
-      const [updatedTenant] = await sql`
-        UPDATE tenants 
-        SET ${updateClause}
-        WHERE id = ${tenantId}
-        RETURNING *
-      `;
+      
+      // Build the query using sql.unsafe with parameterized values
+      const query = `UPDATE tenants SET ${setClauses.join(', ')} WHERE id = $${paramIndex} RETURNING *`;
+      values.push(tenantId);
+      
+      const [updatedTenant] = await sql.unsafe(query, values);
       return updatedTenant;
     } catch (error) {
       console.error("Error updating tenant:", error);
@@ -8824,6 +8834,13 @@ RateHonk CRM Team`,
   // Gmail integration methods
   async createOrUpdateGmailIntegration(integrationData: any) {
     try {
+      // Convert Date objects to ISO strings for postgres
+      const tokenExpiryDate = integrationData.tokenExpiryDate 
+        ? (integrationData.tokenExpiryDate instanceof Date 
+            ? integrationData.tokenExpiryDate.toISOString() 
+            : integrationData.tokenExpiryDate)
+        : null;
+
       const [integration] = await sql`
         INSERT INTO gmail_integrations (
           tenant_id, gmail_address, access_token, refresh_token,
@@ -8831,7 +8848,7 @@ RateHonk CRM Team`,
         ) VALUES (
           ${integrationData.tenantId}, ${integrationData.gmailAddress},
           ${integrationData.accessToken || null}, ${integrationData.refreshToken || null},
-          ${integrationData.tokenExpiryDate || null}, ${integrationData.isConnected},
+          ${tokenExpiryDate}, ${integrationData.isConnected},
           ${integrationData.syncEnabled}
         )
         ON CONFLICT (tenant_id) 
@@ -8868,15 +8885,27 @@ RateHonk CRM Team`,
 
   async updateGmailIntegration(integrationId: number, updateData: any) {
     try {
+      // Convert Date objects to ISO strings for postgres
+      const tokenExpiryDate = updateData.tokenExpiryDate 
+        ? (updateData.tokenExpiryDate instanceof Date 
+            ? updateData.tokenExpiryDate.toISOString() 
+            : updateData.tokenExpiryDate)
+        : null;
+      const lastSyncAt = updateData.lastSyncAt 
+        ? (updateData.lastSyncAt instanceof Date 
+            ? updateData.lastSyncAt.toISOString() 
+            : updateData.lastSyncAt)
+        : null;
+
       const [updated] = await sql`
         UPDATE gmail_integrations 
         SET 
           access_token = COALESCE(${updateData.accessToken}, access_token),
           refresh_token = COALESCE(${updateData.refreshToken}, refresh_token),
-          token_expiry_date = COALESCE(${updateData.tokenExpiryDate}, token_expiry_date),
+          token_expiry_date = COALESCE(${tokenExpiryDate}, token_expiry_date),
           is_connected = COALESCE(${updateData.isConnected}, is_connected),
           sync_enabled = COALESCE(${updateData.syncEnabled}, sync_enabled),
-          last_sync_at = COALESCE(${updateData.lastSyncAt}, last_sync_at),
+          last_sync_at = COALESCE(${lastSyncAt}, last_sync_at),
           updated_at = NOW()
         WHERE id = ${integrationId}
         RETURNING *
@@ -12709,6 +12738,8 @@ async getDashboardMetrics(
           invoiceNumberStart: 1,
           invoiceNumberPrefix: "INV",
           defaultCurrency: "USD",
+          timezone: "UTC",
+          dateFormat: "MM/DD/YYYY",
           defaultGstSettingId: null,
           showTax: true,
           showDiscount: true,
@@ -12727,7 +12758,9 @@ async getDashboardMetrics(
         tenantId: settings.tenant_id,
         invoiceNumberStart: settings.invoice_number_start,
         invoiceNumberPrefix: settings.invoice_number_prefix || "INV",
-        defaultCurrency: settings.default_currency,
+        defaultCurrency: settings.default_currency || "USD",
+        timezone: settings.timezone || "UTC",
+        dateFormat: settings.date_format || "MM/DD/YYYY",
         defaultGstSettingId: settings.default_gst_setting_id || null,
         showTax: settings.show_tax,
         showDiscount: settings.show_discount,
@@ -12742,35 +12775,39 @@ async getDashboardMetrics(
       };
     } catch (error) {
       console.error("Error getting invoice settings:", error);
-      return {
-        invoiceNumberStart: 1,
-        invoiceNumberPrefix: "INV",
-        defaultCurrency: "USD",
-        defaultGstSettingId: null,
-        showTax: true,
-        showDiscount: true,
-        showNotes: true,
-        showVoucherInvoice: true,
-        showProvider: true,
-        showVendor: true,
-        showUnitPrice: true,
-        showAdditionalCommission: false,
-        sendInvoiceViaEmail: true,
-        sendInvoiceViaWhatsapp: false,
-      };
+        return {
+          invoiceNumberStart: 1,
+          invoiceNumberPrefix: "INV",
+          defaultCurrency: "USD",
+          timezone: "UTC",
+          dateFormat: "MM/DD/YYYY",
+          defaultGstSettingId: null,
+          showTax: true,
+          showDiscount: true,
+          showNotes: true,
+          showVoucherInvoice: true,
+          showProvider: true,
+          showVendor: true,
+          showUnitPrice: true,
+          showAdditionalCommission: false,
+          sendInvoiceViaEmail: true,
+          sendInvoiceViaWhatsapp: false,
+        };
     }
   }
 
   async upsertInvoiceSettings(tenantId: number, settings: any) {
     try {
       const [result] =
-        await sql`INSERT INTO tenant_settings (tenant_id, invoice_number_start, invoice_number_prefix, default_currency, default_gst_setting_id, show_tax, show_discount, show_notes, show_voucher_invoice, show_provider, show_vendor, show_unit_price, show_additional_commission, send_invoice_via_email, send_invoice_via_whatsapp, updated_at) VALUES (${tenantId}, ${settings.invoiceNumberStart !== undefined ? settings.invoiceNumberStart : 1}, ${settings.invoiceNumberPrefix || "INV"}, ${settings.defaultCurrency || "USD"}, ${settings.defaultGstSettingId || null}, ${settings.showTax !== undefined ? settings.showTax : true}, ${settings.showDiscount !== undefined ? settings.showDiscount : true}, ${settings.showNotes !== undefined ? settings.showNotes : true}, ${settings.showVoucherInvoice !== undefined ? settings.showVoucherInvoice : true}, ${settings.showProvider !== undefined ? settings.showProvider : true}, ${settings.showVendor !== undefined ? settings.showVendor : true}, ${settings.showUnitPrice !== undefined ? settings.showUnitPrice : true}, ${settings.showAdditionalCommission !== undefined ? settings.showAdditionalCommission : false}, ${settings.sendInvoiceViaEmail !== undefined ? settings.sendInvoiceViaEmail : true}, ${settings.sendInvoiceViaWhatsapp !== undefined ? settings.sendInvoiceViaWhatsapp : false}, NOW()) ON CONFLICT (tenant_id) DO UPDATE SET invoice_number_start = COALESCE(${settings.invoiceNumberStart}, tenant_settings.invoice_number_start), invoice_number_prefix = COALESCE(${settings.invoiceNumberPrefix}, tenant_settings.invoice_number_prefix), default_currency = COALESCE(${settings.defaultCurrency}, tenant_settings.default_currency), default_gst_setting_id = COALESCE(${settings.defaultGstSettingId}, tenant_settings.default_gst_setting_id), show_tax = COALESCE(${settings.showTax}, tenant_settings.show_tax), show_discount = COALESCE(${settings.showDiscount}, tenant_settings.show_discount), show_notes = COALESCE(${settings.showNotes}, tenant_settings.show_notes), show_voucher_invoice = COALESCE(${settings.showVoucherInvoice}, tenant_settings.show_voucher_invoice), show_provider = COALESCE(${settings.showProvider}, tenant_settings.show_provider), show_vendor = COALESCE(${settings.showVendor}, tenant_settings.show_vendor), show_unit_price = COALESCE(${settings.showUnitPrice}, tenant_settings.show_unit_price), show_additional_commission = COALESCE(${settings.showAdditionalCommission}, tenant_settings.show_additional_commission), send_invoice_via_email = COALESCE(${settings.sendInvoiceViaEmail}, tenant_settings.send_invoice_via_email), send_invoice_via_whatsapp = COALESCE(${settings.sendInvoiceViaWhatsapp}, tenant_settings.send_invoice_via_whatsapp), updated_at = NOW() RETURNING *`;
+        await sql`INSERT INTO tenant_settings (tenant_id, invoice_number_start, invoice_number_prefix, default_currency, timezone, date_format, default_gst_setting_id, show_tax, show_discount, show_notes, show_voucher_invoice, show_provider, show_vendor, show_unit_price, show_additional_commission, send_invoice_via_email, send_invoice_via_whatsapp, updated_at) VALUES (${tenantId}, ${settings.invoiceNumberStart !== undefined ? settings.invoiceNumberStart : 1}, ${settings.invoiceNumberPrefix || "INV"}, ${settings.defaultCurrency || "USD"}, ${settings.timezone || "UTC"}, ${settings.dateFormat || "MM/DD/YYYY"}, ${settings.defaultGstSettingId || null}, ${settings.showTax !== undefined ? settings.showTax : true}, ${settings.showDiscount !== undefined ? settings.showDiscount : true}, ${settings.showNotes !== undefined ? settings.showNotes : true}, ${settings.showVoucherInvoice !== undefined ? settings.showVoucherInvoice : true}, ${settings.showProvider !== undefined ? settings.showProvider : true}, ${settings.showVendor !== undefined ? settings.showVendor : true}, ${settings.showUnitPrice !== undefined ? settings.showUnitPrice : true}, ${settings.showAdditionalCommission !== undefined ? settings.showAdditionalCommission : false}, ${settings.sendInvoiceViaEmail !== undefined ? settings.sendInvoiceViaEmail : true}, ${settings.sendInvoiceViaWhatsapp !== undefined ? settings.sendInvoiceViaWhatsapp : false}, NOW()) ON CONFLICT (tenant_id) DO UPDATE SET invoice_number_start = COALESCE(${settings.invoiceNumberStart}, tenant_settings.invoice_number_start), invoice_number_prefix = COALESCE(${settings.invoiceNumberPrefix}, tenant_settings.invoice_number_prefix), default_currency = COALESCE(${settings.defaultCurrency}, tenant_settings.default_currency), timezone = COALESCE(${settings.timezone}, tenant_settings.timezone), date_format = COALESCE(${settings.dateFormat}, tenant_settings.date_format), default_gst_setting_id = COALESCE(${settings.defaultGstSettingId}, tenant_settings.default_gst_setting_id), show_tax = COALESCE(${settings.showTax}, tenant_settings.show_tax), show_discount = COALESCE(${settings.showDiscount}, tenant_settings.show_discount), show_notes = COALESCE(${settings.showNotes}, tenant_settings.show_notes), show_voucher_invoice = COALESCE(${settings.showVoucherInvoice}, tenant_settings.show_voucher_invoice), show_provider = COALESCE(${settings.showProvider}, tenant_settings.show_provider), show_vendor = COALESCE(${settings.showVendor}, tenant_settings.show_vendor), show_unit_price = COALESCE(${settings.showUnitPrice}, tenant_settings.show_unit_price), show_additional_commission = COALESCE(${settings.showAdditionalCommission}, tenant_settings.show_additional_commission), send_invoice_via_email = COALESCE(${settings.sendInvoiceViaEmail}, tenant_settings.send_invoice_via_email), send_invoice_via_whatsapp = COALESCE(${settings.sendInvoiceViaWhatsapp}, tenant_settings.send_invoice_via_whatsapp), updated_at = NOW() RETURNING *`;
       return {
         id: result.id,
         tenantId: result.tenant_id,
         invoiceNumberStart: result.invoice_number_start,
         invoiceNumberPrefix: result.invoice_number_prefix || "INV",
-        defaultCurrency: result.default_currency,
+        defaultCurrency: result.default_currency || "USD",
+        timezone: result.timezone || "UTC",
+        dateFormat: result.date_format || "MM/DD/YYYY",
         defaultGstSettingId: result.default_gst_setting_id || null,
         showTax: result.show_tax,
         showDiscount: result.show_discount,

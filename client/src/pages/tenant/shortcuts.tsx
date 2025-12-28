@@ -355,40 +355,40 @@ export default function Shortcuts() {
             </div>
           </div>
 
-          {/* Application Shortcuts Section */}
-          <div>
-            <h2 className="text-xl font-semibold text-gray-900 mb-4">
-              Application Shortcuts
-            </h2>
-            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-4">
-              {availableShortcuts.map((shortcut) => {
-                const Icon = shortcut.icon;
-                return (
-                  <Link 
-                    key={shortcut.key} 
-                    href={shortcut.href} 
-                    className="group flex flex-col items-center gap-3 cursor-pointer transition-all duration-200 hover:scale-105"
-                  >
-                    {/* White background only on icon */}
-                    <div className="w-20 h-20 bg-white rounded-lg shadow-sm flex items-center justify-center group-hover:shadow-md transition-shadow">
-                      <div className="flex items-center justify-center group-hover:scale-110 transition-transform">
-                        <Icon className="h-10 w-10 text-blue-600" />
+          {/* Application Shortcuts Section - Commented out for future use */}
+          {false && (
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900 mb-4">
+                Application Shortcuts
+              </h2>
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-4">
+                {availableShortcuts.map((shortcut) => {
+                  const Icon = shortcut.icon;
+                  return (
+                    <Link 
+                      key={shortcut.key} 
+                      href={shortcut.href} 
+                      className="group flex flex-col items-center gap-3 cursor-pointer transition-all duration-200 hover:scale-105"
+                    >
+                      <div className="w-20 h-20 bg-white rounded-lg shadow-sm flex items-center justify-center group-hover:shadow-md transition-shadow">
+                        <div className="flex items-center justify-center group-hover:scale-110 transition-transform">
+                          <Icon className="h-10 w-10 text-blue-600" />
+                        </div>
                       </div>
-                    </div>
-                    {/* Text outside white background */}
-                    <span className="text-sm font-medium text-gray-900 text-center leading-tight">
-                      {shortcut.name}
-                    </span>
-                  </Link>
-                );
-              })}
-            </div>
-            {availableShortcuts.length === 0 && (
-              <div className="text-center py-12 text-gray-500">
-                No shortcuts available based on your permissions.
+                      <span className="text-sm font-medium text-gray-900 text-center leading-tight">
+                        {shortcut.name}
+                      </span>
+                    </Link>
+                  );
+                })}
               </div>
-            )}
-          </div>
+              {availableShortcuts.length === 0 && (
+                <div className="text-center py-12 text-gray-500">
+                  No shortcuts available based on your permissions.
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </Layout>

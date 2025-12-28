@@ -3,6 +3,7 @@ import { Link } from "wouter";
 import { Layout } from "@/components/layout/layout";
 import { DashboardCustomizationDialog } from "@/components/dashboard-customization-dialog";
 import { DashboardSettingsPanel } from "@/components/dashboard-settings-panel";
+import { SupportPanel } from "@/components/support/SupportPanel";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
@@ -16,13 +17,13 @@ import {
   Download,
   Settings,
   HelpCircle,
-  Bell,
   ChevronRight,
   X,
   Zap,
 } from "lucide-react";
 import { useAuth } from "@/components/auth/auth-provider";
 import { usePermissions } from "@/hooks/use-permissions";
+import { SubscriptionGuard } from "@/components/subscription/SubscriptionGuard";
 import type { DashboardData } from "@/lib/types";
 import type { Estimate, Expense, EmailCampaign } from "@shared/schema";
 
@@ -141,6 +142,7 @@ export default function TenantDashboard() {
  
   const [isCustomizationOpen, setIsCustomizationOpen] = useState(false);
   const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(false);
+  const [isSupportPanelOpen, setIsSupportPanelOpen] = useState(false);
   const getQueryParams = () => {
     const params: any = {};
     if (dateFilter.period && dateFilter.period !== "custom") {
@@ -251,6 +253,48 @@ export default function TenantDashboard() {
         return data.data || [];
       }
       return Array.isArray(data) ? data : [];
+    },
+    enabled: !!tenant?.id,
+  });
+
+  // Fetch consultation forms SENT (not submissions)
+  const { data: consultationFormsData } = useQuery({
+    queryKey: [`/api/tenants/${tenant?.id}/consulation-forms-sent`],
+    queryFn: async () => {
+      if (!tenant?.id) return { success: true, forms: [] };
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(
+        `/api/tenants/${tenant.id}/consulation-forms-sent?limit=10`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      if (!response.ok) return { success: true, forms: [] };
+      return await response.json();
+    },
+    enabled: !!tenant?.id,
+  });
+
+  // Fetch payment forms SENT (not invoice payments)
+  const { data: paymentsData } = useQuery({
+    queryKey: [`/api/tenants/${tenant?.id}/payment-forms-sent`],
+    queryFn: async () => {
+      if (!tenant?.id) return { success: true, forms: [] };
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(
+        `/api/tenants/${tenant.id}/payment-forms-sent?limit=10`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      if (!response.ok) return { success: true, forms: [] };
+      return await response.json();
     },
     enabled: !!tenant?.id,
   });
@@ -464,6 +508,8 @@ export default function TenantDashboard() {
   const customersArray = topCustomersArray ?? [];
   const invoicesArray = topInvoicesArray ?? [];
   const contactsArray = topCustomersArray ?? [];
+  const consultationFormsArray = consultationFormsData?.forms || [];
+  const paymentsArray = paymentsData?.forms || [];
 
   // Show loader while permissions are being fetched
   if (permissionsLoading) {
@@ -480,7 +526,8 @@ export default function TenantDashboard() {
   }
 
   return (
-    <Layout>
+    <SubscriptionGuard requiredMenuItem="dashboard">
+      <Layout>
       <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-blue-50 dark:from-gray-950 dark:via-gray-900 dark:to-blue-950 relative overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none">
           <div className="absolute top-10 left-10 w-64 h-64 bg-[#0BBCD6]/5 rounded-full blur-3xl animate-pulse" />
@@ -504,14 +551,12 @@ export default function TenantDashboard() {
                     >
                       <Settings className="h-4 w-4 sm:h-5 sm:w-5 text-gray-600" />
                     </button>
-                    <div className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-lg border border-gray-200 bg-white shadow-sm">
-                      <Link href="/support">
-                        <HelpCircle className="h-4 w-4 sm:h-5 sm:w-5 text-gray-600" />
-                      </Link>
-                    </div>
-                    <div className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-lg border border-gray-200 bg-white shadow-sm">
-                      <Bell className="h-4 w-4 sm:h-5 sm:w-5 text-gray-600" />
-                    </div>
+                    <button
+                      onClick={() => setIsSupportPanelOpen(true)}
+                      className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-lg border border-gray-200 bg-white shadow-sm hover:bg-gray-50 transition-colors cursor-pointer"
+                    >
+                      <HelpCircle className="h-4 w-4 sm:h-5 sm:w-5 text-gray-600" />
+                    </button>
                   </div>
                 </div>
               </div>
@@ -690,10 +735,14 @@ export default function TenantDashboard() {
               customersArray={customersArray}
               invoicesArray={invoicesArray}
               contactsArray={contactsArray}
+              consultationFormsArray={consultationFormsArray}
+              paymentsArray={paymentsArray}
               canViewFollowUps={canViewComponent("dashboard.sidebar-followups")}
               canViewCustomers={canViewComponent("dashboard.sidebar-customers")}
               canViewInvoices={canViewComponent("dashboard.sidebar-bookings")}
               canViewContacts={canViewComponent("dashboard.sidebar-contacts")}
+              canViewConsultationForms={canViewComponent("dashboard.sidebar-consultation-forms")}
+              canViewPayments={canViewComponent("dashboard.sidebar-payments")}
             />
           </div>
         </div>
@@ -706,6 +755,11 @@ export default function TenantDashboard() {
         open={isSettingsPanelOpen}
         onOpenChange={setIsSettingsPanelOpen}
       />
+      <SupportPanel
+        open={isSupportPanelOpen}
+        onOpenChange={setIsSupportPanelOpen}
+      />
     </Layout>
+    </SubscriptionGuard>
   );
 }
