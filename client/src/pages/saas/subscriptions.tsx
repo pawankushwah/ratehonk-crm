@@ -39,11 +39,25 @@ export default function SaasSubscriptions() {
   });
 
   // Fetch tenant subscriptions
-  const { data: subscriptions, isLoading, refetch } = useQuery({
+  const { data: subscriptions, isLoading, refetch, error: subscriptionsError } = useQuery({
     queryKey: ["/api/saas/subscriptions"],
     queryFn: async () => {
-      const response = await saasApiRequest("GET", "/api/saas/subscriptions", {});
-      return response.json();
+      try {
+        console.log("🔍 Fetching subscriptions from SaaS API...");
+        const response = await saasApiRequest("GET", "/api/saas/subscriptions", {});
+        const data = await response.json();
+        console.log("🔍 Subscriptions response:", data);
+        console.log("🔍 Subscriptions count:", Array.isArray(data) ? data.length : "Not an array");
+        return Array.isArray(data) ? data : [];
+      } catch (error: any) {
+        console.error("🔍 Error fetching subscriptions:", error);
+        toast({
+          title: "Error",
+          description: error.message || "Failed to fetch subscriptions",
+          variant: "destructive",
+        });
+        return [];
+      }
     },
   });
 
@@ -111,6 +125,13 @@ export default function SaasSubscriptions() {
 
         <Card>
           <CardContent className="pt-6">
+            {subscriptionsError && (
+              <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded-lg">
+                <p className="text-red-800 dark:text-red-200">
+                  Error loading subscriptions: {subscriptionsError instanceof Error ? subscriptionsError.message : "Unknown error"}
+                </p>
+              </div>
+            )}
             {isLoading ? (
               <div className="text-center py-8">
                 <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />

@@ -75,6 +75,8 @@ export const tenantSettings = pgTable("tenant_settings", {
   expenseNumberStart: integer("expense_number_start").default(1),
   expenseNumberPrefix: text("expense_number_prefix").default("EXP"),
   defaultCurrency: text("default_currency").default("USD"),
+  timezone: text("timezone").default("UTC"),
+  dateFormat: text("date_format").default("MM/DD/YYYY"),
   defaultGstSettingId: integer("default_gst_setting_id"), // Default tax setting for invoices
   // Field visibility toggles for invoice create page
   showTax: boolean("show_tax").default(true),
@@ -135,16 +137,24 @@ export const dashboardPreferences = pgTable("dashboard_preferences", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
-// Subscription plans
+// Subscription plans - now supports country-wise pricing
 export const subscriptionPlans = pgTable("subscription_plans", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   description: text("description"),
+  country: text("country").notNull().default("US"), // Country code (US, IN, UK, etc.)
+  currency: text("currency").notNull().default("USD"), // Currency code (USD, INR, GBP, etc.)
   monthlyPrice: decimal("monthly_price", { precision: 10, scale: 2 }).notNull(),
   yearlyPrice: decimal("yearly_price", { precision: 10, scale: 2 }).notNull(),
   maxUsers: integer("max_users").notNull(),
   maxCustomers: integer("max_customers").notNull(),
-  features: json("features").$type<string[]>().notNull(),
+  features: json("features").$type<string[]>().notNull(), // Array of menu item IDs (e.g., ["dashboard", "customers", "leads"])
+  allowedMenuItems: json("allowed_menu_items").$type<string[]>().notNull().default([]), // Explicit menu items allowed
+  allowedPages: json("allowed_pages").$type<string[]>().notNull().default([]), // Explicit pages allowed
+  allowedDashboardWidgets: json("allowed_dashboard_widgets").$type<string[]>().notNull().default([]), // Dashboard widgets allowed
+  allowedPagePermissions: json("allowed_page_permissions").$type<Record<string, string[]>>().notNull().default({}), // Page permissions: { "customers": ["view", "edit"], "leads": ["view"] }
+  freeTrialDays: integer("free_trial_days").default(0), // Number of free trial days (0 = no trial)
+  isFreePlan: boolean("is_free_plan").notNull().default(false), // True for free trial plan
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
@@ -154,7 +164,7 @@ export const tenantSubscriptions = pgTable("tenant_subscriptions", {
   id: serial("id").primaryKey(),
   tenantId: integer("tenant_id").notNull(),
   planId: integer("plan_id").notNull(),
-  status: text("status").notNull().default("trial"), // trial, active, cancelled, expired, past_due
+  status: text("status").notNull().default("trial"), // trial, active, cancelled, expired, past_due, free_trial
   billingCycle: text("billing_cycle").notNull().default("monthly"), // monthly, yearly
   paymentGateway: text("payment_gateway").notNull().default("stripe"), // stripe, razorpay
   gatewaySubscriptionId: text("gateway_subscription_id"), // Stripe/Razorpay subscription ID
@@ -168,6 +178,16 @@ export const tenantSubscriptions = pgTable("tenant_subscriptions", {
   failedPaymentAttempts: integer("failed_payment_attempts").default(0),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Track if tenant has used free trial (one-time use)
+export const tenantFreeTrialUsage = pgTable("tenant_free_trial_usage", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().unique(),
+  hasUsedFreeTrial: boolean("has_used_free_trial").notNull().default(false),
+  freeTrialPlanId: integer("free_trial_plan_id"), // Which free trial plan was used
+  usedAt: timestamp("used_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 // Payment history for subscriptions

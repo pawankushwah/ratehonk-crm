@@ -4,6 +4,25 @@ import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
 import { DateFilter } from "@/components/ui/date-filter";
 import { useInvoicesForGraph } from "@/hooks/useDashboardData";
 import { useAuth } from "../auth/auth-provider";
+import { useQuery } from "@tanstack/react-query";
+
+// Helper function to get currency symbol
+const getCurrencySymbol = (currencyCode: string): string => {
+  const symbols: Record<string, string> = {
+    USD: "$",
+    EUR: "€",
+    GBP: "£",
+    INR: "₹",
+    AUD: "A$",
+    CAD: "C$",
+    JPY: "¥",
+    CNY: "¥",
+    SGD: "S$",
+    HKD: "HK$",
+    NZD: "NZ$",
+  };
+  return symbols[currencyCode] || currencyCode;
+};
 
 export function ConsolidatedVendorBookingChart() {
   const { tenant } = useAuth();
@@ -21,17 +40,43 @@ export function ConsolidatedVendorBookingChart() {
 
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
+  // Fetch invoice settings to get currency
+  const { data: invoiceSettings } = useQuery({
+    queryKey: ["/api/invoice-settings", tenant?.id],
+    queryFn: async () => {
+      if (!tenant?.id) return null;
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(
+        `/api/invoice-settings/${tenant.id}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      if (!response.ok) return { defaultCurrency: "USD" };
+      return await response.json();
+    },
+    enabled: !!tenant?.id,
+  });
+
+  const currentCurrency = invoiceSettings?.defaultCurrency || "USD";
+  const currencySymbol = getCurrencySymbol(currentCurrency);
+
   const vendorData = useMemo(() => {
-    const countMap: Record<string, number> = {};
+    const amountMap: Record<string, number> = {};
 
     invoices.forEach((inv) => {
       (inv.lineItems || []).forEach((li) => {
         if (!li.vendorName) return;
-        countMap[li.vendorName] = (countMap[li.vendorName] || 0) + 1;
+        // Sum amounts instead of counting
+        const amount = parseFloat(li.totalAmount || li.amount || li.total_amount || 0);
+        amountMap[li.vendorName] = (amountMap[li.vendorName] || 0) + amount;
       });
     });
 
-    const total = Object.values(countMap).reduce((a, b) => a + b, 0);
+    const total = Object.values(amountMap).reduce((a, b) => a + b, 0);
     if (total === 0) return [];
 
     const colorPalette = [
@@ -47,10 +92,10 @@ export function ConsolidatedVendorBookingChart() {
       "#F2994A",
     ];
 
-    return Object.keys(countMap).map((vendor, idx) => ({
+    return Object.keys(amountMap).map((vendor, idx) => ({
       name: vendor,
-      count: countMap[vendor],
-      percentage: Number(((countMap[vendor] / total) * 100).toFixed(2)),
+      amount: amountMap[vendor],
+      percentage: Number(((amountMap[vendor] / total) * 100).toFixed(2)),
       color: colorPalette[idx % colorPalette.length],
     }));
   }, [invoices]);
@@ -60,9 +105,9 @@ export function ConsolidatedVendorBookingChart() {
   const dummyHoverPalette = ["#2F80ED", "#F66D44", "#219653"]; 
 
   const dummyData = [
-    { name: "Category 0", percentage: 40, count: 0 },
-    { name: "Category 1", percentage: 30, count: 0 },
-    { name: "Category 2", percentage: 30, count: 0 },
+    { name: "Category 0", percentage: 40, amount: 0 },
+    { name: "Category 1", percentage: 30, amount: 0 },
+    { name: "Category 2", percentage: 30, amount: 0 },
   ];
 
   const usingDummy = vendorData.length === 0;
@@ -84,7 +129,7 @@ export function ConsolidatedVendorBookingChart() {
       return (
         <div className="bg-white shadow-lg rounded-md p-2 border text-xs text-black">
           <p className="font-semibold">{item.name}</p>
-          <p>{usingDummy ? "0" : item.count?.toLocaleString() || "0"} bookings</p>
+          <p>{usingDummy ? `${currencySymbol}0.00` : `${currencySymbol}${(item.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</p>
         </div>
       );
     }
@@ -205,7 +250,7 @@ export function ConsolidatedVendorBookingChart() {
 
                   <div>
                     <p className="font-medium">{v.name}</p>
-                    <p className="text-gray-500 text-[11px]">{usingDummy ? "0" : (v.count?.toLocaleString() || "0")} bookings</p>
+                    <p className="text-gray-500 text-[11px]">{usingDummy ? `${currencySymbol}0.00` : `${currencySymbol}${(v.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</p>
                   </div>
                 </div>
               ))}

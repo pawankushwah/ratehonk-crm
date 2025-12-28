@@ -9,10 +9,29 @@ import {
 import { DateFilter } from "@/components/ui/date-filter";
 import { useInvoicesForGraph } from "@/hooks/useDashboardData";
 import { useAuth } from "../auth/auth-provider";
+import { useQuery } from "@tanstack/react-query";
 
 const REAL_COLOR = "#3B82F6";
 const DUMMY_GRAY = ["#D1D5DB", "#C7C7C7", "#BEBEBE"];
 const DUMMY_HOVER = ["#3B82F6", "#2563EB", "#1D4ED8"];
+
+// Helper function to get currency symbol
+const getCurrencySymbol = (currencyCode: string): string => {
+  const symbols: Record<string, string> = {
+    USD: "$",
+    EUR: "€",
+    GBP: "£",
+    INR: "₹",
+    AUD: "A$",
+    CAD: "C$",
+    JPY: "¥",
+    CNY: "¥",
+    SGD: "S$",
+    HKD: "HK$",
+    NZD: "NZ$",
+  };
+  return symbols[currencyCode] || currencyCode;
+};
 
 export function ServiceBookingScatter() {
   const { tenant } = useAuth();
@@ -29,9 +48,33 @@ export function ServiceBookingScatter() {
     customDateTo
   );
 
+  // Fetch invoice settings to get currency
+  const { data: invoiceSettings } = useQuery({
+    queryKey: ["/api/invoice-settings", tenant?.id],
+    queryFn: async () => {
+      if (!tenant?.id) return null;
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(
+        `/api/invoice-settings/${tenant.id}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      if (!response.ok) return { defaultCurrency: "USD" };
+      return await response.json();
+    },
+    enabled: !!tenant?.id,
+  });
+
+  const currentCurrency = invoiceSettings?.defaultCurrency || "USD";
+  const currencySymbol = getCurrencySymbol(currentCurrency);
+
 
   const bubbleData = useMemo(() => {
-    const serviceCountMap: Record<string, number> = {};
+    const serviceAmountMap: Record<string, number> = {};
 
     invoices.forEach((invoice: any) => {
       invoice?.lineItems?.forEach((li: any) => {
@@ -41,21 +84,23 @@ export function ServiceBookingScatter() {
           li.description ||
           "Other Service";
 
-        serviceCountMap[service] = (serviceCountMap[service] || 0) + 1;
+        // Sum amounts instead of counting
+        const amount = parseFloat(li.totalAmount || li.amount || li.total_amount || 0);
+        serviceAmountMap[service] = (serviceAmountMap[service] || 0) + amount;
       });
     });
 
-    const total = Object.values(serviceCountMap).reduce((a, b) => a + b, 0);
+    const total = Object.values(serviceAmountMap).reduce((a, b) => a + b, 0);
     if (total === 0) return [];
 
-    return Object.entries(serviceCountMap)
-      .map(([name, count]) => ({
+    return Object.entries(serviceAmountMap)
+      .map(([name, amount]) => ({
         name: name.length > 15 ? name.substring(0, 12) + "..." : name,
         fullName: name,
-        count,
-        percentage: Math.round((count / total) * 100),
+        amount,
+        percentage: Math.round((amount / total) * 100),
       }))
-      .sort((a, b) => b.count - a.count)
+      .sort((a, b) => b.amount - a.amount)
       .slice(0, 12);
   }, [invoices]);
 
@@ -82,6 +127,7 @@ export function ServiceBookingScatter() {
       const x = 55 + Math.cos(angle) * radius;
       const y = 55 + Math.sin(angle) * (radius * 0.95);
 
+      // Size based on percentage (which is now based on amount)
       const size = usingDummy
         ? 70 + item.percentage * 0.5
         : 80 + item.percentage * 0.6;
@@ -165,7 +211,7 @@ export function ServiceBookingScatter() {
                 >
                   <div className="text-center px-2">
                     <div className="text-xl font-semibold">
-                     {usingDummy ? "0" : item.count.toLocaleString()}
+                     {usingDummy ? `${currencySymbol}0` : `${currencySymbol}${item.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                     </div>
                     <div className="text-xs opacity-90">{item.name}</div>
                   </div>

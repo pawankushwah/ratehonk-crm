@@ -1,16 +1,22 @@
-import { ChevronRight, X } from "lucide-react";
+import { ChevronRight, X, FileText, CreditCard } from "lucide-react";
 import { useState } from "react";
+import { Link } from "wouter";
 import { FollowUpList } from "@/components/follow-ups/FollowUpList";
+import { format } from "date-fns";
 
 interface SidebarListsProps {
   followUpsArray: any[];
   customersArray: any[];
   invoicesArray: any[];
   contactsArray: any[];
+  consultationFormsArray?: any[];
+  paymentsArray?: any[];
   canViewFollowUps?: boolean;
   canViewCustomers?: boolean;
   canViewInvoices?: boolean;
   canViewContacts?: boolean;
+  canViewConsultationForms?: boolean;
+  canViewPayments?: boolean;
 }
 
 export function SidebarLists({
@@ -18,10 +24,14 @@ export function SidebarLists({
   customersArray,
   invoicesArray,
   contactsArray,
+  consultationFormsArray = [],
+  paymentsArray = [],
   canViewFollowUps = true,
   canViewCustomers = true,
   canViewInvoices = true,
   canViewContacts = true,
+  canViewConsultationForms = true,
+  canViewPayments = true,
 }: SidebarListsProps) {
   const [isOpen, setIsOpen] = useState(false);
 
@@ -48,9 +58,16 @@ export function SidebarLists({
         </button>
         {canViewFollowUps && (
           <div className="mt-10 lg:mt-0">
-            <h3 className="text-sm font-semibold text-gray-700 mb-3">
-              Follow Ups
-            </h3>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-gray-700">
+                Follow Ups
+              </h3>
+              <Link href="/follow-ups">
+                <button className="text-xs text-blue-600 hover:text-blue-700 font-medium">
+                  See more
+                </button>
+              </Link>
+            </div>
             <FollowUpList limit={5} showAddButton={true} />
           </div>
         )}
@@ -137,6 +154,72 @@ export function SidebarLists({
                 ))
               ) : (
                 <p className="text-xs text-gray-400">No contacts</p>
+              )}
+            </div>
+          </div>
+        )}
+        {canViewConsultationForms && (
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-gray-700">Consultation Forms</h3>
+              <Link href="/consultation-forms">
+                <button className="text-xs text-blue-600 hover:text-blue-700 font-medium">
+                  See more
+                </button>
+              </Link>
+            </div>
+            <div className="space-y-2">
+              {consultationFormsArray.length > 0 ? (
+                consultationFormsArray.slice(0, 4).map((item, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center">
+                      <FileText className="h-4 w-4 text-blue-600" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-gray-700 truncate">
+                        {item.customerName || "Unknown Customer"}
+                      </p>
+                      <p className="text-xs text-gray-500 truncate">
+                        {item.formType === "payment" ? "Payment Form" : "Consultation Form"} • {format(new Date(item.sentAt || item.createdAt), "MMM d, yyyy")}
+                      </p>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <p className="text-xs text-gray-400">No forms sent</p>
+              )}
+            </div>
+          </div>
+        )}
+        {canViewPayments && (
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-gray-700">Payments</h3>
+              <Link href="/payments">
+                <button className="text-xs text-blue-600 hover:text-blue-700 font-medium">
+                  See more
+                </button>
+              </Link>
+            </div>
+            <div className="space-y-2">
+              {paymentsArray.length > 0 ? (
+                paymentsArray.slice(0, 4).map((item, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <div className="h-8 w-8 rounded-full bg-green-100 flex items-center justify-center">
+                      <CreditCard className="h-4 w-4 text-green-600" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-gray-700 truncate">
+                        {item.customerName || "Unknown Customer"}
+                      </p>
+                      <p className="text-xs text-gray-500 truncate">
+                        Payment Form • {format(new Date(item.sentAt || item.createdAt), "MMM d, yyyy")}
+                      </p>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <p className="text-xs text-gray-400">No payment forms sent</p>
               )}
             </div>
           </div>

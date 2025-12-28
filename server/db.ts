@@ -17,7 +17,7 @@ try {
     ssl: isLocalhost ? false : (isNeon ? { rejectUnauthorized: false } : 'require'),
     max: 20,
     idle_timeout: 20,
-    connect_timeout: 30, // Increased from 10 to 30 seconds for better reliability
+    connect_timeout: 60, // Increased to 60 seconds for better reliability with remote databases
     onnotice: () => {}, // Suppress notices
     transform: {
       undefined: null, // Transform undefined to null for PostgreSQL compatibility
@@ -26,6 +26,8 @@ try {
     connection: {
       application_name: 'ratehonk-crm',
     },
+    // Add connection retry on timeout
+    max_lifetime: 60 * 30, // 30 minutes
   });
   
   db = drizzle(sql);

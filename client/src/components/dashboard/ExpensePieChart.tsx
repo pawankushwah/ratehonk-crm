@@ -7,10 +7,31 @@ import { DateFilter } from "@/components/ui/date-filter";
 
 import { safeParseNumber } from "@/lib/utils";
 import { useExpenses } from "@/hooks/useDashboardData";
+import { useAuth } from "../auth/auth-provider";
+import { useQuery } from "@tanstack/react-query";
+
+// Helper function to get currency symbol
+const getCurrencySymbol = (currencyCode: string): string => {
+  const symbols: Record<string, string> = {
+    USD: "$",
+    EUR: "€",
+    GBP: "£",
+    INR: "₹",
+    AUD: "A$",
+    CAD: "C$",
+    JPY: "¥",
+    CNY: "¥",
+    SGD: "S$",
+    HKD: "HK$",
+    NZD: "NZ$",
+  };
+  return symbols[currencyCode] || currencyCode;
+};
 
 const COLORS = ["#0A64A0", "#3E85C5", "#6DA9DB", "#8EC1E7", "#A7D5F0"];
 
 export function ExpensePieChart() {
+  const { tenant } = useAuth();
   const [dateFilter, setDateFilter] = useState("this_quarter");
   const [customDateFrom, setCustomDateFrom] = useState<Date | null>(null);
   const [customDateTo, setCustomDateTo] = useState<Date | null>(null);
@@ -22,6 +43,30 @@ export function ExpensePieChart() {
   );
 
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+
+  // Fetch invoice settings to get currency
+  const { data: invoiceSettings } = useQuery({
+    queryKey: ["/api/invoice-settings", tenant?.id],
+    queryFn: async () => {
+      if (!tenant?.id) return null;
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(
+        `/api/invoice-settings/${tenant.id}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      if (!response.ok) return { defaultCurrency: "USD" };
+      return await response.json();
+    },
+    enabled: !!tenant?.id,
+  });
+
+  const currentCurrency = invoiceSettings?.defaultCurrency || "USD";
+  const currencySymbol = getCurrencySymbol(currentCurrency);
 
   const approvedExpenses = expensesData.filter(
     (exp: any) => exp.status?.toLowerCase() === "approved"
@@ -85,7 +130,7 @@ export function ExpensePieChart() {
       return (
         <div className="bg-white shadow-lg rounded-md p-2 border text-xs text-black">
           <p className="font-semibold">{item.name}</p>
-          <span>{usingDummy ? "C$ 0" : `C$ ${item.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</span>
+          <span>{usingDummy ? `${currencySymbol} 0` : `${currencySymbol} ${item.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</span>
         </div>
       );
     }
@@ -101,7 +146,7 @@ export function ExpensePieChart() {
           </CardTitle>
 
           <p className="text-xl sm:text-2xl font-semibold text-[#000000] mt-1">
-            C$ {(totalAmount / 1000).toFixed(1)}k
+            {currencySymbol} {(totalAmount / 1000).toFixed(1)}k
           </p>
         </div>
 
@@ -191,7 +236,7 @@ export function ExpensePieChart() {
                   {usingDummy ? item.name : item.name}
                 </div>
 
-               <span>{usingDummy ? "C$ 0" : `C$ ${item.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</span>
+               <span>{usingDummy ? `${currencySymbol} 0` : `${currencySymbol} ${item.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</span>
               </div>
             ))}
           </div>

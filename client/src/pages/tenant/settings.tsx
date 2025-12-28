@@ -59,7 +59,6 @@ import {
   Image,
   Receipt,
   ArrowRight,
-  MessageCircle,
 } from "lucide-react";
 
 // Schema for tenant settings
@@ -89,24 +88,12 @@ const userPreferencesSchema = z.object({
 
 // Schema for system settings
 const systemSettingsSchema = z.object({
-  leadScoringEnabled: z.boolean(),
-  autoLeadAssignment: z.boolean(),
-  autoAssignmentPriorityRoleId: z.number().nullable().optional(),
-  duplicateDetection: z.boolean(),
   dataRetentionDays: z.number().min(30).max(2555),
   auditLogging: z.boolean(),
   sessionTimeout: z.number().min(15).max(480),
 });
 
-// Schema for WhatsApp settings
-const whatsappSettingsSchema = z.object({
-  enableLeadWelcomeMessage: z.boolean(),
-  leadWelcomeMessage: z.string().min(1, "Lead welcome message is required"),
-  enableCustomerWelcomeMessage: z.boolean(),
-  customerWelcomeMessage: z
-    .string()
-    .min(1, "Customer welcome message is required"),
-});
+// WhatsApp settings moved to WhatsAppSettingsPanel component
 
 // Schema for Zoom settings
 const zoomSettingsSchema = z.object({
@@ -118,7 +105,6 @@ const zoomSettingsSchema = z.object({
 type TenantSettings = z.infer<typeof tenantSettingsSchema>;
 type UserPreferences = z.infer<typeof userPreferencesSchema>;
 type SystemSettings = z.infer<typeof systemSettingsSchema>;
-type WhatsAppSettings = z.infer<typeof whatsappSettingsSchema>;
 type ZoomSettings = z.infer<typeof zoomSettingsSchema>;
 
 export default function Settings() {
@@ -134,8 +120,8 @@ export default function Settings() {
     const params = new URLSearchParams(window.location.search);
     const tabParam = params.get("tab");
     if (tabParam) {
-      // Valid tabs: tenant, user, notifications, system, whatsapp
-      const validTabs = ["tenant", "user", "notifications", "system", "whatsapp"];
+      // Valid tabs: tenant, user, notifications, system
+      const validTabs = ["tenant", "user", "notifications", "system"];
       if (validTabs.includes(tabParam)) {
         setActiveTab(tabParam);
       }
@@ -155,29 +141,8 @@ export default function Settings() {
     queryKey: ["/api/system/settings"],
   });
 
-  const { data: whatsappData, isLoading: whatsappLoading } = useQuery({
-    queryKey: ["/api/tenant-settings"],
-  });
 
   const { tenant } = useAuth();
-  const tenantId = tenant?.id;
-
-  // Fetch roles for auto-assignment priority role dropdown
-  const { data: roles = [] } = useQuery({
-    queryKey: [`/api/tenants/${tenantId}/roles`],
-    queryFn: async () => {
-      if (!tenantId) return [];
-      const res = await fetch(`/api/tenants/${tenantId}/roles`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
-        }
-      });
-      if (!res.ok) return [];
-      const data = await res.json();
-      return Array.isArray(data) ? data : [];
-    },
-    enabled: !!tenantId,
-  });
 
   // Forms with data from API
   const tenantForm = useForm<TenantSettings>({
@@ -245,10 +210,6 @@ export default function Settings() {
   const systemForm = useForm<SystemSettings>({
     resolver: zodResolver(systemSettingsSchema),
     defaultValues: {
-      leadScoringEnabled: true,
-      autoLeadAssignment: false,
-      autoAssignmentPriorityRoleId: null,
-      duplicateDetection: true,
       dataRetentionDays: 365,
       auditLogging: true,
       sessionTimeout: 120,
@@ -259,10 +220,6 @@ export default function Settings() {
   React.useEffect(() => {
     if (systemData) {
       systemForm.reset({
-        leadScoringEnabled: (systemData as any).leadScoringEnabled !== false,
-        autoLeadAssignment: (systemData as any).autoLeadAssignment === true,
-        autoAssignmentPriorityRoleId: (systemData as any).autoAssignmentPriorityRoleId || null,
-        duplicateDetection: (systemData as any).duplicateDetection !== false,
         dataRetentionDays: (systemData as any).dataRetentionDays || 365,
         auditLogging: (systemData as any).auditLogging !== false,
         sessionTimeout: (systemData as any).sessionTimeout || 120,
@@ -270,42 +227,6 @@ export default function Settings() {
     }
   }, [systemData, systemForm]);
 
-  // Load auto-assignment priority role from tenant settings
-  React.useEffect(() => {
-    if (whatsappData && (whatsappData as any).autoAssignmentPriorityRoleId !== undefined) {
-      systemForm.setValue('autoAssignmentPriorityRoleId', (whatsappData as any).autoAssignmentPriorityRoleId || null);
-    }
-  }, [whatsappData, systemForm]);
-
-  const whatsappForm = useForm<WhatsAppSettings>({
-    resolver: zodResolver(whatsappSettingsSchema),
-    defaultValues: {
-      enableLeadWelcomeMessage: true,
-      leadWelcomeMessage:
-        "Hello! Thank you for your interest. Our team will get in touch with you shortly.",
-      enableCustomerWelcomeMessage: true,
-      customerWelcomeMessage:
-        "Welcome! Thank you for choosing us. We're excited to serve you!",
-    },
-  });
-
-  // Update WhatsApp form when data loads
-  React.useEffect(() => {
-    if (whatsappData) {
-      whatsappForm.reset({
-        enableLeadWelcomeMessage:
-          (whatsappData as any).enableLeadWelcomeMessage !== false,
-        leadWelcomeMessage:
-          (whatsappData as any).leadWelcomeMessage ||
-          "Hello! Thank you for your interest. Our team will get in touch with you shortly.",
-        enableCustomerWelcomeMessage:
-          (whatsappData as any).enableCustomerWelcomeMessage !== false,
-        customerWelcomeMessage:
-          (whatsappData as any).customerWelcomeMessage ||
-          "Welcome! Thank you for choosing us. We're excited to serve you!",
-      });
-    }
-  }, [whatsappData, whatsappForm]);
 
   const zoomForm = useForm<ZoomSettings>({
     resolver: zodResolver(zoomSettingsSchema),
@@ -405,28 +326,13 @@ export default function Settings() {
   const updateSystemMutation = useMutation({
     mutationFn: async (data: SystemSettings) => {
       const token = localStorage.getItem("auth_token");
-      
-      // Update auto-assignment priority role separately via dedicated endpoint
-      if (data.autoAssignmentPriorityRoleId !== undefined) {
-        try {
-          await apiRequest("PUT", "/api/tenant-settings/auto-assignment", {
-            autoAssignmentPriorityRoleId: data.autoAssignmentPriorityRoleId,
-          });
-        } catch (error) {
-          console.error("Failed to update auto-assignment priority role:", error);
-          // Don't throw - continue with other settings
-        }
-      }
-
-      // Update other system settings
-      const { autoAssignmentPriorityRoleId, ...otherSettings } = data;
       const response = await fetch("/api/system/settings", {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(otherSettings),
+        body: JSON.stringify(data),
       });
       if (!response.ok) {
         const errorData = await response.text();
@@ -448,21 +354,6 @@ export default function Settings() {
     },
   });
 
-  const updateWhatsAppMutation = useMutation({
-    mutationFn: async (data: WhatsAppSettings) => {
-      return await apiRequest("PUT", "/api/tenant-settings/whatsapp", data);
-    },
-    onSuccess: () => {
-      toast({ title: "WhatsApp settings updated successfully" });
-      queryClient.invalidateQueries({ queryKey: ["/api/tenant-settings"] });
-    },
-    onError: () => {
-      toast({
-        title: "Failed to update WhatsApp settings",
-        variant: "destructive",
-      });
-    },
-  });
 
   const updateZoomMutation = useMutation({
     mutationFn: async (data: ZoomSettings) => {
@@ -492,9 +383,6 @@ export default function Settings() {
     updateSystemMutation.mutate(data);
   };
 
-  const onWhatsAppSubmit = (data: WhatsAppSettings) => {
-    updateWhatsAppMutation.mutate(data);
-  };
 
   const onZoomSubmit = (data: ZoomSettings) => {
     updateZoomMutation.mutate(data);
@@ -614,7 +502,7 @@ export default function Settings() {
           onValueChange={setActiveTab}
           className="space-y-6"
         >
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="tenant" className="flex items-center gap-2">
               <Building2 className="h-4 w-4" />
               Company
@@ -626,17 +514,6 @@ export default function Settings() {
             <TabsTrigger value="system" className="flex items-center gap-2">
               <Shield className="h-4 w-4" />
               System
-            </TabsTrigger>
-            <TabsTrigger
-              value="integrations"
-              className="flex items-center gap-2"
-            >
-              <Zap className="h-4 w-4" />
-              Integrations
-            </TabsTrigger>
-            <TabsTrigger value="whatsapp" className="flex items-center gap-2">
-              <MessageCircle className="h-4 w-4" />
-              WhatsApp
             </TabsTrigger>
           </TabsList>
 
@@ -1263,139 +1140,6 @@ export default function Settings() {
                 <Card>
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
-                      <Zap className="h-5 w-5" />
-                      Lead Management
-                    </CardTitle>
-                    <CardDescription>
-                      Configure lead scoring and assignment settings
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-6">
-                    <div className="space-y-4">
-                      <FormField
-                        control={systemForm.control}
-                        name="leadScoringEnabled"
-                        render={({ field }) => (
-                          <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
-                            <div className="space-y-0.5">
-                              <FormLabel className="text-base">
-                                Lead Scoring
-                              </FormLabel>
-                              <FormDescription>
-                                Automatically score leads based on behavior and
-                                attributes
-                              </FormDescription>
-                            </div>
-                            <FormControl>
-                              <Switch
-                                checked={field.value}
-                                onCheckedChange={field.onChange}
-                              />
-                            </FormControl>
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={systemForm.control}
-                        name="autoLeadAssignment"
-                        render={({ field }) => (
-                          <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
-                            <div className="space-y-0.5">
-                              <FormLabel className="text-base">
-                                Auto Lead Assignment
-                              </FormLabel>
-                              <FormDescription>
-                                Automatically assign leads to team members based
-                                on rules
-                              </FormDescription>
-                            </div>
-                            <FormControl>
-                              <Switch
-                                checked={field.value}
-                                onCheckedChange={field.onChange}
-                              />
-                            </FormControl>
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={systemForm.control}
-                        name="autoAssignmentPriorityRoleId"
-                        render={({ field }) => (
-                          <FormItem className="rounded-lg border p-4">
-                            <div className="space-y-3">
-                              <div>
-                                <FormLabel className="text-base">
-                                  Auto-Assignment Priority Role
-                                </FormLabel>
-                                <FormDescription>
-                                  Select which role should receive leads first when auto-assigning. 
-                                  Leads will be distributed evenly among users with this role based on workload.
-                                  Leave empty to use default assignment logic.
-                                </FormDescription>
-                              </div>
-                              <FormControl>
-                                <Select
-                                  value={field.value?.toString() || "none"}
-                                  onValueChange={(value) => {
-                                    field.onChange(value === "none" ? null : parseInt(value));
-                                  }}
-                                >
-                                  <SelectTrigger>
-                                    <SelectValue placeholder="Select priority role (optional)" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="none">None (Use Default Logic)</SelectItem>
-                                    {Array.isArray(roles) && roles.map((role: any) => (
-                                      <SelectItem key={role.id} value={role.id.toString()}>
-                                        {role.name}
-                                        {role.isDefault && " (Owner)"}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              </FormControl>
-                              {field.value && (
-                                <p className="text-sm text-muted-foreground">
-                                  Selected role: {roles.find((r: any) => r.id === field.value)?.name || 'Unknown'}
-                                </p>
-                              )}
-                            </div>
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={systemForm.control}
-                        name="duplicateDetection"
-                        render={({ field }) => (
-                          <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
-                            <div className="space-y-0.5">
-                              <FormLabel className="text-base">
-                                Duplicate Detection
-                              </FormLabel>
-                              <FormDescription>
-                                Prevent duplicate leads from being created
-                              </FormDescription>
-                            </div>
-                            <FormControl>
-                              <Switch
-                                checked={field.value}
-                                onCheckedChange={field.onChange}
-                              />
-                            </FormControl>
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
                       <Shield className="h-5 w-5" />
                       Security & Data
                     </CardTitle>
@@ -1503,405 +1247,6 @@ export default function Settings() {
             </Form>
           </TabsContent>
 
-          {/* Integrations Tab */}
-          <TabsContent value="integrations" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Zap className="h-5 w-5" />
-                  Available Integrations
-                </CardTitle>
-                <CardDescription>
-                  Connect with external services and tools
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  <Card className="p-4">
-                    <div className="flex items-center gap-3 mb-3">
-                      <Mail className="h-8 w-8 text-blue-500" />
-                      <div>
-                        <h3 className="font-semibold">Email Marketing</h3>
-                        <Badge variant="secondary">Connected</Badge>
-                      </div>
-                    </div>
-                    <p className="text-sm text-muted-foreground mb-3">
-                      SendGrid integration for email campaigns
-                    </p>
-                    <Button variant="outline" size="sm" className="w-full">
-                      Configure
-                    </Button>
-                  </Card>
-
-                  <Card className="p-4">
-                    <div className="flex items-center gap-3 mb-3">
-                      <Globe className="h-8 w-8 text-green-500" />
-                      <div>
-                        <h3 className="font-semibold">Social Media</h3>
-                        <Badge variant="outline">Available</Badge>
-                      </div>
-                    </div>
-                    <p className="text-sm text-muted-foreground mb-3">
-                      Facebook and Instagram lead capture
-                    </p>
-                    <Button variant="outline" size="sm" className="w-full">
-                      Connect
-                    </Button>
-                  </Card>
-
-                  <Card className="p-4">
-                    <div className="flex items-center gap-3 mb-3">
-                      <CreditCard className="h-8 w-8 text-purple-500" />
-                      <div>
-                        <h3 className="font-semibold">Payment Gateway</h3>
-                        <Badge variant="outline">Available</Badge>
-                      </div>
-                    </div>
-                    <p className="text-sm text-muted-foreground mb-3">
-                      Stripe integration for secure payments
-                    </p>
-                    <Button variant="outline" size="sm" className="w-full">
-                      Connect
-                    </Button>
-                  </Card>
-
-                  <Card className="p-4">
-                    <div className="flex items-center gap-3 mb-3">
-                      <Calendar className="h-8 w-8 text-orange-500" />
-                      <div>
-                        <h3 className="font-semibold">Calendar Sync</h3>
-                        <Badge variant="outline">Available</Badge>
-                      </div>
-                    </div>
-                    <p className="text-sm text-muted-foreground mb-3">
-                      Google Calendar integration
-                    </p>
-                    <Button variant="outline" size="sm" className="w-full">
-                      Connect
-                    </Button>
-                  </Card>
-
-                  <Card className="p-4">
-                    <div className="flex items-center gap-3 mb-3">
-                      <Database className="h-8 w-8 text-red-500" />
-                      <div>
-                        <h3 className="font-semibold">Analytics</h3>
-                        <Badge variant="outline">Available</Badge>
-                      </div>
-                    </div>
-                    <p className="text-sm text-muted-foreground mb-3">
-                      Google Analytics tracking
-                    </p>
-                    <Button variant="outline" size="sm" className="w-full">
-                      Connect
-                    </Button>
-                  </Card>
-
-                  <Card className="p-4">
-                    <div className="flex items-center gap-3 mb-3">
-                      <Key className="h-8 w-8 text-indigo-500" />
-                      <div>
-                        <h3 className="font-semibold">API Access</h3>
-                        <Badge variant="secondary">Active</Badge>
-                      </div>
-                    </div>
-                    <p className="text-sm text-muted-foreground mb-3">
-                      REST API for custom integrations
-                    </p>
-                    <Button variant="outline" size="sm" className="w-full">
-                      Manage Keys
-                    </Button>
-                  </Card>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Zoom Configuration Section */}
-            <Form {...zoomForm}>
-              <form onSubmit={zoomForm.handleSubmit(onZoomSubmit)}>
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <svg className="h-5 w-5 text-blue-600" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M2 5.5A1.5 1.5 0 0 1 3.5 4h17A1.5 1.5 0 0 1 22 5.5v4.34a3.499 3.499 0 0 0-2-1.08V6.5H4v11h16v-2.26c.61.07 1.23.26 1.75.56a.499.499 0 0 0 .25.06c.28 0 .55-.15.71-.41.21-.35.09-.8-.26-1.01a4.453 4.453 0 0 0-2.45-.69c-2.48 0-4.5 2.02-4.5 4.5S17.52 23 20 23s4.5-2.02 4.5-4.5c0-.88-.26-1.7-.71-2.39-.22-.34-.67-.44-1.01-.21-.35.22-.44.67-.21 1.01.3.45.46.99.46 1.59 0 1.65-1.35 3-3 3s-3-1.35-3-3 1.35-3 3-3c.83 0 1.58.34 2.12.89V5.5A1.5 1.5 0 0 0 20.5 4h-17A1.5 1.5 0 0 0 2 5.5v13A1.5 1.5 0 0 0 3.5 20h11.24c.13.72.41 1.39.79 1.98.16.25.43.39.71.39.12 0 .24-.03.36-.08a.748.748 0 0 0 .31-1.01 3.48 3.48 0 0 1 0-3.56c.22-.34.12-.8-.22-1.02-.35-.22-.8-.12-1.02.22-.54.83-.82 1.78-.82 2.77 0 .17.01.34.03.5H3.5A1.5 1.5 0 0 1 2 18.5v-13z"/>
-                      </svg>
-                      Zoom Meeting Integration
-                    </CardTitle>
-                    <CardDescription>
-                      Configure Zoom Server-to-Server OAuth credentials to enable automatic meeting generation from the Calendar. These credentials allow the system to create Zoom meetings on your behalf when scheduling calendar events.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-6">
-                    <div className="rounded-md bg-blue-50 p-4 border border-blue-200">
-                      <div className="flex gap-3">
-                        <div className="flex-shrink-0">
-                          <svg className="h-5 w-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                          </svg>
-                        </div>
-                        <div className="flex-1 text-sm text-blue-800">
-                          <p className="font-semibold mb-2">How to get Zoom credentials:</p>
-                          <ol className="list-decimal ml-4 space-y-1">
-                            <li>Visit <a href="https://marketplace.zoom.us/" target="_blank" rel="noopener noreferrer" className="underline">Zoom Marketplace</a></li>
-                            <li>Click "Develop" → "Build App" → Choose "Server-to-Server OAuth"</li>
-                            <li>Fill in app details and activate the app</li>
-                            <li>Copy Account ID, Client ID, and Client Secret from the app credentials page</li>
-                          </ol>
-                        </div>
-                      </div>
-                    </div>
-
-                    <FormField
-                      control={zoomForm.control}
-                      name="zoomAccountId"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Zoom Account ID</FormLabel>
-                          <FormControl>
-                            <Input 
-                              placeholder="Enter your Zoom Account ID" 
-                              {...field}
-                              data-testid="input-zoom-account-id"
-                            />
-                          </FormControl>
-                          <FormDescription>
-                            Found in your Zoom Server-to-Server OAuth app credentials
-                          </FormDescription>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <FormField
-                      control={zoomForm.control}
-                      name="zoomClientId"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Zoom Client ID</FormLabel>
-                          <FormControl>
-                            <Input 
-                              placeholder="Enter your Zoom Client ID" 
-                              {...field}
-                              data-testid="input-zoom-client-id"
-                            />
-                          </FormControl>
-                          <FormDescription>
-                            OAuth client ID from your Zoom app
-                          </FormDescription>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <FormField
-                      control={zoomForm.control}
-                      name="zoomClientSecret"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Zoom Client Secret</FormLabel>
-                          <FormControl>
-                            <Input 
-                              type="password"
-                              placeholder="Enter your Zoom Client Secret" 
-                              {...field}
-                              data-testid="input-zoom-client-secret"
-                            />
-                          </FormControl>
-                          <FormDescription>
-                            OAuth client secret from your Zoom app (kept secure)
-                          </FormDescription>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <div className="flex justify-end">
-                      <Button
-                        type="submit"
-                        disabled={updateZoomMutation.isPending}
-                        className="flex items-center gap-2"
-                        data-testid="button-save-zoom-credentials"
-                      >
-                        {updateZoomMutation.isPending ? (
-                          <RefreshCw className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Save className="h-4 w-4" />
-                        )}
-                        Save Zoom Credentials
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              </form>
-            </Form>
-          </TabsContent>
-
-          {/* WhatsApp Settings Tab */}
-          <TabsContent value="whatsapp" className="space-y-6">
-            <Form {...whatsappForm}>
-              <form
-                onSubmit={whatsappForm.handleSubmit(onWhatsAppSubmit)}
-                className="space-y-6"
-              >
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <MessageCircle className="h-5 w-5" />
-                      WhatsApp Welcome Messages
-                    </CardTitle>
-                    <CardDescription>
-                      Configure automatic WhatsApp welcome messages for new
-                      leads and customers. Messages are sent using your default
-                      WhatsApp device when a phone number is provided during
-                      creation.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-6">
-                    {/* Lead Welcome Message Settings */}
-                    <div className="space-y-4 p-4 border rounded-lg">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <h3 className="font-semibold">
-                            Lead Welcome Message
-                          </h3>
-                          <p className="text-sm text-muted-foreground">
-                            Send automatically when a new lead is created with a
-                            phone number
-                          </p>
-                        </div>
-                        <FormField
-                          control={whatsappForm.control}
-                          name="enableLeadWelcomeMessage"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormControl>
-                                <Switch
-                                  checked={field.value}
-                                  onCheckedChange={field.onChange}
-                                  data-testid="switch-enable-lead-welcome"
-                                />
-                              </FormControl>
-                            </FormItem>
-                          )}
-                        />
-                      </div>
-                      <FormField
-                        control={whatsappForm.control}
-                        name="leadWelcomeMessage"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Message Template</FormLabel>
-                            <FormControl>
-                              <Textarea
-                                placeholder="Enter your lead welcome message..."
-                                {...field}
-                                rows={4}
-                                data-testid="textarea-lead-welcome-message"
-                              />
-                            </FormControl>
-                            <FormDescription>
-                              This message will be sent via WhatsApp to new
-                              leads
-                            </FormDescription>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-
-                    {/* Customer Welcome Message Settings */}
-                    <div className="space-y-4 p-4 border rounded-lg">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <h3 className="font-semibold">
-                            Customer Welcome Message
-                          </h3>
-                          <p className="text-sm text-muted-foreground">
-                            Send automatically when a new customer is created
-                            with a phone number
-                          </p>
-                        </div>
-                        <FormField
-                          control={whatsappForm.control}
-                          name="enableCustomerWelcomeMessage"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormControl>
-                                <Switch
-                                  checked={field.value}
-                                  onCheckedChange={field.onChange}
-                                  data-testid="switch-enable-customer-welcome"
-                                />
-                              </FormControl>
-                            </FormItem>
-                          )}
-                        />
-                      </div>
-                      <FormField
-                        control={whatsappForm.control}
-                        name="customerWelcomeMessage"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Message Template</FormLabel>
-                            <FormControl>
-                              <Textarea
-                                placeholder="Enter your customer welcome message..."
-                                {...field}
-                                rows={4}
-                                data-testid="textarea-customer-welcome-message"
-                              />
-                            </FormControl>
-                            <FormDescription>
-                              This message will be sent via WhatsApp to new
-                              customers
-                            </FormDescription>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-
-                    <div className="flex items-center justify-between pt-4 border-t">
-                      <div>
-                        <p className="text-sm text-muted-foreground">
-                          Make sure you have a WhatsApp Integration configured
-                          in{" "}
-                          <Link
-                            href="/whatsapp-setup"
-                            className="text-primary hover:underline"
-                          >
-                            Integrate
-                          </Link>
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-sm text-muted-foreground">
-                          Make sure you have a default WhatsApp device
-                          configured in{" "}
-                          <Link
-                            href="/whatsapp-devices"
-                            className="text-primary hover:underline"
-                          >
-                            WhatsApp Devices
-                          </Link>
-                        </p>
-                      </div>
-                      <Button
-                        type="submit"
-                        disabled={updateWhatsAppMutation.isPending}
-                        data-testid="button-save-whatsapp-settings"
-                      >
-                        <Save className="mr-2 h-4 w-4" />
-                        {updateWhatsAppMutation.isPending
-                          ? "Saving..."
-                          : "Save Settings"}
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              </form>
-            </Form>
-          </TabsContent>
         </Tabs>
       </div>
     </Layout>

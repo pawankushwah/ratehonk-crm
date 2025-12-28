@@ -26,6 +26,7 @@ import { registerMeetingRoutes } from "./meeting-routes";
 import { sql, db } from "./db";
 import { eq, and, desc, asc } from "drizzle-orm";
 import bcrypt from "bcrypt";
+import { requireActiveSubscription, requirePageAccess } from "./subscription-middleware";
 // Google APIs import DISABLED - using direct HTTP requests to avoid "Cannot add property auth" error
 // import { google } from 'googleapis';
 import jwt from "jsonwebtoken";
@@ -202,13 +203,36 @@ async function handleGmailCallback(
       await simpleStorage.getGmailIntegration(tenantId);
     if (existingIntegration) {
       console.log("🔄 Updating existing Gmail integration...");
-      await simpleStorage.updateGmailIntegration(tenantId, integrationData);
+      // Convert snake_case to camelCase and use integration ID
+      // Convert Date objects to ISO strings for postgres
+      await simpleStorage.updateGmailIntegration(existingIntegration.id, {
+        accessToken: integrationData.access_token,
+        refreshToken: integrationData.refresh_token,
+        tokenExpiryDate: integrationData.token_expiry_date 
+          ? (integrationData.token_expiry_date instanceof Date 
+              ? integrationData.token_expiry_date.toISOString() 
+              : integrationData.token_expiry_date)
+          : null,
+        isConnected: integrationData.is_connected,
+        syncEnabled: true, // Keep sync enabled
+      });
     } else {
       console.log("➕ Creating new Gmail integration...");
-      // Use direct SQL since createGmailIntegration might not exist
-      await sql`INSERT INTO gmail_integrations 
-        (tenant_id, gmail_address, access_token, refresh_token, token_expiry_date, is_connected, created_at, updated_at)
-        VALUES (${tenantId}, ${gmailAddress}, ${integrationData.access_token}, ${integrationData.refresh_token}, ${integrationData.token_expiry_date ? integrationData.token_expiry_date.toISOString() : null}, ${integrationData.is_connected}, ${integrationData.created_at.toISOString()}, ${integrationData.updated_at.toISOString()})`;
+      // Use createOrUpdateGmailIntegration which handles both insert and update
+      // Convert Date objects to ISO strings for postgres
+      await simpleStorage.createOrUpdateGmailIntegration({
+        tenantId: tenantId,
+        gmailAddress: gmailAddress,
+        accessToken: integrationData.access_token,
+        refreshToken: integrationData.refresh_token,
+        tokenExpiryDate: integrationData.token_expiry_date 
+          ? (integrationData.token_expiry_date instanceof Date 
+              ? integrationData.token_expiry_date.toISOString() 
+              : integrationData.token_expiry_date)
+          : null,
+        isConnected: integrationData.is_connected,
+        syncEnabled: true,
+      });
     }
     console.log("✅ Gmail integration saved successfully");
 
@@ -789,18 +813,23 @@ const authenticateToken = async (req: any, res: any, next: any) => {
         user ? `found - tenant: ${user.tenantId}` : "not found",
       );
     } catch (dbError: any) {
-      console.error("❌ Database error during user lookup:", dbError.message);
-      // If it's a connection timeout, return a more specific error
-      if (dbError.code === 'CONNECT_TIMEOUT' || dbError.errno === 'CONNECT_TIMEOUT') {
+      console.error("❌ Database error during user lookup:", dbError);
+      // Check for connection timeout errors (ETIMEDOUT from postgres library)
+      if (dbError.code === 'ETIMEDOUT' || dbError.code === 'CONNECT_TIMEOUT' || 
+          dbError.errno === 'ETIMEDOUT' || dbError.message?.includes('ETIMEDOUT') ||
+          dbError.message?.includes('timeout')) {
+        console.error("⏱️ Database connection timeout detected");
         return res.status(503).json({ 
-          message: "Database connection timeout. Please try again later.",
-          error: "Database unavailable"
+          message: "Database connection timeout. The database server is not reachable. Please check your network connection and database server status.",
+          error: "ETIMEDOUT",
+          code: "DATABASE_UNAVAILABLE"
         });
       }
       // For other database errors, still return 500
       return res.status(500).json({ 
         message: "Database error during authentication",
-        error: dbError.message 
+        error: dbError.message || "Unknown database error",
+        code: dbError.code || "DATABASE_ERROR"
       });
     }
 
@@ -3208,6 +3237,24 @@ app.get("/api/tenants/:tenantId/all-customers-graph", authenticateToken, async (
 
         const formName = formType === 'payment' ? 'payment' : 'consulation';
         const activityTitle = formType === 'payment' ? 'Payment Form Link Sent' : 'Consulation Form Link Sent';
+        const activityDescription = `Form link sent via ${shouldSendEmail && shouldSendWhatsApp ? 'Email & WhatsApp' : shouldSendEmail ? 'Email' : 'WhatsApp'}: ${formUrl}`;
+
+        // Create activity to track that form was sent
+        try {
+          await simpleStorage.createCustomerActivity({
+            tenantId,
+            customerId,
+            userId: req.user?.id,
+            activityType: 2, // Email/Communication type
+            activityTitle: activityTitle,
+            activityDescription: activityDescription,
+            activityStatus: 1,
+            activityDate: new Date(),
+          });
+        } catch (activityError) {
+          console.error("❌ Error creating activity for form send:", activityError);
+          // Don't fail the request if activity creation fails
+        }
 
         // Send email and WhatsApp asynchronously (fire and forget) for instant response
         // This allows the API to return immediately while sending happens in the background
@@ -3901,6 +3948,173 @@ app.get("/api/tenants/:tenantId/all-customers-graph", authenticateToken, async (
         return res.status(500).json({
           success: false,
           message: "Failed to fetch consulation form submissions",
+          error: error?.message,
+        });
+      }
+    },
+  );
+
+  // Get all consultation forms SENT (from activities) for a tenant
+  app.get(
+    "/api/tenants/:tenantId/consulation-forms-sent",
+    authenticateToken,
+    async (req: any, res) => {
+      try {
+        const tenantId = parseInt(req.params.tenantId);
+        const limit = parseInt(req.query?.limit as string) || 10;
+        const formType = req.query?.formType; // Optional filter by form type
+
+        if (!tenantId || isNaN(tenantId)) {
+          return res.status(400).json({
+            success: false,
+            message: "Valid tenant ID is required",
+          });
+        }
+
+        // Check authorization
+        if (!req.user || req.user.tenantId !== tenantId) {
+          return res.status(403).json({ message: "Unauthorized" });
+        }
+
+        let activities;
+        if (formType) {
+          const activityTitle = formType === 'payment' ? 'Payment Form Link Sent' : 'Consulation Form Link Sent';
+          activities = await sql`
+            SELECT 
+              ca.id,
+              ca.tenant_id,
+              ca.customer_id,
+              ca.activity_title,
+              ca.activity_description,
+              ca.activity_date,
+              ca.created_at,
+              c.first_name || ' ' || c.last_name as customer_name,
+              c.email as customer_email,
+              c.phone as customer_phone
+            FROM customer_activities ca
+            LEFT JOIN customers c ON ca.customer_id = c.id
+            WHERE ca.tenant_id = ${tenantId} AND ca.activity_title = ${activityTitle}
+            ORDER BY ca.activity_date DESC, ca.created_at DESC
+            LIMIT ${limit}
+          `;
+        } else {
+          activities = await sql`
+            SELECT 
+              ca.id,
+              ca.tenant_id,
+              ca.customer_id,
+              ca.activity_title,
+              ca.activity_description,
+              ca.activity_date,
+              ca.created_at,
+              c.first_name || ' ' || c.last_name as customer_name,
+              c.email as customer_email,
+              c.phone as customer_phone
+            FROM customer_activities ca
+            LEFT JOIN customers c ON ca.customer_id = c.id
+            WHERE ca.tenant_id = ${tenantId} 
+              AND (ca.activity_title = 'Consulation Form Link Sent' OR ca.activity_title = 'Payment Form Link Sent')
+            ORDER BY ca.activity_date DESC, ca.created_at DESC
+            LIMIT ${limit}
+          `;
+        }
+
+        console.log(`📋 Fetched ${activities.length} consultation form activities for tenant ${tenantId}`);
+
+        const formattedForms = activities.map((activity: any) => {
+          const isPaymentForm = activity.activity_title === 'Payment Form Link Sent';
+          return {
+            id: activity.id,
+            tenantId: activity.tenant_id,
+            customerId: activity.customer_id,
+            customerName: activity.customer_name || "Unknown Customer",
+            customerEmail: activity.customer_email || "",
+            customerPhone: activity.customer_phone || "",
+            formType: isPaymentForm ? "payment" : "consulation",
+            sentAt: activity.activity_date || activity.created_at,
+            createdAt: activity.created_at,
+          };
+        });
+
+        res.json({
+          success: true,
+          forms: formattedForms,
+        });
+      } catch (error: any) {
+        console.error("❌ Error fetching consultation forms sent:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Failed to fetch consultation forms sent",
+          error: error?.message,
+        });
+      }
+    },
+  );
+
+  // Get all payment forms SENT (from activities) for a tenant
+  app.get(
+    "/api/tenants/:tenantId/payment-forms-sent",
+    authenticateToken,
+    async (req: any, res) => {
+      try {
+        const tenantId = parseInt(req.params.tenantId);
+        const limit = parseInt(req.query?.limit as string) || 10;
+
+        if (!tenantId || isNaN(tenantId)) {
+          return res.status(400).json({
+            success: false,
+            message: "Valid tenant ID is required",
+          });
+        }
+
+        // Check authorization
+        if (!req.user || req.user.tenantId !== tenantId) {
+          return res.status(403).json({ message: "Unauthorized" });
+        }
+
+        // Get payment forms sent from activities
+        const activities = await sql`
+          SELECT 
+            ca.id,
+            ca.tenant_id,
+            ca.customer_id,
+            ca.activity_title,
+            ca.activity_description,
+            ca.activity_date,
+            ca.created_at,
+            c.first_name || ' ' || c.last_name as customer_name,
+            c.email as customer_email,
+            c.phone as customer_phone
+          FROM customer_activities ca
+          LEFT JOIN customers c ON ca.customer_id = c.id
+          WHERE ca.tenant_id = ${tenantId} AND ca.activity_title = 'Payment Form Link Sent'
+          ORDER BY ca.activity_date DESC, ca.created_at DESC
+          LIMIT ${limit}
+        `;
+
+        console.log(`📋 Fetched ${activities.length} payment form activities for tenant ${tenantId}`);
+
+        const formattedForms = activities.map((activity: any) => ({
+          id: activity.id,
+          tenantId: activity.tenant_id,
+          customerId: activity.customer_id,
+          customerName: activity.customer_name || "Unknown Customer",
+          customerEmail: activity.customer_email || "",
+          customerPhone: activity.customer_phone || "",
+          formType: "payment",
+          sentAt: activity.activity_date || activity.created_at,
+          createdAt: activity.created_at,
+        }));
+
+        res.json({
+          success: true,
+          forms: formattedForms,
+        });
+      } catch (error: any) {
+        console.error("❌ Error fetching payment forms sent:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Failed to fetch payment forms sent",
           error: error?.message,
         });
       }
@@ -15707,10 +15921,27 @@ Please improve this email.`;
           return res.status(400).json({ message: "Invalid tenant ID" });
         }
 
-        // Gmail disconnect service disabled - using embedded functions instead
-        console.log(
-          "📧 Gmail disconnect endpoint temporarily disabled - use embedded functions",
-        );
+        // Get the Gmail integration
+        const integration = await simpleStorage.getGmailIntegration(tenantId);
+        
+        if (integration) {
+          // Update integration status to disconnected and clear tokens using direct SQL
+          await sql`
+            UPDATE gmail_integrations 
+            SET 
+              is_connected = false,
+              access_token = NULL,
+              refresh_token = NULL,
+              token_expiry_date = NULL,
+              updated_at = NOW()
+            WHERE id = ${integration.id}
+          `;
+
+          // Delete stored emails
+          await simpleStorage.deleteGmailEmailsByTenant(tenantId);
+          
+          console.log(`✅ Gmail integration disconnected for tenant ${tenantId}`);
+        }
 
         res.json({
           success: true,
@@ -16877,213 +17108,273 @@ Please improve this email.`;
         "📧 Starting enhanced Gmail sync - filtering for important emails only",
       );
 
-      // Enhanced Gmail queries to filter important emails and exclude promotional/social/updates
-      const queries = [
-        // Priority 1: Important emails in inbox (highest priority)
-        "in:inbox is:important -category:promotions -category:social -category:updates",
-        // Priority 2: Starred emails (often important)
-        "in:inbox is:starred -category:promotions -category:social -category:updates",
-        // Priority 3: From known business domains and people
-        "in:inbox (from:noreply OR from:support OR from:admin OR from:no-reply OR from:contact) -category:promotions -category:social -category:updates",
-        // Priority 4: Unread emails that aren't promotional
-        "in:inbox is:unread -category:promotions -category:social -category:updates",
-      ];
-
+      // Two-phase sync strategy:
+      // Phase 1: Sync recent emails (last 7 days) first to ensure today's emails are captured
+      // Phase 2: Sync all other emails
+      const recentQuery = "in:inbox -category:promotions -category:social -category:updates newer_than:7d";
+      const allQuery = "in:inbox -category:promotions -category:social -category:updates";
+      
       let totalSynced = 0;
-      const maxPerQuery = 50; // 50 emails per query = 200 total
+      const maxResultsPerPage = 500; // Gmail API max is 500 per page
+      const maxPages = 100; // Safety limit to prevent infinite loops (50,000 emails max)
 
-      for (const [index, query] of queries.entries()) {
-        console.log(`📧 Query ${index + 1}/${queries.length}: ${query}`);
+      // Helper function to sync emails with a given query
+      const syncEmailsWithQuery = async (query: string, phaseName: string) => {
+        let nextPageToken: string | null = null;
+        let pageCount = 0;
+        let phaseSynced = 0;
 
-        try {
-          // Step 1: Get list of messages from Gmail API with enhanced filtering
-          const encodedQuery = encodeURIComponent(query);
-          const listResponse = await fetch(
-            `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${maxPerQuery}&q=${encodedQuery}`,
-            {
+        console.log(`📧 ${phaseName} - Query: ${query}`);
+
+        do {
+          pageCount++;
+          if (pageCount > maxPages) {
+            console.log(`⚠️ Reached maximum page limit (${maxPages}), stopping ${phaseName}`);
+            break;
+          }
+
+          try {
+            // Step 1: Get list of messages from Gmail API with pagination
+            let apiUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${maxResultsPerPage}&q=${encodeURIComponent(query)}`;
+            if (nextPageToken) {
+              apiUrl += `&pageToken=${encodeURIComponent(nextPageToken)}`;
+            }
+
+            console.log(`📧 ${phaseName} - Page ${pageCount}${nextPageToken ? ` (token: ${nextPageToken.substring(0, 20)}...)` : ''}`);
+
+            const listResponse = await fetch(apiUrl, {
               headers: {
                 Authorization: `Bearer ${accessToken}`,
                 "Content-Type": "application/json",
               },
-            },
-          );
+            });
 
-          if (!listResponse.ok) {
-            console.error(
-              `❌ Query ${index + 1} failed:`,
-              listResponse.status,
-              listResponse.statusText,
-            );
-            if (listResponse.status === 401) {
-              return res.status(401).json({
-                success: false,
-                message:
-                  "Gmail access token expired. Please reconnect your Gmail account.",
-                needsReauth: true,
-              });
+            if (!listResponse.ok) {
+              console.error(
+                `❌ ${phaseName} - Page ${pageCount} failed:`,
+                listResponse.status,
+                listResponse.statusText,
+              );
+              if (listResponse.status === 401) {
+                throw new Error("Gmail access token expired");
+              }
+              break; // Stop on error
             }
-            continue; // Skip this query and try the next one
-          }
 
-          const listData = await listResponse.json();
-          const messages = listData.messages || [];
+            const listData = await listResponse.json();
+            const messages = listData.messages || [];
+            nextPageToken = listData.nextPageToken || null;
 
-          console.log(
-            `📧 Query ${index + 1} found ${messages.length} messages`,
-          );
+            console.log(
+              `📧 ${phaseName} - Page ${pageCount} found ${messages.length} messages${nextPageToken ? ' (more pages available)' : ' (last page)'}`,
+            );
 
-          // Step 2: Fetch details for each message in this query
-          for (const message of messages) {
-            try {
-              if (!message.id) {
-                console.log("⚠️ Skipping message with no ID");
-                continue;
-              }
-
-              // Check if we already have this email
-              const existingEmail = await sql`
-                SELECT id FROM gmail_emails 
-                WHERE tenant_id = ${tenantId} AND gmail_message_id = ${message.id}
-              `;
-
-              if (existingEmail.length > 0) {
-                continue; // Skip already synced emails
-              }
-
-              // Fetch full message details
-              const messageResponse = await fetch(
-                `https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}?format=full`,
-                {
-                  headers: {
-                    Authorization: `Bearer ${accessToken}`,
-                    "Content-Type": "application/json",
-                  },
-                },
-              );
-
-              if (!messageResponse.ok) {
-                console.error(
-                  `❌ Failed to fetch message ${message.id}:`,
-                  messageResponse.status,
-                );
-                continue;
-              }
-
-              const messageData = await messageResponse.json();
-
-              // Parse email data
-              const headers = messageData.payload?.headers || [];
-              const getHeaderValue = (name: string) => {
-                const header = headers.find(
-                  (h: any) => h.name?.toLowerCase() === name.toLowerCase(),
-                );
-                return header?.value || "";
-              };
-
-              const fromHeader = getHeaderValue("From");
-              const subject = getHeaderValue("Subject");
-
-              // Parse sender info
-              const parseEmailHeader = (header: string) => {
-                const match =
-                  header.match(/^(.+?)\s*<(.+?)>$/) || header.match(/^(.+)$/);
-                if (match) {
-                  if (match[2]) {
-                    return {
-                      name: match[1].trim().replace(/"/g, ""),
-                      email: match[2].trim(),
-                    };
-                  } else {
-                    return { name: "", email: match[1].trim() };
-                  }
-                }
-                return { name: "", email: header };
-              };
-
-              const fromData = parseEmailHeader(fromHeader);
-
-              // Extract email body
-              let bodyText = "";
-              let bodyHtml = "";
-
-              if (messageData.payload?.body?.data) {
-                bodyText = Buffer.from(
-                  messageData.payload.body.data,
-                  "base64url",
-                ).toString();
-              } else if (messageData.payload?.parts) {
-                for (const part of messageData.payload.parts) {
-                  if (part.mimeType === "text/plain" && part.body?.data) {
-                    bodyText = Buffer.from(
-                      part.body.data,
-                      "base64url",
-                    ).toString();
-                  } else if (part.mimeType === "text/html" && part.body?.data) {
-                    bodyHtml = Buffer.from(
-                      part.body.data,
-                      "base64url",
-                    ).toString();
-                  }
-                }
-              }
-
-              // Enhanced importance detection
-              const isRead = !messageData.labelIds?.includes("UNREAD");
-              const isImportant = detectEmailImportance(
-                messageData,
-                subject,
-                fromData.email,
-              );
-
-              // Parse received date
-              const receivedAt = messageData.internalDate
-                ? new Date(parseInt(messageData.internalDate)).toISOString()
-                : new Date().toISOString();
-
-              // Insert email into database
+            // Step 2: Fetch details for each message in this page
+            for (const message of messages) {
               try {
-                await sql`
-                  INSERT INTO gmail_emails (
-                    tenant_id, gmail_message_id, thread_id, subject, from_email, from_name,
-                    to_email, body_text, body_html, received_at, is_read, is_important,
-                    labels, created_at, updated_at
-                  ) VALUES (
-                    ${tenantId}, ${messageData.id}, ${messageData.threadId || ""}, ${subject},
-                    ${fromData.email}, ${fromData.name}, ${integration.gmailAddress}, 
-                    ${bodyText.substring(0, 5000)}, ${bodyHtml.substring(0, 10000)}, 
-                    ${receivedAt}, ${isRead}, ${isImportant}, ${JSON.stringify(messageData.labelIds || [])},
-                    ${new Date().toISOString()}, ${new Date().toISOString()}
-                  )
+                if (!message.id) {
+                  console.log("⚠️ Skipping message with no ID");
+                  continue;
+                }
+
+                // Check if we already have this email
+                const existingEmail = await sql`
+                  SELECT id FROM gmail_emails 
+                  WHERE tenant_id = ${tenantId} AND gmail_message_id = ${message.id}
                 `;
 
-                totalSynced++;
-                console.log(
-                  `✅ Synced: ${subject} (Important: ${isImportant})`,
+                if (existingEmail.length > 0) {
+                  continue; // Skip already synced emails
+                }
+
+                // Fetch full message details
+                const messageResponse = await fetch(
+                  `https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}?format=full`,
+                  {
+                    headers: {
+                      Authorization: `Bearer ${accessToken}`,
+                      "Content-Type": "application/json",
+                    },
+                  },
                 );
-              } catch (insertError) {
-                console.error("❌ Failed to insert email:", insertError);
+
+                if (!messageResponse.ok) {
+                  console.error(
+                    `❌ Failed to fetch message ${message.id}:`,
+                    messageResponse.status,
+                  );
+                  continue;
+                }
+
+                const messageData = await messageResponse.json();
+
+                // Parse email data
+                const headers = messageData.payload?.headers || [];
+                const getHeaderValue = (name: string) => {
+                  const header = headers.find(
+                    (h: any) => h.name?.toLowerCase() === name.toLowerCase(),
+                  );
+                  return header?.value || "";
+                };
+
+                const fromHeader = getHeaderValue("From");
+                const subject = getHeaderValue("Subject");
+
+                // Parse sender info
+                const parseEmailHeader = (header: string) => {
+                  const match =
+                    header.match(/^(.+?)\s*<(.+?)>$/) || header.match(/^(.+)$/);
+                  if (match) {
+                    if (match[2]) {
+                      return {
+                        name: match[1].trim().replace(/"/g, ""),
+                        email: match[2].trim(),
+                      };
+                    } else {
+                      return { name: "", email: match[1].trim() };
+                    }
+                  }
+                  return { name: "", email: header };
+                };
+
+                const fromData = parseEmailHeader(fromHeader);
+
+                // Extract email body
+                let bodyText = "";
+                let bodyHtml = "";
+
+                if (messageData.payload?.body?.data) {
+                  bodyText = Buffer.from(
+                    messageData.payload.body.data,
+                    "base64url",
+                  ).toString();
+                } else if (messageData.payload?.parts) {
+                  for (const part of messageData.payload.parts) {
+                    if (part.mimeType === "text/plain" && part.body?.data) {
+                      bodyText = Buffer.from(
+                        part.body.data,
+                        "base64url",
+                      ).toString();
+                    } else if (part.mimeType === "text/html" && part.body?.data) {
+                      bodyHtml = Buffer.from(
+                        part.body.data,
+                        "base64url",
+                      ).toString();
+                    }
+                  }
+                }
+
+                // Enhanced importance detection
+                const isRead = !messageData.labelIds?.includes("UNREAD");
+                const isImportant = detectEmailImportance(
+                  messageData,
+                  subject,
+                  fromData.email,
+                );
+
+                // Parse received date
+                const receivedAt = messageData.internalDate
+                  ? new Date(parseInt(messageData.internalDate)).toISOString()
+                  : new Date().toISOString();
+
+                // Insert email into database
+                try {
+                  await sql`
+                    INSERT INTO gmail_emails (
+                      tenant_id, gmail_message_id, thread_id, subject, from_email, from_name,
+                      to_email, body_text, body_html, received_at, is_read, is_important,
+                      labels, created_at, updated_at
+                    ) VALUES (
+                      ${tenantId}, ${messageData.id}, ${messageData.threadId || ""}, ${subject},
+                      ${fromData.email}, ${fromData.name}, ${integration.gmailAddress}, 
+                      ${bodyText.substring(0, 5000)}, ${bodyHtml.substring(0, 10000)}, 
+                      ${receivedAt}, ${isRead}, ${isImportant}, ${JSON.stringify(messageData.labelIds || [])},
+                      ${new Date().toISOString()}, ${new Date().toISOString()}
+                    )
+                  `;
+
+                  phaseSynced++;
+                  totalSynced++;
+                  if (phaseSynced % 50 === 0) {
+                    console.log(`✅ ${phaseName} - Synced ${phaseSynced} emails so far...`);
+                  }
+                } catch (insertError) {
+                  console.error("❌ Failed to insert email:", insertError);
+                }
+              } catch (messageError) {
+                console.error(
+                  `❌ Error processing message ${message.id}:`,
+                  messageError,
+                );
               }
-            } catch (messageError) {
-              console.error(
-                `❌ Error processing message ${message.id}:`,
-                messageError,
-              );
             }
+
+          } catch (pageError) {
+            console.error(`❌ ${phaseName} - Error with page ${pageCount}:`, pageError);
+            if (pageError instanceof Error && pageError.message === "Gmail access token expired") {
+              throw pageError;
+            }
+            break; // Stop on error to prevent infinite loops
           }
-        } catch (queryError) {
-          console.error(`❌ Error with query ${index + 1}:`, queryError);
+        } while (nextPageToken); // Continue while there are more pages
+
+        console.log(`✅ ${phaseName} complete: ${phaseSynced} new emails synced`);
+        return phaseSynced;
+      };
+
+      // Phase 1: Sync recent emails (last 7 days) first
+      try {
+        await syncEmailsWithQuery(recentQuery, "Phase 1: Recent emails (last 7 days)");
+      } catch (error: any) {
+        if (error.message === "Gmail access token expired") {
+          return res.status(401).json({
+            success: false,
+            message: "Gmail access token expired. Please reconnect your Gmail account.",
+            needsReauth: true,
+          });
         }
+        console.error("❌ Phase 1 error:", error);
+      }
+
+      // Phase 2: Sync all other emails (excluding recent ones we already synced)
+      // Use a query that excludes emails from the last 7 days to avoid duplicates
+      console.log(`📧 Phase 2: Syncing all other emails (excluding recent 7 days)`);
+      
+      // Note: We'll still check for duplicates in the database, so this is safe
+      // But we use older_than:7d to prioritize older emails and avoid re-processing recent ones
+      const olderQuery = "in:inbox -category:promotions -category:social -category:updates older_than:7d";
+      
+      try {
+        await syncEmailsWithQuery(olderQuery, "Phase 2: Older emails");
+      } catch (error: any) {
+        if (error.message === "Gmail access token expired") {
+          return res.status(401).json({
+            success: false,
+            message: "Gmail access token expired. Please reconnect your Gmail account.",
+            needsReauth: true,
+          });
+        }
+        console.error("❌ Phase 2 error:", error);
       }
 
       console.log(
-        `📧 Enhanced Gmail sync complete: ${totalSynced} new important emails synced`,
+        `📧 Full Gmail sync complete: ${totalSynced} new emails synced`,
       );
+
+      // Update last sync timestamp
+      if (totalSynced > 0) {
+        const integration = await simpleStorage.getGmailIntegration(parseInt(tenantId));
+        if (integration) {
+          await simpleStorage.updateGmailIntegration(integration.id, {
+            lastSyncAt: new Date().toISOString(),
+          });
+        }
+      }
 
       res.json({
         success: true,
-        message: `Enhanced Gmail sync completed - ${totalSynced} important emails synced`,
+        message: `Gmail sync completed - ${totalSynced} emails synced (excluding promotional/social/updates). Recent emails (last 7 days) synced first to ensure today's emails are captured.`,
         processed: totalSynced,
-        totalQueries: queries.length,
       });
     } catch (error) {
       console.error("Gmail sync error:", error);
@@ -17401,10 +17692,29 @@ Please improve this email.`;
           return res.status(403).json({ message: "Access denied" });
         }
 
-        // Gmail disconnect service disabled - using embedded functions instead
-        console.log(
-          "📧 Gmail disconnect endpoint temporarily disabled - use embedded functions",
-        );
+        const tenantIdNum = parseInt(tenantId);
+
+        // Get the Gmail integration
+        const integration = await simpleStorage.getGmailIntegration(tenantIdNum);
+        
+        if (integration) {
+          // Update integration status to disconnected and clear tokens using direct SQL
+          await sql`
+            UPDATE gmail_integrations 
+            SET 
+              is_connected = false,
+              access_token = NULL,
+              refresh_token = NULL,
+              token_expiry_date = NULL,
+              updated_at = NOW()
+            WHERE id = ${integration.id}
+          `;
+
+          // Delete stored emails
+          await simpleStorage.deleteGmailEmailsByTenant(tenantIdNum);
+          
+          console.log(`✅ Gmail integration disconnected for tenant ${tenantIdNum}`);
+        }
 
         res.json({ message: "Gmail integration disconnected successfully" });
       } catch (error) {
@@ -17649,6 +17959,9 @@ Please improve this email.`;
         return res.status(404).json({ message: "Tenant not found" });
       }
 
+      // Get tenant settings for currency, timezone, and date_format (stored in tenant_settings table)
+      const tenantSettings = await simpleStorage.getInvoiceSettings(user.tenantId);
+      
       // Return tenant settings with additional configuration
       res.json({
         companyName: tenant.company_name,
@@ -17656,9 +17969,9 @@ Please improve this email.`;
         contactPhone: tenant.contact_phone,
         address: tenant.address,
         subdomain: tenant.subdomain,
-        timezone: tenant.timezone || "UTC",
-        currency: tenant.currency || "USD",
-        dateFormat: tenant.date_format || "MM/DD/YYYY",
+        timezone: tenantSettings?.timezone || "UTC",
+        currency: tenantSettings?.defaultCurrency || "USD",
+        dateFormat: tenantSettings?.dateFormat || "MM/DD/YYYY",
         logo: tenant.logo,
         zoomAccountId: tenant.zoom_account_id,
         zoomClientId: tenant.zoom_client_id,
@@ -17678,15 +17991,13 @@ Please improve this email.`;
       }
 
       // Map frontend camelCase to database snake_case
+      // Note: timezone, currency, and date_format are not in tenants table
       const updateData = {
         company_name: req.body.companyName,
         contact_email: req.body.contactEmail,
         contact_phone: req.body.contactPhone,
         address: req.body.address,
         subdomain: req.body.subdomain,
-        timezone: req.body.timezone,
-        currency: req.body.currency,
-        date_format: req.body.dateFormat,
         logo: req.body.logo,
       };
 
@@ -17695,6 +18006,28 @@ Please improve this email.`;
         updateData,
       );
 
+      // Update currency, timezone, and date_format in tenant_settings if provided
+      const currentSettings = await simpleStorage.getInvoiceSettings(user.tenantId);
+      const settingsToUpdate: any = { ...currentSettings };
+      
+      if (req.body.currency !== undefined) {
+        settingsToUpdate.defaultCurrency = req.body.currency;
+      }
+      if (req.body.timezone !== undefined) {
+        settingsToUpdate.timezone = req.body.timezone;
+      }
+      if (req.body.dateFormat !== undefined) {
+        settingsToUpdate.dateFormat = req.body.dateFormat;
+      }
+      
+      // Only update if there are changes
+      if (req.body.currency !== undefined || req.body.timezone !== undefined || req.body.dateFormat !== undefined) {
+        await simpleStorage.upsertInvoiceSettings(user.tenantId, settingsToUpdate);
+      }
+
+      // Get updated tenant settings for response
+      const tenantSettings = await simpleStorage.getInvoiceSettings(user.tenantId);
+
       // Return updated data in camelCase format
       res.json({
         companyName: updatedTenant.company_name,
@@ -17702,9 +18035,9 @@ Please improve this email.`;
         contactPhone: updatedTenant.contact_phone,
         address: updatedTenant.address,
         subdomain: updatedTenant.subdomain,
-        timezone: updatedTenant.timezone || "UTC",
-        currency: updatedTenant.currency || "USD",
-        dateFormat: updatedTenant.date_format || "MM/DD/YYYY",
+        timezone: tenantSettings?.timezone || "UTC",
+        currency: tenantSettings?.defaultCurrency || "USD",
+        dateFormat: tenantSettings?.dateFormat || "MM/DD/YYYY",
         logo: updatedTenant.logo,
         zoomAccountId: updatedTenant.zoom_account_id,
         zoomClientId: updatedTenant.zoom_client_id,
@@ -17737,6 +18070,38 @@ Please improve this email.`;
       );
     } catch (error) {
       console.error("Get tenant settings error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Get WhatsApp welcome message settings
+  app.get("/api/tenant-settings/whatsapp", authenticateToken, async (req, res) => {
+    try {
+      const user = (req as any).user;
+      if (!user) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const settings = await simpleStorage.getTenantSettings(user.tenantId);
+      res.json(
+        settings ? {
+          enableLeadWelcomeMessage: settings.enableLeadWelcomeMessage ?? true,
+          leadWelcomeMessage: settings.leadWelcomeMessage ||
+            "Hello! Thank you for your interest. Our team will get in touch with you shortly.",
+          enableCustomerWelcomeMessage: settings.enableCustomerWelcomeMessage ?? true,
+          customerWelcomeMessage: settings.customerWelcomeMessage ||
+            "Welcome! Thank you for choosing us. We're excited to serve you!",
+        } : {
+          enableLeadWelcomeMessage: true,
+          leadWelcomeMessage:
+            "Hello! Thank you for your interest. Our team will get in touch with you shortly.",
+          enableCustomerWelcomeMessage: true,
+          customerWelcomeMessage:
+            "Welcome! Thank you for choosing us. We're excited to serve you!",
+        },
+      );
+    } catch (error) {
+      console.error("Get WhatsApp settings error:", error);
       res.status(500).json({ message: "Internal server error" });
     }
   });
@@ -19614,8 +19979,20 @@ Please improve this email.`;
         }));
 
         res.json(expensesWithLineItems);
-      } catch (error) {
+      } catch (error: unknown) {
         console.error("💰 Error fetching expenses:", error);
+        
+        // Check if it's a database timeout error
+        if (error && typeof error === 'object' && 'code' in error) {
+          const dbError = error as { code?: string; message?: string };
+          if (dbError.code === 'ETIMEDOUT' || (dbError.message && dbError.message.includes('ETIMEDOUT'))) {
+            return res.status(503).json({
+              message: "Database connection timeout. Please try again in a moment.",
+              error: "Service temporarily unavailable",
+            });
+          }
+        }
+        
         res.status(500).json({ message: "Failed to fetch expenses" });
       }
     },
@@ -23875,6 +24252,18 @@ Please improve this email.`;
       });
     } catch (error: unknown) {
       console.error("💰 Error fetching expenses:", error);
+      
+      // Check if it's a database timeout error
+      if (error && typeof error === 'object' && 'code' in error) {
+        const dbError = error as { code?: string; message?: string };
+        if (dbError.code === 'ETIMEDOUT' || (dbError.message && dbError.message.includes('ETIMEDOUT'))) {
+          return res.status(503).json({
+            message: "Database connection timeout. Please try again in a moment.",
+            error: "Service temporarily unavailable",
+          });
+        }
+      }
+      
       res.status(500).json({ message: "Failed to fetch expenses" });
     }
   });
@@ -23964,6 +24353,18 @@ Please improve this email.`;
 
   } catch (error: unknown) {
     console.error("💰 Error fetching expenses:", error);
+    
+    // Check if it's a database timeout error
+    if (error && typeof error === 'object' && 'code' in error) {
+      const dbError = error as { code?: string; message?: string };
+      if (dbError.code === 'ETIMEDOUT' || (dbError.message && dbError.message.includes('ETIMEDOUT'))) {
+        return res.status(503).json({
+          message: "Database connection timeout. Please try again in a moment.",
+          error: "Service temporarily unavailable",
+        });
+      }
+    }
+    
     return res.status(500).json({
       message: "Failed to fetch expenses",
     });
@@ -28286,6 +28687,53 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
         isActive: req.body.isActive !== false,
       });
 
+      // Auto-assign free trial plan if available
+      try {
+        const [freePlan] = await sql`
+          SELECT * FROM subscription_plans 
+          WHERE is_free_plan = true AND is_active = true 
+          ORDER BY free_trial_days DESC 
+          LIMIT 1
+        `;
+
+        if (freePlan) {
+          // Check if tenant has already used free trial
+          const [trialUsage] = await sql`
+            SELECT * FROM tenant_free_trial_usage WHERE tenant_id = ${tenant.id}
+          `;
+
+          if (!trialUsage || !trialUsage.has_used_free_trial) {
+            const trialEndDate = new Date();
+            trialEndDate.setDate(trialEndDate.getDate() + (freePlan.free_trial_days || 7));
+
+            await simpleStorage.createTenantSubscription({
+              tenantId: tenant.id,
+              planId: freePlan.id,
+              status: "free_trial",
+              billingCycle: "monthly",
+              paymentGateway: "none",
+              trialEndsAt: trialEndDate,
+              currentPeriodStart: new Date(),
+              currentPeriodEnd: trialEndDate,
+              nextBillingDate: trialEndDate,
+            });
+
+            // Mark free trial as used
+            await sql`
+              INSERT INTO tenant_free_trial_usage (tenant_id, has_used_free_trial, free_trial_plan_id, used_at)
+              VALUES (${tenant.id}, true, ${freePlan.id}, NOW())
+              ON CONFLICT (tenant_id) 
+              DO UPDATE SET has_used_free_trial = true, free_trial_plan_id = ${freePlan.id}, used_at = NOW()
+            `;
+
+            console.log(`✅ Auto-assigned free trial plan ${freePlan.id} to tenant ${tenant.id}`);
+          }
+        }
+      } catch (subscriptionError: any) {
+        console.error("Free trial plan assignment failed (non-critical):", subscriptionError);
+        // Continue without subscription - user can set it up later
+      }
+
       res.status(201).json(tenant);
     } catch (error: any) {
       console.error("Create tenant error:", error);
@@ -28327,6 +28775,7 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
   // Update SaaS subscriptions endpoint to use SaaS auth
   app.get("/api/saas/subscriptions", authenticateSaasToken, async (req: any, res) => {
     try {
+      console.log("🔍 Fetching all subscriptions for SaaS admin...");
       const subscriptions = await sql`
         SELECT 
           ts.*,
@@ -28340,7 +28789,47 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
         ORDER BY ts.created_at DESC
       `;
 
-      res.json(subscriptions);
+      console.log(`🔍 Found ${subscriptions?.length || 0} subscriptions`);
+      
+      // Ensure we always return an array
+      const result = Array.isArray(subscriptions) ? subscriptions : [];
+      
+      // Transform snake_case to camelCase for consistency
+      const transformedSubscriptions = result.map((sub: any) => ({
+        id: sub.id,
+        tenantId: sub.tenant_id,
+        tenant_id: sub.tenant_id,
+        planId: sub.plan_id,
+        plan_id: sub.plan_id,
+        status: sub.status,
+        billingCycle: sub.billing_cycle,
+        billing_cycle: sub.billing_cycle,
+        paymentGateway: sub.payment_gateway,
+        payment_gateway: sub.payment_gateway,
+        gatewaySubscriptionId: sub.gateway_subscription_id,
+        gatewayCustomerId: sub.gateway_customer_id,
+        trialEndsAt: sub.trial_ends_at,
+        currentPeriodStart: sub.current_period_start,
+        currentPeriodEnd: sub.current_period_end,
+        nextBillingDate: sub.next_billing_date,
+        next_billing_date: sub.next_billing_date,
+        cancelledAt: sub.cancelled_at,
+        lastPaymentDate: sub.last_payment_date,
+        failedPaymentAttempts: sub.failed_payment_attempts,
+        createdAt: sub.created_at,
+        updatedAt: sub.updated_at,
+        tenantName: sub.tenant_name,
+        tenant_name: sub.tenant_name,
+        planName: sub.plan_name,
+        plan_name: sub.plan_name,
+        monthlyPrice: sub.monthly_price,
+        monthly_price: sub.monthly_price,
+        yearlyPrice: sub.yearly_price,
+        yearly_price: sub.yearly_price,
+      }));
+
+      console.log(`🔍 Returning ${transformedSubscriptions.length} transformed subscriptions`);
+      res.json(transformedSubscriptions);
     } catch (error: any) {
       console.error("Get subscriptions error:", error);
       res.status(500).json({ message: "Internal server error", error: error.message });
@@ -28395,10 +28884,30 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
   app.post("/api/saas/plans", authenticateSaasToken, async (req: any, res) => {
     try {
       const [plan] = await sql`
-        INSERT INTO subscription_plans (name, description, monthly_price, yearly_price, max_users, max_customers, features, is_active)
-        VALUES (${req.body.name}, ${req.body.description || null}, ${req.body.monthlyPrice}, 
-                ${req.body.yearlyPrice}, ${req.body.maxUsers}, ${req.body.maxCustomers}, 
-                ${JSON.stringify(req.body.features || [])}, ${req.body.isActive !== false})
+        INSERT INTO subscription_plans (
+          name, description, country, currency, monthly_price, yearly_price, 
+          max_users, max_customers, features, allowed_menu_items, allowed_pages,
+          allowed_dashboard_widgets, allowed_page_permissions,
+          free_trial_days, is_free_plan, is_active
+        )
+        VALUES (
+          ${req.body.name}, 
+          ${req.body.description || null}, 
+          ${req.body.country || 'US'}, 
+          ${req.body.currency || 'USD'}, 
+          ${req.body.monthlyPrice}, 
+          ${req.body.yearlyPrice}, 
+          ${req.body.maxUsers}, 
+          ${req.body.maxCustomers}, 
+          ${JSON.stringify(req.body.allowedMenuItems || req.body.features || [])}, 
+          ${JSON.stringify(req.body.allowedMenuItems || [])}, 
+          ${JSON.stringify(req.body.allowedPages || [])}, 
+          ${JSON.stringify(req.body.allowedDashboardWidgets || [])}, 
+          ${JSON.stringify(req.body.allowedPagePermissions || {})}, 
+          ${req.body.freeTrialDays || 0}, 
+          ${req.body.isFreePlan || false}, 
+          ${req.body.isActive !== false}
+        )
         RETURNING *
       `;
 
@@ -28416,11 +28925,19 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
         UPDATE subscription_plans
         SET name = ${req.body.name},
             description = ${req.body.description || null},
+            country = ${req.body.country || 'US'},
+            currency = ${req.body.currency || 'USD'},
             monthly_price = ${req.body.monthlyPrice},
             yearly_price = ${req.body.yearlyPrice},
             max_users = ${req.body.maxUsers},
             max_customers = ${req.body.maxCustomers},
-            features = ${JSON.stringify(req.body.features || [])},
+            features = ${JSON.stringify(req.body.allowedMenuItems || req.body.features || [])},
+            allowed_menu_items = ${JSON.stringify(req.body.allowedMenuItems || [])},
+            allowed_pages = ${JSON.stringify(req.body.allowedPages || [])},
+            allowed_dashboard_widgets = ${JSON.stringify(req.body.allowedDashboardWidgets || [])},
+            allowed_page_permissions = ${JSON.stringify(req.body.allowedPagePermissions || {})},
+            free_trial_days = ${req.body.freeTrialDays || 0},
+            is_free_plan = ${req.body.isFreePlan || false},
             is_active = ${req.body.isActive !== false}
         WHERE id = ${planId}
         RETURNING *

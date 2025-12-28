@@ -4,6 +4,25 @@ import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
 import { DateFilter } from "@/components/ui/date-filter";
 import { useInvoicesForGraph } from "@/hooks/useDashboardData";
 import { useAuth } from "../auth/auth-provider";
+import { useQuery } from "@tanstack/react-query";
+
+// Helper function to get currency symbol
+const getCurrencySymbol = (currencyCode: string): string => {
+  const symbols: Record<string, string> = {
+    USD: "$",
+    EUR: "€",
+    GBP: "£",
+    INR: "₹",
+    AUD: "A$",
+    CAD: "C$",
+    JPY: "¥",
+    CNY: "¥",
+    SGD: "S$",
+    HKD: "HK$",
+    NZD: "NZ$",
+  };
+  return symbols[currencyCode] || currencyCode;
+};
 
 export function ServiceProviderChart() {
   const { tenant } = useAuth();
@@ -20,6 +39,30 @@ export function ServiceProviderChart() {
     customDateFrom,
     customDateTo
   );
+
+  // Fetch invoice settings to get currency
+  const { data: invoiceSettings } = useQuery({
+    queryKey: ["/api/invoice-settings", tenant?.id],
+    queryFn: async () => {
+      if (!tenant?.id) return null;
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(
+        `/api/invoice-settings/${tenant.id}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      if (!response.ok) return { defaultCurrency: "USD" };
+      return await response.json();
+    },
+    enabled: !!tenant?.id,
+  });
+
+  const currentCurrency = invoiceSettings?.defaultCurrency || "USD";
+  const currencySymbol = getCurrencySymbol(currentCurrency);
 
   const categories = useMemo(() => {
     const set = new Set<string>();
@@ -39,13 +82,13 @@ export function ServiceProviderChart() {
     const topTen = list.slice(0, 10);
     const otherList = list.slice(10);
     const otherValue = otherList.reduce((sum, item) => sum + item.value, 0);
-    const otherCount = otherList.reduce((sum, item) => sum + (item.count || 0), 0);
+    const otherAmount = otherList.reduce((sum, item) => sum + (item.amount || 0), 0);
 
     return [
       ...topTen,
       {
         name: "Other",
-        count: otherCount,
+        amount: otherAmount,
         value: Number(otherValue.toFixed(2)),
         color: "#D1D5DB",
       },
@@ -55,18 +98,20 @@ export function ServiceProviderChart() {
   const providerData = useMemo(() => {
     if (!selectedCategory) return [];
 
-    const countMap: Record<string, number> = {};
+    const amountMap: Record<string, number> = {};
 
     invoices.forEach((inv) => {
       (inv.lineItems || []).forEach((li) => {
         if (li.travelCategory === selectedCategory && li.serviceProviderName) {
-          countMap[li.serviceProviderName] =
-            (countMap[li.serviceProviderName] || 0) + 1;
+          // Sum amounts instead of counting
+          const amount = parseFloat(li.totalAmount || li.amount || li.total_amount || 0);
+          amountMap[li.serviceProviderName] =
+            (amountMap[li.serviceProviderName] || 0) + amount;
         }
       });
     });
 
-    const total = Object.values(countMap).reduce((a, b) => a + b, 0);
+    const total = Object.values(amountMap).reduce((a, b) => a + b, 0);
     if (total === 0) return [];
 
     const colors = [
@@ -84,14 +129,14 @@ export function ServiceProviderChart() {
       "#B9B2FF",
     ];
 
-    const sorted = Object.entries(countMap)
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => b.count - a.count);
+    const sorted = Object.entries(amountMap)
+      .map(([name, amount]) => ({ name, amount }))
+      .sort((a, b) => b.amount - a.amount);
 
     const mapped = sorted.map((item, index) => ({
       name: item.name,
-      count: item.count,
-      value: Number(((item.count / total) * 100).toFixed(2)),
+      amount: item.amount,
+      value: Number(((item.amount / total) * 100).toFixed(2)),
       color: colors[index % colors.length],
     }));
 
@@ -125,7 +170,7 @@ export function ServiceProviderChart() {
       return (
         <div className="bg-white shadow-lg rounded-md px-3 py-2 text-xs border border-gray-200">
           <p className="font-semibold">{item.name}</p>
-          <p>{usingDummy ? "0" : (item.count?.toLocaleString() || "0")} bookings</p>
+          <p>{usingDummy ? `${currencySymbol}0.00` : `${currencySymbol}${(item.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</p>
         </div>
       );
     }
@@ -237,7 +282,7 @@ export function ServiceProviderChart() {
                   ></div>
                   <div>
                     <p className="font-medium">{item.name}</p>
-                   <p className="text-gray-500">{usingDummy ? "0" : (item.count?.toLocaleString() || "0")} bookings</p>
+                   <p className="text-gray-500">{usingDummy ? `${currencySymbol}0.00` : `${currencySymbol}${(item.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</p>
                   </div>
                 </div>
               ))}

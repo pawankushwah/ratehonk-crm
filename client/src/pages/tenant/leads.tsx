@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { SubscriptionGuard } from "@/components/subscription/SubscriptionGuard";
 import { Layout } from "@/components/layout/layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -96,6 +97,7 @@ import { useToast } from "@/hooks/use-toast";
 import { FlexibleLeadForm } from "@/components/lead/flexible-lead-form";
 import { directLeadsApi } from "@/lib/direct-leads-api";
 import { CreateFollowUpDialog } from "@/components/follow-ups/CreateFollowUpDialog";
+import { LeadManagementSettingsPanel } from "@/components/leads/LeadManagementSettingsPanel";
 import type { Lead } from "@/lib/types";
 import { usePermissions } from "@/hooks/use-permissions";
 import KanbanBoard from "./KanbanBoard";
@@ -275,6 +277,9 @@ export default function Leads() {
   // Follow-up dialog state
   const [followUpDialogOpen, setFollowUpDialogOpen] = useState(false);
   const [selectedLeadForFollowUp, setSelectedLeadForFollowUp] = useState<any>(null);
+  
+  // Lead management settings panel state
+  const [isLeadSettingsPanelOpen, setIsLeadSettingsPanelOpen] = useState(false);
 
   // Save Note (Add or Edit)
   const getCurrentData = () => {
@@ -1258,8 +1263,9 @@ export default function Leads() {
   console.log("Lead Filters:", typeFilter, leadTypeFields);
 
   return (
-    <Layout>
-      <div className="flex-1 bg-[#F6F6F6] rounded-2xl p-1 mt-1">
+    <SubscriptionGuard requiredMenuItem="leads">
+      <Layout>
+        <div className="flex-1 bg-[#F6F6F6] rounded-2xl p-1 mt-1">
         {/* Main Card Container */}
         <div className="rounded-lg shadow-sm mx-2 my-2">
           {/* Header */}
@@ -1272,9 +1278,13 @@ export default function Leads() {
 
                 <div className="flex gap-3 ml-auto">
                   {" "}
-                  <div className="w-10 h-10 flex items-center justify-center rounded-lg border border-gray-200 bg-white shadow-sm">
+                  <button
+                    onClick={() => setIsLeadSettingsPanelOpen(true)}
+                    className="w-10 h-10 flex items-center justify-center rounded-lg border border-gray-200 bg-white shadow-sm hover:bg-gray-50 cursor-pointer"
+                    title="Lead Management Settings"
+                  >
                     <Settings className="h-5 w-5 text-gray-600" />
-                  </div>
+                  </button>
                   <div className="w-10 h-10 flex items-center justify-center rounded-lg border border-gray-200 bg-white shadow-sm">
                     <HelpCircle className="h-5 w-5 text-gray-600" />
                   </div>
@@ -2626,6 +2636,12 @@ export default function Leads() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <LeadManagementSettingsPanel
+        open={isLeadSettingsPanelOpen}
+        onOpenChange={setIsLeadSettingsPanelOpen}
+      />
     </Layout>
+    </SubscriptionGuard>
   );
 }

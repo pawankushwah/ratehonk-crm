@@ -94,6 +94,16 @@ export const MENU_ITEMS = {
     icon: Users,
     actions: ["view"]
   },
+  "dashboard.sidebar-consultation-forms": {
+    name: "Dashboard - Consultation Forms List",
+    icon: FileText,
+    actions: ["view"]
+  },
+  "dashboard.sidebar-payments": {
+    name: "Dashboard - Payments List",
+    icon: CreditCard,
+    actions: ["view"]
+  },
   customers: { 
     name: "Customers", 
     

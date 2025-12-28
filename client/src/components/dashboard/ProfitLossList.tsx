@@ -1,3 +1,24 @@
+import { useAuth } from "../auth/auth-provider";
+import { useQuery } from "@tanstack/react-query";
+
+// Helper function to get currency symbol
+const getCurrencySymbol = (currencyCode: string): string => {
+  const symbols: Record<string, string> = {
+    USD: "$",
+    EUR: "€",
+    GBP: "£",
+    INR: "₹",
+    AUD: "A$",
+    CAD: "C$",
+    JPY: "¥",
+    CNY: "¥",
+    SGD: "S$",
+    HKD: "HK$",
+    NZD: "NZ$",
+  };
+  return symbols[currencyCode] || currencyCode;
+};
+
 interface ProfitLossListProps {
   profitLossData: Array<{
     month: string;
@@ -14,7 +35,31 @@ export function ProfitLossList({
   profitPage,
   setProfitPage,
 }: ProfitLossListProps) {
+  const { tenant } = useAuth();
 
+  // Fetch invoice settings to get currency
+  const { data: invoiceSettings } = useQuery({
+    queryKey: ["/api/invoice-settings", tenant?.id],
+    queryFn: async () => {
+      if (!tenant?.id) return null;
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(
+        `/api/invoice-settings/${tenant.id}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      if (!response.ok) return { defaultCurrency: "USD" };
+      return await response.json();
+    },
+    enabled: !!tenant?.id,
+  });
+
+  const currentCurrency = invoiceSettings?.defaultCurrency || "USD";
+  const currencySymbol = getCurrencySymbol(currentCurrency);
 
 const latestYear = Array.isArray(profitLossData)
   ? Math.max(...profitLossData.map((m) => Number(m.month.split("-")[0])))
@@ -67,7 +112,7 @@ const sortedProfitLossData = [...filtered].sort((a, b) => {
           const expenses = item.expenses ?? 0;
           const profit = revenue - expenses;
           const isLoss = profit < 0;
-          const displayValue = `$${formatShort(profit)}`;
+          const displayValue = `${currencySymbol}${formatShort(profit)}`;
           const widthPercentage = (Math.abs(profit) / maxValue) * 100;
 
           return (

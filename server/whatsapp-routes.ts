@@ -250,7 +250,7 @@ export async function sendWhatsAppCustomMessage(options: {
           userId,
           activityType: 5,
           activityTitle:
-            options.activityTitle || "Consultation Form Link Sent",
+            options.activityTitle || "Consulation Form Link Sent",
           activityDescription: `WhatsApp message sent: "${message.substring(0, 120)}${
             message.length > 120 ? "..." : ""
           }"`,
@@ -263,7 +263,7 @@ export async function sendWhatsAppCustomMessage(options: {
           leadId,
           userId,
           activityType: 5,
-          activityTitle: options.activityTitle || "Consultation Form Link Sent",
+          activityTitle: options.activityTitle || "Consulation Form Link Sent",
           activityDescription: `WhatsApp message sent: "${message.substring(0, 120)}${
             message.length > 120 ? "..." : ""
           }"`,
