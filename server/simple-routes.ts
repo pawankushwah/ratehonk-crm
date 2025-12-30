@@ -1266,9 +1266,14 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
           .json({ success: false, message: "Tenant ID required" });
       }
 
+      const user = (req as any).user;
+      const invoiceDataWithUserId = {
+        ...invoiceData,
+        userId: user?.id, // Pass userId for activity logging
+      };
       const updatedInvoice = await simpleStorage.updateInvoice(
         invoiceId,
-        invoiceData,
+        invoiceDataWithUserId,
       );
       return res.json({ success: true, invoice: updatedInvoice });
     } catch (error) {
@@ -5570,9 +5575,11 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
     try {
       const tenantId = parseInt(req.params.tenantId);
       const invoiceId = parseInt(req.params.invoiceId);
+      const user = (req as any).user;
       const invoiceData = {
         ...req.body,
         tenantId: tenantId,
+        userId: user.id, // Pass userId for activity logging
       };
       
       const updatedInvoice = await simpleStorage.updateInvoice(invoiceId, invoiceData);
@@ -7874,9 +7881,11 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
           return res.status(401).json({ message: "No authorization header" });
         }
 
+        const user = (req as any).user;
         const invoiceData = {
           ...req.body,
           tenantId: parseInt(tenantId as string),
+          userId: user?.id, // Pass userId for activity logging
         };
         const updatedInvoice = await simpleStorage.updateInvoice(
           parseInt(req.body.invoiceId as string),
@@ -10274,10 +10283,12 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
             .json({ success: false, message: "Invoice ID is required" });
         }
 
+        const user = (req as any).user;
         // Ensure tenantId is included for security
         const updateData = {
           ...invoiceData,
           tenantId: parseInt(tenantId as string),
+          userId: user?.id, // Pass userId for activity logging
         };
 
         const updatedInvoice = await simpleStorage.updateInvoice(
@@ -19282,9 +19293,14 @@ Please improve this email.`;
     async (req, res) => {
       try {
         const { invoiceId } = req.params;
+        const user = (req as any).user;
+        const invoiceDataWithUserId = {
+          ...req.body,
+          userId: user?.id, // Pass userId for activity logging
+        };
         const updatedInvoice = await simpleStorage.updateInvoice(
           parseInt(invoiceId),
-          req.body,
+          invoiceDataWithUserId,
         );
         res.json(updatedInvoice);
       } catch (error) {
@@ -22174,12 +22190,14 @@ Please improve this email.`;
             });
           }
 
+          const user = (req as any).user;
           // Update existing invoice with properly defined values
           const updateData = {
             subtotal: parseFloat(totalAmount.toString()),
             taxAmount: parseFloat((totalAmount * 0.1).toString()), // 10% tax
             totalAmount: parseFloat((totalAmount * 1.1).toString()),
             notes: `Invoice for booking ${bookingNumber}`, // Use 'notes' instead of 'description'
+            userId: user?.id, // Pass userId for activity logging
             status: "draft", // Ensure status is defined
           };
 
@@ -23846,6 +23864,7 @@ Please improve this email.`;
       const category = req.query.category as string | undefined;
       const startDate = req.query.startDate as string | undefined;
       const endDate = req.query.endDate as string | undefined;
+      const invoiceId = req.query.invoiceId ? parseInt(req.query.invoiceId as string) : undefined;
       const sortBy = (req.query.sortBy as string) || "created_at";
       const sortOrder = (req.query.sortOrder as string) || "desc";
 
@@ -23858,6 +23877,7 @@ Please improve this email.`;
         category,
         startDate,
         endDate,
+        invoiceId,
         sortBy,
         sortOrder,
       });
@@ -23890,6 +23910,11 @@ Please improve this email.`;
         whereClause = sql`${whereClause} AND e.expense_date <= ${endDate}`;
       }
 
+      // Filter by invoice_id if provided
+      if (invoiceId) {
+        whereClause = sql`${whereClause} AND e.invoice_id = ${invoiceId}`;
+      }
+
       // Get total count for pagination
       const [countResult] = await sql`
         SELECT COUNT(*) as total
@@ -23919,7 +23944,8 @@ Please improve this email.`;
             SELECT 
               e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
               e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
-              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.lead_type_id, e.invoice_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.auto_generated,
               e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
               e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
               v.name as vendor_name,
@@ -23938,7 +23964,8 @@ Please improve this email.`;
             SELECT 
               e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
               e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
-              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.lead_type_id, e.invoice_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.auto_generated,
               e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
               e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
               v.name as vendor_name,
@@ -23959,7 +23986,8 @@ Please improve this email.`;
             SELECT 
               e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
               e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
-              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.lead_type_id, e.invoice_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.auto_generated,
               e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
               e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
               v.name as vendor_name,
@@ -23978,7 +24006,8 @@ Please improve this email.`;
             SELECT 
               e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
               e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
-              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.lead_type_id, e.invoice_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.auto_generated,
               e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
               e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
               v.name as vendor_name,
@@ -23999,7 +24028,8 @@ Please improve this email.`;
             SELECT 
               e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
               e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
-              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.lead_type_id, e.invoice_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.auto_generated,
               e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
               e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
               v.name as vendor_name,
@@ -24018,7 +24048,8 @@ Please improve this email.`;
             SELECT 
               e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
               e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
-              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.lead_type_id, e.invoice_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.auto_generated,
               e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
               e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
               v.name as vendor_name,
@@ -24039,7 +24070,8 @@ Please improve this email.`;
             SELECT 
               e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
               e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
-              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.lead_type_id, e.invoice_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.auto_generated,
               e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
               e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
               v.name as vendor_name,
@@ -24058,7 +24090,8 @@ Please improve this email.`;
             SELECT 
               e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
               e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
-              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.lead_type_id, e.invoice_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.auto_generated,
               e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
               e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
               v.name as vendor_name,
@@ -24079,7 +24112,8 @@ Please improve this email.`;
             SELECT 
               e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
               e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
-              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.lead_type_id, e.invoice_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.auto_generated,
               e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
               e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
               v.name as vendor_name,
@@ -24098,7 +24132,8 @@ Please improve this email.`;
             SELECT 
               e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
               e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
-              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.lead_type_id, e.invoice_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.auto_generated,
               e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
               e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
               v.name as vendor_name,
@@ -24119,7 +24154,8 @@ Please improve this email.`;
             SELECT 
               e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
               e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
-              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.lead_type_id, e.invoice_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.auto_generated,
               e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
               e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
               v.name as vendor_name,
@@ -24138,7 +24174,8 @@ Please improve this email.`;
             SELECT 
               e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
               e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
-              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.lead_type_id, e.invoice_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.auto_generated,
               e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
               e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
               v.name as vendor_name,
@@ -24160,7 +24197,8 @@ Please improve this email.`;
             SELECT 
               e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
               e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
-              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.lead_type_id, e.invoice_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.auto_generated,
               e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
               e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
               v.name as vendor_name,
@@ -24179,7 +24217,8 @@ Please improve this email.`;
             SELECT 
               e.id, e.tenant_id, e.expense_prefix, e.expense_number, e.title, e.description, e.quantity, e.amount, e.currency,
               e.category, e.subcategory, e.expense_date, e.payment_method, e.payment_reference, e.vendor_id,
-              e.lead_type_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.lead_type_id, e.invoice_id, e.expense_type, e.receipt_url, e.tax_amount, e.tax_rate, e.is_reimbursable,
+              e.auto_generated,
               e.is_recurring, e.recurring_frequency, e.status, e.amount_paid, e.amount_due, e.approved_by,
               e.approved_at, e.rejection_reason, e.tags, e.notes, e.created_by, e.created_at, e.updated_at,
               v.name as vendor_name,
@@ -24595,6 +24634,7 @@ Please improve this email.`;
         paymentReference: expenseHeader.paymentReference || null,
         vendorId: expenseHeader.vendorId || null,
         leadTypeId: expenseHeader.leadTypeId || null,
+        invoiceId: expenseHeader.invoiceId || null,
         expenseType: expenseHeader.expenseType || "purchase",
         receiptUrl: null, // Receipt URLs are stored in line items
         taxAmount: totalTaxAmount,
@@ -24617,7 +24657,7 @@ Please improve this email.`;
       const [createdExpense] = await sql`
         INSERT INTO expenses (
           tenant_id, expense_prefix, expense_number, title, description, quantity, amount, currency, category, subcategory,
-          expense_date, payment_method, payment_reference, vendor_id, lead_type_id,
+          expense_date, payment_method, payment_reference, vendor_id, lead_type_id, invoice_id,
           expense_type, receipt_url, tax_amount, tax_rate, is_reimbursable, is_recurring,
           recurring_frequency, status, amount_paid, amount_due, approved_by, approved_at, rejection_reason,
           tags, notes, created_by
@@ -24625,7 +24665,7 @@ Please improve this email.`;
           ${expenseHeaderData.tenantId}, ${expenseHeaderData.expensePrefix}, ${expenseHeaderData.expenseNumber}, ${expenseHeaderData.title}, ${expenseHeaderData.description},
           ${expenseHeaderData.quantity}, ${expenseHeaderData.amount}, ${expenseHeaderData.currency}, ${expenseHeaderData.category},
           ${expenseHeaderData.subcategory}, ${expenseHeaderData.expenseDate}, ${expenseHeaderData.paymentMethod},
-          ${expenseHeaderData.paymentReference}, ${expenseHeaderData.vendorId}, ${expenseHeaderData.leadTypeId},
+          ${expenseHeaderData.paymentReference}, ${expenseHeaderData.vendorId}, ${expenseHeaderData.leadTypeId}, ${expenseHeaderData.invoiceId},
           ${expenseHeaderData.expenseType}, ${expenseHeaderData.receiptUrl}, ${expenseHeaderData.taxAmount}, ${expenseHeaderData.taxRate},
           ${expenseHeaderData.isReimbursable}, ${expenseHeaderData.isRecurring},
           ${expenseHeaderData.recurringFrequency}, ${expenseHeaderData.status},

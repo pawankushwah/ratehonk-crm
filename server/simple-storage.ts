@@ -4783,6 +4783,9 @@ async getAllLeadsByTenant(
         enableReminder: invoice.enable_reminder || false,
         reminderFrequency: invoice.reminder_frequency || null,
         reminderSpecificDate: invoice.reminder_specific_date || null,
+        hasCancellationCharge: invoice.has_cancellation_charge || false,
+        cancellationChargeAmount: parseFloat(invoice.cancellation_charge_amount || "0"),
+        cancellationChargeNotes: invoice.cancellation_charge_notes || null,
         lineItems: finalLineItems,
         installments: installments.length > 0 ? installments : undefined,
         createdAt: invoice.created_at,
@@ -4855,12 +4858,8 @@ async getAllLeadsByTenant(
         console.log("🔍 Applying status filter:", filterParams.status);
         whereClause = sql`${whereClause} AND invoices.status = ${filterParams.status}`;
         console.log("🔍 WHERE clause after status filter");
-      } else {
-        // When status is "all" or not specified, exclude void invoices
-        console.log("🔍 No status filter applied - excluding void invoices");
-        whereClause = sql`${whereClause} AND LOWER(invoices.status) != 'void'`;
-        console.log("🔍 WHERE clause after excluding void invoices");
       }
+      // When status is "all" or not specified, include all invoices including void
 
       // Build JOIN clause for search if needed
       let joinClause = sql``;
@@ -5633,10 +5632,83 @@ async getAllLeadsByTenant(
         }
       }
 
-      // Create expenses if provided (using new line items structure)
+      // Create expenses if provided (consolidate all expenses into ONE expense record with multiple line items)
       if (invoiceData.expenses && Array.isArray(invoiceData.expenses) && invoiceData.expenses.length > 0) {
-        for (const expense of invoiceData.expenses) {
-          try {
+        try {
+          // Calculate totals for all expenses
+          let totalExpenseAmount = 0;
+          let totalTaxAmount = 0;
+          let totalAmountPaid = 0;
+          let totalAmountDue = 0;
+          
+          // Get expense settings for default prefix
+          const expenseSettings = await this.getExpenseSettings(invoiceData.tenantId);
+          const defaultPrefix = expenseSettings?.expenseNumberPrefix || "EXP";
+          
+          // Generate expense number based on invoice number
+          const invoiceNumber = invoiceData.invoiceNumber || newInvoice.invoice_number || "";
+          const expenseNumber = `${invoiceNumber}-EXP`;
+
+          // Calculate totals from all expenses
+          for (const expense of invoiceData.expenses) {
+            const expenseAmount = parseFloat(expense.amount?.toString() || "0");
+            const expenseTaxAmount = parseFloat(expense.taxAmount?.toString() || "0");
+            const expenseAmountPaid = parseFloat(expense.amountPaid?.toString() || "0");
+            const expenseAmountDue = parseFloat(expense.amountDue?.toString() || expenseAmount.toString() || "0");
+            
+            totalExpenseAmount += expenseAmount;
+            totalTaxAmount += expenseTaxAmount;
+            totalAmountPaid += expenseAmountPaid;
+            totalAmountDue += expenseAmountDue;
+          }
+
+          const grandTotal = totalExpenseAmount + totalTaxAmount;
+
+          // Create ONE expense header for all expenses (auto-generated from invoice)
+          const [createdExpense] = await sql`
+            INSERT INTO expenses (
+              tenant_id, expense_prefix, expense_number, title, description, quantity, amount, currency, category, subcategory,
+              expense_date, payment_method, payment_reference, vendor_id, lead_type_id, invoice_id, expense_type,
+              receipt_url, tax_amount, tax_rate, is_reimbursable, is_recurring, recurring_frequency,
+              status, amount_paid, amount_due, tags, notes, auto_generated, created_by
+            ) VALUES (
+              ${invoiceData.tenantId},
+              ${defaultPrefix},
+              ${expenseNumber},
+              ${`Expenses for Invoice ${invoiceNumber}`},
+              ${`Multiple expense line items for invoice ${invoiceNumber}`},
+              1,
+              ${grandTotal},
+              ${invoiceData.currency || "USD"},
+              ${"General"},
+              ${"General"},
+              ${issueDate},
+              ${"bank_transfer"},
+              ${null},
+              ${null},
+              ${null},
+              ${newInvoice.id}, // Link expense to the invoice being created
+              ${"purchase"},
+              null,
+              ${totalTaxAmount},
+              ${totalTaxAmount > 0 && totalExpenseAmount > 0 ? (totalTaxAmount / totalExpenseAmount) * 100 : 0},
+              ${false},
+              ${false},
+              ${null},
+              ${"pending"},
+              ${totalAmountPaid},
+              ${totalAmountDue},
+              ${JSON.stringify([])},
+              ${`Expenses from invoice ${invoiceNumber}`},
+              ${true}, // Mark as auto-generated from invoice
+              ${invoiceData.userId || null}
+            )
+            RETURNING id
+          `;
+
+          // Create line items for each expense
+          let displayOrder = 0;
+          for (const expense of invoiceData.expenses) {
             const expenseAmount = parseFloat(expense.amount?.toString() || "0");
             const expenseTaxAmount = parseFloat(expense.taxAmount?.toString() || "0");
             const expenseTaxRate = parseFloat(expense.taxRate?.toString() || "0");
@@ -5644,75 +5716,9 @@ async getAllLeadsByTenant(
             const expenseAmountPaid = parseFloat(expense.amountPaid?.toString() || "0");
             const expenseAmountDue = parseFloat(expense.amountDue?.toString() || expenseAmount.toString() || "0");
             const totalAmount = expenseAmount + expenseTaxAmount;
-
-            // Get expense settings for default prefix
-            const expenseSettings = await this.getExpenseSettings(invoiceData.tenantId);
-            const defaultPrefix = expenseSettings?.expenseNumberPrefix || "EXP";
-
-            // Split expense number into prefix and number
-            const splitExpenseNumber = (fullNumber: string, defaultPrefix: string = "EXP"): { prefix: string; number: string } => {
-              if (!fullNumber) {
-                return { prefix: defaultPrefix, number: "" };
-              }
-              const matchWithSeparator = fullNumber.match(/^([A-Za-z0-9]+)[\s-]+(.+)$/);
-              if (matchWithSeparator) {
-                return { prefix: matchWithSeparator[1].toUpperCase(), number: matchWithSeparator[2] };
-              }
-              const numberMatch = fullNumber.match(/^([A-Za-z]+)(\d+.*)$/);
-              if (numberMatch) {
-                return { prefix: numberMatch[1].toUpperCase(), number: numberMatch[2] };
-              }
-              if (/^\d+/.test(fullNumber)) {
-                return { prefix: defaultPrefix, number: fullNumber };
-              }
-              return { prefix: defaultPrefix, number: fullNumber };
-            };
-
-            const fullExpenseNumber = expense.expenseNumber || "";
-            const { prefix: expensePrefix, number: expenseNumber } = splitExpenseNumber(fullExpenseNumber, defaultPrefix);
-
-            // Create expense header
-            const [createdExpense] = await sql`
-              INSERT INTO expenses (
-                tenant_id, expense_prefix, expense_number, title, description, quantity, amount, currency, category, subcategory,
-                expense_date, payment_method, payment_reference, vendor_id, lead_type_id, expense_type,
-                receipt_url, tax_amount, tax_rate, is_reimbursable, is_recurring, recurring_frequency,
-                status, amount_paid, amount_due, tags, notes, created_by
-              ) VALUES (
-                ${invoiceData.tenantId},
-                ${expensePrefix},
-                ${expenseNumber || null},
-                ${expense.title || "Expense"},
-                ${expense.notes || expense.description || null},
-                1,
-                ${totalAmount},
-                ${expense.currency || invoiceData.currency || "USD"},
-                ${expense.category || "General"},
-                ${expense.subcategory || expense.category || "General"},
-                ${expense.expenseDate || issueDate},
-                ${expense.paymentMethod || "bank_transfer"},
-                ${expense.paymentReference || null},
-                ${expense.vendorId || null},
-                ${expense.leadTypeId || null},
-                ${expense.expenseType || "purchase"},
-                null,
-                ${expenseTaxAmount},
-                ${expenseTaxRate},
-                ${expense.isReimbursable || false},
-                ${expense.isRecurring || false},
-                ${expense.recurringFrequency || null},
-                ${expense.status || "pending"},
-                ${expenseAmountPaid},
-                ${expenseAmountDue},
-                ${JSON.stringify(expense.tags || [])},
-                ${expense.notes || null},
-                ${invoiceData.userId || null}
-              )
-              RETURNING id
-            `;
-
-            // Create line item for this expense
+            
             const paymentStatus = expense.status === "paid" ? "paid" : (expense.status === "due" ? "due" : "credit");
+            
             await sql`
               INSERT INTO expense_line_items (
                 expense_id, category, title, description, quantity, amount, tax_rate_id, tax_amount, tax_rate,
@@ -5737,15 +5743,17 @@ async getAllLeadsByTenant(
                 ${expenseAmountDue},
                 ${expense.receiptUrl || null},
                 ${expense.notes || null},
-                0
+                ${displayOrder}
               )
             `;
-
-            console.log(`✅ Created expense with line item: ${expense.title || "Expense"}`);
-          } catch (expenseError) {
-            console.error("⚠️ Failed to create expense:", expenseError);
-            // Continue with other expenses even if one fails
+            
+            displayOrder++;
           }
+
+          console.log(`✅ Created single expense with ${invoiceData.expenses.length} line items for invoice ${invoiceNumber}`);
+        } catch (expenseError) {
+          console.error("⚠️ Failed to create expense:", expenseError);
+          // Continue even if expense creation fails
         }
       }
 
@@ -5782,14 +5790,17 @@ async getAllLeadsByTenant(
       // Log customer activity for invoice creation
       if (invoiceData.userId) {
         try {
+          const fullInvoiceNumber = `${invoicePrefix}${invoiceNumber}`;
           await this.createCustomerActivity({
             tenantId: invoiceData.tenantId,
             customerId: invoiceData.customerId,
             userId: invoiceData.userId,
             activityType: 12, // Invoice Created
-            activityTitle: `Invoice Created: ${invoiceNumber}`,
-            activityDescription: `New invoice created. Total amount: ${totalAmount}. Status: ${invoiceData.status || "draft"}`,
+            activityTitle: `Invoice Created: ${fullInvoiceNumber}`,
+            activityDescription: `New invoice created. Total amount: ${totalAmount} ${invoiceData.currency || "USD"}. Status: ${invoiceData.status || "draft"}`,
             activityStatus: 1,
+            activityTableId: newInvoice.id,
+            activityTableName: "invoices",
           });
           console.log(
             `✅ Customer activity logged for invoice ${newInvoice.id}`,
@@ -5873,6 +5884,14 @@ async getAllLeadsByTenant(
     try {
       console.log("Updating invoice with data:", invoiceData);
 
+      // Get old invoice data before update for activity logging
+      const oldInvoiceData = await sql`
+        SELECT status, total_amount, currency, invoice_prefix, invoice_number, customer_id, tenant_id
+        FROM invoices 
+        WHERE id = ${invoiceId}
+      `;
+      const oldInvoice = oldInvoiceData[0];
+
       // Store full line items as JSON for complete data preservation
       const lineItemsJson = invoiceData.lineItems || invoiceData.items ? JSON.stringify(invoiceData.lineItems || invoiceData.items || []) : null;
 
@@ -5928,6 +5947,9 @@ async getAllLeadsByTenant(
         reminderFrequency: invoiceData.reminderFrequency || null,
         reminderSpecificDate: invoiceData.reminderSpecificDate || null,
         lineItems: lineItemsJson,
+        hasCancellationCharge: invoiceData.hasCancellationCharge !== undefined ? invoiceData.hasCancellationCharge : null,
+        cancellationChargeAmount: invoiceData.cancellationChargeAmount !== undefined ? parseFloat(invoiceData.cancellationChargeAmount?.toString() || "0") : null,
+        cancellationChargeNotes: invoiceData.cancellationChargeNotes || null,
       };
 
       console.log("Clean update data:", cleanData);
@@ -5958,6 +5980,9 @@ async getAllLeadsByTenant(
           reminder_frequency = COALESCE(${cleanData.reminderFrequency}, reminder_frequency),
           reminder_specific_date = COALESCE(${cleanData.reminderSpecificDate}, reminder_specific_date),
           line_items = COALESCE(${cleanData.lineItems}, line_items),
+          has_cancellation_charge = COALESCE(${cleanData.hasCancellationCharge}, has_cancellation_charge),
+          cancellation_charge_amount = COALESCE(${cleanData.cancellationChargeAmount}, cancellation_charge_amount),
+          cancellation_charge_notes = COALESCE(${cleanData.cancellationChargeNotes}, cancellation_charge_notes),
           updated_at = NOW()
         WHERE id = ${invoiceId}
         RETURNING *
@@ -6043,6 +6068,282 @@ async getAllLeadsByTenant(
         }
       }
 
+      // Handle expenses update - find existing auto-generated expense or create new one
+      if (invoiceData.expenses && Array.isArray(invoiceData.expenses) && invoiceData.expenses.length > 0) {
+        try {
+          // Check if there's an existing auto-generated expense for this invoice
+          const existingAutoExpense = await sql`
+            SELECT id, amount, tax_amount
+            FROM expenses
+            WHERE invoice_id = ${invoiceId}
+              AND auto_generated = TRUE
+            LIMIT 1
+          `;
+
+          const invoiceNumber = fullUpdatedInvoiceNumber || updatedInvoice.invoice_number || "";
+          const tenantId = invoiceData.tenantId || updatedInvoice.tenant_id;
+          const issueDate = invoiceData.issueDate || updatedInvoice.issue_date || updatedInvoice.invoice_date || new Date().toISOString();
+
+          if (existingAutoExpense.length > 0) {
+            // Update existing auto-generated expense
+            const existingExpenseId = existingAutoExpense[0].id;
+            
+            // Calculate new totals
+            let totalExpenseAmount = 0;
+            let totalTaxAmount = 0;
+            let totalAmountPaid = 0;
+            let totalAmountDue = 0;
+            
+            for (const expense of invoiceData.expenses) {
+              const expenseAmount = parseFloat(expense.amount?.toString() || "0");
+              const expenseTaxAmount = parseFloat(expense.taxAmount?.toString() || "0");
+              const expenseAmountPaid = parseFloat(expense.amountPaid?.toString() || "0");
+              const expenseAmountDue = parseFloat(expense.amountDue?.toString() || expenseAmount.toString() || "0");
+              
+              totalExpenseAmount += expenseAmount;
+              totalTaxAmount += expenseTaxAmount;
+              totalAmountPaid += expenseAmountPaid;
+              totalAmountDue += expenseAmountDue;
+            }
+
+            const grandTotal = totalExpenseAmount + totalTaxAmount;
+
+            // Update expense header
+            await sql`
+              UPDATE expenses
+              SET 
+                amount = ${grandTotal},
+                tax_amount = ${totalTaxAmount},
+                tax_rate = ${totalTaxAmount > 0 && totalExpenseAmount > 0 ? (totalTaxAmount / totalExpenseAmount) * 100 : 0},
+                amount_paid = ${totalAmountPaid},
+                amount_due = ${totalAmountDue},
+                updated_at = NOW()
+              WHERE id = ${existingExpenseId}
+            `;
+
+            // Delete existing line items and add new ones
+            await sql`DELETE FROM expense_line_items WHERE expense_id = ${existingExpenseId}`;
+
+            // Add all new line items
+            let displayOrder = 0;
+            for (const expense of invoiceData.expenses) {
+              const expenseAmount = parseFloat(expense.amount?.toString() || "0");
+              const expenseTaxAmount = parseFloat(expense.taxAmount?.toString() || "0");
+              const expenseTaxRate = parseFloat(expense.taxRate?.toString() || "0");
+              const expenseQuantity = parseFloat(expense.quantity?.toString() || "1");
+              const expenseAmountPaid = parseFloat(expense.amountPaid?.toString() || "0");
+              const expenseAmountDue = parseFloat(expense.amountDue?.toString() || expenseAmount.toString() || "0");
+              const totalAmount = expenseAmount + expenseTaxAmount;
+              
+              const paymentStatus = expense.status === "paid" ? "paid" : (expense.status === "due" ? "due" : "credit");
+              
+              await sql`
+                INSERT INTO expense_line_items (
+                  expense_id, category, title, description, quantity, amount, tax_rate_id, tax_amount, tax_rate,
+                  total_amount, vendor_id, lead_type_id, payment_method, payment_status, amount_paid, amount_due,
+                  receipt_url, notes, display_order
+                ) VALUES (
+                  ${existingExpenseId},
+                  ${expense.category || "General"},
+                  ${expense.title || "Expense"},
+                  ${expense.description || expense.notes || null},
+                  ${expenseQuantity},
+                  ${expenseAmount},
+                  ${expense.taxRateId || null},
+                  ${expenseTaxAmount},
+                  ${expenseTaxRate},
+                  ${totalAmount},
+                  ${expense.vendorId || null},
+                  ${expense.leadTypeId || null},
+                  ${expense.paymentMethod || "bank_transfer"},
+                  ${paymentStatus},
+                  ${expenseAmountPaid},
+                  ${expenseAmountDue},
+                  ${expense.receiptUrl || null},
+                  ${expense.notes || null},
+                  ${displayOrder}
+                )
+              `;
+              
+              displayOrder++;
+            }
+
+            console.log(`✅ Updated auto-generated expense ${existingExpenseId} with ${invoiceData.expenses.length} line items for invoice ${invoiceNumber}`);
+          } else {
+            // Create new auto-generated expense (same logic as createInvoice)
+            const expenseSettings = await this.getExpenseSettings(tenantId);
+            const defaultPrefix = expenseSettings?.expenseNumberPrefix || "EXP";
+            const expenseNumber = `${invoiceNumber}-EXP`;
+
+            // Calculate totals
+            let totalExpenseAmount = 0;
+            let totalTaxAmount = 0;
+            let totalAmountPaid = 0;
+            let totalAmountDue = 0;
+            
+            for (const expense of invoiceData.expenses) {
+              const expenseAmount = parseFloat(expense.amount?.toString() || "0");
+              const expenseTaxAmount = parseFloat(expense.taxAmount?.toString() || "0");
+              const expenseAmountPaid = parseFloat(expense.amountPaid?.toString() || "0");
+              const expenseAmountDue = parseFloat(expense.amountDue?.toString() || expenseAmount.toString() || "0");
+              
+              totalExpenseAmount += expenseAmount;
+              totalTaxAmount += expenseTaxAmount;
+              totalAmountPaid += expenseAmountPaid;
+              totalAmountDue += expenseAmountDue;
+            }
+
+            const grandTotal = totalExpenseAmount + totalTaxAmount;
+
+            // Create expense header
+            const [createdExpense] = await sql`
+              INSERT INTO expenses (
+                tenant_id, expense_prefix, expense_number, title, description, quantity, amount, currency, category, subcategory,
+                expense_date, payment_method, payment_reference, vendor_id, lead_type_id, invoice_id, expense_type,
+                receipt_url, tax_amount, tax_rate, is_reimbursable, is_recurring, recurring_frequency,
+                status, amount_paid, amount_due, tags, notes, auto_generated, created_by
+              ) VALUES (
+                ${tenantId},
+                ${defaultPrefix},
+                ${expenseNumber},
+                ${`Expenses for Invoice ${invoiceNumber}`},
+                ${`Multiple expense line items for invoice ${invoiceNumber}`},
+                1,
+                ${grandTotal},
+                ${updatedInvoice.currency || "USD"},
+                ${"General"},
+                ${"General"},
+                ${issueDate},
+                ${"bank_transfer"},
+                ${null},
+                ${null},
+                ${null},
+                ${invoiceId},
+                ${"purchase"},
+                null,
+                ${totalTaxAmount},
+                ${totalTaxAmount > 0 && totalExpenseAmount > 0 ? (totalTaxAmount / totalExpenseAmount) * 100 : 0},
+                ${false},
+                ${false},
+                ${null},
+                ${"pending"},
+                ${totalAmountPaid},
+                ${totalAmountDue},
+                ${JSON.stringify([])},
+                ${`Expenses from invoice ${invoiceNumber}`},
+                ${true}, // Mark as auto-generated
+                ${invoiceData.userId || null}
+              )
+              RETURNING id
+            `;
+
+            // Create line items
+            let displayOrder = 0;
+            for (const expense of invoiceData.expenses) {
+              const expenseAmount = parseFloat(expense.amount?.toString() || "0");
+              const expenseTaxAmount = parseFloat(expense.taxAmount?.toString() || "0");
+              const expenseTaxRate = parseFloat(expense.taxRate?.toString() || "0");
+              const expenseQuantity = parseFloat(expense.quantity?.toString() || "1");
+              const expenseAmountPaid = parseFloat(expense.amountPaid?.toString() || "0");
+              const expenseAmountDue = parseFloat(expense.amountDue?.toString() || expenseAmount.toString() || "0");
+              const totalAmount = expenseAmount + expenseTaxAmount;
+              
+              const paymentStatus = expense.status === "paid" ? "paid" : (expense.status === "due" ? "due" : "credit");
+              
+              await sql`
+                INSERT INTO expense_line_items (
+                  expense_id, category, title, description, quantity, amount, tax_rate_id, tax_amount, tax_rate,
+                  total_amount, vendor_id, lead_type_id, payment_method, payment_status, amount_paid, amount_due,
+                  receipt_url, notes, display_order
+                ) VALUES (
+                  ${createdExpense.id},
+                  ${expense.category || "General"},
+                  ${expense.title || "Expense"},
+                  ${expense.description || expense.notes || null},
+                  ${expenseQuantity},
+                  ${expenseAmount},
+                  ${expense.taxRateId || null},
+                  ${expenseTaxAmount},
+                  ${expenseTaxRate},
+                  ${totalAmount},
+                  ${expense.vendorId || null},
+                  ${expense.leadTypeId || null},
+                  ${expense.paymentMethod || "bank_transfer"},
+                  ${paymentStatus},
+                  ${expenseAmountPaid},
+                  ${expenseAmountDue},
+                  ${expense.receiptUrl || null},
+                  ${expense.notes || null},
+                  ${displayOrder}
+                )
+              `;
+              
+              displayOrder++;
+            }
+
+            console.log(`✅ Created new auto-generated expense with ${invoiceData.expenses.length} line items for invoice ${invoiceNumber}`);
+          }
+        } catch (expenseError) {
+          console.error("⚠️ Failed to update/create expense:", expenseError);
+          // Continue even if expense update fails
+        }
+      }
+
+      // Log customer activity for invoice update
+      const oldStatus = oldInvoice?.status;
+      const newStatus = updatedInvoice.status;
+      const userId = invoiceData.userId || null;
+
+      if (userId && updatedInvoice.customer_id) {
+        try {
+          // Check if status changed
+          if (oldStatus && newStatus && oldStatus !== newStatus) {
+            // Status changed - log status change activity
+            let activityDescription = `Invoice status changed from "${oldStatus}" to "${newStatus}". Total amount: ${parseFloat(updatedInvoice.total_amount || "0")} ${updatedInvoice.currency || "USD"}`;
+            
+            // Add cancellation charge info if status is cancelled and charge is applied
+            if (newStatus === "cancelled" && updatedInvoice.has_cancellation_charge) {
+              const cancellationCharge = parseFloat(updatedInvoice.cancellation_charge_amount || "0");
+              activityDescription += `. Cancellation charge applied: ${cancellationCharge} ${updatedInvoice.currency || "USD"}`;
+              if (updatedInvoice.cancellation_charge_notes) {
+                activityDescription += `. Notes: ${updatedInvoice.cancellation_charge_notes}`;
+              }
+            }
+            
+            await this.createCustomerActivity({
+              tenantId: updatedInvoice.tenant_id,
+              customerId: updatedInvoice.customer_id,
+              userId: userId,
+              activityType: 12, // Invoice Activity
+              activityTitle: `Invoice Status Changed: ${fullUpdatedInvoiceNumber}`,
+              activityDescription: activityDescription,
+              activityStatus: 1,
+              activityTableId: invoiceId,
+              activityTableName: "invoices",
+            });
+            console.log(`✅ Customer activity logged for invoice ${invoiceId} status change: ${oldStatus} -> ${newStatus}`);
+          } else {
+            // Invoice was updated (status didn't change or other fields changed) - log update activity
+            await this.createCustomerActivity({
+              tenantId: updatedInvoice.tenant_id,
+              customerId: updatedInvoice.customer_id,
+              userId: userId,
+              activityType: 12, // Invoice Activity
+              activityTitle: `Invoice Updated: ${fullUpdatedInvoiceNumber}`,
+              activityDescription: `Invoice details updated. Total amount: ${parseFloat(updatedInvoice.total_amount || "0")} ${updatedInvoice.currency || "USD"}. Status: ${newStatus || oldStatus || "draft"}`,
+              activityStatus: 1,
+              activityTableId: invoiceId,
+              activityTableName: "invoices",
+            });
+            console.log(`✅ Customer activity logged for invoice ${invoiceId} update`);
+          }
+        } catch (activityError) {
+          console.error("⚠️ Failed to log invoice update activity:", activityError);
+        }
+      } else {
+        console.warn(`⚠️ Cannot log invoice activity: userId=${userId}, customerId=${updatedInvoice.customer_id}`);
+      }
+
       return {
         id: updatedInvoice.id,
         tenantId: updatedInvoice.tenant_id,
@@ -6074,6 +6375,9 @@ async getAllLeadsByTenant(
         enableReminder: updatedInvoice.enable_reminder || false,
         reminderFrequency: updatedInvoice.reminder_frequency || null,
         reminderSpecificDate: updatedInvoice.reminder_specific_date || null,
+        hasCancellationCharge: updatedInvoice.has_cancellation_charge || false,
+        cancellationChargeAmount: parseFloat(updatedInvoice.cancellation_charge_amount || "0"),
+        cancellationChargeNotes: updatedInvoice.cancellation_charge_notes || null,
         createdAt: updatedInvoice.created_at,
         updatedAt: updatedInvoice.updated_at,
       };
@@ -11320,6 +11624,8 @@ RateHonk CRM Team`,
           activity_description as "activityDescription",
           activity_status as "activityStatus",
           activity_date as "activityDate",
+          activity_table_id as "activityTableId",
+          activity_table_name as "activityTableName",
           created_at as "createdAt",
           updated_at as "updatedAt"
         FROM customer_activities 
@@ -11344,15 +11650,18 @@ RateHonk CRM Team`,
       const activityDescription = data.activityDescription ?? null;
       const activityStatus = data.activityStatus ?? 1;
       const activityDate = data.activityDate ?? sql`NOW()`;
+      const activityTableId = data.activityTableId ?? null;
+      const activityTableName = data.activityTableName ?? null;
 
       const [activity] = await sql`
         INSERT INTO customer_activities (
           tenant_id, customer_id, user_id, activity_type, 
-          activity_title, activity_description, activity_status, activity_date
+          activity_title, activity_description, activity_status, activity_date,
+          activity_table_id, activity_table_name
         ) VALUES (
           ${tenantId}, ${customerId}, ${userId}, 
           ${activityType}, ${activityTitle}, ${activityDescription},
-          ${activityStatus}, ${activityDate}
+          ${activityStatus}, ${activityDate}, ${activityTableId}, ${activityTableName}
         )
         RETURNING 
           id,
@@ -11364,6 +11673,8 @@ RateHonk CRM Team`,
           activity_description as "activityDescription",
           activity_status as "activityStatus",
           activity_date as "activityDate",
+          activity_table_id as "activityTableId",
+          activity_table_name as "activityTableName",
           created_at as "createdAt",
           updated_at as "updatedAt"
       `;

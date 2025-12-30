@@ -239,6 +239,8 @@ export default function CustomerDetail() {
   const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
   const [isEditCustomerOpen, setIsEditCustomerOpen] = useState(false);
   const [formValidationErrors, setFormValidationErrors] = useState<Record<string, string>>({});
+  const [activityPopupOpen, setActivityPopupOpen] = useState(false);
+  const [selectedActivityTable, setSelectedActivityTable] = useState<{ tableName: string; tableId: number } | null>(null);
 
   // Customer mutations
   const createCustomerMutation = useMutation({
@@ -1770,11 +1772,23 @@ export default function CustomerDetail() {
                         setIsNavigatingToConsulationForm(false);
                       }, 300);
                     } else if (activityTableId && activity.activityTableName) {
-                      // For other activities, open the popup as before
-                      setSelectedActivityTable({
-                        tableName: activity.activityTableName,
-                        tableId: activityTableId,
-                      });
+                      // For invoice activities, open invoice popup
+                      if (activity.activityTableName === "invoices" || activity.activityType === 12) {
+                        setSelectedActivityTable({
+                          tableName: activity.activityTableName,
+                          tableId: activityTableId,
+                        });
+                        setActivityPopupOpen(true);
+                      } else {
+                        // For other activities, open the popup as before
+                        setSelectedActivityTable({
+                          tableName: activity.activityTableName,
+                          tableId: activityTableId,
+                        });
+                        setActivityPopupOpen(true);
+                      }
+                    } else if (activity.activityType === 12) {
+                      // Invoice activity without table reference - try to find invoice by activity date
                       setActivityPopupOpen(true);
                     }
                   }}
@@ -4317,7 +4331,250 @@ export default function CustomerDetail() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Activity Popup Dialog - Shows Invoice Details */}
+      <ActivityInvoicePopup
+        isOpen={activityPopupOpen}
+        onClose={() => {
+          setActivityPopupOpen(false);
+          setSelectedActivityTable(null);
+        }}
+        tableName={selectedActivityTable?.tableName}
+        tableId={selectedActivityTable?.tableId}
+        tenantId={tenant?.id}
+      />
     </Layout>
+  );
+}
+
+// Activity Invoice Popup Component
+interface ActivityInvoicePopupProps {
+  isOpen: boolean;
+  onClose: () => void;
+  tableName?: string;
+  tableId?: number;
+  tenantId?: number;
+}
+
+function ActivityInvoicePopup({
+  isOpen,
+  onClose,
+  tableName,
+  tableId,
+  tenantId,
+}: ActivityInvoicePopupProps) {
+  const { data: invoice, isLoading } = useQuery({
+    queryKey: [`/api/tenants/${tenantId}/invoices/${tableId}`],
+    enabled: isOpen && !!tableId && !!tenantId && tableName === "invoices",
+    staleTime: 0,
+  });
+
+  if (!isOpen || tableName !== "invoices" || !tableId) {
+    return null;
+  }
+
+  const getCurrencySymbol = (currencyCode: string): string => {
+    const symbols: { [key: string]: string } = {
+      USD: "$",
+      INR: "₹",
+      EUR: "€",
+      GBP: "£",
+      JPY: "¥",
+      AUD: "A$",
+      CAD: "C$",
+      CHF: "CHF",
+      CNY: "¥",
+      SGD: "S$",
+      HKD: "HK$",
+      NZD: "NZ$",
+    };
+    return symbols[currencyCode] || currencyCode;
+  };
+
+  const getStatusBadge = (status: string) => {
+    switch (status?.toLowerCase()) {
+      case "paid":
+        return { label: "Paid", color: "bg-green-100 text-green-800 border-green-200" };
+      case "pending":
+        return { label: "Pending", color: "bg-yellow-100 text-yellow-800 border-yellow-200" };
+      case "draft":
+        return { label: "Draft", color: "bg-gray-100 text-gray-800 border-gray-200" };
+      case "overdue":
+        return { label: "Overdue", color: "bg-red-100 text-red-800 border-red-200" };
+      case "partially_paid":
+      case "partial":
+        return { label: "Partial", color: "bg-orange-100 text-orange-800 border-orange-200" };
+      default:
+        return { label: status || "Unknown", color: "bg-gray-100 text-gray-800 border-gray-200" };
+    }
+  };
+
+  // Parse line items
+  let lineItems: any[] = [];
+  if (invoice?.lineItems) {
+    if (typeof invoice.lineItems === "string") {
+      try {
+        lineItems = JSON.parse(invoice.lineItems);
+      } catch (e) {
+        console.warn("Failed to parse line items:", e);
+      }
+    } else if (Array.isArray(invoice.lineItems)) {
+      lineItems = invoice.lineItems;
+    }
+  }
+
+  const statusBadge = invoice ? getStatusBadge(invoice.status) : null;
+  const currencySymbol = invoice ? getCurrencySymbol(invoice.currency || "USD") : "$";
+
+  return (
+    <Dialog open={isOpen} onOpenChange={onClose}>
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Invoice Details</DialogTitle>
+          <DialogDescription>
+            View invoice information and details
+          </DialogDescription>
+        </DialogHeader>
+
+        {isLoading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-8 w-8 animate-spin text-cyan-600" />
+          </div>
+        ) : invoice ? (
+          <div className="space-y-6">
+            {/* Invoice Header */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium text-gray-500">Invoice Number</label>
+                <p className="text-lg font-semibold">{invoice.invoiceNumber || `INV-${invoice.id}`}</p>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-gray-500">Status</label>
+                <div className="mt-1">
+                  {statusBadge && (
+                    <Badge className={statusBadge.color}>{statusBadge.label}</Badge>
+                  )}
+                </div>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-gray-500">Issue Date</label>
+                <p>
+                  {invoice.issueDate || invoice.invoiceDate
+                    ? new Date(invoice.issueDate || invoice.invoiceDate).toLocaleDateString()
+                    : "-"}
+                </p>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-gray-500">Due Date</label>
+                <p>
+                  {invoice.dueDate
+                    ? new Date(invoice.dueDate).toLocaleDateString()
+                    : "-"}
+                </p>
+              </div>
+            </div>
+
+            {/* Line Items */}
+            {lineItems.length > 0 && (
+              <div>
+                <h3 className="text-sm font-semibold mb-3">Line Items</h3>
+                <div className="border rounded-lg overflow-hidden">
+                  <table className="w-full">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Description</th>
+                        <th className="px-4 py-2 text-right text-sm font-medium text-gray-700">Quantity</th>
+                        <th className="px-4 py-2 text-right text-sm font-medium text-gray-700">Unit Price</th>
+                        <th className="px-4 py-2 text-right text-sm font-medium text-gray-700">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {lineItems.map((item: any, index: number) => (
+                        <tr key={index}>
+                          <td className="px-4 py-2 text-sm">{item.description || item.itemTitle || "Item"}</td>
+                          <td className="px-4 py-2 text-sm text-right">{item.quantity || 1}</td>
+                          <td className="px-4 py-2 text-sm text-right">
+                            {currencySymbol}{parseFloat(item.unitPrice || item.sellingPrice || "0").toFixed(2)}
+                          </td>
+                          <td className="px-4 py-2 text-sm text-right font-medium">
+                            {currencySymbol}{parseFloat(item.totalAmount || item.totalPrice || "0").toFixed(2)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Summary */}
+            <div className="border-t pt-4">
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600">Subtotal:</span>
+                  <span className="font-medium">
+                    {currencySymbol}{parseFloat(invoice.subtotal || "0").toFixed(2)}
+                  </span>
+                </div>
+                {parseFloat(invoice.taxAmount || "0") > 0 && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-600">Tax:</span>
+                    <span className="font-medium">
+                      {currencySymbol}{parseFloat(invoice.taxAmount || "0").toFixed(2)}
+                    </span>
+                  </div>
+                )}
+                {parseFloat(invoice.discountAmount || "0") > 0 && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-600">Discount:</span>
+                    <span className="font-medium">
+                      -{currencySymbol}{parseFloat(invoice.discountAmount || "0").toFixed(2)}
+                    </span>
+                  </div>
+                )}
+                <div className="flex justify-between text-lg font-bold border-t pt-2">
+                  <span>Total:</span>
+                  <span>
+                    {currencySymbol}{parseFloat(invoice.totalAmount || "0").toFixed(2)}
+                  </span>
+                </div>
+                {parseFloat(invoice.paidAmount || "0") > 0 && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-600">Paid:</span>
+                    <span className="font-medium text-green-600">
+                      {currencySymbol}{parseFloat(invoice.paidAmount || "0").toFixed(2)}
+                    </span>
+                  </div>
+                )}
+                {parseFloat(invoice.totalAmount || "0") - parseFloat(invoice.paidAmount || "0") > 0 && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-600">Balance:</span>
+                    <span className="font-medium text-orange-600">
+                      {currencySymbol}
+                      {(parseFloat(invoice.totalAmount || "0") - parseFloat(invoice.paidAmount || "0")).toFixed(2)}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Notes */}
+            {invoice.notes && (
+              <div>
+                <label className="text-sm font-medium text-gray-500">Notes</label>
+                <p className="text-sm text-gray-700 mt-1 bg-gray-50 p-3 rounded-md">
+                  {invoice.notes}
+                </p>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="text-center py-8 text-gray-500">
+            <p>Invoice not found</p>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 

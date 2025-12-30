@@ -179,6 +179,11 @@ export default function Invoices() {
   const [selectedInvoiceForFollowUp, setSelectedInvoiceForFollowUp] = useState<any>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
+  const [isCancellationChargeDialogOpen, setIsCancellationChargeDialogOpen] = useState(false);
+  const [pendingStatusChange, setPendingStatusChange] = useState<{ invoiceId: number; status: string } | null>(null);
+  const [cancellationChargeAmount, setCancellationChargeAmount] = useState("");
+  const [cancellationChargeNotes, setCancellationChargeNotes] = useState("");
+  const [showCancellationChargeFields, setShowCancellationChargeFields] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
 
   // Import handlers
@@ -1392,24 +1397,10 @@ export default function Invoices() {
         };
       }
 
-      // Filter out void status invoices
-      const filteredInvoices = invoicesData.filter(
-        (invoice) => invoice.status?.toLowerCase() !== "void"
-      );
-
-      // Recalculate pagination for filtered results
-      const filteredTotal = filteredInvoices.length;
-      const filteredTotalPages = Math.ceil(
-        filteredTotal / paginationData.pageSize
-      );
-
+      // Return invoices as-is from API (backend handles all filtering including void status)
       return {
-        data: filteredInvoices,
-        pagination: {
-          ...paginationData,
-          total: filteredTotal,
-          totalPages: filteredTotalPages,
-        },
+        data: invoicesData,
+        pagination: paginationData,
       };
     },
   });
@@ -1459,11 +1450,29 @@ export default function Invoices() {
     mutationFn: async ({
       invoiceId,
       status,
+      hasCancellationCharge,
+      cancellationChargeAmount,
+      cancellationChargeNotes,
     }: {
       invoiceId: number;
       status: string;
+      hasCancellationCharge?: boolean;
+      cancellationChargeAmount?: number;
+      cancellationChargeNotes?: string;
     }) => {
       const token = auth.getToken();
+      const updateData: any = { status };
+      
+      if (status === "cancelled" && hasCancellationCharge) {
+        updateData.hasCancellationCharge = true;
+        updateData.cancellationChargeAmount = cancellationChargeAmount || 0;
+        updateData.cancellationChargeNotes = cancellationChargeNotes || "";
+      } else if (status === "cancelled") {
+        updateData.hasCancellationCharge = false;
+        updateData.cancellationChargeAmount = 0;
+        updateData.cancellationChargeNotes = "";
+      }
+      
       const response = await fetch(
         `/api/tenants/${tenant?.id}/invoices/${invoiceId}`,
         {
@@ -1472,7 +1481,7 @@ export default function Invoices() {
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ status }),
+          body: JSON.stringify(updateData),
         }
       );
 
@@ -1494,6 +1503,13 @@ export default function Invoices() {
       queryClient.invalidateQueries({
         queryKey: [`/api/tenants/${tenant?.id}/invoices`],
       });
+      
+      // Reset cancellation charge dialog state
+      setIsCancellationChargeDialogOpen(false);
+      setPendingStatusChange(null);
+      setCancellationChargeAmount("");
+      setCancellationChargeNotes("");
+      setShowCancellationChargeFields(false);
     },
     onError: (error: any) => {
       toast({
@@ -1707,10 +1723,20 @@ export default function Invoices() {
           <Select
             value={displayStatus || "pending"}
             onValueChange={(newStatus) => {
-              updateStatusMutation.mutate({
-                invoiceId: invoice.id,
-                status: newStatus,
-              });
+              // If changing to cancelled, show cancellation charge dialog
+              if (newStatus === "cancelled") {
+                setPendingStatusChange({ invoiceId: invoice.id, status: newStatus });
+                setIsCancellationChargeDialogOpen(true);
+                setCancellationChargeAmount("");
+                setCancellationChargeNotes("");
+                setShowCancellationChargeFields(false);
+              } else {
+                // For other status changes, update directly
+                updateStatusMutation.mutate({
+                  invoiceId: invoice.id,
+                  status: newStatus,
+                });
+              }
             }}
             disabled={updateStatusMutation.isPending}
           >
@@ -3209,6 +3235,10 @@ export default function Invoices() {
                 paidAmount: parseFloat(
                   (invoiceData.paidAmount || 0).toString()
                 ),
+                cancellationChargeAmount: invoiceData.hasCancellationCharge 
+                  ? parseFloat((invoiceData.cancellationChargeAmount || 0).toString())
+                  : undefined,
+                cancellationChargeNotes: invoiceData.cancellationChargeNotes || undefined,
                 installments: invoiceData.installments || undefined,
               };
 
@@ -3886,6 +3916,106 @@ export default function Invoices() {
           }
         />
       )}
+
+      {/* Cancellation Charge Dialog */}
+      <Dialog open={isCancellationChargeDialogOpen} onOpenChange={setIsCancellationChargeDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Apply Cancellation Charge?</DialogTitle>
+            <DialogDescription>
+              Do you want to apply cancellation charges to this invoice?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="flex items-center space-x-2">
+              <Button
+                variant={showCancellationChargeFields ? "default" : "outline"}
+                onClick={() => {
+                  setShowCancellationChargeFields(true);
+                  if (!cancellationChargeAmount || cancellationChargeAmount === "") {
+                    setCancellationChargeAmount("0");
+                  }
+                }}
+                className="flex-1"
+              >
+                Yes, Apply Charge
+              </Button>
+              <Button
+                variant={!showCancellationChargeFields ? "default" : "outline"}
+                onClick={() => {
+                  setShowCancellationChargeFields(false);
+                  setCancellationChargeAmount("");
+                  setCancellationChargeNotes("");
+                }}
+                className="flex-1"
+              >
+                No Charge
+              </Button>
+            </div>
+            
+            {showCancellationChargeFields && (
+              <div className="space-y-4 pt-4 border-t">
+                <div>
+                  <Label htmlFor="cancellation-charge-amount">Cancellation Charge Amount</Label>
+                  <Input
+                    id="cancellation-charge-amount"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={cancellationChargeAmount}
+                    onChange={(e) => setCancellationChargeAmount(e.target.value)}
+                    placeholder="0.00"
+                    className="mt-1"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="cancellation-charge-notes">Notes (Optional)</Label>
+                  <Textarea
+                    id="cancellation-charge-notes"
+                    value={cancellationChargeNotes}
+                    onChange={(e) => setCancellationChargeNotes(e.target.value)}
+                    placeholder="Enter reason or notes for cancellation charge..."
+                    className="mt-1"
+                    rows={3}
+                  />
+                </div>
+              </div>
+            )}
+            
+            <div className="flex justify-end gap-2 pt-4 border-t">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setIsCancellationChargeDialogOpen(false);
+                  setPendingStatusChange(null);
+                  setCancellationChargeAmount("");
+                  setCancellationChargeNotes("");
+                  setShowCancellationChargeFields(false);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() => {
+                  if (pendingStatusChange) {
+                    const hasCharge = cancellationChargeAmount !== "" && parseFloat(cancellationChargeAmount) > 0;
+                    updateStatusMutation.mutate({
+                      invoiceId: pendingStatusChange.invoiceId,
+                      status: pendingStatusChange.status,
+                      hasCancellationCharge: hasCharge,
+                      cancellationChargeAmount: hasCharge ? parseFloat(cancellationChargeAmount) : 0,
+                      cancellationChargeNotes: cancellationChargeNotes,
+                    });
+                  }
+                }}
+                disabled={updateStatusMutation.isPending || (cancellationChargeAmount !== "" && (!cancellationChargeAmount || parseFloat(cancellationChargeAmount) < 0))}
+              >
+                {updateStatusMutation.isPending ? "Updating..." : "Confirm Cancellation"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Import Dialog */}
       <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
