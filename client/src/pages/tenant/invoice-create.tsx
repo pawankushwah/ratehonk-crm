@@ -3280,8 +3280,7 @@ export default function InvoiceCreate() {
                     </Button>
                   </div>
                   {/* Unified Expenses Table - Shows all expenses in one table */}
-                  {getAllExpenses().length > 0 && (
-                    <div className="border rounded-lg overflow-hidden">
+                  <div className="border rounded-lg overflow-hidden">
                       <div className="overflow-x-auto">
                         <div className="min-w-[2200px]">
                           {/* Table Header */}
@@ -3587,24 +3586,24 @@ export default function InvoiceCreate() {
                                 </div>
                               );
                             })}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Total Row */}
-                    <div className="border rounded-lg p-4 bg-gray-50 dark:bg-gray-800">
-                      <div className="flex justify-end items-center gap-4">
-                        <span className="text-sm font-medium">Total Expenses:</span>
-                        <span className="text-lg font-semibold">
-                          {currencySymbol}{getAllExpenses()
-                            .reduce((sum, exp) => sum + (parseFloat(exp.amount) || 0), 0)
-                            .toFixed(2)}
-                        </span>
                       </div>
                     </div>
                   </div>
-                )}
+
+                  {/* Total Row */}
+                  <div className="border rounded-lg p-4 bg-gray-50 dark:bg-gray-800">
+                    <div className="flex justify-end items-center gap-4">
+                      <span className="text-sm font-medium">Total Expenses:</span>
+                      <span className="text-lg font-semibold">
+                        {currencySymbol}{getAllExpenses()
+                          .reduce((sum, exp) => sum + (parseFloat(exp.amount) || 0), 0)
+                          .toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              )}
 
               {/* Profit Calculation Section */}
               <div className="mt-6 pt-4">
