@@ -124,6 +124,7 @@ export default function ExpenseCreate() {
   const [expenseNumber, setExpenseNumber] = useState("");
   const [expenseNumberOnly, setExpenseNumberOnly] = useState("");
   const [expenseTitle, setExpenseTitle] = useState("");
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState<string>("");
 
   // Fetch expense settings
   const { data: expenseSettings = {
@@ -391,6 +392,31 @@ export default function ExpenseCreate() {
     },
   });
 
+  // Fetch invoices for dropdown
+  const { data: invoicesResponse } = useQuery({
+    queryKey: [`/api/tenants/${tenant?.id}/invoices`],
+    enabled: !!tenant?.id,
+    queryFn: async () => {
+      const token = auth.getToken();
+      const params = new URLSearchParams();
+      params.append("page", "1");
+      params.append("pageSize", "1000"); // Get a large number for dropdown
+      const response = await fetch(
+        `/api/tenants/${tenant?.id}/invoices?${params.toString()}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      if (!response.ok) return { data: [] };
+      const result = await response.json();
+      return {
+        data: result.data || result.invoices || [],
+      };
+    },
+  });
+
+  const invoices = invoicesResponse?.data || [];
+
   // Track if expense data has been loaded to prevent re-loading
   const expenseDataLoadedRef = useRef<number | null>(null);
 
@@ -534,6 +560,8 @@ export default function ExpenseCreate() {
       setExpenseDate(expense.expense_date || expense.expenseDate || new Date().toISOString().split("T")[0]);
       setCurrency(expense.currency || "USD");
       setExpenseTitle(expense.title || "");
+      // Load invoice_id if available
+      setSelectedInvoiceId(expense.invoice_id?.toString() || expense.invoiceId?.toString() || "");
       
       // Clean notes - remove HTML tags if present
       let notesText = expense.notes || expense.description || "";
@@ -1040,6 +1068,25 @@ export default function ExpenseCreate() {
     ];
   };
 
+  // Get invoice options for dropdown
+  const getInvoiceOptions = (): AutocompleteOption[] => {
+    const invoiceOptions = invoices.map((invoice: any) => {
+      const invoiceNumber = invoice.invoiceNumber || invoice.invoice_number || `INV-${invoice.id}`;
+      const customerName = invoice.customerName || invoice.customer?.name || "Unknown Customer";
+      const totalAmount = parseFloat(invoice.totalAmount || invoice.total_amount || "0");
+      const currency = invoice.currency || "USD";
+      return {
+        value: invoice.id.toString(),
+        label: `${invoiceNumber} - ${customerName} (${currency} ${totalAmount.toFixed(2)})`,
+      };
+    });
+
+    return [
+      { value: "", label: "No Invoice (Optional)" },
+      ...invoiceOptions,
+    ];
+  };
+
   // Get lead type options
   const getLeadTypeOptions = (): AutocompleteOption[] => {
     const leadTypeOptions = leadTypes.map((type: any) => ({
@@ -1172,6 +1219,7 @@ export default function ExpenseCreate() {
       notes: notesContent || null,
       title: expenseTitle || "Expense", // Use expense title or default
       category: "other", // Default category
+      invoiceId: selectedInvoiceId && selectedInvoiceId !== "" ? parseInt(selectedInvoiceId) : null,
     };
 
     // Prepare line items
@@ -1326,7 +1374,7 @@ export default function ExpenseCreate() {
               </div>
 
               {/* Expense Title and Date Row */}
-              <div className="flex items-end gap-4">
+              <div className="flex items-end gap-4 flex-wrap">
                 <div className="w-auto md:w-48">
                   <Label htmlFor="expenseTitle">Expense Title</Label>
                   <Input
@@ -1346,6 +1394,18 @@ export default function ExpenseCreate() {
                     className="w-full"
                   />
                   <input type="hidden" name="expenseDate" value={expenseDate} />
+                </div>
+                <div className="w-auto md:w-80">
+                  <Label htmlFor="selectedInvoice">Invoice (Optional)</Label>
+                  <AutocompleteInput
+                    id="selectedInvoice"
+                    suggestions={getInvoiceOptions()}
+                    value={selectedInvoiceId}
+                    onValueChange={(value) => setSelectedInvoiceId(value)}
+                    placeholder="Search invoice..."
+                    emptyText="No invoices found"
+                    allowCustomValue={false}
+                  />
                 </div>
                 {expenseSettings?.showTax !== false && (
                   <div className="ml-auto">

@@ -25,6 +25,8 @@ export interface InvoiceData {
   subtotal: number;
   taxAmount: number;
   discountAmount: number;
+  cancellationChargeAmount?: number;
+  cancellationChargeNotes?: string;
   totalAmount: number;
   currency: string;
   notes?: string;
@@ -135,6 +137,12 @@ export const ModernTemplate: React.FC<InvoiceTemplateProps> = ({ data }) => (
           <span>Tax:</span>
           <span>{data.currency} {data.taxAmount.toFixed(2)}</span>
         </div>
+        {data.cancellationChargeAmount && data.cancellationChargeAmount > 0 && (
+          <div className="flex justify-between py-2 text-red-600">
+            <span>Cancellation Charge:</span>
+            <span>{data.currency} {data.cancellationChargeAmount.toFixed(2)}</span>
+          </div>
+        )}
         <div className="border-t-2 border-gray-300 pt-2">
           <div className="flex justify-between py-2 text-xl font-bold">
             <span>Total:</span>
@@ -215,12 +223,18 @@ export const ModernTemplate: React.FC<InvoiceTemplateProps> = ({ data }) => (
     )}
 
     {/* Footer */}
-    {(data.notes || (data.paymentTerms && data.paymentStatus?.toLowerCase() !== "paid")) && (
+    {(data.notes || (data.paymentTerms && data.paymentStatus?.toLowerCase() !== "paid") || data.cancellationChargeNotes) && (
       <div className="border-t pt-6">
         {data.paymentTerms && data.paymentStatus?.toLowerCase() !== "paid" && (
           <div className="mb-4">
             <h4 className="font-semibold mb-2">Payment Terms:</h4>
             <p className="text-gray-600">{data.paymentTerms}</p>
+          </div>
+        )}
+        {data.cancellationChargeNotes && (
+          <div className="mb-4">
+            <h4 className="font-semibold mb-2 text-red-600">Cancellation Charge Notes:</h4>
+            <p className="text-gray-600">{data.cancellationChargeNotes}</p>
           </div>
         )}
         {data.notes && (
