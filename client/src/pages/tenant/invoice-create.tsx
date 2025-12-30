@@ -3666,8 +3666,7 @@ export default function InvoiceCreate() {
                   </div>
                 </div>
               </div>
-                </div>
-              )}
+
               <div className="flex flex-col sm:flex-row justify-end gap-2 sm:space-x-2 pt-4">
                 <Button
                   type="button"
