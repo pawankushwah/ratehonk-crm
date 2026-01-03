@@ -1845,7 +1845,7 @@ export default function Expenses() {
 
         {/* Expense Details Dialog */}
         <Dialog open={showDetailsDialog} onOpenChange={setShowDetailsDialog}>
-          <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+          <DialogContent className="max-w-7xl max-h-[90vh] overflow-hidden flex flex-col">
             <DialogHeader>
               <DialogTitle>Expense Details</DialogTitle>
               <DialogDescription>
@@ -1928,26 +1928,8 @@ export default function Expenses() {
                   )}
                 </div>
                 
-                {/* Category and Type */}
-                <div className="grid grid-cols-2 gap-4">
-                  <Card>
-                    <CardContent className="p-4">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Tag className="h-4 w-4 text-muted-foreground" />
-                        <span className="text-sm font-medium">Category</span>
-                      </div>
-                      <Badge className={getCategoryConfig(selectedExpense.category).color}>
-                        <span className="mr-1">{getCategoryConfig(selectedExpense.category).icon}</span>
-                        {getCategoryConfig(selectedExpense.category).label}
-                      </Badge>
-                      {selectedExpense.subcategory && (
-                        <div className="text-sm text-muted-foreground mt-2">
-                          Subcategory: {selectedExpense.subcategory}
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                  
+                {/* Expense Type */}
+                <div className="grid grid-cols-1 gap-4">
                   <Card>
                     <CardContent className="p-4">
                       <div className="flex items-center gap-2 mb-2">
@@ -2044,8 +2026,8 @@ export default function Expenses() {
                           <TableHeader>
                             <TableRow>
                               <TableHead>#</TableHead>
-                              <TableHead>Category</TableHead>
                               <TableHead>Title</TableHead>
+                              <TableHead>Vendor</TableHead>
                               <TableHead>Quantity</TableHead>
                               <TableHead>Amount</TableHead>
                               <TableHead>Tax</TableHead>
@@ -2062,12 +2044,8 @@ export default function Expenses() {
                             {selectedExpense.lineItems.map((item: any, index: number) => (
                               <TableRow key={item.id || index}>
                                 <TableCell>{index + 1}</TableCell>
-                                <TableCell>
-                                  <Badge className={getCategoryConfig(item.category || selectedExpense.category).color}>
-                                    {getCategoryConfig(item.category || selectedExpense.category).icon} {getCategoryConfig(item.category || selectedExpense.category).label}
-                                  </Badge>
-                                </TableCell>
                                 <TableCell className="font-medium">{item.title}</TableCell>
+                                <TableCell>{item.vendor_name || item.vendorName || '-'}</TableCell>
                                 <TableCell>{item.quantity || 1}</TableCell>
                                 <TableCell>{formatCurrency(item.amount || 0, selectedExpense.currency)}</TableCell>
                                 <TableCell>

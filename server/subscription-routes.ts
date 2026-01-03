@@ -47,10 +47,96 @@ export function registerSubscriptionRoutes(app: Express) {
       const plans = await simpleStorage.getAllSubscriptionPlans();
       console.log('Found plans:', plans.length);
       
-      res.json(plans);
+      // Group plans by country
+      const plansByCountry: Record<string, any[]> = {};
+      
+      plans.forEach((plan: any) => {
+        const country = plan.country || 'US';
+        if (!plansByCountry[country]) {
+          plansByCountry[country] = [];
+        }
+        plansByCountry[country].push(plan);
+      });
+      
+      // Transform to the desired structure
+      const result = Object.keys(plansByCountry).map((country) => {
+        const countryPlans = plansByCountry[country];
+        const firstPlan = countryPlans[0];
+        
+        return {
+          country: country,
+          currency: firstPlan.currency || 'USD',
+          plans: countryPlans.map((plan: any) => ({
+            id: plan.id,
+            name: plan.name,
+            description: plan.description,
+            monthly_price: plan.monthly_price,
+            yearly_price: plan.yearly_price,
+            max_users: plan.max_users,
+            max_customers: plan.max_customers,
+            features: plan.features,
+            is_active: plan.is_active,
+            created_at: plan.created_at,
+            country: plan.country,
+            currency: plan.currency,
+            allowed_menu_items: plan.allowed_menu_items || [],
+            allowed_pages: plan.allowed_pages || [],
+            free_trial_days: plan.free_trial_days || 0,
+            is_free_plan: plan.is_free_plan || false,
+            allowed_dashboard_widgets: plan.allowed_dashboard_widgets || [],
+            allowed_page_permissions: plan.allowed_page_permissions || {}
+          }))
+        };
+      });
+      
+      res.json(result);
     } catch (error) {
       console.error('Error fetching subscription plans:', error);
       res.status(500).json({ error: 'Failed to fetch subscription plans' });
+    }
+  });
+
+  // Get single subscription plan by ID (for editing)
+  app.get('/api/subscription/plans/:planId', async (req, res) => {
+    try {
+      const planId = parseInt(req.params.planId);
+      if (isNaN(planId)) {
+        return res.status(400).json({ error: 'Invalid plan ID' });
+      }
+
+      console.log('Fetching subscription plan by ID:', planId);
+      res.setHeader('Content-Type', 'application/json');
+      
+      const plan = await simpleStorage.getSubscriptionPlanById(planId);
+      
+      if (!plan) {
+        return res.status(404).json({ error: 'Plan not found' });
+      }
+
+      // Return plan with all fields
+      res.json({
+        id: plan.id,
+        name: plan.name,
+        description: plan.description,
+        monthly_price: plan.monthly_price,
+        yearly_price: plan.yearly_price,
+        max_users: plan.max_users,
+        max_customers: plan.max_customers,
+        features: plan.features,
+        is_active: plan.is_active,
+        created_at: plan.created_at,
+        country: plan.country,
+        currency: plan.currency,
+        allowed_menu_items: plan.allowed_menu_items || [],
+        allowed_pages: plan.allowed_pages || [],
+        free_trial_days: plan.free_trial_days || 0,
+        is_free_plan: plan.is_free_plan || false,
+        allowed_dashboard_widgets: plan.allowed_dashboard_widgets || [],
+        allowed_page_permissions: plan.allowed_page_permissions || {}
+      });
+    } catch (error) {
+      console.error('Error fetching subscription plan by ID:', error);
+      res.status(500).json({ error: 'Failed to fetch subscription plan' });
     }
   });
 
@@ -96,7 +182,7 @@ export function registerSubscriptionRoutes(app: Express) {
       const user = req.user;
       const { planId, billingCycle, paymentGateway, paymentMethodId } = req.body;
 
-      console.log('Creating subscription for tenant:', user.tenantId, 'plan:', planId);
+      console.log('Creating subscription for tenant:', user.tenantId, 'plan:', planId, 'gateway:', paymentGateway);
       
       res.setHeader('Content-Type', 'application/json');
 
@@ -104,33 +190,77 @@ export function registerSubscriptionRoutes(app: Express) {
         return res.status(400).json({ error: 'Missing required fields' });
       }
 
-      // Create trial subscription
-      const subscriptionData = {
-        tenantId: user.tenantId,
-        planId: parseInt(planId),
-        status: 'trial',
-        billingCycle,
-        paymentGateway,
-        gatewaySubscriptionId: 'sub_' + Math.random().toString(36).substr(2, 9),
-        gatewayCustomerId: 'cust_' + Math.random().toString(36).substr(2, 9),
-        trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
-        currentPeriodStart: new Date(),
-        currentPeriodEnd: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
-        nextBillingDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
-        failedPaymentAttempts: 0
+      // Get user details for payment gateway (user object already has the data from authenticateToken)
+      const userDetails = {
+        email: user.email,
+        first_name: user.firstName,
+        last_name: user.lastName,
+        phone: (user as any).phone,
       };
 
-      const result = await simpleStorage.createTenantSubscription(subscriptionData);
+      // Get tenant details
+      const tenant = await simpleStorage.getTenantById(user.tenantId);
+      if (!tenant) {
+        return res.status(404).json({ error: 'Tenant not found' });
+      }
+
+      // Import subscription service
+      const { SubscriptionService } = await import("./subscription-service");
+      const subscriptionService = new SubscriptionService();
+
+      let result;
+      
+      if (paymentGateway === 'stripe') {
+        // For Stripe, payment method is REQUIRED
+        if (!paymentMethodId) {
+          return res.status(400).json({ 
+            error: 'Payment method is required for Stripe subscriptions. Please add a payment method first.' 
+          });
+        }
+
+        // Create REAL Stripe subscription with trial
+        result = await subscriptionService.createStripeSubscription({
+          tenantId: user.tenantId,
+          planId: parseInt(planId),
+          billingCycle: billingCycle as 'monthly' | 'yearly',
+          paymentGateway: 'stripe',
+          paymentMethodId,
+          customerInfo: {
+            email: userDetails.email || tenant.contact_email || '',
+            name: `${userDetails.first_name || ''} ${userDetails.last_name || ''}`.trim() || tenant.company_name || 'Customer',
+            phone: userDetails.phone || tenant.contact_phone || undefined,
+          },
+        });
+      } else if (paymentGateway === 'razorpay') {
+        // For Razorpay, create subscription
+        result = await subscriptionService.createRazorpaySubscription({
+          tenantId: user.tenantId,
+          planId: parseInt(planId),
+          billingCycle: billingCycle as 'monthly' | 'yearly',
+          paymentGateway: 'razorpay',
+          customerInfo: {
+            email: userDetails.email || tenant.contact_email || '',
+            name: `${userDetails.first_name || ''} ${userDetails.last_name || ''}`.trim() || tenant.company_name || 'Customer',
+            phone: userDetails.phone || tenant.contact_phone || undefined,
+          },
+        });
+      } else {
+        return res.status(400).json({ error: 'Invalid payment gateway' });
+      }
 
       res.json({
-        subscriptionId: result.gatewaySubscriptionId,
+        subscriptionId: result.subscriptionId,
         status: 'trial',
         trialEndsAt: result.trialEndsAt,
-        nextBillingDate: result.nextBillingDate
+        nextBillingDate: result.nextBillingDate,
+        clientSecret: result.clientSecret, // For Stripe payment confirmation
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error creating subscription:', error);
-      res.status(500).json({ error: 'Failed to create subscription' });
+      res.status(500).json({ 
+        error: 'Failed to create subscription',
+        details: error.message 
+      });
     }
   });
 

@@ -2176,7 +2176,7 @@ export default function CustomerDetail() {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => navigate(`/invoice-create/${invoice.id}?customerId=${customerId}&redirectTo=/customers/${customerId}`)}
+                onClick={() => navigate(`/invoice-edit/${invoice.id}?customerId=${customerId}&redirectTo=/customers/${customerId}`)}
                 title="Edit Invoice"
               >
                 <Edit className="h-4 w-4" />

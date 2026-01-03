@@ -45,7 +45,8 @@ import {
   DollarSign,
   TrendingDown,
 } from "lucide-react";
-import Logo from "../assets/Logo-sidebar.svg";
+// import Logo from "../assets/Logo-sidebar.svg";
+import Logo from "../assets/RATEHONKLOGO.png";
 import LeadsDetailsImg from "../assets/leads-details.png";
 import CalendarSidebarImg from "../assets/calendar-sidebar.png";
 import ServicesListImg from "../assets/services-list.png";
@@ -332,12 +333,12 @@ export default function Portfolio() {
                 <div className="absolute -top-1 -right-1 w-3 h-3 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-full animate-pulse" />
               </div>
               <div>
-                <span className="text-2xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent">
+                {/* <span className="text-2xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent">
                   RateHonk
                 </span>
                 <div className="text-xs text-gray-500 font-medium tracking-wide">
                   TRAVEL TECHNOLOGY
-                </div>
+                </div> */}
               </div>
             </div>
 

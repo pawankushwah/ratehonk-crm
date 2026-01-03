@@ -299,7 +299,9 @@ class TenantEmailService {
     tenantId: number;
     attachments?: Array<{
       filename: string;
-      path: string;
+      path?: string;
+      content?: string; // Base64 content
+      contentType?: string; // MIME type
     }>;
   }) {
     try {

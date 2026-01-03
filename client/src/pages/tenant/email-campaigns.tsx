@@ -19,18 +19,24 @@ import { Link } from "wouter";
 import { 
   Plus, Search, Mail, Users, TrendingUp, Clock, 
   Send, Edit, Copy, Trash2, Eye, BarChart3,
-  Calendar, Target, Zap, MoreHorizontal
+  Calendar, Target, Zap, MoreHorizontal, ExternalLink
 } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { format } from "date-fns";
 import { UsersIcon, Settings, TestTube } from "lucide-react";
+import { EmailSettingsPanel } from "@/components/email/EmailSettingsPanel";
+import { CampaignBuilder } from "@/components/campaigns/CampaignBuilder";
 
 export default function EmailCampaigns() {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [isPreviewDialogOpen, setIsPreviewDialogOpen] = useState(false);
+  const [isAnalyticsDialogOpen, setIsAnalyticsDialogOpen] = useState(false);
   const [selectedCampaign, setSelectedCampaign] = useState<EmailCampaign | null>(null);
+  const [isEmailSettingsPanelOpen, setIsEmailSettingsPanelOpen] = useState(false);
   
   const { tenant } = useAuth();
   const { toast } = useToast();
@@ -127,9 +133,48 @@ export default function EmailCampaigns() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [`/api/tenants/${tenant?.id}/email-campaigns`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/tenants/${tenant?.id}/email-campaigns/stats`] });
       toast({
         title: "Campaign Deleted",
         description: "Email campaign has been removed."
+      });
+    }
+  });
+
+  const duplicateCampaignMutation = useMutation({
+    mutationFn: async (campaign: EmailCampaign) => {
+      const duplicateData = {
+        name: `${campaign.name} (Copy)`,
+        subject: campaign.subject,
+        content: campaign.content,
+        type: campaign.type,
+        status: "draft",
+        targetAudience: campaign.targetAudience,
+      };
+      const response = await apiRequest("POST", `/api/tenants/${tenant?.id}/email-campaigns`, duplicateData);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/tenants/${tenant?.id}/email-campaigns`] });
+      toast({
+        title: "Campaign Duplicated",
+        description: "Campaign has been duplicated as a draft."
+      });
+    }
+  });
+
+  const updateCampaignMutation = useMutation({
+    mutationFn: async (data: { campaignId: number; updates: Partial<InsertEmailCampaign> }) => {
+      const response = await apiRequest("PUT", `/api/tenants/${tenant?.id}/email-campaigns/${data.campaignId}`, data.updates);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/tenants/${tenant?.id}/email-campaigns`] });
+      setIsEditDialogOpen(false);
+      setSelectedCampaign(null);
+      toast({
+        title: "Campaign Updated",
+        description: "Campaign has been updated successfully."
       });
     }
   });
@@ -177,15 +222,67 @@ export default function EmailCampaigns() {
 
   return (
     <Layout>
-      <div className="p-8 space-y-6">
+      <div className="rounded-lg shadow-sm mx-2 my-2">
         {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Email Campaigns</h1>
-            <p className="text-gray-600 dark:text-gray-300">Create and manage your email marketing campaigns</p>
+        <div className="bg-white rounded-2xl shadow-sm">
+          <div className="w-full h-[72px] flex items-center bg-white px-[18px] py-4 rounded-t-xl border-b border-[#E3E8EF] shadow-[0px_1px_6px_0px_rgba(0,0,0,0.05)]">
+            <h1 className="font-inter font-medium text-[20px] leading-[24px] text-[#121926]">
+              Email Campaigns
+            </h1>
+            <div className="flex gap-3 ml-auto">
+              <button
+                onClick={() => setIsEmailSettingsPanelOpen(true)}
+                className="w-10 h-10 flex items-center justify-center rounded-lg border border-gray-200 bg-white shadow-sm hover:bg-gray-50 cursor-pointer"
+                title="Email Settings"
+              >
+                <Settings className="h-5 w-5 text-gray-600" />
+              </button>
+            </div>
           </div>
-          <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-            <DialogTrigger asChild>
+        </div>
+
+        <div className="p-8 space-y-6">
+          {/* Create Campaign Button */}
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={async () => {
+                try {
+                  const response = await fetch(`/api/tenants/${tenant?.id}/email-campaigns/create-dummy`, {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                    },
+                  });
+                  const result = await response.json();
+                  if (response.ok) {
+                    toast({
+                      title: "Dummy Campaigns Created!",
+                      description: `Successfully created ${result.campaigns?.length || 7} dummy campaigns for testing.`,
+                    });
+                    queryClient.invalidateQueries({ queryKey: [`/api/tenants/${tenant?.id}/email-campaigns`] });
+                    queryClient.invalidateQueries({ queryKey: [`/api/tenants/${tenant?.id}/email-campaigns/stats`] });
+                  } else {
+                    toast({
+                      title: "Error",
+                      description: result.message || "Failed to create dummy campaigns",
+                      variant: "destructive",
+                    });
+                  }
+                } catch (error: any) {
+                  toast({
+                    title: "Error",
+                    description: error.message || "Failed to create dummy campaigns",
+                    variant: "destructive",
+                  });
+                }
+              }}
+            >
+              <TestTube className="mr-2 h-4 w-4" />
+              Create Dummy Campaigns
+            </Button>
+            <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+              <DialogTrigger asChild>
               <Button className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700">
                 <Plus className="mr-2 h-4 w-4" />
                 Create Campaign
@@ -193,125 +290,70 @@ export default function EmailCampaigns() {
             </DialogTrigger>
            
             
-            <DialogContent className="max-w-2xl">
-              <DialogHeader>
-                <DialogTitle>Create New Email Campaign</DialogTitle>
-                <DialogDescription>
-                  Design a beautiful email campaign to engage your travel customers
-                </DialogDescription>
-              </DialogHeader>
-              
-              <Form {...form}>
-                <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <FormField
-                      control={form.control}
-                      name="name"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Campaign Name</FormLabel>
-                          <FormControl>
-                            <Input placeholder="Summer Travel Newsletter" {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="type"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Campaign Type</FormLabel>
-                          <Select onValueChange={field.onChange} defaultValue={field.value}>
-                            <FormControl>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Select type" />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              <SelectItem value="welcome">Welcome Email</SelectItem>
-                              <SelectItem value="booking_confirmation">Booking Confirmation</SelectItem>
-                              <SelectItem value="follow_up">Follow Up</SelectItem>
-                              <SelectItem value="newsletter">Newsletter</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-                  
-                  <FormField
-                    control={form.control}
-                    name="subject"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Email Subject</FormLabel>
-                        <FormControl>
-                          <Input placeholder="Discover Amazing Travel Deals This Summer!" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="targetAudience"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Target Audience</FormLabel>
-                        <Select onValueChange={field.onChange} defaultValue={field.value}>
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select audience" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="all_customers">All Customers</SelectItem>
-                            <SelectItem value="new_leads">New Leads</SelectItem>
-                            <SelectItem value="recent_bookings">Recent Bookings</SelectItem>
-                            <SelectItem value="newsletter_subscribers">Newsletter Subscribers</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="content"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Email Content</FormLabel>
-                        <FormControl>
-                          <Textarea 
-                            placeholder="Write your email content here..." 
-                            className="min-h-[200px]"
-                            {...field} 
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <DialogFooter>
-                    <Button type="button" variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
-                      Cancel
-                    </Button>
-                    <Button type="submit" disabled={createCampaignMutation.isPending}>
-                      {createCampaignMutation.isPending ? "Creating..." : "Create Campaign"}
-                    </Button>
-                  </DialogFooter>
-                </form>
-              </Form>
+            <DialogContent className="max-w-7xl max-h-[90vh] p-0 flex flex-col">
+              <div className="flex-1 overflow-y-auto min-h-0">
+                <CampaignBuilder
+                  onSave={(data) => {
+                    // Transform CampaignBuilder data to InsertEmailCampaign format
+                    const campaignData: any = {
+                      tenantId: tenant?.id || 1,
+                      name: data.name,
+                      subject: data.subject || "",
+                      content: data.content,
+                      type: data.objective === "lead_generation" ? "welcome" : 
+                            data.objective === "package_promotion" ? "newsletter" :
+                            data.objective === "abandoned_inquiry" ? "follow_up" : "newsletter",
+                      status: data.scheduledAt ? "scheduled" : "draft",
+                      targetAudience: data.audienceType === "segment" && data.segmentId 
+                        ? `segment_${data.segmentId}` 
+                        : data.audienceType === "manual" && data.selectedRecipients?.length
+                        ? "manual_selection"
+                        : "all_customers",
+                      scheduledAt: data.scheduledAt,
+                      templateId: data.templateId,
+                      channel: data.channel,
+                      objective: data.objective,
+                      selectedRecipients: data.selectedRecipients || [],
+                      recipientCount: data.audienceType === "manual" 
+                        ? (data.selectedRecipients?.length || 0)
+                        : 0,
+                    };
+                    createCampaignMutation.mutate(campaignData);
+                  }}
+                  onSend={(data) => {
+                    const campaignData: any = {
+                      tenantId: tenant?.id || 1,
+                      name: data.name,
+                      subject: data.subject || "",
+                      content: data.content,
+                      type: data.objective === "lead_generation" ? "welcome" : 
+                            data.objective === "package_promotion" ? "newsletter" :
+                            data.objective === "abandoned_inquiry" ? "follow_up" : "newsletter",
+                      status: "sent",
+                      targetAudience: data.audienceType === "segment" && data.segmentId 
+                        ? `segment_${data.segmentId}` 
+                        : data.audienceType === "manual" && data.selectedRecipients?.length
+                        ? "manual_selection"
+                        : "all_customers",
+                      scheduledAt: data.scheduledAt,
+                      templateId: data.templateId,
+                      channel: data.channel,
+                      objective: data.objective,
+                      selectedRecipients: data.selectedRecipients || [],
+                      recipientCount: data.audienceType === "manual" 
+                        ? (data.selectedRecipients?.length || 0)
+                        : 0,
+                    };
+                    createCampaignMutation.mutate(campaignData);
+                  }}
+                  isLoading={createCampaignMutation.isPending}
+                />
+              </div>
             </DialogContent>
           </Dialog>
-        </div>
-           <div className="flex flex-wrap items-center gap-3  p-4 rounded-lg shadow-sm">
+          </div>
+          
+          <div className="flex flex-wrap items-center gap-3  p-4 rounded-lg shadow-sm">
       
       
 
@@ -497,9 +539,23 @@ export default function EmailCampaigns() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => {
+                              setSelectedCampaign(campaign);
+                              setIsPreviewDialogOpen(true);
+                            }}
+                          >
                             <Eye className="mr-2 h-4 w-4" />
                             Preview
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => {
+                              setSelectedCampaign(campaign);
+                              setIsEditDialogOpen(true);
+                            }}
+                          >
+                            <Edit className="mr-2 h-4 w-4" />
+                            Edit
                           </DropdownMenuItem>
                           {campaign.status === "draft" && (
                             <DropdownMenuItem
@@ -510,11 +566,19 @@ export default function EmailCampaigns() {
                               Send Now
                             </DropdownMenuItem>
                           )}
-                          <DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => duplicateCampaignMutation.mutate(campaign)}
+                            disabled={duplicateCampaignMutation.isPending}
+                          >
                             <Copy className="mr-2 h-4 w-4" />
                             Duplicate
                           </DropdownMenuItem>
-                          <DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => {
+                              setSelectedCampaign(campaign);
+                              setIsAnalyticsDialogOpen(true);
+                            }}
+                          >
                             <BarChart3 className="mr-2 h-4 w-4" />
                             Analytics
                           </DropdownMenuItem>
@@ -556,7 +620,202 @@ export default function EmailCampaigns() {
             </CardContent>
           </Card>
         )}
-      </div>
+          </div>
+        </div>
+      
+      <EmailSettingsPanel 
+        open={isEmailSettingsPanelOpen} 
+        onOpenChange={setIsEmailSettingsPanelOpen} 
+      />
+
+      {/* Edit Campaign Dialog */}
+      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <DialogContent className="max-w-7xl max-h-[90vh] p-0 flex flex-col">
+          <div className="flex-1 overflow-y-auto min-h-0">
+            {selectedCampaign && (
+              <CampaignBuilder
+                initialData={{
+                  name: selectedCampaign.name,
+                  channel: (selectedCampaign as any).channel || "email",
+                  objective: (selectedCampaign as any).objective || 
+                            (selectedCampaign.type === "welcome" ? "lead_generation" :
+                            selectedCampaign.type === "newsletter" ? "package_promotion" :
+                            selectedCampaign.type === "follow_up" ? "abandoned_inquiry" : "lead_generation"),
+                  subject: selectedCampaign.subject,
+                  content: selectedCampaign.content,
+                  fromName: (selectedCampaign as any).fromName || "Vani Technologies Travel",
+                  fromEmail: (selectedCampaign as any).fromEmail || "noreply@vanitechnologies.in",
+                  replyTo: (selectedCampaign as any).replyTo || "support@vanitechnologies.in",
+                  scheduledAt: selectedCampaign.scheduledAt ? new Date(selectedCampaign.scheduledAt) : undefined,
+                  timezone: (selectedCampaign as any).timezone || "UTC",
+                  segmentId: (selectedCampaign as any).segmentId,
+                  templateId: (selectedCampaign as any).templateId,
+                  internalNotes: (selectedCampaign as any).internalNotes,
+                  selectedRecipients: (selectedCampaign as any).selectedRecipients || [],
+                  audienceType: (selectedCampaign as any).audienceType || "manual",
+                }}
+                onSave={(data) => {
+                  updateCampaignMutation.mutate({
+                    campaignId: selectedCampaign.id,
+                    updates: {
+                      name: data.name,
+                      subject: data.subject,
+                      content: data.content,
+                      channel: data.channel,
+                      objective: data.objective,
+                      templateId: data.templateId,
+                      scheduledAt: data.scheduledAt,
+                      selectedRecipients: data.selectedRecipients,
+                      recipientCount: data.audienceType === "manual" 
+                        ? (data.selectedRecipients?.length || 0)
+                        : 0,
+                    },
+                  });
+                }}
+                onCancel={() => {
+                  setIsEditDialogOpen(false);
+                  setSelectedCampaign(null);
+                }}
+                isLoading={updateCampaignMutation.isPending}
+              />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Preview Campaign Dialog */}
+      <Dialog open={isPreviewDialogOpen} onOpenChange={setIsPreviewDialogOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Campaign Preview</DialogTitle>
+            <DialogDescription>
+              Preview how your campaign will appear to recipients
+            </DialogDescription>
+          </DialogHeader>
+          {selectedCampaign && (
+            <div className="space-y-4">
+              <div className="border rounded-lg p-4 bg-gray-50">
+                <div className="mb-2">
+                  <span className="text-sm font-medium text-gray-600">From:</span>
+                  <span className="ml-2">Vani Technologies Travel &lt;noreply@vanitechnologies.in&gt;</span>
+                </div>
+                <div className="mb-2">
+                  <span className="text-sm font-medium text-gray-600">Subject:</span>
+                  <span className="ml-2 font-semibold">{selectedCampaign.subject}</span>
+                </div>
+                <div className="mb-4">
+                  <span className="text-sm font-medium text-gray-600">To:</span>
+                  <span className="ml-2">recipient@example.com</span>
+                </div>
+              </div>
+              <div className="border rounded-lg p-6 bg-white">
+                <div 
+                  className="prose max-w-none" 
+                  dangerouslySetInnerHTML={{ __html: selectedCampaign.content }} 
+                />
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Analytics Dialog */}
+      <Dialog open={isAnalyticsDialogOpen} onOpenChange={setIsAnalyticsDialogOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Campaign Analytics</DialogTitle>
+            <DialogDescription>
+              Detailed performance metrics for {selectedCampaign?.name}
+            </DialogDescription>
+          </DialogHeader>
+          {selectedCampaign && (
+            <div className="space-y-6">
+              {/* Key Metrics */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="text-sm text-muted-foreground mb-1">Recipients</div>
+                    <div className="text-2xl font-bold">{selectedCampaign.recipientCount || 0}</div>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="text-sm text-muted-foreground mb-1">Open Rate</div>
+                    <div className="text-2xl font-bold">{selectedCampaign.openRate || "0"}%</div>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="text-sm text-muted-foreground mb-1">Click Rate</div>
+                    <div className="text-2xl font-bold">{selectedCampaign.clickRate || "0"}%</div>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="text-sm text-muted-foreground mb-1">Status</div>
+                    <div className="text-2xl font-bold">
+                      <Badge className={getStatusColor(selectedCampaign.status)}>
+                        {selectedCampaign.status}
+                      </Badge>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* Campaign Details */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Campaign Details</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <div className="flex justify-between">
+                    <span className="text-sm text-muted-foreground">Campaign Name:</span>
+                    <span className="font-medium">{selectedCampaign.name}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-sm text-muted-foreground">Type:</span>
+                    <Badge variant="outline" className={getTypeColor(selectedCampaign.type)}>
+                      {selectedCampaign.type.replace('_', ' ')}
+                    </Badge>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-sm text-muted-foreground">Created:</span>
+                    <span>{selectedCampaign.createdAt ? format(new Date(selectedCampaign.createdAt), "MMM d, yyyy 'at' h:mm a") : '-'}</span>
+                  </div>
+                  {selectedCampaign.sentAt && (
+                    <div className="flex justify-between">
+                      <span className="text-sm text-muted-foreground">Sent:</span>
+                      <span>{format(new Date(selectedCampaign.sentAt), "MMM d, yyyy 'at' h:mm a")}</span>
+                    </div>
+                  )}
+                  {selectedCampaign.scheduledAt && (
+                    <div className="flex justify-between">
+                      <span className="text-sm text-muted-foreground">Scheduled:</span>
+                      <span>{format(new Date(selectedCampaign.scheduledAt), "MMM d, yyyy 'at' h:mm a")}</span>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Performance Chart Placeholder */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Performance Over Time</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="h-64 flex items-center justify-center text-muted-foreground border-2 border-dashed rounded-lg">
+                    <div className="text-center">
+                      <BarChart3 className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                      <p>Performance chart will be displayed here</p>
+                      <p className="text-sm">(Coming soon)</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </Layout>
   );
 }

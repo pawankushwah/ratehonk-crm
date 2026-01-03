@@ -6,7 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { CheckCircle, AlertCircle } from "lucide-react";
-import Logo from "../../assets/Logo-sidebar.svg";
+// import Logo from "../../assets/Logo-sidebar.svg";
+import Logo from "../../assets/RATEHONKLOGO.png";
 
 export default function ForgotPassword() {
   const [email, setEmail] = useState("");

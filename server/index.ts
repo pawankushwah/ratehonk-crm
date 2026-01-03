@@ -558,5 +558,13 @@ app.use((req, res, next) => {
     throw err;
   });
 
+  // Start campaign scheduler
+  try {
+    const { campaignScheduler } = await import("./campaign-scheduler");
+    campaignScheduler.start();
+  } catch (error) {
+    console.error("Failed to start campaign scheduler:", error);
+  }
+
   // Server already started above before Vite setup
 })();

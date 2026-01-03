@@ -153,8 +153,7 @@ export default function InvoiceCreate() {
   const [notesContent, setNotesContent] = useState("");
   const [additionalNotesContent, setAdditionalNotesContent] = useState("");
   // Notes attachments state
-  const [notesAttachments, setNotesAttachments] = useState<Array<{ id: string; name: string; url: string; type?: string }>>([]);
-  const [additionalNotesAttachments, setAdditionalNotesAttachments] = useState<Array<{ id: string; name: string; url: string; type?: string }>>([]);
+  const [invoiceAttachments, setInvoiceAttachments] = useState<Array<{ id: string; name: string; url: string; type?: string }>>([]);
 
   // Preview state
   const [showPreview, setShowPreview] = useState(false);
@@ -740,7 +739,6 @@ export default function InvoiceCreate() {
         return '';
       }).trim();
       setNotesContent(notesWithoutAttachments);
-      setNotesAttachments(notesAttachmentsFound);
       
       // Parse additional notes and extract attachments
       const additionalNotesHtml = invoice.additionalNotes || "";
@@ -754,7 +752,9 @@ export default function InvoiceCreate() {
         return '';
       }).trim();
       setAdditionalNotesContent(additionalNotesWithoutAttachments);
-      setAdditionalNotesAttachments(additionalNotesAttachmentsFound);
+      
+      // Combine all attachments into one array
+      setInvoiceAttachments([...notesAttachmentsFound, ...additionalNotesAttachmentsFound]);
       
       setEnableReminder(invoice.enableReminder || false);
       setReminderFrequency(invoice.reminderFrequency || "weekly");
@@ -1106,6 +1106,30 @@ export default function InvoiceCreate() {
     }
   };
 
+  // Handler for numeric-only input (no decimals) - for commission field
+  const handleIntegerKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    const allowedKeys = [
+      "0",
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8",
+      "9",
+      "Backspace",
+      "Delete",
+      "ArrowLeft",
+      "ArrowRight",
+      "Tab",
+    ];
+    if (!allowedKeys.includes(e.key) && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+    }
+  };
+
   // Get travel categories from lead types
   const getTravelCategories = (): AutocompleteOption[] => {
     const leadTypeCategories = leadTypes.map((lt: any) => ({
@@ -1210,8 +1234,10 @@ export default function InvoiceCreate() {
   };
 
   // Get payment status options
+  // Hide cancelled, void, and overdue when creating new invoice
+  // Show all options when editing existing invoice
   const getPaymentStatusOptions = (): AutocompleteOption[] => {
-    return [
+    const allOptions = [
       { value: "draft", label: "Draft" },
       { value: "pending", label: "Pending" },
       { value: "paid", label: "Paid" },
@@ -1220,6 +1246,18 @@ export default function InvoiceCreate() {
       { value: "cancelled", label: "Cancelled" },
       { value: "void", label: "Void" },
     ];
+    
+    // When creating new invoice, hide cancelled, void, and overdue
+    if (!isEditMode) {
+      return allOptions.filter(option => 
+        option.value !== "overdue" && 
+        option.value !== "cancelled" && 
+        option.value !== "void"
+      );
+    }
+    
+    // When editing, show all options
+    return allOptions;
   };
 
   // Get currency symbol
@@ -1380,13 +1418,12 @@ export default function InvoiceCreate() {
     );
   };
 
-  // Calculate grand total (subtotal + tax - discount + additional commission)
+  // Calculate grand total (subtotal + tax - discount) - commission is NOT included
   const calculateGrandTotal = () => {
     const subtotal = calculateSubtotal();
     const tax = calculateTotalTax();
     const discount = parseFloat(discountAmount || "0");
-    const additionalCommission = calculateTotalAdditionalCommission();
-    return subtotal + tax - discount + additionalCommission;
+    return subtotal + tax - discount;
   };
 
   // Calculate payment installments
@@ -2016,26 +2053,13 @@ export default function InvoiceCreate() {
       hasCancellationCharge: paymentStatus === "cancelled" ? hasCancellationCharge : false,
       cancellationChargeAmount: paymentStatus === "cancelled" && hasCancellationCharge ? parseFloat(cancellationChargeAmount || "0") : 0,
       cancellationChargeNotes: paymentStatus === "cancelled" && hasCancellationCharge ? cancellationChargeNotes : "",
-      notes: (() => {
-        let notes = notesContent || "";
-        if (notesAttachments.length > 0) {
-          const attachmentLinks = notesAttachments.map(a => 
-            `<p><a href="${a.url}" target="_blank" rel="noopener noreferrer">📎 ${a.name}</a></p>`
-          ).join('');
-          notes = notes + (notes ? '<br/>' : '') + attachmentLinks;
-        }
-        return notes || undefined;
-      })(),
-      additionalNotes: (() => {
-        let additionalNotes = additionalNotesContent || "";
-        if (additionalNotesAttachments.length > 0) {
-          const attachmentLinks = additionalNotesAttachments.map(a => 
-            `<p><a href="${a.url}" target="_blank" rel="noopener noreferrer">📎 ${a.name}</a></p>`
-          ).join('');
-          additionalNotes = additionalNotes + (additionalNotes ? '<br/>' : '') + attachmentLinks;
-        }
-        return additionalNotes || undefined;
-      })(),
+      notes: notesContent || undefined,
+      additionalNotes: additionalNotesContent || undefined,
+      attachments: invoiceAttachments.length > 0 ? invoiceAttachments.map(a => ({
+        name: a.name,
+        url: a.url,
+        type: a.type,
+      })) : undefined,
       paymentTerms: paymentTerms || undefined,
       paymentMethod: paymentMethod.length > 0 ? paymentMethod : ["credit_card"],
       isTaxInclusive: isTaxInclusive,
@@ -2417,13 +2441,11 @@ export default function InvoiceCreate() {
                       <SelectValue placeholder="Select status..." />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="draft">Draft</SelectItem>
-                      <SelectItem value="pending">Pending</SelectItem>
-                      <SelectItem value="paid">Paid</SelectItem>
-                      <SelectItem value="partial">Partially Paid</SelectItem>
-                      <SelectItem value="overdue">Overdue</SelectItem>
-                      <SelectItem value="cancelled">Cancelled</SelectItem>
-                      <SelectItem value="void">Void</SelectItem>
+                      {getPaymentStatusOptions().map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -2627,15 +2649,17 @@ export default function InvoiceCreate() {
                             data-testid={`input-additional-commission-${index}`}
                             type="text"
                             value={item.additionalCommission || ""}
-                            onChange={(e) =>
+                            onChange={(e) => {
+                              // Only allow numeric input (no decimals)
+                              const value = e.target.value.replace(/[^0-9]/g, '');
                               updateLineItem(
                                 index,
                                 "additionalCommission",
-                                e.target.value,
-                              )
-                            }
-                            onKeyPress={handleNumericKeyPress}
-                            placeholder="0.00"
+                                value,
+                              );
+                            }}
+                            onKeyPress={handleIntegerKeyPress}
+                            placeholder="0"
                           />
                         </div>
                       )}
@@ -3053,90 +3077,6 @@ export default function InvoiceCreate() {
                         />
                       </div>
                       <input type="hidden" name="notes" value={notesContent} />
-                      
-                      {/* Notes Attachments */}
-                      <div className="mt-3 space-y-2">
-                        <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                          Attachments
-                        </Label>
-                        {notesAttachments.length > 0 && (
-                          <div className="flex flex-wrap gap-2 mb-2">
-                            {notesAttachments.map((attachment) => (
-                              <div
-                                key={attachment.id}
-                                className="flex items-center gap-2 bg-gray-100 dark:bg-gray-800 px-3 py-2 rounded-md text-sm"
-                              >
-                                {attachment.type?.startsWith('image/') ? (
-                                  <ImageIcon className="h-4 w-4 text-blue-600" />
-                                ) : attachment.name.toLowerCase().endsWith('.pdf') ? (
-                                  <FileText className="h-4 w-4 text-red-600" />
-                                ) : (
-                                  <File className="h-4 w-4 text-gray-600" />
-                                )}
-                                <a
-                                  href={attachment.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-blue-600 hover:underline truncate max-w-[200px]"
-                                  title={attachment.name}
-                                >
-                                  {attachment.name}
-                                </a>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setNotesAttachments(notesAttachments.filter(a => a.id !== attachment.id));
-                                  }}
-                                  className="text-red-600 hover:text-red-800"
-                                >
-                                  <X className="h-4 w-4" />
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        <ObjectUploader
-                          maxNumberOfFiles={10}
-                          maxFileSize={50 * 1024 * 1024} // 50MB
-                          endpoint="/api/objects/store"
-                          customerId={selectedCustomerId}
-                          tenantId={tenant?.id}
-                          onComplete={(result: UploadResult<Record<string, unknown>, Record<string, unknown>>) => {
-                            if (result.successful.length > 0) {
-                              const uploadedFile = result.successful[0];
-                              const file = uploadedFile.data as File;
-                              let responseBody = (uploadedFile as any).response?.body;
-                              const fullResponse = (uploadedFile as any).response;
-                              
-                              if (!responseBody && fullResponse && typeof fullResponse === 'object') {
-                                if (fullResponse.publicUrl || fullResponse.objectPath || fullResponse.success) {
-                                  responseBody = fullResponse;
-                                }
-                              }
-                              
-                              const objectPath = responseBody?.publicUrl || responseBody?.objectPath || responseBody?.location || responseBody?.url;
-                              
-                              if (objectPath) {
-                                const newAttachment = {
-                                  id: `${Date.now()}-${Math.random()}`,
-                                  name: file.name,
-                                  url: objectPath,
-                                  type: file.type,
-                                };
-                                setNotesAttachments([...notesAttachments, newAttachment]);
-                                toast({
-                                  title: "Success",
-                                  description: "File uploaded successfully",
-                                });
-                              }
-                            }
-                          }}
-                          buttonClassName="bg-cyan-600 hover:bg-cyan-700 text-white text-sm"
-                        >
-                          <Paperclip className="h-4 w-4 mr-2" />
-                          Attach Files
-                        </ObjectUploader>
-                      </div>
                     </div>
 
                     <div className="rounded-lg p-2 sm:p-4">
@@ -3169,91 +3109,117 @@ export default function InvoiceCreate() {
                         />
                       </div>
                       <input type="hidden" name="notes" value={additionalNotesContent} />
-                      
-                      {/* Additional Notes Attachments */}
-                      <div className="mt-3 space-y-2">
-                        <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                          Attachments
-                        </Label>
-                        {additionalNotesAttachments.length > 0 && (
-                          <div className="flex flex-wrap gap-2 mb-2">
-                            {additionalNotesAttachments.map((attachment) => (
-                              <div
-                                key={attachment.id}
-                                className="flex items-center gap-2 bg-gray-100 dark:bg-gray-800 px-3 py-2 rounded-md text-sm"
-                              >
-                                {attachment.type?.startsWith('image/') ? (
-                                  <ImageIcon className="h-4 w-4 text-blue-600" />
-                                ) : attachment.name.toLowerCase().endsWith('.pdf') ? (
-                                  <FileText className="h-4 w-4 text-red-600" />
-                                ) : (
-                                  <File className="h-4 w-4 text-gray-600" />
-                                )}
-                                <a
-                                  href={attachment.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-blue-600 hover:underline truncate max-w-[200px]"
-                                  title={attachment.name}
-                                >
-                                  {attachment.name}
-                                </a>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setAdditionalNotesAttachments(additionalNotesAttachments.filter(a => a.id !== attachment.id));
-                                  }}
-                                  className="text-red-600 hover:text-red-800"
-                                >
-                                  <X className="h-4 w-4" />
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        <ObjectUploader
-                          maxNumberOfFiles={10}
-                          maxFileSize={50 * 1024 * 1024} // 50MB
-                          endpoint="/api/objects/store"
-                          customerId={selectedCustomerId}
-                          tenantId={tenant?.id}
-                          onComplete={(result: UploadResult<Record<string, unknown>, Record<string, unknown>>) => {
-                            if (result.successful.length > 0) {
-                              const uploadedFile = result.successful[0];
-                              const file = uploadedFile.data as File;
-                              let responseBody = (uploadedFile as any).response?.body;
-                              const fullResponse = (uploadedFile as any).response;
-                              
-                              if (!responseBody && fullResponse && typeof fullResponse === 'object') {
-                                if (fullResponse.publicUrl || fullResponse.objectPath || fullResponse.success) {
-                                  responseBody = fullResponse;
-                                }
-                              }
-                              
-                              const objectPath = responseBody?.publicUrl || responseBody?.objectPath || responseBody?.location || responseBody?.url;
-                              
-                              if (objectPath) {
-                                const newAttachment = {
-                                  id: `${Date.now()}-${Math.random()}`,
-                                  name: file.name,
-                                  url: objectPath,
-                                  type: file.type,
-                                };
-                                setAdditionalNotesAttachments([...additionalNotesAttachments, newAttachment]);
-                                toast({
-                                  title: "Success",
-                                  description: "File uploaded successfully",
-                                });
-                              }
-                            }
-                          }}
-                          buttonClassName="bg-cyan-600 hover:bg-cyan-700 text-white text-sm"
-                        >
-                          <Paperclip className="h-4 w-4 mr-2" />
-                          Attach Files
-                        </ObjectUploader>
-                      </div>
                     </div>
+                  </div>
+                  
+                  {/* Single Attachments Section - Below Notes */}
+                  <div className="mt-6 pt-6 border-t">
+                    <Label className="text-base sm:text-lg font-semibold mb-3 block">
+                      Attachments
+                    </Label>
+                    <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-4">
+                      Upload files and images to attach to this invoice.
+                    </p>
+                    
+                    {/* Display uploaded attachments */}
+                    {invoiceAttachments.length > 0 && (
+                      <div className="mb-4">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                          {invoiceAttachments.map((attachment) => (
+                            <div
+                              key={attachment.id}
+                              className="relative group border rounded-lg overflow-hidden bg-gray-50 dark:bg-gray-800"
+                            >
+                              {attachment.type?.startsWith('image/') ? (
+                                <div className="aspect-square">
+                                  <img
+                                    src={attachment.url}
+                                    alt={attachment.name}
+                                    className="w-full h-full object-cover"
+                                  />
+                                  <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-50 transition-opacity flex items-center justify-center">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setInvoiceAttachments(invoiceAttachments.filter(a => a.id !== attachment.id));
+                                      }}
+                                      className="opacity-0 group-hover:opacity-100 text-white bg-red-600 hover:bg-red-700 rounded-full p-2 transition-opacity"
+                                      title="Remove"
+                                    >
+                                      <X className="h-4 w-4" />
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="p-4 flex flex-col items-center justify-center min-h-[100px]">
+                                  {attachment.name.toLowerCase().endsWith('.pdf') ? (
+                                    <FileText className="h-8 w-8 text-red-600 mb-2" />
+                                  ) : (
+                                    <File className="h-8 w-8 text-gray-600 mb-2" />
+                                  )}
+                                  <p className="text-xs text-center text-gray-700 dark:text-gray-300 truncate w-full px-2" title={attachment.name}>
+                                    {attachment.name}
+                                  </p>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setInvoiceAttachments(invoiceAttachments.filter(a => a.id !== attachment.id));
+                                    }}
+                                    className="mt-2 text-red-600 hover:text-red-800"
+                                    title="Remove"
+                                  >
+                                    <X className="h-4 w-4" />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Upload Button */}
+                    <ObjectUploader
+                      maxNumberOfFiles={10}
+                      maxFileSize={50 * 1024 * 1024} // 50MB
+                      endpoint="/api/objects/store"
+                      customerId={selectedCustomerId}
+                      tenantId={tenant?.id}
+                      onComplete={(result: UploadResult<Record<string, unknown>, Record<string, unknown>>) => {
+                        if (result.successful.length > 0) {
+                          const uploadedFile = result.successful[0];
+                          const file = uploadedFile.data as File;
+                          let responseBody = (uploadedFile as any).response?.body;
+                          const fullResponse = (uploadedFile as any).response;
+                          
+                          if (!responseBody && fullResponse && typeof fullResponse === 'object') {
+                            if (fullResponse.publicUrl || fullResponse.objectPath || fullResponse.success) {
+                              responseBody = fullResponse;
+                            }
+                          }
+                          
+                          const objectPath = responseBody?.publicUrl || responseBody?.objectPath || responseBody?.location || responseBody?.url;
+                          
+                          if (objectPath) {
+                            const newAttachment = {
+                              id: `${Date.now()}-${Math.random()}`,
+                              name: file.name,
+                              url: objectPath,
+                              type: file.type,
+                            };
+                            setInvoiceAttachments([...invoiceAttachments, newAttachment]);
+                            toast({
+                              title: "Success",
+                              description: "File uploaded successfully",
+                            });
+                          }
+                        }
+                      }}
+                      buttonClassName="bg-cyan-600 hover:bg-cyan-700 text-white text-sm"
+                    >
+                      <Paperclip className="h-4 w-4 mr-2" />
+                      Attach Files
+                    </ObjectUploader>
                   </div>
                 </div>
               )}
@@ -3654,11 +3620,12 @@ export default function InvoiceCreate() {
                         <p className="text-3xl font-bold text-center text-gray-900 dark:text-white">
                           {currencySymbol}{(
                             calculateGrandTotal() -
-                            getTotalExpensesForProfit()
+                            getTotalExpensesForProfit() +
+                            calculateTotalAdditionalCommission()
                           ).toFixed(2)}
                         </p>
                         <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 text-center">
-                          (Invoice Amount - Expenses)
+                          (Invoice Amount - Expenses) + Commission
                         </p>
                       </div>
                     </div>

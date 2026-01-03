@@ -18,6 +18,7 @@ import {
   HelpCircle,
   Building2,
 } from "lucide-react";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
 
 export function Header() {
   const { user, tenant, logout } = useAuth();
@@ -47,15 +48,8 @@ export function Header() {
 
         {/* Right side - User menu */}
         <div className="flex items-center gap-4">
-          {/* Notifications button */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="relative h-9 w-9 rounded-full"
-          >
-            <Bell className="h-5 w-5 text-gray-600" />
-            <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-red-500"></span>
-          </Button>
+          {/* Notifications bell */}
+          <NotificationBell />
 
           {/* User dropdown */}
           <DropdownMenu>

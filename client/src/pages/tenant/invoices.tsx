@@ -1778,8 +1778,8 @@ export default function Invoices() {
             size="sm"
             variant="outline"
             onClick={() => {
-              // Navigate to invoice create page with invoice ID for editing
-              navigate(`/invoice-create/${invoice.id}`);
+              // Navigate to invoice edit page
+              navigate(`/invoice-edit/${invoice.id}`);
             }}
             title="Edit Invoice"
           >

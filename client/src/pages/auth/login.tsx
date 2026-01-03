@@ -22,6 +22,12 @@ export default function Login() {
   const [blockTimer, setBlockTimer] = useState(0);
   const [successMessage, setSuccessMessage] = useState("");
   const [showWelcomeScreen, setShowWelcomeScreen] = useState(false);
+  const [showOtpInput, setShowOtpInput] = useState(false);
+  const [otp, setOtp] = useState(["", "", "", "", "", ""]);
+  const [otpUserId, setOtpUserId] = useState<number | null>(null);
+  const [otpEmail, setOtpEmail] = useState("");
+  const [verifyingOtp, setVerifyingOtp] = useState(false);
+  const [resendingOtp, setResendingOtp] = useState(false);
   const [, setLocation] = useLocation();
   const { login } = useAuth();
   const { toast } = useToast();
@@ -145,9 +151,12 @@ export default function Login() {
         description: "Successfully logged in to your TravelCRM Pro account.",
       });
 
-      // Navigate directly to dashboard (skip welcome screen)
+      // Use window.location.href to force a full page reload and ensure auth state is updated
+      // This prevents routing issues where the auth state hasn't updated yet
       console.log("🎉 Login successful, navigating to dashboard");
-      setLocation("/dashboard");
+      setTimeout(() => {
+        window.location.href = "/dashboard";
+      }, 100);
     } catch (error: any) {
       console.error("Login error:", error);
 
@@ -169,13 +178,52 @@ export default function Login() {
       }
 
       // Handle specific error cases
-      if (
+      if (error.accountInactive) {
+        // Account is inactive or suspended
+        toast({
+          title: "Account Inactive",
+          description: error.message || "Your account is inactive or suspended. Please contact support for assistance.",
+          variant: "destructive",
+        });
+        setLoading(false);
+        return;
+      } else if (error.requiresEmailVerification && error.userId) {
+        // Email not verified - show OTP input field
+        setOtpUserId(error.userId);
+        setOtpEmail(error.email || email);
+        setShowOtpInput(true);
+        toast({
+          title: "Email Verification Required",
+          description: "OTP has been sent to your email. Please enter it below to verify and login.",
+        });
+        setLoading(false);
+        return;
+      } else if (
         error.message?.includes("Invalid credentials") ||
         error.message?.includes("Invalid email or password")
       ) {
         toast({
           title: "Invalid Login Credentials",
           description: `Email or password is incorrect. ${5 - newAttempts} attempts remaining before temporary lockout.`,
+          variant: "destructive",
+        });
+      } else if (
+        error.message?.includes("Email not verified") ||
+        error.message?.includes("email verification")
+      ) {
+        // Handle email verification error from API
+        if (error.userId) {
+          toast({
+            title: "Email Verification Required",
+            description: "Please verify your email address before logging in.",
+            variant: "destructive",
+          });
+          setLocation(`/verify-otp?userId=${error.userId}&email=${encodeURIComponent(email)}`);
+          return;
+        }
+        toast({
+          title: "Email Not Verified",
+          description: "Please check your email for the verification OTP.",
           variant: "destructive",
         });
       } else if (
@@ -219,6 +267,175 @@ export default function Login() {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  // OTP handling functions
+  const handleOtpChange = (index: number, value: string) => {
+    if (value.length > 1) {
+      // Handle paste
+      const pastedOtp = value.replace(/\D/g, "").slice(0, 6);
+      const newOtp = [...otp];
+      for (let i = 0; i < pastedOtp.length && i < 6; i++) {
+        newOtp[i] = pastedOtp[i];
+      }
+      setOtp(newOtp);
+      const nextIndex = Math.min(pastedOtp.length, 5);
+      const nextInput = document.getElementById(`login-otp-${nextIndex}`);
+      if (nextInput) {
+        (nextInput as HTMLInputElement).focus();
+      }
+      return;
+    }
+
+    // Only allow digits
+    if (value && !/^\d$/.test(value)) {
+      return;
+    }
+
+    const newOtp = [...otp];
+    newOtp[index] = value;
+    setOtp(newOtp);
+
+    // Auto-focus next input
+    if (value && index < 5) {
+      const nextInput = document.getElementById(`login-otp-${index + 1}`);
+      if (nextInput) {
+        (nextInput as HTMLInputElement).focus();
+      }
+    }
+  };
+
+  const handleOtpKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Backspace" && !otp[index] && index > 0) {
+      const prevInput = document.getElementById(`login-otp-${index - 1}`);
+      if (prevInput) {
+        (prevInput as HTMLInputElement).focus();
+      }
+    }
+  };
+
+  const handleVerifyOtpAndLogin = async () => {
+    if (!otpUserId) {
+      toast({
+        title: "Error",
+        description: "User ID is missing. Please try logging in again.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const otpString = otp.join("");
+    if (otpString.length !== 6) {
+      toast({
+        title: "Invalid OTP",
+        description: "Please enter the complete 6-digit OTP",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setVerifyingOtp(true);
+
+    try {
+      // Verify OTP
+      const verifyResponse = await fetch("/api/auth/verify-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          userId: otpUserId,
+          otp: otpString,
+        }),
+      });
+
+      const verifyData = await verifyResponse.json();
+
+      if (!verifyResponse.ok) {
+        throw new Error(verifyData.message || "Invalid OTP");
+      }
+
+      // OTP verified - token is already in the response
+      // Store token and user data
+      if (verifyData.token) {
+        localStorage.setItem("auth_token", verifyData.token);
+        localStorage.setItem("token", verifyData.token);
+        localStorage.setItem("cached_auth_data", JSON.stringify(verifyData));
+      }
+
+      // Reset OTP state
+      setShowOtpInput(false);
+      setOtp(["", "", "", "", "", ""]);
+      setOtpUserId(null);
+      setOtpEmail("");
+
+      toast({
+        title: "Welcome Back!",
+        description: "Email verified and successfully logged in.",
+      });
+
+      // Refresh the page to update auth state, or navigate directly
+      setTimeout(() => {
+        window.location.href = "/dashboard";
+      }, 500);
+    } catch (error: any) {
+      console.error("OTP verification error:", error);
+      toast({
+        title: "Verification Failed",
+        description: error.message || "Invalid OTP. Please check and try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setVerifyingOtp(false);
+    }
+  };
+
+  const handleResendOtp = async () => {
+    if (!otpUserId) {
+      toast({
+        title: "Error",
+        description: "User ID is missing. Please try logging in again.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setResendingOtp(true);
+
+    try {
+      const response = await fetch("/api/auth/resend-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ userId: otpUserId }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || "Failed to resend OTP");
+      }
+
+      toast({
+        title: "OTP Resent",
+        description: "A new OTP has been sent to your email address.",
+      });
+
+      // Clear OTP inputs
+      setOtp(["", "", "", "", "", ""]);
+      const firstInput = document.getElementById("login-otp-0");
+      if (firstInput) {
+        (firstInput as HTMLInputElement).focus();
+      }
+    } catch (error: any) {
+      console.error("Resend OTP error:", error);
+      toast({
+        title: "Resend Failed",
+        description: error.message || "Failed to resend OTP. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setResendingOtp(false);
     }
   };
 
@@ -345,10 +562,81 @@ export default function Login() {
                     </div>
                   </div>
 
+                  {/* OTP Input Section - Show when email verification is required */}
+                  {showOtpInput && (
+                    <div className="space-y-4 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                      <div className="text-center space-y-2">
+                        <p className="text-sm font-semibold text-gray-900 dark:text-white">
+                          Email Verification Required
+                        </p>
+                        <p className="text-xs text-gray-600 dark:text-gray-400">
+                          We've sent a 6-digit verification code to {otpEmail || email}
+                        </p>
+                      </div>
+                      
+                      <div className="space-y-3">
+                        <Label className="text-sm font-semibold text-gray-700 text-center block">
+                          Enter Verification Code
+                        </Label>
+                        <div className="flex justify-center gap-2">
+                          {otp.map((digit, index) => (
+                            <Input
+                              key={index}
+                              id={`login-otp-${index}`}
+                              type="text"
+                              inputMode="numeric"
+                              maxLength={1}
+                              value={digit}
+                              onChange={(e) => handleOtpChange(index, e.target.value)}
+                              onKeyDown={(e) => handleOtpKeyDown(index, e)}
+                              className="w-12 h-14 text-center text-2xl font-bold border-2 focus:border-blue-500 focus:ring-blue-500"
+                              autoFocus={index === 0}
+                            />
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-2">
+                        <Button
+                          type="button"
+                          onClick={handleVerifyOtpAndLogin}
+                          disabled={verifyingOtp || otp.join("").length !== 6}
+                          className="w-full h-12 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white font-semibold"
+                        >
+                          {verifyingOtp ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              Verifying...
+                            </>
+                          ) : (
+                            "Verify & Login"
+                          )}
+                        </Button>
+                        
+                        <Button
+                          type="button"
+                          variant="link"
+                          onClick={handleResendOtp}
+                          disabled={resendingOtp}
+                          className="text-blue-600 hover:text-blue-700 font-semibold text-sm"
+                        >
+                          {resendingOtp ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              Sending...
+                            </>
+                          ) : (
+                            "Resend OTP"
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
                   <Button
                     type="submit"
                     className="w-full h-12 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white font-semibold shadow-lg hover:shadow-xl transition-all duration-200"
-                    disabled={loading || isBlocked}
+                    disabled={loading || isBlocked || showOtpInput}
                   >
                     {loading ? (
                       <>

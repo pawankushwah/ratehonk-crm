@@ -36,7 +36,8 @@ import {
   Activity,
   PieChart,
 } from "lucide-react";
-import Logo from "../../assets/Logo-sidebar.svg";
+// import Logo from "../../assets/Logo-sidebar.svg";
+import Logo from "../../assets/RATEHONKLOGO.png";
 
 const saasMenuItems = [
   {
@@ -113,7 +114,7 @@ export function SaasSidebar() {
         {!isCollapsed && (
           <Link href="/saas/dashboard" className="flex items-center gap-2">
             <img src={Logo} alt="Logo" className="h-8 w-auto" />
-            <span className="font-bold text-lg">SaaS Admin</span>
+            {/* <span className="font-bold text-lg">SaaS Admin</span> */}
           </Link>
         )}
         <Button

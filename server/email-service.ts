@@ -161,6 +161,56 @@ class EmailService {
     }
   }
 
+  async sendOtpEmail(data: {
+    to: string;
+    firstName: string;
+    lastName: string;
+    otp: string;
+    companyName: string;
+  }) {
+    const mailOptions = {
+      from: process.env.EMAIL_FROM || "noreply@ratehonk.com",
+      to: data.to,
+      subject: "Email Verification - RateHonk CRM",
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+            <h1 style="color: white; margin: 0; font-size: 28px;">Email Verification</h1>
+          </div>
+          <div style="background-color: #ffffff; padding: 40px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
+            <p style="color: #333; font-size: 16px; margin-bottom: 20px;">Hello ${data.firstName} ${data.lastName},</p>
+            <p style="color: #666; font-size: 14px; line-height: 1.6; margin-bottom: 30px;">
+              Thank you for registering with ${data.companyName}! To complete your registration and verify your email address, please use the OTP (One-Time Password) below:
+            </p>
+            <div style="background-color: #f5f5f5; border: 2px dashed #667eea; border-radius: 8px; padding: 30px; text-align: center; margin: 30px 0;">
+              <p style="color: #333; font-size: 14px; margin: 0 0 10px 0; font-weight: 600;">Your Verification Code:</p>
+              <p style="color: #667eea; font-size: 36px; font-weight: bold; letter-spacing: 8px; margin: 0; font-family: 'Courier New', monospace;">${data.otp}</p>
+            </div>
+            <p style="color: #666; font-size: 14px; line-height: 1.6; margin-bottom: 20px;">
+              This OTP will expire in 10 minutes for security purposes. Please enter this code on the verification page to activate your account.
+            </p>
+            <p style="color: #999; font-size: 12px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
+              If you didn't create an account with ${data.companyName}, please ignore this email.
+            </p>
+            <p style="color: #333; font-size: 14px; margin-top: 30px;">
+              Best regards,<br>
+              <strong>The RateHonk CRM Team</strong>
+            </p>
+          </div>
+        </div>
+      `,
+    };
+
+    try {
+      await this.transporter.sendMail(mailOptions);
+      console.log(`OTP email sent successfully to ${data.to}`);
+      return true;
+    } catch (error) {
+      console.error("Error sending OTP email:", error);
+      return false;
+    }
+  }
+
   async sendActivationEmail(data: {
     to: string;
     firstName: string;

@@ -22,19 +22,20 @@ export function useSubscriptionFeatures(): {
   isLoading: boolean;
   hasAccess: (menuItem: string) => boolean;
   hasPageAccess: (pageRoute: string) => boolean;
+  subscriptionQueryCompleted: boolean;
 } {
   // Check if user is SaaS owner - if so, skip subscription checks
   // Check localStorage for SaaS auth token or if we're in SaaS admin area
   const isSaasOwner = typeof window !== 'undefined' && 
     (localStorage.getItem('saas_auth_token') || window.location.pathname.startsWith('/saas/'));
   
-  const { data: currentSubscription, isLoading } = useQuery({
+  const { data: currentSubscription, isLoading: isLoadingSubscription, isFetching: isFetchingSubscription, isFetched: isFetchedSubscription } = useQuery({
     queryKey: ['/api/subscription/current'],
     queryFn: () => SubscriptionAPIClient.getCurrentSubscription(),
     enabled: !isSaasOwner, // Don't fetch if SaaS owner
   });
 
-  const { data: planDetails } = useQuery({
+  const { data: planDetails, isLoading: isLoadingPlan, isFetching: isFetchingPlan, isFetched: isFetchedPlan } = useQuery({
     queryKey: ['/api/subscription/plan', currentSubscription?.subscription?.planId],
     queryFn: async () => {
       if (!currentSubscription?.subscription?.planId) return null;
@@ -45,17 +46,46 @@ export function useSubscriptionFeatures(): {
           }
         });
         if (!response.ok) return null;
-        const plans = await response.json();
-        return Array.isArray(plans) 
-          ? plans.find((p: any) => p.id === currentSubscription.subscription.planId)
-          : null;
+        const plansData = await response.json();
+        
+        // Handle grouped structure (by country)
+        if (Array.isArray(plansData) && plansData.length > 0) {
+          // Check if it's the new grouped structure
+          if (plansData[0]?.country && plansData[0]?.plans) {
+            // Flatten and find the plan
+            for (const countryGroup of plansData) {
+              if (countryGroup.plans && Array.isArray(countryGroup.plans)) {
+                const plan = countryGroup.plans.find((p: any) => p.id === currentSubscription.subscription.planId);
+                if (plan) return plan;
+              }
+            }
+            return null;
+          } else {
+            // Old flat structure
+            return plansData.find((p: any) => p.id === currentSubscription.subscription.planId) || null;
+          }
+        }
+        return null;
       } catch (error) {
         console.error('Error fetching plan details:', error);
         return null;
       }
     },
-    enabled: !!currentSubscription?.subscription?.planId,
+    enabled: !!currentSubscription?.subscription?.planId && !isSaasOwner,
   });
+
+  // Combine loading states - we're loading if either query is loading or fetching
+  // For SaaS owners, queries are disabled so we're never loading
+  // We need to check if we need to wait for plan details (if subscription exists but plan details haven't loaded)
+  const needsPlanDetails = currentSubscription?.subscription?.planId && !isSaasOwner;
+  const isLoading = isSaasOwner ? false : (
+    isLoadingSubscription || 
+    isFetchingSubscription || 
+    (needsPlanDetails && (isLoadingPlan || isFetchingPlan))
+  );
+  
+  // Track if subscription query has completed (for determining if we should show access restricted)
+  const subscriptionQueryCompleted = isSaasOwner || isFetchedSubscription;
 
   const features: SubscriptionFeatures | null = currentSubscription?.subscription ? {
     allowedMenuItems: planDetails?.allowedMenuItems || planDetails?.allowed_menu_items || planDetails?.features || [],
@@ -92,6 +122,7 @@ export function useSubscriptionFeatures(): {
     isLoading,
     hasAccess,
     hasPageAccess,
+    subscriptionQueryCompleted, // Export this to help SubscriptionGuard know when to check access
   };
 }
 

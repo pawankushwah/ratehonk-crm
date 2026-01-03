@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -33,6 +33,10 @@ interface SubscriptionPlan {
   maxCustomers: number;
   features: string[];
   isActive: boolean;
+  country?: string;
+  currency?: string;
+  freeTrialDays?: number;
+  isFreePlan?: boolean;
 }
 
 interface PaymentMethod {
@@ -54,6 +58,56 @@ interface PaymentHistory {
   receiptUrl?: string;
   createdAt: string;
 }
+
+// Helper function to get country name from country code
+const getCountryName = (countryCode: string): string => {
+  const countryNames: Record<string, string> = {
+    'US': 'United States',
+    'IN': 'India',
+    'GB': 'United Kingdom',
+    'CA': 'Canada',
+    'AU': 'Australia',
+    'DE': 'Germany',
+    'FR': 'France',
+    'IT': 'Italy',
+    'ES': 'Spain',
+    'NL': 'Netherlands',
+    'BR': 'Brazil',
+    'MX': 'Mexico',
+    'JP': 'Japan',
+    'CN': 'China',
+    'KR': 'South Korea',
+    'SG': 'Singapore',
+    'AE': 'UAE',
+    'SA': 'Saudi Arabia',
+  };
+  return countryNames[countryCode] || countryCode;
+};
+
+// Helper function to get country flag emoji
+const getCountryFlag = (countryCode: string): string => {
+  const flags: Record<string, string> = {
+    'US': '🇺🇸',
+    'IN': '🇮🇳',
+    'GB': '🇬🇧',
+    'CA': '🇨🇦',
+    'AU': '🇦🇺',
+    'DE': '🇩🇪',
+    'FR': '🇫🇷',
+    'IT': '🇮🇹',
+    'ES': '🇪🇸',
+    'NL': '🇳🇱',
+    'BR': '🇧🇷',
+    'MX': '🇲🇽',
+    'JP': '🇯🇵',
+    'CN': '🇨🇳',
+    'KR': '🇰🇷',
+    'SG': '🇸🇬',
+    'AE': '🇦🇪',
+    'SA': '🇸🇦',
+  };
+  return flags[countryCode] || '';
+};
 
 const StripePaymentForm = ({ planId, billingCycle, onSuccess }: { 
   planId: number; 
@@ -178,7 +232,7 @@ const RazorpayPaymentForm = ({ planId, billingCycle, amount, onSuccess }: {
     setIsProcessing(true);
 
     try {
-      // Create subscription
+      // Create subscription first - MUST succeed before opening Razorpay
       const response = await fetch('/api/subscription/create', {
         method: 'POST',
         headers: {
@@ -194,6 +248,17 @@ const RazorpayPaymentForm = ({ planId, billingCycle, amount, onSuccess }: {
 
       const result = await response.json();
 
+      // Check if API call was successful
+      if (!response.ok) {
+        throw new Error(result.error || result.details || 'Failed to create subscription');
+      }
+
+      // Verify subscription was created successfully
+      if (!result.subscriptionId) {
+        throw new Error('Subscription ID not received from server');
+      }
+
+      // Only open Razorpay if subscription was created successfully
       if (window.Razorpay) {
         const options = {
           key: import.meta.env.VITE_RAZORPAY_KEY_ID,
@@ -226,14 +291,15 @@ const RazorpayPaymentForm = ({ planId, billingCycle, amount, onSuccess }: {
           description: "Razorpay not loaded. Please refresh and try again.",
           variant: "destructive",
         });
+        setIsProcessing(false);
       }
-    } catch (error) {
+    } catch (error: any) {
+      console.error('Razorpay payment error:', error);
       toast({
         title: "Error",
-        description: "Failed to initiate payment. Please try again.",
+        description: error.message || "Failed to create subscription. Please check your Razorpay credentials and try again.",
         variant: "destructive",
       });
-    } finally {
       setIsProcessing(false);
     }
   };
@@ -261,6 +327,8 @@ export default function SubscriptionPage() {
   const [selectedPlan, setSelectedPlan] = useState<number | null>(null);
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly');
   const [paymentGateway, setPaymentGateway] = useState<'stripe' | 'razorpay'>('stripe');
+  const [selectedCountry, setSelectedCountry] = useState<string>('IN'); // Default to India
+  const [expandedFeatures, setExpandedFeatures] = useState<Record<number, boolean>>({}); // Track which plan's features are expanded
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -331,14 +399,64 @@ export default function SubscriptionPage() {
     }
   ];
 
-  // Fetch subscription plans with fallback to mock data
-  const { data: apiPlans = [], isLoading: plansLoading } = useQuery({
+  // Fetch subscription plans grouped by country
+  const { data: plansByCountry = [], isLoading: plansLoading } = useQuery({
     queryKey: ['/api/subscription/plans'],
-    queryFn: () => SubscriptionAPIClient.getPlans(),
+    queryFn: () => SubscriptionAPIClient.getPlansGroupedByCountry(),
   });
 
-  // Use API data if available, otherwise use mock plans
-  const plans = apiPlans.length > 0 ? apiPlans : mockPlans;
+  // Extract countries from grouped response
+  const countries = useMemo(() => {
+    if (plansByCountry.length > 0) {
+      return plansByCountry.map((group: any) => group.country).filter(Boolean).sort();
+    }
+    // Fallback: if response is flat array (old format)
+    return ['US'];
+  }, [plansByCountry]);
+
+  // Set default country to first available if current selection is not available
+  useEffect(() => {
+    if (countries.length > 0 && !countries.includes(selectedCountry)) {
+      setSelectedCountry(countries[0]);
+    }
+  }, [countries, selectedCountry]);
+
+  // Get plans for selected country
+  const plans = useMemo(() => {
+    if (plansByCountry.length === 0) {
+      return mockPlans.filter((plan: SubscriptionPlan) => 
+        (plan.country || 'US') === selectedCountry
+      );
+    }
+
+    // Find the country group for selected country
+    const countryGroup = plansByCountry.find((group: any) => group.country === selectedCountry);
+    
+    if (!countryGroup || !countryGroup.plans) {
+      return [];
+    }
+
+    // Transform plans to match frontend interface
+    return countryGroup.plans.map((plan: any) => ({
+      id: plan.id,
+      name: plan.name,
+      description: plan.description,
+      monthlyPrice: plan.monthly_price?.replace('.00', '') || plan.monthlyPrice || '0',
+      yearlyPrice: plan.yearly_price?.replace('.00', '') || plan.yearlyPrice || '0',
+      maxUsers: plan.max_users !== undefined ? plan.max_users : (plan.maxUsers !== undefined ? plan.maxUsers : 0),
+      maxCustomers: plan.max_customers !== undefined ? plan.max_customers : (plan.maxCustomers !== undefined ? plan.maxCustomers : 0),
+      features: plan.features || [],
+      isActive: plan.is_active !== undefined ? plan.is_active : plan.isActive,
+      country: plan.country || countryGroup.country || 'US',
+      currency: plan.currency || countryGroup.currency || 'USD',
+      freeTrialDays: plan.free_trial_days !== undefined ? plan.free_trial_days : (plan.freeTrialDays !== undefined ? plan.freeTrialDays : 0),
+      isFreePlan: plan.is_free_plan !== undefined ? plan.is_free_plan : (plan.isFreePlan !== undefined ? plan.isFreePlan : false),
+      allowed_menu_items: plan.allowed_menu_items || [],
+      allowed_pages: plan.allowed_pages || [],
+      allowed_dashboard_widgets: plan.allowed_dashboard_widgets || [],
+      allowed_page_permissions: plan.allowed_page_permissions || {}
+    }));
+  }, [plansByCountry, selectedCountry]);
 
   // Fetch current subscription from API
   const { data: currentSubscription, isLoading: subscriptionLoading } = useQuery({
@@ -550,6 +668,30 @@ export default function SubscriptionPage() {
           </TabsContent>
 
           <TabsContent value="plans" className="space-y-6">
+            {/* Country Tabs */}
+            {countries.length > 1 && (
+              <div className="mb-6">
+                <div className="flex flex-wrap gap-2 justify-center">
+                  {countries.map((country) => {
+                    const countryName = getCountryName(country);
+                    const countryFlag = getCountryFlag(country);
+                    return (
+                      <Button
+                        key={country}
+                        variant={selectedCountry === country ? 'default' : 'outline'}
+                        onClick={() => setSelectedCountry(country)}
+                        className="flex items-center gap-2"
+                      >
+                        {countryFlag && <span className="text-lg">{countryFlag}</span>}
+                        <span>{countryName}</span>
+                      </Button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Billing Cycle Toggle */}
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4 mb-6">
               <Button
                 variant={billingCycle === 'monthly' ? 'default' : 'outline'}
@@ -585,29 +727,71 @@ export default function SubscriptionPage() {
                       </div>
                     )}
                     <CardHeader>
-                      <CardTitle>{plan.name}</CardTitle>
+                      <CardTitle>{plan.name} {plan.country && `- ${getCountryName(plan.country)}`}</CardTitle>
                       <CardDescription>{plan.description}</CardDescription>
                       <div className="text-3xl font-bold">
-                        ${billingCycle === 'monthly' ? plan.monthlyPrice : Math.floor(parseFloat(plan.yearlyPrice) / 12).toString()}
+                        {plan.currency || 'USD'} {billingCycle === 'monthly' ? plan.monthlyPrice : Math.floor(parseFloat(plan.yearlyPrice) / 12).toString()}
                         <span className="text-sm font-normal text-gray-600 dark:text-gray-400">
                           /month{billingCycle === 'yearly' ? ' (billed yearly)' : ''}
                         </span>
                         {billingCycle === 'yearly' && (
                           <div className="text-sm text-green-600 font-medium">
-                            Save ${(parseFloat(plan.monthlyPrice) * 12 - parseFloat(plan.yearlyPrice)).toFixed(0)} per year
+                            Save {plan.currency || 'USD'} {(parseFloat(plan.monthlyPrice) * 12 - parseFloat(plan.yearlyPrice)).toFixed(0)} per year
                           </div>
                         )}
                       </div>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                      <ul className="space-y-2">
-                        {plan.features.map((feature: string, index: number) => (
-                          <li key={index} className="flex items-center gap-2">
-                            <Check className="w-4 h-4 text-green-600" />
-                            <span className="text-sm">{feature}</span>
-                          </li>
-                        ))}
-                      </ul>
+                      {/* Plan Details */}
+                      <div className="space-y-3 pb-4 border-b border-gray-200 dark:border-gray-700">
+                        {plan.freeTrialDays && plan.freeTrialDays > 0 && (
+                          <div className="flex justify-between items-center">
+                            <span className="text-sm text-gray-600 dark:text-gray-400">Free Trial:</span>
+                            <span className="font-medium text-sm">{plan.freeTrialDays} days</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm text-gray-600 dark:text-gray-400">Max Users:</span>
+                          <span className="font-medium text-sm">
+                            {plan.maxUsers === -1 ? 'Unlimited' : plan.maxUsers}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm text-gray-600 dark:text-gray-400">Max Customers:</span>
+                          <span className="font-medium text-sm">
+                            {plan.maxCustomers === -1 ? 'Unlimited' : plan.maxCustomers}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Features List with View More */}
+                      <div>
+                        <h4 className="text-sm font-semibold mb-3">Features:</h4>
+                        <ul className="space-y-2">
+                          {(expandedFeatures[plan.id] 
+                            ? plan.features 
+                            : plan.features.slice(0, 5)
+                          ).map((feature: string, index: number) => (
+                            <li key={index} className="flex items-center gap-2">
+                              <Check className="w-4 h-4 text-green-600 flex-shrink-0" />
+                              <span className="text-sm">{feature}</span>
+                            </li>
+                          ))}
+                        </ul>
+                        {plan.features.length > 5 && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setExpandedFeatures(prev => ({
+                              ...prev,
+                              [plan.id]: !prev[plan.id]
+                            }))}
+                            className="mt-2 w-full text-blue-600 hover:text-blue-700"
+                          >
+                            {expandedFeatures[plan.id] ? 'View Less' : `View More (${plan.features.length - 5} more)`}
+                          </Button>
+                        )}
+                      </div>
                       
                       <Button 
                         className="w-full" 
@@ -662,31 +846,47 @@ export default function SubscriptionPage() {
                   </div>
 
                   <div className="p-4 sm:p-6 border border-gray-200 dark:border-gray-700 rounded-lg">
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
-                      <span className="text-lg font-medium">Start 14-Day Free Trial</span>
-                      <Button 
-                        onClick={() => {
-                          if (selectedPlan) {
-                            createSubscriptionMutation.mutate({
-                              planId: selectedPlan,
-                              billingCycle,
-                              paymentGateway,
-                            });
-                          }
-                        }}
-                        disabled={createSubscriptionMutation.isPending}
-                        className="w-full sm:w-32"
-                      >
-                        {createSubscriptionMutation.isPending ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          'Subscribe'
-                        )}
-                      </Button>
+                    <div className="mb-4">
+                      <h3 className="text-lg font-medium mb-2">Start 14-Day Free Trial</h3>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                        Add your payment method to start your free trial. You won't be charged until after the trial period ends.
+                      </p>
                     </div>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">
-                      No payment required. Your trial will automatically convert to a paid subscription after 14 days.
-                    </p>
+
+                    {/* Payment Forms */}
+                    {paymentGateway === 'stripe' ? (
+                      <Elements stripe={stripePromise}>
+                        <StripePaymentForm
+                          planId={selectedPlan!}
+                          billingCycle={billingCycle}
+                          onSuccess={() => {
+                            queryClient.invalidateQueries({ queryKey: ['/api/subscription/current'] });
+                            setSelectedPlan(null);
+                            toast({
+                              title: "Trial Started",
+                              description: "Your 14-day free trial has begun! Payment will be processed automatically after the trial ends.",
+                            });
+                          }}
+                        />
+                      </Elements>
+                    ) : (
+                      <RazorpayPaymentForm
+                        planId={selectedPlan!}
+                        billingCycle={billingCycle}
+                        amount={(() => {
+                          const plan = plans.find(p => p.id === selectedPlan);
+                          return parseFloat(billingCycle === 'monthly' ? plan?.monthlyPrice || '0' : plan?.yearlyPrice || '0');
+                        })()}
+                        onSuccess={() => {
+                          queryClient.invalidateQueries({ queryKey: ['/api/subscription/current'] });
+                          setSelectedPlan(null);
+                          toast({
+                            title: "Trial Started",
+                            description: "Your 14-day free trial has begun! Payment will be processed automatically after the trial ends.",
+                          });
+                        }}
+                      />
+                    )}
                   </div>
                 </CardContent>
               </Card>
