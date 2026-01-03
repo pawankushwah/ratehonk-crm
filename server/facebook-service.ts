@@ -73,16 +73,20 @@ export class FacebookService {
    * Get OAuth2 authorization URL for Facebook Login
    */
   getAuthUrl(tenantId: number, redirectUri: string): string {
+    // Start with basic permissions that don't require app review
+    // Advanced permissions can be added after app review is complete
     const scopes = [
-      'email',
-      'pages_read_engagement',
-      'pages_manage_posts',
-      'pages_show_list',
-      'business_management',
-      'instagram_basic',
-      'instagram_content_publish',
-      'leads_retrieval'
-    ].join(',');
+      'email',                    // Basic - no review needed
+      'pages_show_list',          // Basic - no review needed
+      'pages_read_engagement',   // Basic - no review needed
+      // Advanced permissions (require app review):
+      'pages_manage_posts',      // Requires app review
+      'business_management',     // Requires app review
+      'leads_retrieval',         // Requires app review + business verification
+      // Instagram permissions (optional):
+      // 'instagram_basic',       // Requires app review
+      // 'instagram_content_publish', // Requires app review
+    ].filter(Boolean).join(',');
 
     const params = new URLSearchParams({
       client_id: this.appId,
