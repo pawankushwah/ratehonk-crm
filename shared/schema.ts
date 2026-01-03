@@ -32,6 +32,16 @@ export const passwordResetTokens = pgTable("password_reset_tokens", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// Email verification OTP table
+export const emailVerificationOtps = pgTable("email_verification_otps", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  otp: text("otp").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  usedAt: timestamp("used_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 // Roles table for tenant-specific roles
 export const roles = pgTable("roles", {
   id: serial("id").primaryKey(),
@@ -388,7 +398,7 @@ export const invoices = pgTable("invoices", {
   customerId: integer("customer_id").notNull(),
   bookingId: integer("booking_id"),
   invoicePrefix: text("invoice_prefix").default("INV"),
-  invoiceNumber: text("invoice_number").notNull().unique(),
+  invoiceNumber: text("invoice_number").notNull(),
   status: text("status").notNull().default("draft"), // draft, pending, paid, overdue, cancelled
   invoiceDate: timestamp("invoice_date").notNull(),
   issueDate: timestamp("issue_date"), // Keep both for compatibility

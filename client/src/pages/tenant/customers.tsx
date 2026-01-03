@@ -46,9 +46,6 @@ import {
   Eye,
   MoreHorizontal,
   BarChart3,
-  Settings,
-  HelpCircle,
-  Bell,
   X,
   Users,
   Globe,
@@ -717,22 +714,6 @@ export default function Customers() {
                   Customer Management
                 </h1>
 
-                {/* Right Icons */}
-                <div className="flex gap-3 ml-auto">
-                  <div className="w-10 h-10 flex items-center justify-center rounded-lg border border-gray-200 bg-white shadow-sm">
-                    <Link href="/dynamic-fields">
-                      <Settings className="h-5 w-5 text-gray-600" />
-                    </Link>
-                  </div>
-                  <div className="w-10 h-10 flex items-center justify-center rounded-lg border border-gray-200 bg-white shadow-sm">
-                    <Link href="/support">
-                      <HelpCircle className="h-5 w-5 text-gray-600" />
-                    </Link>
-                  </div>
-                  <div className="w-10 h-10 flex items-center justify-center rounded-lg border border-gray-200 bg-white shadow-sm">
-                    <Bell className="h-5 w-5 text-gray-600" />
-                  </div>
-                </div>
               </div>
             </div>
           </div>

@@ -572,7 +572,7 @@ export default function TenantDashboard() {
                   <div data-testid="metric-card-revenue">
                     <MetricCard
                       
-                      title="Total Revenue"
+                      title="Total Invoice"
                       value={`C$ ${formatNumberShort(metrics.revenue)}`}
                       icon={DollarSign}
                       trend={`${(

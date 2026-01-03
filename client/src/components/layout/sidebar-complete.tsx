@@ -57,8 +57,10 @@ import {
   MessageSquare,
   Users as UsersIcon,
   Bell,
+  Receipt,
 } from "lucide-react";
-import Logo from "../../assets/Logo-sidebar.svg";
+// import Logo from "../../assets/Logo-sidebar.svg";
+import Logo from "../../assets/RATEHONKLOGO.png";
 
 // Complete menu items from original sidebar
 const allMenuItems = {
@@ -237,6 +239,14 @@ const allMenuItems = {
     group: null,
     badge: null,
     order: 6,
+  },
+  "email-templates": {
+    name: "Email Templates",
+    href: "/email-templates",
+    icon: FileText,
+    group: null,
+    badge: null,
+    order: 6.1,
   },
   // "email-campaigns": {
   //   name: "Campaign Manager",
@@ -422,47 +432,47 @@ const allMenuItems = {
     badge: null,
     order: 8.5,
   },
-  settings: {
-    name: "Settings",
-    href: "/dynamic-fields",
-    icon: Settings,
-    group: null,
+  
+  "menu-ordering": {
+    name: "Menus Ordering",
+    href: "/menu-ordering",
+    icon: Layout,
+    group: "Settings",
     badge: null,
-    order: 9,
+    order: 9.5,
   },
-
-  // "dynamic-fields": {
-  //   name: "Dynamic Fields",
-  //   href: "/dynamic-fields",
-  //   icon: Settings,
-  //   group: "Settings",
-  //   badge: "New",
-  //   order: 9,
-  // },
-  // "menu-ordering": {
-  //   name: "Menu Customization",
-  //   href: "/menu-ordering",
-  //   icon: Layout,
-  //   group: "Settings",
-  //   badge: null,
-  //   order: 9,
-  // },
-  // settings: {
-  //   name: "System Settings",
-  //   href: "/settings",
-  //   icon: Settings,
-  //   group: "Settings",
-  //   badge: null,
-  //   order: 9,
-  // },
-  // subscription: {
-  //   name: "Subscription Plans",
-  //   href: "/subscription",
-  //   icon: Crown,
-  //   group: "Settings",
-  //   badge: null,
-  //   order: 9,
-  // },
+  settings: {
+    name: "Profile & Organization",
+    href: "/settings",
+    icon: Settings,
+    group: "Settings",
+    badge: null,
+    order: 9.1,
+  },
+  subscription: {
+    name: "Subscriptions",
+    href: "/subscription",
+    icon: Crown,
+    group: "Settings",
+    badge: null,
+    order: 9.2,
+  },
+  "email-settings": {
+    name: "Email Setting",
+    href: "/email-settings",
+    icon: Mail,
+    group: "Settings",
+    badge: null,
+    order: 9.3,
+  },
+  "gst-settings": {
+    name: "Tax Setting",
+    href: "/gst-settings",
+    icon: Receipt,
+    group: "Settings",
+    badge: null,
+    order: 9.4,
+  },
   support: {
     name: "Help & Support",
     href: "/support",
@@ -505,7 +515,12 @@ export function CompleteSidebar({
   // Map menu item IDs to permission keys (some menu IDs differ from permission keys)
   const permissionKeyMap: Record<string, string> = {
     'supplier-management': 'vendors',
-    'settings': 'dynamic-fields', // Settings menu points to dynamic-fields page
+    'dynamic-fields': 'dynamic-fields',
+    'settings': 'settings',
+    'subscription': 'subscription',
+    'email-settings': 'email-settings',
+    'gst-settings': 'gst-settings',
+    'menu-ordering': 'menu-ordering',
   };
 
   // Group menu items and filter by permissions
@@ -794,23 +809,50 @@ export function CompleteSidebar({
                 return (
                   <div key={groupName}>
                     {isCollapsed ? (
-                      <Popover open={isPopoverOpen} onOpenChange={(open) => {
-                        if (isCollapsed) {
-                          if (open) {
-                            setExpandedGroups((prev) =>
-                              prev.includes(groupName)
-                                ? prev
-                                : [...prev, groupName]
-                            );
-                          } else {
+                      <div
+                        onMouseLeave={() => {
+                          if (isCollapsed) {
                             setExpandedGroups((prev) =>
                               prev.filter((g) => g !== groupName)
                             );
                           }
-                        }
-                      }}>
-                        <PopoverTrigger asChild>
-                          <div
+                        }}
+                      >
+                        <Popover open={isPopoverOpen} onOpenChange={(open) => {
+                          if (isCollapsed) {
+                            if (open) {
+                              setExpandedGroups((prev) =>
+                                prev.includes(groupName)
+                                  ? prev
+                                  : [...prev, groupName]
+                              );
+                            } else {
+                              setExpandedGroups((prev) =>
+                                prev.filter((g) => g !== groupName)
+                              );
+                            }
+                          }
+                        }}>
+                          <PopoverTrigger asChild>
+                            <div
+                              onMouseEnter={() => {
+                                if (isCollapsed) {
+                                  setExpandedGroups((prev) =>
+                                    prev.includes(groupName)
+                                      ? prev
+                                      : [...prev, groupName]
+                                  );
+                                }
+                              }}
+                            >
+                              {groupButton}
+                            </div>
+                          </PopoverTrigger>
+                          <PopoverContent 
+                            side="right" 
+                            align="start"
+                            className="w-56 p-1"
+                            onOpenAutoFocus={(e) => e.preventDefault()}
                             onMouseEnter={() => {
                               if (isCollapsed) {
                                 setExpandedGroups((prev) =>
@@ -820,35 +862,7 @@ export function CompleteSidebar({
                                 );
                               }
                             }}
-                            onMouseLeave={() => {
-                              // Don't close immediately on mouse leave - let PopoverContent handle it
-                            }}
                           >
-                            {groupButton}
-                          </div>
-                        </PopoverTrigger>
-                        <PopoverContent 
-                          side="right" 
-                          align="start"
-                          className="w-56 p-1"
-                          onOpenAutoFocus={(e) => e.preventDefault()}
-                          onMouseEnter={() => {
-                            if (isCollapsed) {
-                              setExpandedGroups((prev) =>
-                                prev.includes(groupName)
-                                  ? prev
-                                  : [...prev, groupName]
-                              );
-                            }
-                          }}
-                          onMouseLeave={() => {
-                            if (isCollapsed) {
-                              setExpandedGroups((prev) =>
-                                prev.filter((g) => g !== groupName)
-                              );
-                            }
-                          }}
-                        >
                           <div className="space-y-1">
                             {groupItems.map((child: any, childIndex: number) => {
                               const ChildIcon = child.icon;
@@ -881,24 +895,52 @@ export function CompleteSidebar({
                           </div>
                         </PopoverContent>
                       </Popover>
+                      </div>
                     ) : (
-                      <Popover open={isExpanded} onOpenChange={(open) => {
-                        if (!isCollapsed) {
-                          if (open) {
-                            setExpandedGroups((prev) =>
-                              prev.includes(groupName)
-                                ? prev
-                                : [...prev, groupName]
-                            );
-                          } else {
+                      <div
+                        onMouseLeave={() => {
+                          if (!isCollapsed) {
                             setExpandedGroups((prev) =>
                               prev.filter((g) => g !== groupName)
                             );
                           }
-                        }
-                      }}>
-                        <PopoverTrigger asChild>
-                          <div
+                        }}
+                      >
+                        <Popover open={isExpanded} onOpenChange={(open) => {
+                          if (!isCollapsed) {
+                            if (open) {
+                              setExpandedGroups((prev) =>
+                                prev.includes(groupName)
+                                  ? prev
+                                  : [...prev, groupName]
+                              );
+                            } else {
+                              setExpandedGroups((prev) =>
+                                prev.filter((g) => g !== groupName)
+                              );
+                            }
+                          }
+                        }}>
+                          <PopoverTrigger asChild>
+                            <div
+                              onMouseEnter={() => {
+                                if (!isCollapsed) {
+                                  setExpandedGroups((prev) =>
+                                    prev.includes(groupName)
+                                      ? prev
+                                      : [...prev, groupName]
+                                  );
+                                }
+                              }}
+                            >
+                              {groupButton}
+                            </div>
+                          </PopoverTrigger>
+                          <PopoverContent 
+                            side="right" 
+                            align="start"
+                            className="w-56 p-1"
+                            onOpenAutoFocus={(e) => e.preventDefault()}
                             onMouseEnter={() => {
                               if (!isCollapsed) {
                                 setExpandedGroups((prev) =>
@@ -909,31 +951,6 @@ export function CompleteSidebar({
                               }
                             }}
                           >
-                            {groupButton}
-                          </div>
-                        </PopoverTrigger>
-                        <PopoverContent 
-                          side="right" 
-                          align="start"
-                          className="w-56 p-1"
-                          onOpenAutoFocus={(e) => e.preventDefault()}
-                          onMouseEnter={() => {
-                            if (!isCollapsed) {
-                              setExpandedGroups((prev) =>
-                                prev.includes(groupName)
-                                  ? prev
-                                  : [...prev, groupName]
-                              );
-                            }
-                          }}
-                          onMouseLeave={() => {
-                            if (!isCollapsed) {
-                              setExpandedGroups((prev) =>
-                                prev.filter((g) => g !== groupName)
-                              );
-                            }
-                          }}
-                        >
                           <div className="space-y-1">
                             {groupItems.map((child: any, childIndex: number) => {
                               const ChildIcon = child.icon;
@@ -966,6 +983,7 @@ export function CompleteSidebar({
                           </div>
                         </PopoverContent>
                       </Popover>
+                      </div>
                     )}
                   </div>
                 );

@@ -5,7 +5,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Sparkles, ArrowRight, CheckCircle, Gift, Star, Zap } from "lucide-react";
 import { useAuth } from "@/components/auth/auth-provider";
 import { RateHonkLogo } from "@/components/ui/ratehonk-logo";
-import Logo from "../assets/Logo-sidebar.svg"
+// import Logo from "../assets/Logo-sidebar.svg"
+import Logo from "../assets/RATEHONKLOGO.png";
 
 export default function Welcome() {
   const [, setLocation] = useLocation();

@@ -24,7 +24,8 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/components/auth/auth-provider";
 import { RateHonkLogo } from "@/components/ui/ratehonk-logo";
-import Logo from "../assets/Logo-sidebar.svg"
+// import Logo from "../assets/Logo-sidebar.svg"
+import Logo from "../assets/RATEHONKLOGO.png";
 
 interface Module {
   id: string;

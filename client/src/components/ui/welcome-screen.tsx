@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { RateHonkLogo } from '@/components/ui/ratehonk-logo';
 
 import confetti from 'canvas-confetti';
-import Logo from "../../assets/Logo-sidebar.svg"
+// import Logo from "../../assets/Logo-sidebar.svg"
+import Logo from "../../assets/RATEHONKLOGO.png";
 
 interface WelcomeScreenProps {
   onComplete: () => void;

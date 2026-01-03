@@ -2,15 +2,42 @@ import Stripe from 'stripe';
 import Razorpay from 'razorpay';
 import { simpleStorage } from './simple-storage';
 
-// Payment gateway configuration
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
-  apiVersion: '2023-10-16',
-});
+// Lazy initialization of payment gateways (only when needed)
+let stripeInstance: Stripe | null = null;
+let razorpayInstance: Razorpay | null = null;
 
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID || '',
-  key_secret: process.env.RAZORPAY_SECRET || '',
-});
+function getStripe(): Stripe {
+  if (!stripeInstance) {
+    const apiKey = process.env.STRIPE_SECRET_KEY;
+    if (!apiKey) {
+      throw new Error('STRIPE_SECRET_KEY is not configured in environment variables');
+    }
+    stripeInstance = new Stripe(apiKey, {
+      apiVersion: '2023-10-16',
+    });
+  }
+  return stripeInstance;
+}
+
+function getRazorpay(): Razorpay {
+  if (!razorpayInstance) {
+    // Support both RAZORPAY_SECRET and RAZORPAY_KEY_SECRET for compatibility
+    const keyId = process.env.RAZORPAY_KEY_ID;
+    const keySecret = process.env.RAZORPAY_SECRET || process.env.RAZORPAY_KEY_SECRET;
+    
+    if (!keyId || !keySecret) {
+      const missing = [];
+      if (!keyId) missing.push('RAZORPAY_KEY_ID');
+      if (!keySecret) missing.push('RAZORPAY_SECRET or RAZORPAY_KEY_SECRET');
+      throw new Error(`${missing.join(' and ')} ${missing.length > 1 ? 'are' : 'is'} not configured in environment variables. Please check your .env file and restart the server.`);
+    }
+    razorpayInstance = new Razorpay({
+      key_id: keyId,
+      key_secret: keySecret,
+    });
+  }
+  return razorpayInstance;
+}
 
 export interface SubscriptionData {
   tenantId: number;
@@ -41,6 +68,8 @@ export class SubscriptionService {
       const plan = plans.find(p => p.id === data.planId);
       if (!plan) throw new Error('Subscription plan not found');
 
+      const stripe = getStripe();
+
       // Create or get Stripe customer
       let stripeCustomer;
       const existingSubscription = await simpleStorage.getTenantSubscription(data.tenantId);
@@ -54,6 +83,20 @@ export class SubscriptionService {
           phone: data.customerInfo.phone,
           metadata: {
             tenantId: data.tenantId.toString(),
+          },
+        });
+      }
+
+      // Attach payment method to customer if provided
+      if (data.paymentMethodId) {
+        await stripe.paymentMethods.attach(data.paymentMethodId, {
+          customer: stripeCustomer.id,
+        });
+        
+        // Set as default payment method
+        await stripe.customers.update(stripeCustomer.id, {
+          invoice_settings: {
+            default_payment_method: data.paymentMethodId,
           },
         });
       }
@@ -97,21 +140,31 @@ export class SubscriptionService {
         });
       }
 
-      // Create subscription
-      const subscription = await stripe.subscriptions.create({
+      // Create subscription with payment method attached
+      const subscriptionParams: any = {
         customer: stripeCustomer.id,
         items: [{ price: price.id }],
-        payment_behavior: 'default_incomplete',
-        payment_settings: {
-          save_default_payment_method: 'on_subscription',
-        },
         expand: ['latest_invoice.payment_intent'],
         trial_period_days: 14, // 14-day trial
         metadata: {
           tenantId: data.tenantId.toString(),
           planId: data.planId.toString(),
         },
-      });
+      };
+
+      // If payment method is provided, use it; otherwise create incomplete subscription
+      if (data.paymentMethodId) {
+        subscriptionParams.default_payment_method = data.paymentMethodId;
+        subscriptionParams.payment_behavior = 'default_incomplete';
+        subscriptionParams.payment_settings = {
+          save_default_payment_method: 'on_subscription',
+        };
+      } else {
+        // If no payment method, subscription will be incomplete and require payment method later
+        subscriptionParams.payment_behavior = 'default_incomplete';
+      }
+
+      const subscription = await stripe.subscriptions.create(subscriptionParams);
 
       // Calculate trial and billing dates
       const trialEndsAt = new Date();
@@ -162,44 +215,124 @@ export class SubscriptionService {
       const plan = plans.find(p => p.id === data.planId);
       if (!plan) throw new Error('Subscription plan not found');
 
-      // Create Razorpay customer
-      const customer = await razorpay.customers.create({
-        name: data.customerInfo.name,
-        email: data.customerInfo.email,
-        contact: data.customerInfo.phone || '',
-        fail_existing: 0,
-      });
+      const razorpay = getRazorpay();
+      
+      // Check if customer already exists in database subscription
+      let customer;
+      const existingSubscription = await simpleStorage.getTenantSubscription(data.tenantId);
+      
+      if (existingSubscription?.gatewayCustomerId) {
+        // Customer already exists, retrieve it
+        try {
+          customer = await razorpay.customers.fetch(existingSubscription.gatewayCustomerId);
+        } catch (error: any) {
+          // If customer doesn't exist in Razorpay, create new one
+          console.log('Existing customer ID not found in Razorpay, creating new customer');
+          customer = null;
+        }
+      }
+      
+      // Create new customer if doesn't exist
+      if (!customer) {
+        try {
+          customer = await razorpay.customers.create({
+            name: data.customerInfo.name,
+            email: data.customerInfo.email,
+            contact: data.customerInfo.phone || '',
+            fail_existing: 0, // Don't fail if customer exists, just return existing
+          });
+        } catch (error: any) {
+          // Handle case where customer already exists
+          if (error.statusCode === 400 && error.error?.description?.includes('already exists')) {
+            console.log('Razorpay customer already exists. Attempting to find existing customer by email...');
+            
+            // First, check if we have customer ID in database
+            const existingSub = await simpleStorage.getTenantSubscription(data.tenantId);
+            if (existingSub?.gatewayCustomerId) {
+              try {
+                customer = await razorpay.customers.fetch(existingSub.gatewayCustomerId);
+                console.log('Using existing customer from database:', customer.id);
+              } catch (fetchError) {
+                console.log('Customer ID from database not found in Razorpay, will search by email');
+              }
+            }
+            
+            // If still not found, try to list customers and find by email
+            if (!customer) {
+              try {
+                console.log('Searching for customer by email in Razorpay...');
+                // List customers (Razorpay doesn't support email search, so we list and filter)
+                // Limit to first 100 customers to avoid performance issues
+                const customersList = await razorpay.customers.all({ count: 100 });
+                
+                // Find customer with matching email
+                const foundCustomer = customersList.items.find(
+                  (c: any) => c.email && c.email.toLowerCase() === data.customerInfo.email.toLowerCase()
+                );
+                
+                if (foundCustomer) {
+                  customer = foundCustomer;
+                  console.log('Found existing customer by email:', customer.id);
+                  
+                  // Update database with the found customer ID for future use
+                  if (existingSub) {
+                    await simpleStorage.updateTenantSubscription(existingSub.id, {
+                      gatewayCustomerId: customer.id,
+                    });
+                    console.log('Updated database with customer ID:', customer.id);
+                  }
+                } else {
+                  throw new Error('Customer exists in Razorpay but could not be found. Please contact support.');
+                }
+              } catch (searchError: any) {
+                console.error('Error searching for customer:', searchError);
+                throw new Error('Customer already exists in Razorpay but we could not retrieve it. Please contact support.');
+              }
+            }
+          } else {
+            throw error;
+          }
+        }
+      }
 
-      // Create Razorpay plan
+      // Create Razorpay plan with recurring billing
+      // Amount should be in smallest currency unit (paise for INR, cents for USD)
       const amount = data.billingCycle === 'monthly' 
         ? Math.round(parseFloat(plan.monthlyPrice) * 100)
         : Math.round(parseFloat(plan.yearlyPrice) * 100);
 
+      // Razorpay plan configuration for recurring payments
       const period = data.billingCycle === 'monthly' ? 'monthly' : 'yearly';
-      const interval = data.billingCycle === 'monthly' ? 1 : 12;
+      const interval = data.billingCycle === 'monthly' ? 1 : 12; // 1 month or 12 months
+      const currency = plan.currency?.toUpperCase() || 'INR';
 
+      // Razorpay plan creation
+      // According to Razorpay API: item should have 'amount' (not unit_amount) and 'currency'
       const razorpayPlan = await razorpay.plans.create({
-        period,
-        interval,
+        period, // 'monthly' or 'yearly'
+        interval, // 1 for monthly, 12 for yearly
         item: {
           name: plan.name,
-          amount,
-          currency: 'INR',
+          amount: amount, // Amount in smallest currency unit (paise for INR, cents for USD)
+          currency: currency, // Currency code (INR, USD, etc.)
           description: plan.description || '',
         },
       });
 
-      // Create subscription with trial period
+      // Create recurring subscription with trial period
+      // total_count: null = infinite recurring (continues until cancelled)
+      // start_at: Trial end date (14 days from now) - first payment happens after trial
       const subscription = await razorpay.subscriptions.create({
         plan_id: razorpayPlan.id,
         customer_id: customer.id,
-        total_count: 120, // 10 years worth of payments
+        total_count: null, // null = infinite recurring, continues monthly/yearly until cancelled
         quantity: 1,
-        start_at: Math.floor(Date.now() / 1000) + (14 * 24 * 60 * 60), // Start after 14-day trial
+        start_at: Math.floor(Date.now() / 1000) + (14 * 24 * 60 * 60), // Start billing after 14-day trial
         addons: [],
         notes: {
           tenantId: data.tenantId.toString(),
           planId: data.planId.toString(),
+          billingCycle: data.billingCycle, // Store billing cycle in notes for reference
         },
       });
 
@@ -249,6 +382,8 @@ export class SubscriptionService {
         throw new Error('Customer not found');
       }
 
+      const stripe = getStripe();
+
       // Attach payment method to customer
       await stripe.paymentMethods.attach(data.token, {
         customer: subscription.gatewayCustomerId,
@@ -296,10 +431,12 @@ export class SubscriptionService {
       if (!subscription) throw new Error('Subscription not found');
 
       if (subscription.paymentGateway === 'stripe') {
+        const stripe = getStripe();
         await stripe.subscriptions.update(subscription.gatewaySubscriptionId!, {
           cancel_at_period_end: true,
         });
       } else if (subscription.paymentGateway === 'razorpay') {
+        const razorpay = getRazorpay();
         await razorpay.subscriptions.cancel(subscription.gatewaySubscriptionId!, {
           cancel_at_cycle_end: 1,
         });
@@ -361,8 +498,32 @@ export class SubscriptionService {
   }
 
   private async handleStripePaymentSucceeded(invoice: Stripe.Invoice) {
-    const tenantId = parseInt(invoice.subscription_details?.metadata?.tenantId || '0');
-    if (!tenantId) return;
+    // Try to get tenantId from subscription metadata
+    let tenantId = 0;
+    
+    if (invoice.subscription) {
+      const subscriptionId = typeof invoice.subscription === 'string' 
+        ? invoice.subscription 
+        : invoice.subscription.id;
+      
+      try {
+        const stripe = getStripe();
+        const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+        tenantId = parseInt(subscription.metadata?.tenantId || '0');
+      } catch (error) {
+        console.error('Error retrieving subscription:', error);
+      }
+    }
+    
+    // Fallback: try invoice metadata
+    if (!tenantId && invoice.metadata?.tenantId) {
+      tenantId = parseInt(invoice.metadata.tenantId);
+    }
+    
+    if (!tenantId) {
+      console.warn('Could not determine tenantId from invoice:', invoice.id);
+      return;
+    }
 
     // Record payment history
     await simpleStorage.createPaymentHistory({
@@ -378,9 +539,9 @@ export class SubscriptionService {
     });
 
     // Update subscription status
-    const subscription = await simpleStorage.getTenantSubscription(tenantId);
-    if (subscription) {
-      await simpleStorage.updateTenantSubscription(subscription.id, {
+    const dbSubscription = await simpleStorage.getTenantSubscription(tenantId);
+    if (dbSubscription) {
+      await simpleStorage.updateTenantSubscription(dbSubscription.id, {
         status: 'active',
         lastPaymentDate: new Date(),
         failedPaymentAttempts: 0,
@@ -389,13 +550,37 @@ export class SubscriptionService {
   }
 
   private async handleStripePaymentFailed(invoice: Stripe.Invoice) {
-    const tenantId = parseInt(invoice.subscription_details?.metadata?.tenantId || '0');
-    if (!tenantId) return;
+    // Try to get tenantId from subscription metadata
+    let tenantId = 0;
+    
+    if (invoice.subscription) {
+      const subscriptionId = typeof invoice.subscription === 'string' 
+        ? invoice.subscription 
+        : invoice.subscription.id;
+      
+      try {
+        const stripe = getStripe();
+        const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+        tenantId = parseInt(subscription.metadata?.tenantId || '0');
+      } catch (error) {
+        console.error('Error retrieving subscription:', error);
+      }
+    }
+    
+    // Fallback: try invoice metadata
+    if (!tenantId && invoice.metadata?.tenantId) {
+      tenantId = parseInt(invoice.metadata.tenantId);
+    }
+    
+    if (!tenantId) {
+      console.warn('Could not determine tenantId from invoice:', invoice.id);
+      return;
+    }
 
     const subscription = await simpleStorage.getTenantSubscription(tenantId);
     if (subscription) {
       const failedAttempts = (subscription.failedPaymentAttempts || 0) + 1;
-      await simpleStorage.updateTenantSubscription(subscription.id, {
+      await simpleStorage.updateTenantSubscription(dbSubscription.id, {
         status: failedAttempts >= 3 ? 'past_due' : 'active',
         failedPaymentAttempts: failedAttempts,
       });

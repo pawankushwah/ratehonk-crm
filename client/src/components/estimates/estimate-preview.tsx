@@ -7,7 +7,8 @@ import { useReactToPrint } from "react-to-print";
 import { useToast } from "@/hooks/use-toast";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
-import Logo from "../../assets/Logo-sidebar.svg"
+// import Logo from "../../assets/Logo-sidebar.svg"
+import Logo from "../../assets/RATEHONKLOGO.png";
 
 interface EstimateLineItem {
   itemName: string;

@@ -24,6 +24,7 @@ import { registerLeadCreateEndpoint } from "./lead-create-endpoint";
 import { registerPackageTypesRoutes } from "./package-types-routes";
 import { registerZoomRoutes } from "./zoom-routes";
 import { tenantEmailService } from "./tenant-email-service";
+import { emailService } from "./email-service";
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 
@@ -187,7 +188,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Hash password
       const hashedPassword = await bcrypt.hash(password, 10);
 
-      // Create user
+      // Create user with email verification set to false
       const user = await storage.createUser({
         email,
         password: hashedPassword,
@@ -196,7 +197,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         firstName,
         lastName,
         isActive: true,
+        isEmailVerified: false, // Email not verified yet
       });
+
+      // Generate 6-digit OTP
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+      // Store OTP in database (expires in 10 minutes)
+      await storage.createOtp(user.id, otp, 10);
+
+      // Send OTP email
+      try {
+        await emailService.sendOtpEmail({
+          to: email,
+          firstName,
+          lastName,
+          otp,
+          companyName,
+        });
+      } catch (emailError) {
+        console.error("Error sending OTP email:", emailError);
+        // Continue even if email fails - user can request resend
+      }
 
       // Create 7-day trial subscription
       try {
@@ -227,13 +249,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Continue without subscription - user can set it up later
       }
 
-      // Generate JWT token
-      const token = jwt.sign({ userId: user.id }, JWT_SECRET);
-
+      // Return user info but NO token - user must verify email first
+      // Convert snake_case to camelCase for frontend
+      // The user object from createUser has snake_case fields from database
+      const userResponse = {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        tenantId: user.tenant_id || user.tenantId,
+        firstName: user.first_name || user.firstName,
+        lastName: user.last_name || user.lastName,
+        isActive: user.is_active !== undefined ? user.is_active : user.isActive,
+        isEmailVerified: user.is_email_verified !== undefined ? user.is_email_verified : (user.isEmailVerified || false),
+      };
+      
+      console.log("📝 Registration response - user:", userResponse);
+      console.log("📝 Registration response - requiresEmailVerification: true");
+      
       res.status(201).json({
-        user: { ...user, password: undefined },
+        user: userResponse,
         tenant,
-        token,
+        requiresEmailVerification: true,
+        message: "Registration successful. Please check your email for the verification OTP.",
       });
     } catch (error) {
       console.error("Registration error details:", error);
@@ -281,6 +318,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: "Invalid credentials" });
       }
 
+      // Check if account is active (for all users)
+      if (!user.is_active) {
+        return res.status(403).json({
+          message: "Your account is inactive or suspended. Please contact support for assistance.",
+          accountInactive: true,
+        });
+      }
+
+      // Check if email is verified (only for tenant_admin and tenant_user)
+      if ((user.role === "tenant_admin" || user.role === "tenant_user") && !user.is_email_verified) {
+        // Generate and send OTP
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        
+        // Store OTP in database (expires in 10 minutes)
+        await storage.createOtp(user.id, otp, 10);
+        
+        // Get tenant info for company name
+        let companyName = "RateHonk CRM";
+        if (user.tenant_id) {
+          const tenant = await storage.getTenant(user.tenant_id);
+          if (tenant) {
+            companyName = tenant.companyName;
+          }
+        }
+        
+        // Send OTP email
+        try {
+          await emailService.sendOtpEmail({
+            to: user.email,
+            firstName: user.first_name,
+            lastName: user.last_name,
+            otp,
+            companyName,
+          });
+        } catch (emailError) {
+          console.error("Error sending OTP email:", emailError);
+          // Continue even if email fails - user can request resend
+        }
+        
+        return res.status(403).json({
+          message: "Email verification required. OTP has been sent to your email.",
+          requiresEmailVerification: true,
+          userId: user.id,
+          email: user.email,
+        });
+      }
+
       // Generate JWT token
       const token = jwt.sign({ userId: user.id }, JWT_SECRET);
 
@@ -292,8 +376,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       console.log("Login successful for user:", user.email);
+      
+      // Convert snake_case to camelCase for frontend
+      const userResponse = {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        tenantId: user.tenant_id,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        isActive: user.is_active,
+        isEmailVerified: user.is_email_verified,
+      };
+      
       res.json({
-        user: { ...user, password: undefined },
+        user: userResponse,
         tenant,
         token,
       });
@@ -301,6 +398,123 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Login error details:", error);
       console.error("Error message:", error.message);
       console.error("Error stack:", error.stack);
+      res.status(500).json({
+        message: "Internal server error",
+        details:
+          process.env.NODE_ENV === "development" ? error.message : undefined,
+      });
+    }
+  });
+
+  // OTP Verification endpoint
+  app.post("/api/auth/verify-otp", async (req, res) => {
+    try {
+      const { userId, otp } = req.body;
+
+      if (!userId || !otp) {
+        return res.status(400).json({ message: "User ID and OTP are required" });
+      }
+
+      const result = await storage.verifyOtp(userId, otp);
+
+      if (!result.valid) {
+        return res.status(400).json({ message: result.message });
+      }
+
+      // Get updated user info
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      // Generate JWT token after successful verification
+      const token = jwt.sign({ userId: user.id }, JWT_SECRET);
+
+      // Get tenant info
+      let tenant = null;
+      if (user.tenant_id) {
+        tenant = await storage.getTenant(user.tenant_id);
+      }
+
+      // Convert snake_case to camelCase for frontend
+      const userResponse = {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        tenantId: user.tenant_id,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        isActive: user.is_active,
+        isEmailVerified: user.is_email_verified,
+      };
+      
+      res.json({
+        message: "Email verified successfully",
+        user: userResponse,
+        tenant,
+        token,
+      });
+    } catch (error) {
+      console.error("OTP verification error:", error);
+      res.status(500).json({
+        message: "Internal server error",
+        details:
+          process.env.NODE_ENV === "development" ? error.message : undefined,
+      });
+    }
+  });
+
+  // Resend OTP endpoint
+  app.post("/api/auth/resend-otp", async (req, res) => {
+    try {
+      const { userId } = req.body;
+
+      if (!userId) {
+        return res.status(400).json({ message: "User ID is required" });
+      }
+
+      // Get user info
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      // Check if already verified
+      if (user.is_email_verified) {
+        return res.status(400).json({ message: "Email is already verified" });
+      }
+
+      // Get tenant info for company name
+      let companyName = "RateHonk CRM";
+      if (user.tenantId) {
+        const tenant = await storage.getTenant(user.tenantId);
+        if (tenant) {
+          companyName = tenant.companyName;
+        }
+      }
+
+      // Generate new 6-digit OTP
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+      // Store OTP in database (expires in 10 minutes)
+      await storage.createOtp(userId, otp, 10);
+
+      // Send OTP email
+      try {
+        await emailService.sendOtpEmail({
+          to: user.email,
+          firstName: user.first_name,
+          lastName: user.last_name,
+          otp,
+          companyName,
+        });
+        res.json({ message: "OTP sent successfully" });
+      } catch (emailError) {
+        console.error("Error sending OTP email:", emailError);
+        res.status(500).json({ message: "Failed to send OTP email" });
+      }
+    } catch (error) {
+      console.error("Resend OTP error:", error);
       res.status(500).json({
         message: "Internal server error",
         details:

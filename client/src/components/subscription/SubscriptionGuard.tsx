@@ -1,5 +1,4 @@
-import { useEffect } from "react";
-import { useLocation, useRoute } from "wouter";
+import { useLocation } from "wouter";
 import { useSubscriptionFeatures } from "@/lib/subscription-check";
 import { PAGE_ROUTES } from "@/lib/menu-items";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,12 +17,25 @@ export function SubscriptionGuard({
   requiredMenuItem 
 }: SubscriptionGuardProps) {
   const [location, setLocation] = useLocation();
-  const { features, isLoading, hasAccess, hasPageAccess } = useSubscriptionFeatures();
+  const { features, isLoading, hasAccess, hasPageAccess, subscriptionQueryCompleted } = useSubscriptionFeatures();
 
   // Determine which check to use
   const checkAccess = () => {
-    if (isLoading) return true; // Allow while loading
+    // Always allow while loading - this prevents showing access restricted during initial load
+    if (isLoading) return true; 
     
+    // Check if we're a SaaS owner (query would be disabled, so always allow)
+    const isSaasOwner = typeof window !== 'undefined' && 
+      (localStorage.getItem('saas_auth_token') || window.location.pathname.startsWith('/saas/'));
+    
+    if (isSaasOwner) return true;
+    
+    // Only check access if the subscription query has completed
+    // This prevents showing access restricted before the query has finished
+    if (!subscriptionQueryCompleted) return true;
+    
+    // Only deny access if we're certain the data has loaded and there's no subscription
+    // If features is null after loading completes, it means no subscription exists
     if (!features) {
       // No subscription at all
       return false;

@@ -97,8 +97,10 @@ import {
   Building2,
   CreditCard,
   Globe,
+  Receipt,
 } from "lucide-react";
-import Logo from "../../assets/Logo-sidebar.svg";
+// import Logo from "../../assets/Logo-sidebar.svg";
+import Logo from "../../assets/RATEHONKLOGO.png";
 
 // Enhanced group icon mapping for better visual hierarchy
 const groupIcons = {
@@ -899,12 +901,12 @@ const allMenuItems = {
     order: 5,
   },
   "email-settings": {
-    name: "Email Configuration",
+    name: "Email Setting",
     href: "/email-settings",
-    icon: Settings,
-    group: "Email Marketing",
+    icon: Mail,
+    group: "Settings",
     badge: null,
-    order: 5,
+    order: 9.3,
   },
   "email-test": {
     name: "Email Testing",
@@ -979,28 +981,36 @@ const allMenuItems = {
     order: 9,
   },
   "menu-ordering": {
-    name: "Menu Customization",
+    name: "Menus Ordering",
     href: "/menu-ordering",
     icon: Layout,
     group: "Settings",
     badge: null,
-    order: 9,
+    order: 9.5,
   },
   settings: {
-    name: "System Settings",
+    name: "Profile & Organization",
     href: "/settings",
     icon: Settings,
     group: "Settings",
     badge: null,
-    order: 9,
+    order: 9.1,
   },
   subscription: {
-    name: "Subscription Plans",
+    name: "Subscriptions",
     href: "/subscription",
     icon: Crown,
     group: "Settings",
     badge: null,
-    order: 9,
+    order: 9.2,
+  },
+  "gst-settings": {
+    name: "Tax Setting",
+    href: "/gst-settings",
+    icon: Receipt,
+    group: "Settings",
+    badge: null,
+    order: 9.4,
   },
   support: {
     name: "Help & Support",

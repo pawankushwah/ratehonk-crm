@@ -29,8 +29,36 @@ export interface AuthData {
 
 export const auth = {
   async login(email: string, password: string): Promise<AuthData> {
-    const response = await apiRequest("POST", "/api/auth/login", { email, password });
+    // Use fetch directly to handle 403 responses properly
+    const response = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ email, password }),
+    });
+    
     const data = await response.json();
+    
+    // Check if account is inactive (403 status)
+    if (!response.ok && response.status === 403 && data.accountInactive) {
+      const error: any = new Error(data.message || "Account is inactive or suspended");
+      error.accountInactive = true;
+      throw error;
+    }
+    
+    // Check if email verification is required (403 status)
+    if (!response.ok && response.status === 403 && data.requiresEmailVerification) {
+      const error: any = new Error("Email not verified");
+      error.requiresEmailVerification = true;
+      error.userId = data.userId;
+      error.email = data.email;
+      throw error;
+    }
+    
+    // If response is not ok and not a verification error, throw
+    if (!response.ok) {
+      throw new Error(data.message || `Login failed: ${response.status}`);
+    }
     
     // Store token and cache authentication data (use both keys for compatibility)
     localStorage.setItem("auth_token", data.token);
@@ -48,13 +76,15 @@ export const auth = {
     companyName: string;
     contactPhone?: string;
     address?: string;
-  }): Promise<AuthData> {
+  }): Promise<AuthData & { requiresEmailVerification?: boolean }> {
     const response = await apiRequest("POST", "/api/auth/register", formData);
     const data = await response.json();
     
-    // Store token in localStorage (use both keys for compatibility)
-    localStorage.setItem("auth_token", data.token);
-    localStorage.setItem("token", data.token);
+    // Only store token if it exists (email verification not required)
+    if (data.token) {
+      localStorage.setItem("auth_token", data.token);
+      localStorage.setItem("token", data.token);
+    }
     
     return data;
   },

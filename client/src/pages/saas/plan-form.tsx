@@ -49,39 +49,72 @@ export default function PlanForm() {
 
   // Fetch plan data if editing
   const { data: plan, isLoading: planLoading } = useQuery({
-    queryKey: ["/api/saas/plans", planId],
+    queryKey: ["/api/subscription/plans", planId],
     queryFn: async () => {
       if (!planId) return null;
-      const response = await saasApiRequest("GET", `/api/subscription/plans`, {});
-      const plans = await response.json();
-      return Array.isArray(plans) ? plans.find((p: any) => p.id === planId) : null;
+      // Use the dedicated endpoint to fetch a single plan by ID
+      const response = await saasApiRequest("GET", `/api/subscription/plans/${planId}`, {});
+      if (!response.ok) {
+        throw new Error("Failed to fetch plan");
+      }
+      const planData = await response.json();
+      return planData;
     },
     enabled: !!planId,
   });
 
   // Load plan data when editing
   useEffect(() => {
-    if (plan) {
+    if (plan && isEditing) {
+      console.log("Loading plan data:", plan);
       const selectedCountry = COUNTRIES.find(c => c.code === (plan.country || 'US'));
+      
+      // Handle array fields - ensure they're arrays
+      const allowedMenuItems = Array.isArray(plan.allowed_menu_items) 
+        ? plan.allowed_menu_items 
+        : Array.isArray(plan.allowedMenuItems) 
+          ? plan.allowedMenuItems 
+          : Array.isArray(plan.features) 
+            ? plan.features 
+            : [];
+      
+      const allowedPages = Array.isArray(plan.allowed_pages) 
+        ? plan.allowed_pages 
+        : Array.isArray(plan.allowedPages) 
+          ? plan.allowedPages 
+          : [];
+      
+      const allowedDashboardWidgets = Array.isArray(plan.allowed_dashboard_widgets) 
+        ? plan.allowed_dashboard_widgets 
+        : Array.isArray(plan.allowedDashboardWidgets) 
+          ? plan.allowedDashboardWidgets 
+          : [];
+      
+      const allowedPagePermissions = plan.allowed_page_permissions && typeof plan.allowed_page_permissions === 'object'
+        ? plan.allowed_page_permissions
+        : plan.allowedPagePermissions && typeof plan.allowedPagePermissions === 'object'
+          ? plan.allowedPagePermissions
+          : {};
+      
       setFormData({
         name: plan.name || "",
         description: plan.description || "",
         country: plan.country || "US",
         currency: plan.currency || selectedCountry?.currency || "USD",
-        monthlyPrice: plan.monthlyPrice || plan.monthly_price || "",
-        yearlyPrice: plan.yearlyPrice || plan.yearly_price || "",
-        maxUsers: plan.maxUsers || plan.max_users || 10,
-        maxCustomers: plan.maxCustomers || plan.max_customers || 100,
-        allowedMenuItems: plan.allowedMenuItems || plan.allowed_menu_items || plan.features || [],
-        allowedPages: plan.allowedPages || plan.allowed_pages || plan.features || [],
-        allowedDashboardWidgets: plan.allowedDashboardWidgets || plan.allowed_dashboard_widgets || [],
-        allowedPagePermissions: plan.allowedPagePermissions || plan.allowed_page_permissions || {},
-        freeTrialDays: plan.freeTrialDays || plan.free_trial_days || 0,
-        isFreePlan: plan.isFreePlan || plan.is_free_plan || false,
-        isActive: plan.isActive !== undefined ? plan.isActive : (plan.is_active !== undefined ? plan.is_active : true),
+        monthlyPrice: String(plan.monthly_price || plan.monthlyPrice || "").replace('.00', ''),
+        yearlyPrice: String(plan.yearly_price || plan.yearlyPrice || "").replace('.00', ''),
+        maxUsers: plan.max_users !== undefined ? plan.max_users : (plan.maxUsers !== undefined ? plan.maxUsers : 10),
+        maxCustomers: plan.max_customers !== undefined ? plan.max_customers : (plan.maxCustomers !== undefined ? plan.maxCustomers : 100),
+        allowedMenuItems: allowedMenuItems,
+        allowedPages: allowedPages,
+        allowedDashboardWidgets: allowedDashboardWidgets,
+        allowedPagePermissions: allowedPagePermissions,
+        freeTrialDays: plan.free_trial_days !== undefined ? plan.free_trial_days : (plan.freeTrialDays !== undefined ? plan.freeTrialDays : 0),
+        isFreePlan: plan.is_free_plan !== undefined ? plan.is_free_plan : (plan.isFreePlan !== undefined ? plan.isFreePlan : false),
+        isActive: plan.is_active !== undefined ? plan.is_active : (plan.isActive !== undefined ? plan.isActive : true),
       });
     }
-  }, [plan]);
+  }, [plan, isEditing]);
 
   // Create/Update Plan
   const planMutation = useMutation({

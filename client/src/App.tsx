@@ -13,6 +13,7 @@ import NotFound from "@/pages/not-found";
 // Temporarily using a simple login component
 import Login from "@/pages/auth/login";
 import Register from "@/pages/auth/register";
+import VerifyOtp from "@/pages/auth/verify-otp";
 
 // Core page imports
 import Welcome from "@/pages/welcome";
@@ -36,6 +37,7 @@ import FacebookBusinessSuite from "@/pages/tenant/facebook-business-suite";
 import ZoomSettings from "@/pages/tenant/zoom-settings";
 // import LinkedInBusinessSuite from "@/pages/tenant/linkedin-business-suite";
 import EmailCampaigns from "@/pages/tenant/email-campaigns";
+import EmailTemplates from "@/pages/tenant/email-templates";
 import EmailAutomations from "@/pages/tenant/email-automations";
 import EmailABTests from "@/pages/tenant/email-ab-tests";
 import EmailSegments from "@/pages/tenant/email-segments";
@@ -57,6 +59,7 @@ import PackagePreview from "@/pages/tenant/package-preview";
 import PackageTypes from "@/pages/tenant/package-types";
 import Invoices from "@/pages/tenant/invoices";
 import InvoiceCreate from "@/pages/tenant/invoice-create";
+import InvoiceEdit from "@/pages/tenant/invoice-edit";
 import Communications from "@/pages/tenant/communications";
 import Tasks from "@/pages/tenant/tasks";
 import FollowUps from "@/pages/tenant/follow-ups";
@@ -232,6 +235,12 @@ function Router() {
           </PublicRoute>
         </Route>
 
+        <Route path="/verify-otp">
+          <PublicRoute>
+            <VerifyOtp />
+          </PublicRoute>
+        </Route>
+
         <Route path="/portfolio">
           <Portfolio />
         </Route>
@@ -361,6 +370,12 @@ function Router() {
         <Route path="/email-campaigns">
           <ProtectedRoute>
             <EmailCampaigns />
+          </ProtectedRoute>
+        </Route>
+
+        <Route path="/email-templates">
+          <ProtectedRoute>
+            <EmailTemplates />
           </ProtectedRoute>
         </Route>
 
@@ -541,6 +556,12 @@ function Router() {
         <Route path="/invoice-create/:id?">
           <ProtectedRoute>
             <InvoiceCreate />
+          </ProtectedRoute>
+        </Route>
+
+        <Route path="/invoice-edit/:id">
+          <ProtectedRoute>
+            <InvoiceEdit />
           </ProtectedRoute>
         </Route>
 

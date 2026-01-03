@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { SaasLayout } from "@/components/layout/saas-layout";
 import { Card, CardContent } from "@/components/ui/card";
@@ -30,13 +30,41 @@ export default function SaasSubscriptions() {
     },
   });
 
-  const { data: plans } = useQuery({
+  const { data: plansData } = useQuery({
     queryKey: ["/api/subscription/plans"],
     queryFn: async () => {
       const response = await saasApiRequest("GET", "/api/subscription/plans", {});
       return response.json();
     },
   });
+
+  // Flatten plans from grouped structure
+  const plans = useMemo(() => {
+    if (!plansData || !Array.isArray(plansData)) return [];
+    
+    // Check if it's the new grouped structure
+    if (plansData.length > 0 && plansData[0]?.country && plansData[0]?.plans) {
+      // Flatten grouped structure
+      const allPlans: any[] = [];
+      plansData.forEach((countryGroup: any) => {
+        if (countryGroup.plans && Array.isArray(countryGroup.plans)) {
+          countryGroup.plans.forEach((plan: any) => {
+            allPlans.push({
+              id: plan.id,
+              name: plan.name,
+              description: plan.description,
+              country: plan.country || countryGroup.country,
+              currency: plan.currency || countryGroup.currency,
+            });
+          });
+        }
+      });
+      return allPlans;
+    }
+    
+    // Old flat structure - return as is
+    return plansData;
+  }, [plansData]);
 
   // Fetch tenant subscriptions
   const { data: subscriptions, isLoading, refetch, error: subscriptionsError } = useQuery({
@@ -291,9 +319,9 @@ function SubscriptionDialog({ open, onOpenChange, subscription, tenants, plans, 
                   <SelectValue placeholder="Select plan" />
                 </SelectTrigger>
                 <SelectContent>
-                  {plans.map((plan: any) => (
-                    <SelectItem key={plan.id} value={plan.id.toString()}>
-                      {plan.name}
+                  {plans.filter((plan: any) => plan && plan.id).map((plan: any) => (
+                    <SelectItem key={plan.id} value={String(plan.id)}>
+                      {plan.name || 'Unnamed Plan'}
                     </SelectItem>
                   ))}
                 </SelectContent>

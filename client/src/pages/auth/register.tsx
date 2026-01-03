@@ -98,17 +98,38 @@ export default function Register() {
       console.log('📝 Registering user with data:', formData);
       const result = await auth.register(formData);
       console.log('✅ Registration successful:', result);
+      console.log('📝 Result requiresEmailVerification:', result.requiresEmailVerification);
+      console.log('📝 Result user:', result.user);
       
-      // Success notification with trial information
-      toast({
-        title: "Welcome to RateHonk CRM!",
-        description: "Account created successfully! Your 14-day free trial has started. You can now access all premium features.",
-      });
-      
-      // Slight delay for user to see success message
-      setTimeout(() => {
-        setLocation("/dashboard");
-      }, 1000);
+      // Check if email verification is required
+      if (result.requiresEmailVerification) {
+        // Store user ID and email for OTP verification page
+        if (result.user?.id) {
+          localStorage.setItem("pendingVerificationUserId", result.user.id.toString());
+          localStorage.setItem("pendingVerificationEmail", formData.email);
+        }
+        
+        // Success notification
+        toast({
+          title: "Registration Successful!",
+          description: "Please check your email for the verification OTP to complete your registration.",
+        });
+        
+        // Redirect to OTP verification page
+        setTimeout(() => {
+          setLocation(`/verify-otp?userId=${result.user?.id}&email=${encodeURIComponent(formData.email)}`);
+        }, 1000);
+      } else {
+        // Legacy flow (shouldn't happen with new registration)
+        toast({
+          title: "Welcome to RateHonk CRM!",
+          description: "Account created successfully! Your 14-day free trial has started.",
+        });
+        
+        setTimeout(() => {
+          setLocation("/dashboard");
+        }, 1000);
+      }
       
     } catch (error: any) {
       console.error('Registration error:', error);

@@ -5825,6 +5825,234 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
     }
   });
 
+  // Helper function to render modern invoice template for PDF
+  const renderModernTemplateForPDF = (data: any): string => {
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>Invoice ${data.invoiceNumber}</title>
+        <style>
+          @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+          
+          * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+          }
+          
+          body {
+            font-family: 'Inter', sans-serif;
+            font-size: 14px;
+            line-height: 1.6;
+            color: #374151;
+            background: #ffffff;
+          }
+          
+          .invoice-container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px;
+            background: white;
+          }
+          
+          .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 40px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #e5e7eb;
+          }
+          
+          .company-info h1 {
+            font-size: 28px;
+            font-weight: 700;
+            color: #1f2937;
+            margin-bottom: 8px;
+          }
+          
+          .company-info p {
+            color: #6b7280;
+            margin-bottom: 4px;
+          }
+          
+          .invoice-info {
+            text-align: right;
+          }
+          
+          .invoice-info h2 {
+            font-size: 24px;
+            font-weight: 600;
+            color: #3b82f6;
+            margin-bottom: 8px;
+          }
+          
+          .billing-section {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 40px;
+          }
+          
+          .billing-info h3 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #1f2937;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+          }
+          
+          .items-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 30px;
+          }
+          
+          .items-table th {
+            background-color: #f8fafc;
+            padding: 16px;
+            text-align: left;
+            font-weight: 600;
+            color: #374151;
+            border-bottom: 1px solid #e5e7eb;
+          }
+          
+          .items-table td {
+            padding: 16px;
+            border-bottom: 1px solid #f1f5f9;
+            color: #4b5563;
+          }
+          
+          .text-right {
+            text-align: right;
+          }
+          
+          .amount {
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
+            font-weight: 600;
+          }
+          
+          .totals {
+            margin-left: auto;
+            width: 300px;
+            margin-top: 20px;
+          }
+          
+          .total-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #f1f5f9;
+          }
+          
+          .total-row:last-child {
+            font-size: 18px;
+            font-weight: 700;
+            color: #1f2937;
+            border-bottom: 2px solid #3b82f6;
+            border-top: 2px solid #3b82f6;
+            padding: 16px 0;
+            margin-top: 12px;
+          }
+          
+          .footer {
+            margin-top: 40px;
+            text-align: center;
+            color: #9ca3af;
+            font-size: 12px;
+            border-top: 1px solid #e5e7eb;
+            padding-top: 20px;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="invoice-container">
+          <div class="header">
+            <div class="company-info">
+              <h1>${data.companyName}</h1>
+              <p>${data.companyEmail}</p>
+              <p>${data.companyPhone || ''}</p>
+              <p>${data.companyAddress || ''}</p>
+            </div>
+            <div class="invoice-info">
+              <h2>INVOICE</h2>
+              <p><strong>Invoice #:</strong> ${data.invoiceNumber}</p>
+              <p><strong>Date:</strong> ${data.issueDate}</p>
+              <p><strong>Due Date:</strong> ${data.dueDate}</p>
+            </div>
+          </div>
+          
+          <div class="billing-section">
+            <div class="billing-info">
+              <h3>Bill To</h3>
+              <p><strong>${data.customerName}</strong></p>
+              <p>${data.customerEmail}</p>
+              <p>${data.customerAddress || ''}</p>
+            </div>
+            <div class="billing-info">
+              <h3>Payment Terms</h3>
+              <p>${data.paymentTerms || 'Net 30'}</p>
+            </div>
+          </div>
+          
+          <table class="items-table">
+            <thead>
+              <tr>
+                <th>Description</th>
+                <th class="text-right">Quantity</th>
+                <th class="text-right">Rate</th>
+                <th class="text-right">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${data.items.map((item: any) => `
+                <tr>
+                  <td>${item.description}</td>
+                  <td class="text-right">${item.quantity}</td>
+                  <td class="text-right amount">${data.currency}${item.unitPrice.toFixed(2)}</td>
+                  <td class="text-right amount">${data.currency}${item.totalPrice.toFixed(2)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          
+          <div class="totals">
+            <div class="total-row">
+              <span>Subtotal:</span>
+              <span class="amount">${data.currency}${data.subtotal.toFixed(2)}</span>
+            </div>
+            ${data.taxAmount > 0 ? `
+              <div class="total-row">
+                <span>Tax:</span>
+                <span class="amount">${data.currency}${data.taxAmount.toFixed(2)}</span>
+              </div>
+            ` : ''}
+            ${data.discountAmount > 0 ? `
+              <div class="total-row">
+                <span>Discount:</span>
+                <span class="amount">-${data.currency}${data.discountAmount.toFixed(2)}</span>
+              </div>
+            ` : ''}
+            <div class="total-row">
+              <span>Total:</span>
+              <span class="amount">${data.currency}${data.totalAmount.toFixed(2)}</span>
+            </div>
+          </div>
+          
+          ${data.notes ? `
+            <div class="footer">
+              <p><strong>Notes:</strong></p>
+              <div>${data.notes}</div>
+            </div>
+          ` : ''}
+        </div>
+      </body>
+      </html>
+    `;
+  };
+
   // Send invoice via email
   app.post("/api/tenants/:tenantId/invoices/:invoiceId/email", authenticateToken, async (req, res) => {
     try {
@@ -5861,6 +6089,38 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
       `;
       const tenant = tenants[0] || null;
 
+      // Generate invoice HTML for email (using same template as preview)
+      const currencySymbol = invoice.currency === 'USD' ? '$' : invoice.currency === 'EUR' ? '€' : '₹';
+      
+      // Prepare invoice data for PDF generation
+      const invoiceDataForPDF = {
+        invoiceNumber: invoice.invoiceNumber || `INV-${invoice.id}`,
+        issueDate: invoice.issueDate ? new Date(invoice.issueDate).toLocaleDateString() : new Date().toLocaleDateString(),
+        dueDate: invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString() : 'N/A',
+        customerName: customer.name || 'N/A',
+        customerEmail: customer.email || '',
+        customerPhone: customer.phone || '',
+        customerAddress: customer.address || '',
+        companyName: tenant?.company_name || tenant?.name || 'Company',
+        companyEmail: tenant?.contact_email || '',
+        companyPhone: tenant?.contact_phone || '',
+        companyAddress: tenant?.address || '',
+        items: (invoice.lineItems || []).map((item: any) => ({
+          description: item.itemTitle || item.description || 'N/A',
+          quantity: item.quantity || 1,
+          unitPrice: parseFloat(item.sellingPrice || item.unitPrice || 0),
+          totalPrice: parseFloat(item.totalAmount || 0),
+        })),
+        subtotal: parseFloat(invoice.subtotal?.toString() || invoice.totalAmount?.toString() || "0"),
+        taxAmount: parseFloat(invoice.taxAmount?.toString() || "0"),
+        discountAmount: parseFloat(invoice.discountAmount?.toString() || "0"),
+        totalAmount: parseFloat(invoice.totalAmount?.toString() || "0"),
+        currency: currencySymbol,
+        notes: invoice.notes || undefined,
+        paymentTerms: invoice.paymentTerms || 'Net 30',
+        paymentStatus: invoice.status || 'pending',
+      };
+
       // Generate invoice HTML for email
       const invoiceHtml = `
         <html>
@@ -5882,23 +6142,23 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
         <body>
           <div class="header">
             <h1>INVOICE</h1>
-            <p>Invoice #: ${invoice.invoiceNumber || `INV-${invoice.id}`}</p>
+            <p>Invoice #: ${invoiceDataForPDF.invoiceNumber}</p>
           </div>
           <div class="invoice-info">
             <div class="info-section">
               <h3>Bill To:</h3>
-              <p><strong>${customer.name || 'N/A'}</strong></p>
-              ${customer.email ? `<p>${customer.email}</p>` : ''}
-              ${customer.phone ? `<p>${customer.phone}</p>` : ''}
+              <p><strong>${invoiceDataForPDF.customerName}</strong></p>
+              ${invoiceDataForPDF.customerEmail ? `<p>${invoiceDataForPDF.customerEmail}</p>` : ''}
+              ${invoiceDataForPDF.customerPhone ? `<p>${invoiceDataForPDF.customerPhone}</p>` : ''}
             </div>
             <div class="info-section">
               <h3>Invoice Details:</h3>
-              <p><strong>Issue Date:</strong> ${invoice.issueDate ? new Date(invoice.issueDate).toLocaleDateString() : 'N/A'}</p>
-              <p><strong>Due Date:</strong> ${invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString() : 'N/A'}</p>
-              <p><strong>Status:</strong> ${invoice.status || 'N/A'}</p>
+              <p><strong>Issue Date:</strong> ${invoiceDataForPDF.issueDate}</p>
+              <p><strong>Due Date:</strong> ${invoiceDataForPDF.dueDate}</p>
+              <p><strong>Status:</strong> ${invoiceDataForPDF.paymentStatus}</p>
             </div>
           </div>
-          ${invoice.lineItems && invoice.lineItems.length > 0 ? `
+          ${invoiceDataForPDF.items.length > 0 ? `
             <table class="line-items">
               <thead>
                 <tr>
@@ -5910,13 +6170,13 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
                 </tr>
               </thead>
               <tbody>
-                ${invoice.lineItems.map((item: any, index: number) => `
+                ${invoiceDataForPDF.items.map((item: any, index: number) => `
                   <tr>
                     <td>${index + 1}</td>
-                    <td>${item.itemTitle || item.description || 'N/A'}</td>
-                    <td class="text-right">${item.quantity || 1}</td>
-                    <td class="text-right">${invoice.currency === 'USD' ? '$' : '₹'}${parseFloat(item.sellingPrice || item.unitPrice || 0).toFixed(2)}</td>
-                    <td class="text-right">${invoice.currency === 'USD' ? '$' : '₹'}${parseFloat(item.totalAmount || 0).toFixed(2)}</td>
+                    <td>${item.description}</td>
+                    <td class="text-right">${item.quantity}</td>
+                    <td class="text-right">${currencySymbol}${item.unitPrice.toFixed(2)}</td>
+                    <td class="text-right">${currencySymbol}${item.totalPrice.toFixed(2)}</td>
                   </tr>
                 `).join('')}
               </tbody>
@@ -5925,24 +6185,60 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
           <div class="totals">
             <div class="totals-row total">
               <span>Total Amount:</span>
-              <span>${invoice.currency === 'USD' ? '$' : '₹'}${parseFloat(invoice.totalAmount || 0).toFixed(2)}</span>
+              <span>${currencySymbol}${invoiceDataForPDF.totalAmount.toFixed(2)}</span>
             </div>
           </div>
-          ${invoice.notes ? `<p><strong>Notes:</strong> ${invoice.notes}</p>` : ''}
+          ${invoiceDataForPDF.notes ? `<p><strong>Notes:</strong> ${invoiceDataForPDF.notes}</p>` : ''}
         </body>
         </html>
       `;
 
+      // Generate PDF from HTML using Playwright
+      let pdfBuffer: Buffer | null = null;
+      try {
+        const { chromium } = await import('playwright');
+        const browser = await chromium.launch({ headless: true });
+        const page = await browser.newPage();
+        
+        // Use the same HTML template as the preview (ModernTemplate)
+        const pdfHtml = renderModernTemplateForPDF(invoiceDataForPDF);
+        
+        await page.setContent(pdfHtml, { waitUntil: 'networkidle' });
+        pdfBuffer = await page.pdf({
+          format: 'A4',
+          printBackground: true,
+          margin: { top: '20px', right: '20px', bottom: '20px', left: '20px' },
+        });
+        
+        await browser.close();
+        console.log(`✅ PDF generated successfully for invoice ${invoiceDataForPDF.invoiceNumber}`);
+      } catch (pdfError: any) {
+        console.error("⚠️ Failed to generate PDF, sending email without attachment:", pdfError);
+        // Continue without PDF attachment if generation fails
+      }
+
       // Send email using tenant email service
       try {
         const { tenantEmailService } = await import("./tenant-email-service.js");
-        await tenantEmailService.sendCustomerEmail({
+        const emailOptions: any = {
           to: customer.email,
-          subject: `Invoice ${invoice.invoiceNumber || `INV-${invoice.id}`} from ${tenant?.company_name || tenant?.name || 'Company'}`,
-          body: `Please find attached invoice ${invoice.invoiceNumber || `INV-${invoice.id}`}. Total amount: ${invoice.currency === 'USD' ? '$' : '₹'}${parseFloat(invoice.totalAmount?.toString() || "0").toFixed(2)}`,
+          subject: `Invoice ${invoiceDataForPDF.invoiceNumber} from ${tenant?.company_name || tenant?.name || 'Company'}`,
+          body: `Please find attached invoice ${invoiceDataForPDF.invoiceNumber}. Total amount: ${currencySymbol}${invoiceDataForPDF.totalAmount.toFixed(2)}`,
           htmlBody: invoiceHtml,
           tenantId: tenantId,
-        });
+        };
+
+        // Add PDF attachment if generated successfully
+        if (pdfBuffer) {
+          emailOptions.attachments = [{
+            filename: `invoice-${invoiceDataForPDF.invoiceNumber}.pdf`,
+            content: pdfBuffer.toString('base64'),
+            contentType: 'application/pdf',
+            mimetype: 'application/pdf',
+          }];
+        }
+
+        await tenantEmailService.sendCustomerEmail(emailOptions);
 
         return res.json({ 
           success: true, 
@@ -10546,6 +10842,7 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
         const invoiceData = {
           ...req.body,
           tenantId: parseInt(tenantId as string),
+          userId: (req as any).user?.id || req.body.userId, // Add userId from authenticated user
         };
 
         console.log("🔍 Processing createInvoice with data:", invoiceData);
@@ -11439,6 +11736,53 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
 
       // Password is valid, continue with login
 
+      // Check if account is active (for all users)
+      if (!user.is_active) {
+        return res.status(403).json({
+          message: "Your account is inactive or suspended. Please contact support for assistance.",
+          accountInactive: true,
+        });
+      }
+
+      // Check if email is verified (only for tenant_admin and tenant_user)
+      if ((user.role === "tenant_admin" || user.role === "tenant_user") && !user.is_email_verified) {
+        // Generate and send OTP
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        
+        // Store OTP in database (expires in 10 minutes)
+        await simpleStorage.createOtp(user.id, otp, 10);
+        
+        // Get tenant info for company name
+        let companyName = "RateHonk CRM";
+        if (user.tenant_id) {
+          const tenant = await simpleStorage.getTenant(user.tenant_id);
+          if (tenant) {
+            companyName = tenant.company_name;
+          }
+        }
+        
+        // Send OTP email
+        try {
+          await emailService.sendOtpEmail({
+            to: user.email,
+            firstName: user.first_name || "",
+            lastName: user.last_name || "",
+            otp,
+            companyName,
+          });
+        } catch (emailError) {
+          console.error("Error sending OTP email:", emailError);
+          // Continue even if email fails - user can request resend
+        }
+        
+        return res.status(403).json({
+          message: "Email verification required. OTP has been sent to your email.",
+          requiresEmailVerification: true,
+          userId: user.id,
+          email: user.email,
+        });
+      }
+
       // Generate JWT token
       const token = jwt.sign({ userId: user.id }, JWT_SECRET);
 
@@ -11605,7 +11949,7 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
       // Hash password
       const hashedPassword = await bcrypt.hash(password, 10);
 
-      // Create user
+      // Create user with email verification set to false
       const user = await simpleStorage.createUser({
         email,
         password: hashedPassword,
@@ -11614,6 +11958,7 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
         firstName,
         lastName,
         isActive: true,
+        isEmailVerified: false, // Email not verified yet
       });
 
       // Create 14-day trial subscription
@@ -11646,28 +11991,28 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
         // Continue without subscription - user can set it up later
       }
 
-      // Send welcome email
+      // Generate 6-digit OTP
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+      // Store OTP in database (expires in 10 minutes)
+      await simpleStorage.createOtp(user.id, otp, 10);
+
+      // Send OTP email
       try {
-        const userName = `${firstName} ${lastName}`;
-        console.log("📧 Sending welcome email to:", email);
-        // await emailService.sendWelcomeEmail(email, companyName, userName);
-        await emailService.sendWelcomeEmail({
+        await emailService.sendOtpEmail({
           to: email,
-          firstName: firstName,
-          lastName: lastName,
+          firstName,
+          lastName,
+          otp,
           companyName,
-          email,
-          temporaryPassword: "",
         });
-        console.log("✅ Welcome email sent successfully");
+        console.log("✅ OTP email sent successfully");
       } catch (emailError) {
-        console.error("Welcome email failed (non-critical):", emailError);
-        // Continue without email - user account is still created
+        console.error("Error sending OTP email:", emailError);
+        // Continue even if email fails - user can request resend
       }
 
-      // Generate JWT token
-      const token = jwt.sign({ userId: user.id }, JWT_SECRET);
-
+      // Return user info but NO token - user must verify email first
       res.status(201).json({
         user: {
           id: user.id,
@@ -11684,7 +12029,8 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
           isActive: user.is_active,
         },
         tenant,
-        token,
+        requiresEmailVerification: true,
+        message: "Registration successful. Please check your email for the verification OTP.",
       });
     } catch (error: any) {
       console.error("Registration error details:", error);
@@ -11692,6 +12038,138 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
         "Error stack:",
         error instanceof Error ? error.stack : "No stack trace",
       );
+      res.status(500).json({
+        message: "Internal server error",
+        details:
+          process.env.NODE_ENV === "development" ? error.message : undefined,
+      });
+    }
+  });
+
+  // OTP Verification endpoint
+  app.post("/api/auth/verify-otp", async (req, res) => {
+    try {
+      const { userId, otp } = req.body;
+
+      if (!userId || !otp) {
+        return res.status(400).json({ message: "User ID and OTP are required" });
+      }
+
+      const result = await simpleStorage.verifyOtp(userId, otp);
+
+      if (!result.valid) {
+        return res.status(400).json({ message: result.message });
+      }
+
+      // Get updated user info
+      const user = await simpleStorage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      // Generate JWT token after successful verification
+      const token = jwt.sign({ userId: user.id }, JWT_SECRET);
+
+      // Get tenant info
+      let tenant = null;
+      let permissions = null;
+      if (user.tenant_id) {
+        tenant = await simpleStorage.getTenant(user.tenant_id);
+        permissions = await simpleStorage.getRoleById(
+          user.role_id,
+          user.tenant_id,
+        );
+      }
+
+      res.json({
+        message: "Email verified successfully",
+        user: {
+          id: user.id,
+          email: user.email,
+          role: user.role,
+          tenantId: user.tenant_id,
+          roleId: user.role_id || null,
+          reportingUserId: user.reporting_user_id || null,
+          firstName: user.first_name || "",
+          lastName: user.last_name || "",
+          permissions: permissions ? permissions.permissions : {},
+          isActive: user.is_active,
+        },
+        tenant: tenant
+          ? {
+              id: tenant.id,
+              companyName: tenant.company_name,
+              subdomain: tenant.subdomain,
+              contactEmail: tenant.contact_email,
+              contactPhone: tenant.contact_phone,
+              address: tenant.address,
+              isActive: tenant.is_active,
+              logo: tenant.logo,
+            }
+          : null,
+        token,
+      });
+    } catch (error) {
+      console.error("OTP verification error:", error);
+      res.status(500).json({
+        message: "Internal server error",
+        details:
+          process.env.NODE_ENV === "development" ? error.message : undefined,
+      });
+    }
+  });
+
+  // Resend OTP endpoint
+  app.post("/api/auth/resend-otp", async (req, res) => {
+    try {
+      const { userId } = req.body;
+
+      if (!userId) {
+        return res.status(400).json({ message: "User ID is required" });
+      }
+
+      // Get user info
+      const user = await simpleStorage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      // Check if already verified
+      if (user.is_email_verified) {
+        return res.status(400).json({ message: "Email is already verified" });
+      }
+
+      // Get tenant info for company name
+      let companyName = "RateHonk CRM";
+      if (user.tenant_id) {
+        const tenant = await simpleStorage.getTenant(user.tenant_id);
+        if (tenant) {
+          companyName = tenant.company_name;
+        }
+      }
+
+      // Generate new 6-digit OTP
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+      // Store OTP in database (expires in 10 minutes)
+      await simpleStorage.createOtp(userId, otp, 10);
+
+      // Send OTP email
+      try {
+        await emailService.sendOtpEmail({
+          to: user.email,
+          firstName: user.first_name || "",
+          lastName: user.last_name || "",
+          otp,
+          companyName,
+        });
+        res.json({ message: "OTP sent successfully" });
+      } catch (emailError) {
+        console.error("Error sending OTP email:", emailError);
+        res.status(500).json({ message: "Failed to send OTP email" });
+      }
+    } catch (error) {
+      console.error("Resend OTP error:", error);
       res.status(500).json({
         message: "Internal server error",
         details:
@@ -17787,31 +18265,156 @@ Please improve this email.`;
     async (req, res) => {
       try {
         const { tenantId, campaignId } = req.params;
+        const { campaignTracker } = await import("./campaign-tracker");
+        const { emailService } = await import("./email-service");
 
-        // Simulate sending process
-        await new Promise((resolve) => setTimeout(resolve, 1500));
+        // Get campaign details
+        const [campaign] = await sql`
+          SELECT * FROM email_campaigns WHERE id = ${parseInt(campaignId)} AND tenant_id = ${parseInt(tenantId)}
+        `;
 
-        // Generate realistic campaign results
-        const recipientCount = Math.floor(Math.random() * 400) + 100;
-        const openRate = (Math.random() * 30 + 15).toFixed(1); // 15-45%
-        const clickRate = (Math.random() * 8 + 2).toFixed(1); // 2-10%
+        if (!campaign) {
+          return res.status(404).json({ message: "Campaign not found" });
+        }
 
-        // Update the campaign in database
+        // Extract links from content for tracking
+        await campaignTracker.extractAndTrackLinks(parseInt(campaignId), campaign.content);
+
+        // Get recipients based on campaign target audience
+        let recipients: any[] = [];
+
+        if (campaign.target_audience === "manual_selection") {
+          // Get manually selected recipients from campaign metadata
+          const metadata = campaign.metadata ? JSON.parse(campaign.metadata) : {};
+          const selectedRecipients = metadata.selectedRecipients || [];
+
+          // Fetch actual customer/lead data
+          for (const recipient of selectedRecipients) {
+            if (recipient.type === "customer") {
+              const [customer] = await sql`
+                SELECT * FROM customers WHERE id = ${recipient.id} AND tenant_id = ${parseInt(tenantId)}
+              `;
+              if (customer) recipients.push({ ...customer, type: "customer" });
+            } else if (recipient.type === "lead") {
+              const [lead] = await sql`
+                SELECT * FROM leads WHERE id = ${recipient.id} AND tenant_id = ${parseInt(tenantId)}
+              `;
+              if (lead) recipients.push({ ...lead, type: "lead" });
+            }
+          }
+        } else if (campaign.target_audience?.startsWith("segment_")) {
+          // Get segment recipients (simplified - would use actual segment logic)
+          const segmentRecipients = await sql`
+            SELECT DISTINCT c.*, 'customer' as type
+            FROM customers c
+            WHERE c.tenant_id = ${parseInt(tenantId)} AND c.email IS NOT NULL
+            LIMIT 100
+          `;
+          recipients = segmentRecipients;
+        } else {
+          // All customers with email
+          const allCustomers = await sql`
+            SELECT *, 'customer' as type FROM customers 
+            WHERE tenant_id = ${parseInt(tenantId)} AND email IS NOT NULL
+          `;
+          recipients = allCustomers;
+        }
+
+        let successCount = 0;
+        let failureCount = 0;
+
+        // Send to each recipient
+        for (const recipient of recipients) {
+          try {
+            const email = recipient.email;
+            if (!email) continue;
+
+            // Personalize content
+            let personalizedContent = campaign.content;
+            let personalizedSubject = campaign.subject;
+
+            // Replace tokens
+            const firstName = recipient.first_name || recipient.name?.split(" ")[0] || "";
+            const lastName = recipient.last_name || recipient.name?.split(" ")[1] || "";
+            
+            personalizedContent = personalizedContent
+              .replace(/\{\{FirstName\}\}/g, firstName)
+              .replace(/\{\{LastName\}\}/g, lastName)
+              .replace(/\{\{Email\}\}/g, email)
+              .replace(/\{\{CompanyName\}\}/g, "Vani Technologies Travel")
+              .replace(/\{\{AgentName\}\}/g, "Travel Agent")
+              .replace(/\{\{BookingLink\}\}/g, `${process.env.APP_URL || "http://localhost:5000"}/bookings`);
+
+            personalizedSubject = personalizedSubject
+              .replace(/\{\{FirstName\}\}/g, firstName)
+              .replace(/\{\{LastName\}\}/g, lastName);
+
+            // Send email
+            const sent = await emailService.sendEmail({
+              to: email,
+              subject: personalizedSubject,
+              html: personalizedContent,
+              tenantId: parseInt(tenantId),
+            });
+
+            if (sent) {
+              successCount++;
+              // Track as sent
+              await campaignTracker.trackSent({
+                campaignId: parseInt(campaignId),
+                tenantId: parseInt(tenantId),
+                recipientType: recipient.type || "customer",
+                recipientId: recipient.id,
+                email: email,
+                metadata: { sentAt: new Date().toISOString() },
+              });
+            } else {
+              failureCount++;
+              await campaignTracker.trackFailed(
+                parseInt(campaignId),
+                recipient.id,
+                recipient.type || "customer",
+                "Failed to send email"
+              );
+            }
+          } catch (error: any) {
+            console.error(`Error sending to ${recipient.email}:`, error);
+            failureCount++;
+            await campaignTracker.trackFailed(
+              parseInt(campaignId),
+              recipient.id,
+              recipient.type || "customer",
+              error.message || "Unknown error"
+            );
+          }
+        }
+
+        // Update campaign with results
+        const totalSent = successCount + failureCount;
+        const stats = await campaignTracker.getCampaignStats(parseInt(campaignId));
+
         const updatedCampaign = await simpleStorage.updateEmailCampaign(
           parseInt(campaignId),
           {
             status: "sent",
-            recipientCount,
-            openRate,
-            clickRate,
+            recipientCount: totalSent,
+            openRate: stats.openRate.toFixed(2),
+            clickRate: stats.clickRate.toFixed(2),
             sentAt: new Date().toISOString(),
+            deliveredCount: stats.totalDelivered,
+            failedCount: failureCount,
           },
         );
 
-        res.json(updatedCampaign);
+        res.json({
+          ...updatedCampaign,
+          successCount,
+          failureCount,
+          stats,
+        });
       } catch (error) {
         console.error("Send email campaign error:", error);
-        res.status(500).json({ message: "Failed to send campaign" });
+        res.status(500).json({ message: "Failed to send campaign", error: (error as any)?.message });
       }
     },
   );
@@ -18352,7 +18955,7 @@ Please improve this email.`;
     }
   });
 
-  // User Notifications Routes - Simplified API for frontend NotificationBell component
+  // User Notifications Routes - Enhanced API with filtering and pagination
   app.get("/api/user/notifications", authenticateToken, async (req, res) => {
     try {
       const user = (req as any).user;
@@ -18360,13 +18963,34 @@ Please improve this email.`;
         return res.status(401).json({ message: "Unauthorized" });
       }
 
-      const { includeRead } = req.query;
+      const { 
+        includeRead = "true",
+        type,
+        priority,
+        limit = "50",
+        offset = "0",
+        unreadOnly = "false"
+      } = req.query;
+
       const notifications = await simpleStorage.getUserNotifications(
         user.id,
         user.tenantId,
         includeRead === "true",
+        type as string | undefined,
+        priority as string | undefined,
+        parseInt(limit as string),
+        parseInt(offset as string),
+        unreadOnly === "true"
       );
-      res.json(notifications);
+      
+      // Get unread count
+      const unreadCount = await simpleStorage.getUnreadNotificationCount(user.id, user.tenantId);
+      
+      res.json({
+        notifications,
+        unreadCount,
+        total: notifications.length,
+      });
     } catch (error) {
       console.error("Get user notifications error:", error);
       res.status(500).json({ message: "Internal server error" });
@@ -18415,6 +19039,80 @@ Please improve this email.`;
       }
     },
   );
+
+  // Delete notification
+  app.delete(
+    "/api/user/notifications/:notificationId",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        const user = (req as any).user;
+        const { notificationId } = req.params;
+
+        if (!user) {
+          return res.status(401).json({ message: "Unauthorized" });
+        }
+
+        await simpleStorage.deleteNotification(parseInt(notificationId), user.id);
+        res.json({ message: "Notification deleted" });
+      } catch (error) {
+        console.error("Delete notification error:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    },
+  );
+
+  // Delete all read notifications
+  app.delete(
+    "/api/user/notifications/read/all",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        const user = (req as any).user;
+        if (!user) {
+          return res.status(401).json({ message: "Unauthorized" });
+        }
+
+        await simpleStorage.deleteAllReadNotifications(user.id, user.tenantId);
+        res.json({ message: "All read notifications deleted" });
+      } catch (error) {
+        console.error("Delete all read notifications error:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    },
+  );
+
+  // Notification Preferences Routes
+  app.get("/api/user/notification-preferences", authenticateToken, async (req, res) => {
+    try {
+      const user = (req as any).user;
+      if (!user) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const preferences = await simpleStorage.getUserNotificationPreferences(user.id, user.tenantId);
+      res.json(preferences);
+    } catch (error) {
+      console.error("Get notification preferences error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.put("/api/user/notification-preferences", authenticateToken, async (req, res) => {
+    try {
+      const user = (req as any).user;
+      if (!user) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const preferences = req.body;
+      await simpleStorage.saveUserNotificationPreferences(user.id, user.tenantId, preferences);
+      res.json({ message: "Preferences saved successfully" });
+    } catch (error) {
+      console.error("Save notification preferences error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
 
   app.get("/api/system/settings", authenticateToken, async (req, res) => {
     try {
@@ -18535,6 +19233,24 @@ Please improve this email.`;
     }
   });
 
+  app.put(
+    "/api/tenants/:tenantId/email-campaigns/:campaignId",
+    async (req, res) => {
+      try {
+        const { campaignId } = req.params;
+        const updates = req.body;
+        const updatedCampaign = await simpleStorage.updateEmailCampaign(
+          parseInt(campaignId),
+          updates
+        );
+        res.json(updatedCampaign);
+      } catch (error) {
+        console.error("Update email campaign error:", error);
+        res.status(500).json({ message: "Failed to update campaign" });
+      }
+    },
+  );
+
   app.delete(
     "/api/tenants/:tenantId/email-campaigns/:campaignId",
     async (req, res) => {
@@ -18548,6 +19264,495 @@ Please improve this email.`;
       }
     },
   );
+
+  // Create dummy campaigns for testing
+  app.post("/api/tenants/:tenantId/email-campaigns/create-dummy", async (req, res) => {
+    try {
+      const { tenantId } = req.params;
+      const tenantIdNum = parseInt(tenantId);
+
+      // Get first user from tenant
+      const users = await sql`
+        SELECT id FROM users 
+        WHERE tenant_id = ${tenantIdNum} 
+        LIMIT 1
+      `;
+      const userId = users[0]?.id || null;
+
+      const campaigns = [
+        {
+          name: 'Summer Travel Promotion 2024',
+          subject: 'Discover Amazing Summer Destinations - Up to 40% Off!',
+          content: '<html><body><h1>Summer Travel Special</h1><p>Dear {{FirstName}},</p><p>Get ready for an unforgettable summer! We\'re offering exclusive discounts on our most popular destinations.</p><ul><li>Bali Packages - 35% OFF</li><li>European Tours - 40% OFF</li><li>Thailand Adventures - 30% OFF</li></ul><p><a href="{{BookingLink}}">Book Now</a></p><p>Best regards,<br>Travel Team</p></body></html>',
+          type: 'newsletter',
+          status: 'draft',
+          targetAudience: 'all_customers',
+          channel: 'email',
+          objective: 'package_promotion',
+        },
+        {
+          name: 'Welcome New Leads',
+          subject: 'Welcome to Vani Technologies Travel - Let\'s Plan Your Dream Trip!',
+          content: '<html><body><h1>Welcome {{FirstName}}!</h1><p>Thank you for your interest in our travel services. We\'re excited to help you plan your perfect getaway.</p><p>Your assigned travel agent, {{AgentName}}, will be in touch shortly to discuss your travel preferences.</p><p>In the meantime, explore our <a href="{{BookingLink}}">popular destinations</a>.</p><p>Happy Travels!<br>Vani Technologies Team</p></body></html>',
+          type: 'welcome',
+          status: 'sent',
+          targetAudience: 'new_leads',
+          channel: 'email',
+          objective: 'lead_generation',
+          recipientCount: 150,
+          openRate: '42.5',
+          clickRate: '12.3',
+          sentAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),
+        },
+        {
+          name: 'Follow-up: Abandoned Inquiries',
+          subject: 'Still Planning Your Trip? We\'re Here to Help!',
+          content: '<html><body><h1>Hi {{FirstName}},</h1><p>We noticed you were interested in {{Destination}} but haven\'t completed your inquiry.</p><p>Our travel experts are ready to help you finalize your plans. Here\'s what we can offer:</p><ul><li>Customized itinerary for {{Destination}}</li><li>Best price guarantee</li><li>24/7 support during your trip</li></ul><p><a href="{{BookingLink}}">Complete Your Inquiry</a></p><p>Questions? Reply to this email or call us anytime.</p><p>Best regards,<br>{{AgentName}}<br>Vani Technologies Travel</p></body></html>',
+          type: 'follow_up',
+          status: 'scheduled',
+          targetAudience: 'new_leads',
+          channel: 'email',
+          objective: 'abandoned_inquiry',
+          scheduledAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000),
+          recipientCount: 75,
+        },
+        {
+          name: 'Post-Booking: Travel Insurance & Add-ons',
+          subject: 'Enhance Your {{Destination}} Trip with Travel Insurance',
+          content: '<html><body><h1>Protect Your Investment, {{FirstName}}</h1><p>Congratulations on booking your trip to {{Destination}}!</p><p>Before you travel, consider adding:</p><ul><li><strong>Travel Insurance</strong> - Comprehensive coverage for just ₹{{Price}}</li><li><strong>Airport Transfers</strong> - Hassle-free arrival</li><li><strong>Travel Guide</strong> - Local insights and tips</li></ul><p><a href="{{BookingLink}}">Add Services Now</a></p><p>Questions? Contact {{AgentName}} at support@vanitechnologies.in</p><p>Safe Travels!<br>Vani Technologies Team</p></body></html>',
+          type: 'newsletter',
+          status: 'sent',
+          targetAudience: 'recent_bookings',
+          channel: 'email',
+          objective: 'post_booking_upsell',
+          recipientCount: 89,
+          openRate: '58.2',
+          clickRate: '18.7',
+          sentAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
+        },
+        {
+          name: 'Diwali Special: Family Travel Packages',
+          subject: 'Celebrate Diwali with Your Family - Special Travel Packages!',
+          content: '<html><body><h1>Diwali Special Offer</h1><p>Dear {{FirstName}},</p><p>This Diwali, create unforgettable memories with your family!</p><h2>Special Packages:</h2><ul><li>Goa Family Package - 3N/4D from ₹25,000</li><li>Kerala Backwaters - 4N/5D from ₹35,000</li><li>Rajasthan Heritage - 5N/6D from ₹45,000</li></ul><p><strong>Valid until: {{TravelDate}}</strong></p><p><a href="{{BookingLink}}">Book Your Diwali Trip</a></p><p>Wishing you a Happy Diwali!<br>Vani Technologies Travel</p></body></html>',
+          type: 'newsletter',
+          status: 'paused',
+          targetAudience: 'all_customers',
+          channel: 'email',
+          objective: 'seasonal_offers',
+          internalNotes: 'Paused for review - waiting for final approval from management',
+        },
+        {
+          name: 'Post-Travel Feedback Request',
+          subject: 'How was your trip to {{Destination}}? We\'d love your feedback!',
+          content: '<html><body><h1>Thank You for Traveling with Us!</h1><p>Hi {{FirstName}},</p><p>We hope you had an amazing trip to {{Destination}}!</p><p>Your feedback helps us improve our services. Please take a moment to share your experience:</p><p><a href="{{BookingLink}}">Share Your Feedback</a></p><p>As a thank you, we\'re offering 10% off your next booking!</p><p>Thank you for choosing Vani Technologies Travel.</p><p>Best regards,<br>{{AgentName}}<br>Vani Technologies Travel</p></body></html>',
+          type: 'follow_up',
+          status: 'sent',
+          targetAudience: 'recent_bookings',
+          channel: 'email',
+          objective: 'feedback_reviews',
+          recipientCount: 120,
+          openRate: '65.8',
+          clickRate: '22.5',
+          sentAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000),
+        },
+        {
+          name: 'New Year Multi-Channel Campaign',
+          subject: 'Start 2024 with Amazing Travel Adventures!',
+          content: '<html><body><h1>Happy New Year {{FirstName}}!</h1><p>Start the new year with unforgettable travel experiences.</p><p>Special New Year offers on all destinations!</p><p><a href="{{BookingLink}}">Explore Offers</a></p></body></html>',
+          type: 'newsletter',
+          status: 'draft',
+          targetAudience: 'all_customers',
+          channel: 'multi_channel',
+          objective: 'package_promotion',
+          internalNotes: 'Multi-channel campaign: Email + SMS + WhatsApp',
+        },
+      ];
+
+      const createdCampaigns = [];
+      for (const campaignData of campaigns) {
+        // Convert Date objects to ISO strings for PostgreSQL
+        const scheduledAtStr = campaignData.scheduledAt 
+          ? new Date(campaignData.scheduledAt).toISOString() 
+          : null;
+        const sentAtStr = campaignData.sentAt 
+          ? new Date(campaignData.sentAt).toISOString() 
+          : null;
+
+        const campaign = await sql`
+          INSERT INTO email_campaigns (
+            tenant_id, name, subject, content, type, status, target_audience,
+            channel, objective, owner_id, from_name, from_email, reply_to,
+            recipient_count, open_rate, click_rate, scheduled_at, sent_at,
+            internal_notes, created_at
+          ) VALUES (
+            ${tenantIdNum},
+            ${campaignData.name},
+            ${campaignData.subject},
+            ${campaignData.content},
+            ${campaignData.type},
+            ${campaignData.status},
+            ${campaignData.targetAudience},
+            ${campaignData.channel || 'email'},
+            ${campaignData.objective || 'package_promotion'},
+            ${userId},
+            'Vani Technologies Travel',
+            'noreply@vanitechnologies.in',
+            'support@vanitechnologies.in',
+            ${campaignData.recipientCount || 0},
+            ${campaignData.openRate || '0'},
+            ${campaignData.clickRate || '0'},
+            ${scheduledAtStr},
+            ${sentAtStr},
+            ${campaignData.internalNotes || null},
+            NOW()
+          )
+          RETURNING id, name, status
+        `;
+        createdCampaigns.push(campaign[0]);
+      }
+
+      res.json({
+        success: true,
+        message: `Successfully created ${createdCampaigns.length} dummy campaigns`,
+        campaigns: createdCampaigns,
+      });
+    } catch (error: any) {
+      console.error("Error creating dummy campaigns:", error);
+      res.status(500).json({
+        message: "Failed to create dummy campaigns",
+        error: error?.message,
+      });
+    }
+  });
+
+  // Add channel column to email_templates if missing (one-time migration)
+  app.post("/api/migrate/email-templates-channel", async (req, res) => {
+    try {
+      const checkColumn = await sql`
+        SELECT column_name 
+        FROM information_schema.columns 
+        WHERE table_name = 'email_templates' AND column_name = 'channel'
+        LIMIT 1
+      `;
+
+      if (checkColumn.length === 0) {
+        await sql`
+          ALTER TABLE email_templates 
+          ADD COLUMN channel TEXT DEFAULT 'email' 
+          CHECK (channel IN ('email', 'sms', 'whatsapp'))
+        `;
+        await sql`
+          CREATE INDEX IF NOT EXISTS idx_email_templates_channel 
+          ON email_templates(channel)
+        `;
+        res.json({ message: "Channel column added successfully" });
+      } else {
+        res.json({ message: "Channel column already exists" });
+      }
+    } catch (error) {
+      console.error("Migration error:", error);
+      res.status(500).json({ message: "Migration failed", error: (error as any)?.message });
+    }
+  });
+
+  // Email Templates Routes
+  app.get("/api/tenants/:tenantId/email-templates", async (req, res) => {
+    try {
+      const { tenantId } = req.params;
+      const templates = await simpleStorage.getEmailTemplatesByTenant(parseInt(tenantId));
+      res.json(templates);
+    } catch (error) {
+      console.error("Get email templates error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post("/api/tenants/:tenantId/email-templates", async (req, res) => {
+    try {
+      const { tenantId } = req.params;
+      const templateData = {
+        ...req.body,
+        tenantId: parseInt(tenantId),
+      };
+      const newTemplate = await simpleStorage.createEmailTemplate(templateData);
+      res.status(201).json(newTemplate);
+    } catch (error) {
+      console.error("Create email template error:", error);
+      res.status(500).json({ message: "Failed to create template" });
+    }
+  });
+
+  app.put("/api/tenants/:tenantId/email-templates/:templateId", async (req, res) => {
+    try {
+      const { templateId } = req.params;
+      const updates = req.body;
+      const updatedTemplate = await simpleStorage.updateEmailTemplate(parseInt(templateId), updates);
+      res.json(updatedTemplate);
+    } catch (error) {
+      console.error("Update email template error:", error);
+      res.status(500).json({ message: "Failed to update template" });
+    }
+  });
+
+  app.delete("/api/tenants/:tenantId/email-templates/:templateId", async (req, res) => {
+    try {
+      const { templateId } = req.params;
+      await simpleStorage.deleteEmailTemplate(parseInt(templateId));
+      res.json({ message: "Template deleted successfully" });
+    } catch (error) {
+      console.error("Delete email template error:", error);
+      res.status(500).json({ message: "Failed to delete template" });
+    }
+  });
+
+  // Create dummy templates for testing
+  app.post("/api/tenants/:tenantId/email-templates/create-dummy", async (req, res) => {
+    try {
+      const { tenantId } = req.params;
+      const tenantIdNum = parseInt(tenantId);
+
+      const dummyTemplates = [
+        {
+          tenantId: tenantIdNum,
+          name: "Welcome Email Template",
+          channel: "email",
+          category: "welcome",
+          subject: "Welcome to {{CompanyName}} - Your Journey Begins!",
+          content: `
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <meta charset="utf-8">
+              <style>
+                body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+                .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+                .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
+                .button { display: inline-block; padding: 12px 30px; background: #667eea; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }
+                .footer { text-align: center; padding: 20px; color: #666; font-size: 12px; }
+              </style>
+            </head>
+            <body>
+              <div class="container">
+                <div class="header">
+                  <h1>Welcome {{FirstName}}!</h1>
+                </div>
+                <div class="content">
+                  <p>Dear {{FirstName}} {{LastName}},</p>
+                  <p>We're thrilled to have you join us at {{CompanyName}}! Your travel journey starts here.</p>
+                  <p>As a valued member, you'll enjoy:</p>
+                  <ul>
+                    <li>Exclusive travel deals and offers</li>
+                    <li>Personalized travel recommendations</li>
+                    <li>24/7 customer support</li>
+                    <li>Early access to new destinations</li>
+                  </ul>
+                  <a href="{{BookingLink}}" class="button">Explore Our Packages</a>
+                  <p>If you have any questions, feel free to reach out to {{AgentName}} at {{Email}}.</p>
+                  <p>Happy travels!</p>
+                  <p>Best regards,<br>The {{CompanyName}} Team</p>
+                </div>
+                <div class="footer">
+                  <p>© 2024 {{CompanyName}}. All rights reserved.</p>
+                </div>
+              </div>
+            </body>
+            </html>
+          `,
+          previewText: "Welcome to our travel family! Start exploring amazing destinations today.",
+        },
+        {
+          tenantId: tenantIdNum,
+          name: "Promotional Newsletter",
+          channel: "email",
+          category: "promotional",
+          subject: "🌴 Exclusive Summer Deals - Save Up to 30%!",
+          content: `
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <meta charset="utf-8">
+              <style>
+                body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+                .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                .header { background: #ff6b6b; color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+                .content { background: #fff; padding: 30px; border-radius: 0 0 10px 10px; }
+                .offer-box { background: #fff3cd; border: 2px dashed #ffc107; padding: 20px; margin: 20px 0; text-align: center; border-radius: 5px; }
+                .button { display: inline-block; padding: 12px 30px; background: #ff6b6b; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }
+              </style>
+            </head>
+            <body>
+              <div class="container">
+                <div class="header">
+                  <h1>Summer Sale is Here! 🏖️</h1>
+                </div>
+                <div class="content">
+                  <p>Hi {{FirstName}},</p>
+                  <p>Don't miss out on our biggest summer sale of the year!</p>
+                  <div class="offer-box">
+                    <h2>Save Up to 30%</h2>
+                    <p>On all travel packages</p>
+                    <p><strong>Valid until {{TravelDate}}</strong></p>
+                  </div>
+                  <p>Popular destinations include:</p>
+                  <ul>
+                    <li>🏝️ {{Destination}} - Starting from {{Price}}</li>
+                    <li>🏔️ Mountain Getaways - Special rates</li>
+                    <li>🌍 International Tours - Limited availability</li>
+                  </ul>
+                  <a href="{{BookingLink}}" class="button">Book Now & Save</a>
+                  <p>Questions? Contact {{AgentName}} at {{Email}}</p>
+                </div>
+              </div>
+            </body>
+            </html>
+          `,
+          previewText: "Exclusive summer deals! Save up to 30% on travel packages.",
+        },
+        {
+          tenantId: tenantIdNum,
+          name: "Booking Confirmation",
+          channel: "email",
+          category: "booking",
+          subject: "Booking Confirmed - {{BookingNumber}}",
+          content: `
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <meta charset="utf-8">
+              <style>
+                body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+                .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                .header { background: #28a745; color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+                .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
+                .booking-details { background: white; padding: 20px; margin: 20px 0; border-radius: 5px; border-left: 4px solid #28a745; }
+                .button { display: inline-block; padding: 12px 30px; background: #28a745; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }
+              </style>
+            </head>
+            <body>
+              <div class="container">
+                <div class="header">
+                  <h1>✓ Booking Confirmed!</h1>
+                </div>
+                <div class="content">
+                  <p>Dear {{FirstName}} {{LastName}},</p>
+                  <p>Your booking has been confirmed. We're excited to be part of your travel journey!</p>
+                  <div class="booking-details">
+                    <h3>Booking Details</h3>
+                    <p><strong>Booking Number:</strong> {{BookingNumber}}</p>
+                    <p><strong>Package:</strong> {{PackageName}}</p>
+                    <p><strong>Destination:</strong> {{Destination}}</p>
+                    <p><strong>Travel Date:</strong> {{TravelDate}}</p>
+                    <p><strong>Total Amount:</strong> {{Price}}</p>
+                  </div>
+                  <p>Your dedicated travel agent {{AgentName}} will be in touch soon with more details.</p>
+                  <a href="{{BookingLink}}" class="button">View Booking Details</a>
+                  <p>Thank you for choosing {{CompanyName}}!</p>
+                </div>
+              </div>
+            </body>
+            </html>
+          `,
+          previewText: "Your booking is confirmed! View details here.",
+        },
+        {
+          tenantId: tenantIdNum,
+          name: "SMS Welcome Message",
+          channel: "sms",
+          category: "welcome",
+          subject: null,
+          content: `Hi {{FirstName}}! Welcome to {{CompanyName}}. Your travel journey starts here. Get exclusive deals & 24/7 support. Reply HELP for assistance.`,
+          previewText: null,
+        },
+        {
+          tenantId: tenantIdNum,
+          name: "SMS Promotional Offer",
+          channel: "sms",
+          category: "promotional",
+          subject: null,
+          content: `{{FirstName}}, Summer Sale! Save 30% on {{Destination}} packages. Valid until {{TravelDate}}. Book now: {{BookingLink}}`,
+          previewText: null,
+        },
+        {
+          tenantId: tenantIdNum,
+          name: "WhatsApp Welcome Template",
+          channel: "whatsapp",
+          category: "welcome",
+          subject: null,
+          content: `👋 Welcome {{FirstName}}!
+
+Thank you for choosing {{CompanyName}}! We're here to make your travel dreams come true.
+
+✨ What you'll get:
+• Exclusive travel deals
+• Personalized recommendations
+• 24/7 support
+
+Ready to explore? Visit: {{BookingLink}}
+
+Need help? Just reply to this message!
+
+Happy travels! 🌍✈️`,
+          previewText: null,
+        },
+        {
+          tenantId: tenantIdNum,
+          name: "Follow-up Email",
+          channel: "email",
+          category: "followup",
+          subject: "How was your trip to {{Destination}}?",
+          content: `
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <meta charset="utf-8">
+              <style>
+                body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+                .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                .content { background: #f9f9f9; padding: 30px; border-radius: 10px; }
+                .button { display: inline-block; padding: 12px 30px; background: #17a2b8; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }
+              </style>
+            </head>
+            <body>
+              <div class="container">
+                <div class="content">
+                  <p>Hi {{FirstName}},</p>
+                  <p>We hope you had an amazing time exploring {{Destination}}!</p>
+                  <p>Your feedback is invaluable to us. Please take a moment to share your experience:</p>
+                  <a href="{{BookingLink}}" class="button">Share Your Feedback</a>
+                  <p>We'd also love to help you plan your next adventure. Check out our latest offers!</p>
+                  <p>Best regards,<br>{{AgentName}}<br>{{CompanyName}}</p>
+                </div>
+              </div>
+            </body>
+            </html>
+          `,
+          previewText: "We'd love to hear about your travel experience!",
+        },
+      ];
+
+      const createdTemplates = [];
+      for (const template of dummyTemplates) {
+        try {
+          const newTemplate = await simpleStorage.createEmailTemplate(template);
+          createdTemplates.push(newTemplate);
+        } catch (error) {
+          console.error(`Error creating template ${template.name}:`, error);
+        }
+      }
+
+      res.json({
+        message: `Successfully created ${createdTemplates.length} dummy templates`,
+        templates: createdTemplates,
+      });
+    } catch (error) {
+      console.error("Create dummy templates error:", error);
+      res.status(500).json({
+        message: "Failed to create dummy templates",
+        error: (error as any)?.message,
+      });
+    }
+  });
 
   app.get("/api/tenants/:tenantId/email-campaigns/stats", async (req, res) => {
     try {
@@ -20572,9 +21777,95 @@ Please improve this email.`;
       console.log("API: Fetching subscription plans");
       const plans = await simpleStorage.getAllSubscriptionPlans();
       res.setHeader("Content-Type", "application/json");
-      res.json(plans);
+      
+      // Group plans by country
+      const plansByCountry: Record<string, any[]> = {};
+      
+      plans.forEach((plan: any) => {
+        const country = plan.country || 'US';
+        if (!plansByCountry[country]) {
+          plansByCountry[country] = [];
+        }
+        plansByCountry[country].push(plan);
+      });
+      
+      // Transform to the desired structure
+      const result = Object.keys(plansByCountry).map((country) => {
+        const countryPlans = plansByCountry[country];
+        const firstPlan = countryPlans[0];
+        
+        return {
+          country: country,
+          currency: firstPlan.currency || 'USD',
+          plans: countryPlans.map((plan: any) => ({
+            id: plan.id,
+            name: plan.name,
+            description: plan.description,
+            monthly_price: plan.monthly_price,
+            yearly_price: plan.yearly_price,
+            max_users: plan.max_users,
+            max_customers: plan.max_customers,
+            features: plan.features,
+            is_active: plan.is_active,
+            created_at: plan.created_at,
+            country: plan.country,
+            currency: plan.currency,
+            allowed_menu_items: plan.allowed_menu_items || [],
+            allowed_pages: plan.allowed_pages || [],
+            free_trial_days: plan.free_trial_days || 0,
+            is_free_plan: plan.is_free_plan || false,
+            allowed_dashboard_widgets: plan.allowed_dashboard_widgets || [],
+            allowed_page_permissions: plan.allowed_page_permissions || {}
+          }))
+        };
+      });
+      
+      res.json(result);
     } catch (error) {
       console.error("Get subscription plans error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Get single subscription plan by ID (for editing)
+  app.get("/api/subscription/plans/:planId", async (req, res) => {
+    try {
+      const planId = parseInt(req.params.planId);
+      if (isNaN(planId)) {
+        return res.status(400).json({ message: "Invalid plan ID" });
+      }
+
+      console.log("API: Fetching subscription plan by ID:", planId);
+      const plan = await simpleStorage.getSubscriptionPlanById(planId);
+      res.setHeader("Content-Type", "application/json");
+      
+      if (!plan) {
+        return res.status(404).json({ message: "Plan not found" });
+      }
+
+      // Return plan with all fields
+      res.json({
+        id: plan.id,
+        name: plan.name,
+        description: plan.description,
+        monthly_price: plan.monthly_price,
+        yearly_price: plan.yearly_price,
+        max_users: plan.max_users,
+        max_customers: plan.max_customers,
+        features: plan.features,
+        is_active: plan.is_active,
+        created_at: plan.created_at,
+        country: plan.country,
+        currency: plan.currency,
+        allowed_menu_items: plan.allowed_menu_items || [],
+        allowed_pages: plan.allowed_pages || [],
+        free_trial_days: plan.free_trial_days || 0,
+        is_free_plan: plan.is_free_plan || false,
+        allowed_dashboard_widgets: plan.allowed_dashboard_widgets || [],
+        allowed_page_permissions: plan.allowed_page_permissions || {}
+      });
+    } catch (error) {
+      console.error("Get subscription plan by ID error:", error);
       res.status(500).json({ message: "Internal server error" });
     }
   });
@@ -20753,7 +22044,44 @@ Please improve this email.`;
   // Webhook endpoints for payment gateways
   app.post("/api/webhooks/stripe", async (req, res) => {
     try {
-      console.log("Stripe webhook received:", req.body);
+      const sig = req.headers['stripe-signature'];
+      if (!sig) {
+        return res.status(400).json({ error: "Missing stripe-signature header" });
+      }
+
+      const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+      if (!webhookSecret) {
+        console.warn("STRIPE_WEBHOOK_SECRET not configured, skipping signature verification");
+      }
+
+      // Import Stripe for webhook verification
+      const Stripe = require('stripe');
+      const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
+        apiVersion: '2023-10-16',
+      });
+
+      let event;
+      try {
+        if (webhookSecret) {
+          event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
+        } else {
+          // In development, accept events without verification
+          event = req.body;
+        }
+      } catch (err: any) {
+        console.error("Webhook signature verification failed:", err.message);
+        return res.status(400).json({ error: `Webhook Error: ${err.message}` });
+      }
+
+      console.log("Stripe webhook received:", event.type);
+      
+      // Import subscription service
+      const { SubscriptionService } = await import("./subscription-service");
+      const subscriptionService = new SubscriptionService();
+      
+      // Handle the webhook event
+      await subscriptionService.handleStripeWebhook(event);
+      
       res.json({ received: true });
     } catch (error) {
       console.error("Stripe webhook error:", error);
@@ -20763,7 +22091,30 @@ Please improve this email.`;
 
   app.post("/api/webhooks/razorpay", async (req, res) => {
     try {
-      console.log("Razorpay webhook received:", req.body);
+      const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
+      const signature = req.headers['x-razorpay-signature'] as string;
+      
+      if (webhookSecret && signature) {
+        const crypto = require('crypto');
+        const expectedSignature = crypto
+          .createHmac('sha256', webhookSecret)
+          .update(JSON.stringify(req.body))
+          .digest('hex');
+        
+        if (signature !== expectedSignature) {
+          return res.status(400).json({ error: "Invalid webhook signature" });
+        }
+      }
+
+      console.log("Razorpay webhook received:", req.body.event);
+      
+      // Import subscription service
+      const { SubscriptionService } = await import("./subscription-service");
+      const subscriptionService = new SubscriptionService();
+      
+      // Handle the webhook event
+      await subscriptionService.handleRazorpayWebhook(req.body);
+      
       res.json({ received: true });
     } catch (error) {
       console.error("Razorpay webhook error:", error);
@@ -25038,6 +26389,8 @@ Please improve this email.`;
           e.created_by,
           e.created_at,
           e.updated_at,
+          e.invoice_id,
+          e.auto_generated,
           v.name as vendor_name,
           lt.name as lead_type_name,
           lt.color as lead_type_color
@@ -25064,6 +26417,8 @@ Please improve this email.`;
         WHERE eli.expense_id = ${expenseId}
         ORDER BY eli.display_order ASC, eli.id ASC
       `;
+      
+      console.log(`💰 Fetched ${lineItems.length} line items for expense ${expenseId}:`, lineItems);
 
       // If no line items exist, check if this is an old expense (before migration)
       // In that case, return the expense as a single line item for backward compatibility
@@ -25099,11 +26454,13 @@ Please improve this email.`;
           }],
         });
       } else {
-        res.json({
+        const responseData = {
           ...expense,
           expenseNumber: `${expense.expense_prefix || ""}${expense.expense_number || ""}`,
           lineItems: lineItems,
-        });
+        };
+        console.log(`💰 Returning expense ${expenseId} with ${lineItems.length} line items`);
+        res.json(responseData);
       }
     } catch (error: unknown) {
       console.error("💰 Error fetching expense:", error);
@@ -27901,19 +29258,11 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
 
     invoices.forEach((inv) => {
       const month = inv.month;
-      const paidAmount = Number(inv.paidAmount || 0);
       const totalAmount = Number(inv.totalAmount || 0);
-      const status = (inv.status || '').toLowerCase();
       
-      // Only count actual revenue received (paid amounts)
-      // For fully paid invoices, use totalAmount; for partially paid, use paidAmount
-      let revenue = 0;
-      if (status === 'paid') {
-        revenue = totalAmount; // Fully paid invoice
-      } else if (status === 'partially_paid' || status === 'partial' || paidAmount > 0) {
-        revenue = paidAmount; // Partially paid invoice - only count what's been paid
-      }
-      // Don't count pending, overdue, or draft invoices as revenue
+      // Count all invoices (except void/cancelled which are already filtered) as revenue
+      // This represents total invoice amount issued, not just paid amount
+      const revenue = totalAmount;
 
       if (!invoiceMonthData[month]) {
         invoiceMonthData[month] = { revenue: 0 };
@@ -27937,7 +29286,7 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
         SUM(amount)::numeric AS total
       FROM expenses
       WHERE tenant_id = ${tenantId}
-        AND status = 'approved'
+        AND status NOT IN ('cancelled', 'void')
         AND ${expenseDateFilter}
       GROUP BY 1
       ORDER BY 1 ASC
