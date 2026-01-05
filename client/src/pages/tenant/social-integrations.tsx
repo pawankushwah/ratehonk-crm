@@ -31,6 +31,7 @@ interface SocialIntegration {
   lastSync?: string;
   totalLeadsImported?: number;
   webhookUrl?: string;
+  tokenExpiresAt?: string;
 }
 
 export default function SocialIntegrations() {
@@ -49,6 +50,12 @@ export default function SocialIntegrations() {
     queryKey: [`/api/tenants/${tenant?.id}/social-integrations`],
     enabled: !!tenant?.id,
   });
+
+  // Check if Facebook Lead Ads integration is connected
+  const facebookLeadAdsIntegration = integrations.find(
+    (int: SocialIntegration) => int.platform === 'facebook-lead-ads'
+  );
+  const isFacebookLeadAdsConnected = facebookLeadAdsIntegration && facebookLeadAdsIntegration.accessToken;
 
   const saveIntegrationMutation = useMutation({
     mutationFn: async (integration: SocialIntegration) => {
@@ -1419,7 +1426,7 @@ export default function SocialIntegrations() {
                           <span className="text-sm font-medium">Real-time Sync Available</span>
                         </div>
                       </div>
-                      {(facebookStatus as any)?.isConnected ? (
+                      {isFacebookLeadAdsConnected ? (
                         <div className="flex gap-3">
                           <Button 
                             onClick={() => setIsFacebookLeadsManagerOpen(true)}
@@ -1467,11 +1474,19 @@ export default function SocialIntegrations() {
                                 if (event.data.type === 'FACEBOOK_OAUTH_SUCCESS' && event.data.integration === 'facebook-lead-ads') {
                                   window.removeEventListener('message', messageListener);
                                   popup?.close();
-                                  toast({
-                                    title: "Facebook Lead Ads Connected!",
-                                    description: "You can now sync leads from Facebook Lead Ads.",
-                                  });
+                                  
+                                  // Refresh integrations to get the new connection status
                                   queryClient.invalidateQueries({ queryKey: [`/api/tenants/${tenant?.id}/social-integrations`] });
+                                  
+                                  // Wait a moment for the query to refresh, then show success and open leads manager
+                                  setTimeout(() => {
+                                    toast({
+                                      title: "Facebook Lead Ads Connected!",
+                                      description: "You can now sync leads from Facebook Lead Ads.",
+                                    });
+                                    // Automatically open the leads manager after successful connection
+                                    setIsFacebookLeadsManagerOpen(true);
+                                  }, 500);
                                 } else if (event.data.type === 'FACEBOOK_OAUTH_ERROR') {
                                   window.removeEventListener('message', messageListener);
                                   popup?.close();

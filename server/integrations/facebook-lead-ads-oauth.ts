@@ -11,12 +11,12 @@ import crypto from "crypto";
 // Since the app is already working in another project, these permissions are likely already approved
 const FACEBOOK_SCOPES = [
   // Basic permissions:
-  "email",                    // Basic user email
+  // "email",                    // Optional: Basic user email (not required for Lead Ads, email comes from form data)
   "pages_show_list",         // List user's pages
   "pages_read_engagement",   // Read page engagement metrics
   
   // Advanced permissions (should be approved if app works in another project):
-  "leads_retrieval",         // Retrieve lead data from Facebook Lead Ads
+  "leads_retrieval",         // Retrieve lead data from Facebook Lead Ads (CRITICAL)
   "pages_manage_metadata",   // Manage page metadata
   "pages_read_user_content", // Read user content on pages
   "pages_manage_ads",        // Manage ads and lead forms

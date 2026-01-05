@@ -15187,46 +15187,47 @@ David,Brown,david.brown@example.com,555-0127,email_campaign,contacted,Prefers lu
     try {
       const { tenantId } = req.params;
 
-      // For now, return sample integrations with stored configurations
-      const integrations = [
-        {
-          id: 1,
-          platform: "facebook",
-          isActive: false,
-          appId: "",
-          appSecret: "",
-          accessToken: "",
-          lastSync: null,
-          totalLeadsImported: 0,
-          webhookUrl: `${req.protocol}://${req.get("host")}/api/tenants/${tenantId}/webhooks/facebook`,
-        },
-        {
-          id: 2,
-          platform: "instagram",
-          isActive: false,
-          accessToken: "",
-          businessAccountId: "",
-          lastSync: null,
-          totalLeadsImported: 0,
-          webhookUrl: `${req.protocol}://${req.get("host")}/api/tenants/${tenantId}/webhooks/instagram`,
-        },
-        {
-          id: 3,
-          platform: "linkedin",
-          isActive: false,
-          clientId: "",
-          clientSecret: "",
-          accessToken: "",
-          lastSync: null,
-          totalLeadsImported: 0,
-          webhookUrl: `${req.protocol}://${req.get("host")}/api/tenants/${tenantId}/webhooks/linkedin`,
-        },
-      ];
+      // Get all integrations from database
+      const dbIntegrations = await sql`
+        SELECT 
+          id,
+          tenant_id as "tenantId",
+          platform,
+          is_active as "isActive",
+          app_id as "appId",
+          app_secret as "appSecret",
+          access_token as "accessToken",
+          token_expires_at as "tokenExpiresAt",
+          last_sync as "lastSync",
+          total_leads_imported as "totalLeadsImported",
+          webhook_url as "webhookUrl",
+          settings,
+          created_at as "createdAt",
+          updated_at as "updatedAt"
+        FROM social_integrations 
+        WHERE tenant_id = ${parseInt(tenantId)}
+        ORDER BY platform
+      `;
+
+      // Map database results to frontend format
+      const integrations = dbIntegrations.map((int: any) => ({
+        id: int.id,
+        platform: int.platform,
+        isActive: int.isActive,
+        appId: int.appId || null,
+        appSecret: int.appSecret || null,
+        accessToken: int.accessToken || null,
+        tokenExpiresAt: int.tokenExpiresAt ? new Date(int.tokenExpiresAt).toISOString() : null,
+        lastSync: int.lastSync ? new Date(int.lastSync).toISOString() : null,
+        totalLeadsImported: int.totalLeadsImported || 0,
+        webhookUrl: int.webhookUrl || `${req.protocol}://${req.get("host")}/api/tenants/${tenantId}/webhooks/${int.platform}`,
+        settings: int.settings || {},
+      }));
 
       res.json(integrations);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Get social integrations error:", error);
-      res.status(500).json({ message: "Internal server error" });
+      res.status(500).json({ message: error.message || "Internal server error" });
     }
   });
 
