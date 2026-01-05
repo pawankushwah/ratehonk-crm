@@ -8,13 +8,20 @@ import { sql } from "../db";
 import { FacebookService } from "../facebook-service";
 import crypto from "crypto";
 
+// Facebook OAuth Scopes
+// Since the app is already working in another project, these permissions are likely already approved
 const FACEBOOK_SCOPES = [
-  "leads_retrieval",
-  "pages_read_engagement",
-  "pages_manage_metadata",
-  "pages_read_user_content",
-  "pages_manage_ads",
-];
+  // Basic permissions:
+  "email",                    // Basic user email
+  "pages_show_list",         // List user's pages
+  "pages_read_engagement",   // Read page engagement metrics
+  
+  // Advanced permissions (should be approved if app works in another project):
+  "leads_retrieval",         // Retrieve lead data from Facebook Lead Ads
+  "pages_manage_metadata",   // Manage page metadata
+  "pages_read_user_content", // Read user content on pages
+  "pages_manage_ads",        // Manage ads and lead forms
+].filter(Boolean);
 
 /**
  * Generate OAuth state token and store it in database
