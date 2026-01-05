@@ -103,7 +103,7 @@ export function FacebookLeadsManager({
       const response = await apiRequest("POST", `/api/integrations/facebook-lead-ads/sync-leads`, {
         integrationId,
         pageId: selectedPageId || undefined,
-        formId: selectedFormId || undefined,
+        formId: selectedFormId && selectedFormId !== "all" ? selectedFormId : undefined,
         startDate: startDate ? format(startDate, "yyyy-MM-dd") : undefined,
         endDate: endDate ? format(endDate, "yyyy-MM-dd") : undefined,
         tenantId,
@@ -196,7 +196,7 @@ export function FacebookLeadsManager({
                     <SelectValue placeholder={formsLoading ? "Loading forms..." : "Select a form (optional)"} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">All Forms</SelectItem>
+                    <SelectItem value="all">All Forms</SelectItem>
                     {formsData?.forms.map((form) => (
                       <SelectItem key={form.id} value={form.id}>
                         {form.name} ({form.status}) {form.leads_count !== undefined && `- ${form.leads_count} leads`}
