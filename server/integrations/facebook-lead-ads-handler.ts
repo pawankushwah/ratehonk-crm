@@ -5,7 +5,6 @@
 
 import { Express } from "express";
 import { sql } from "../db";
-import { FacebookService } from "../facebook-service";
 import { SimpleStorage } from "../simple-storage";
 
 const simpleStorage = new SimpleStorage();
@@ -188,31 +187,18 @@ export function registerFacebookLeadAdsRoutes(app: Express) {
         });
       }
 
-      // Get app credentials for FacebookService
-      const [appCreds] = await sql`
-        SELECT app_id, app_secret FROM social_integrations 
-        WHERE tenant_id = ${tenantId} AND platform = 'facebook' AND is_active = true
-      `;
+      // Get user's pages using Graph API directly
+      const pagesResponse = await fetch(
+        `https://graph.facebook.com/v18.0/me/accounts?fields=id,name,category,access_token&access_token=${integration.access_token}`
+      );
 
-      const appId =
-        appCreds?.app_id ||
-        process.env.FACEBOOK_APP_ID ||
-        process.env.FB_APP_ID;
-      const appSecret =
-        appCreds?.app_secret ||
-        process.env.FACEBOOK_APP_SECRET ||
-        process.env.FB_APP_SECRET;
-
-      if (!appId || !appSecret) {
-        return res.status(400).json({
-          error: "Facebook app credentials not configured",
-        });
+      if (!pagesResponse.ok) {
+        const errorData = await pagesResponse.json().catch(() => ({}));
+        throw new Error(errorData.error?.message || "Failed to fetch pages");
       }
 
-      const facebookService = new FacebookService(appId, appSecret);
-      const pages = await facebookService.getUserPages(
-        integration.access_token
-      );
+      const pagesData = await pagesResponse.json();
+      const pages = pagesData.data || [];
 
       res.json({
         success: true,
@@ -273,21 +259,31 @@ export function registerFacebookLeadAdsRoutes(app: Express) {
         });
       }
 
-      const facebookService = new FacebookService(appId, appSecret);
-      const pages = await facebookService.getUserPages(
-        integration.access_token
+      // Get page access token
+      const pageResponse = await fetch(
+        `https://graph.facebook.com/v18.0/${pageId}?fields=id,name,access_token&access_token=${integration.access_token}`
       );
 
-      const page = pages.find((p: any) => p.id === pageId);
-      if (!page) {
-        return res.status(404).json({ error: "Page not found" });
+      if (!pageResponse.ok) {
+        const errorData = await pageResponse.json().catch(() => ({}));
+        throw new Error(errorData.error?.message || "Failed to fetch page");
       }
 
-      // Get lead forms for this page
-      const forms = await facebookService.getPageLeadForms(
-        page.access_token,
-        pageId
+      const pageData = await pageResponse.json();
+      const pageAccessToken = pageData.access_token || integration.access_token;
+
+      // Get lead forms for the page
+      const formsResponse = await fetch(
+        `https://graph.facebook.com/v18.0/${pageId}/leadgen_forms?fields=id,name,status,leads_count&access_token=${pageAccessToken}`
       );
+
+      if (!formsResponse.ok) {
+        const errorData = await formsResponse.json().catch(() => ({}));
+        throw new Error(errorData.error?.message || "Failed to fetch lead forms");
+      }
+
+      const formsData = await formsResponse.json();
+      const forms = formsData.data || [];
 
       res.json({
         success: true,
@@ -345,31 +341,18 @@ export function registerFacebookLeadAdsRoutes(app: Express) {
         });
       }
 
-      // Get app credentials
-      const [appCreds] = await sql`
-        SELECT app_id, app_secret FROM social_integrations 
-        WHERE tenant_id = ${tenantId} AND platform = 'facebook' AND is_active = true
-      `;
+      // Get user's pages using Graph API directly
+      const pagesResponse = await fetch(
+        `https://graph.facebook.com/v18.0/me/accounts?fields=id,name,access_token&access_token=${integration.access_token}`
+      );
 
-      const appId =
-        appCreds?.app_id ||
-        process.env.FACEBOOK_APP_ID ||
-        process.env.FB_APP_ID;
-      const appSecret =
-        appCreds?.app_secret ||
-        process.env.FACEBOOK_APP_SECRET ||
-        process.env.FB_APP_SECRET;
-
-      if (!appId || !appSecret) {
-        return res.status(400).json({
-          error: "Facebook app credentials not configured",
-        });
+      if (!pagesResponse.ok) {
+        const errorData = await pagesResponse.json().catch(() => ({}));
+        throw new Error(errorData.error?.message || "Failed to fetch pages");
       }
 
-      const facebookService = new FacebookService(appId, appSecret);
-      const pages = await facebookService.getUserPages(
-        integration.access_token
-      );
+      const pagesData = await pagesResponse.json();
+      const pages = pagesData.data || [];
 
       // Filter pages if pageId is specified
       const pagesToProcess = pageId
@@ -390,11 +373,19 @@ export function registerFacebookLeadAdsRoutes(app: Express) {
       // Process each page
       for (const page of pagesToProcess) {
         try {
-          // Get lead forms
-          const forms = await facebookService.getPageLeadForms(
-            page.access_token,
-            page.id
+          // Get lead forms for this page
+          const formsResponse = await fetch(
+            `https://graph.facebook.com/v18.0/${page.id}/leadgen_forms?fields=id,name,status&access_token=${page.access_token || integration.access_token}`
           );
+
+          let forms: any[] = [];
+          if (formsResponse.ok) {
+            const formsData = await formsResponse.json();
+            forms = formsData.data || [];
+          } else {
+            const errorData = await formsResponse.json().catch(() => ({}));
+            console.error(`Failed to fetch forms for page ${page.id}:`, errorData);
+          }
 
           // Filter forms if formId is specified
           const formsToProcess = formId
@@ -404,42 +395,81 @@ export function registerFacebookLeadAdsRoutes(app: Express) {
           // Process each form
           for (const form of formsToProcess) {
             try {
-              // Get leads with pagination
-              let allLeads: any[] = [];
-              let nextUrl: string | null = `${facebookService['baseUrl']}/${form.id}/leads?fields=id,created_time,field_data&access_token=${page.access_token}`;
+              // Build query parameters for leads
+              const params = new URLSearchParams({
+                access_token: page.access_token || integration.access_token,
+              });
 
-              // Add date filters if provided
-              if (startDate || endDate) {
-                const params = new URLSearchParams();
-                if (startDate) params.append("since", new Date(startDate).getTime().toString());
-                if (endDate) params.append("until", new Date(endDate).getTime().toString());
-                nextUrl += `&${params.toString()}`;
+              if (startDate) {
+                params.append("time_created[gte]", new Date(startDate).getTime().toString());
+              }
+              if (endDate) {
+                params.append("time_created[lte]", new Date(endDate).getTime().toString());
               }
 
-              // Fetch all leads with pagination
-              while (nextUrl) {
-                const response = await fetch(nextUrl);
-                if (!response.ok) {
-                  throw new Error(`Failed to fetch leads: ${response.statusText}`);
+              // Get leads for this form (include field_data to get form field values)
+              // Handle pagination to get ALL leads
+              let leadsUrl = `https://graph.facebook.com/v18.0/${form.id}/leads?fields=id,created_time,field_data&${params.toString()}`;
+              let formLeads: any[] = [];
+
+              while (leadsUrl) {
+                const leadsResponse = await fetch(leadsUrl);
+
+                if (leadsResponse.ok) {
+                  const leadsData = await leadsResponse.json();
+                  const leads = leadsData.data || [];
+
+                  // Enrich leads with form and page info
+                  const enrichedLeads = leads.map((lead: any) => ({
+                    ...lead,
+                    form_id: form.id,
+                    form_name: form.name,
+                    page_id: page.id,
+                    page_name: page.name,
+                  }));
+
+                  formLeads = formLeads.concat(enrichedLeads);
+
+                  // Check for next page
+                  const paging = leadsData.paging;
+                  if (paging && paging.next) {
+                    leadsUrl = paging.next;
+                    console.log(`[Facebook Leads] Fetching next page for form ${form.id}, total so far: ${formLeads.length}`);
+                  } else {
+                    leadsUrl = ''; // No more pages
+                  }
+                } else {
+                  const errorData = await leadsResponse.json().catch(() => ({}));
+                  console.error(`Failed to fetch leads for form ${form.id}:`, errorData);
+                  leadsUrl = ''; // Stop pagination on error
                 }
-                const data = await response.json();
-                allLeads = allLeads.concat(data.data || []);
-                nextUrl = data.paging?.next || null;
               }
 
-              totalLeads += allLeads.length;
+              console.log(`[Facebook Leads] Fetched ${formLeads.length} total leads from form ${form.id}`);
+              allLeads = allLeads.concat(formLeads);
 
               // Process each lead
-              for (const lead of allLeads) {
+              for (let i = 0; i < formLeads.length; i++) {
+                const lead = formLeads[i];
+                
+                // Log progress every 50 leads
+                if (i % 50 === 0 && i > 0) {
+                  console.log(`[Facebook Leads] Processing lead ${i + 1}/${formLeads.length}...`);
+                }
+
                 try {
-                  // Lead data already contains field_data from the API call
-                  // Use the lead directly (it already has field_data)
+                  // Get form and page info from enriched lead data
+                  const formId = lead.form_id || form.id;
+                  const formName = lead.form_name || form.name;
+                  const pageId = lead.page_id || page.id;
+                  const pageName = lead.page_name || page.name;
+                  
                   const result = await processLead(
                     lead,
-                    form.id,
-                    form.name,
-                    page.id,
-                    page.name,
+                    formId,
+                    formName,
+                    pageId,
+                    pageName,
                     tenantId
                   );
 
@@ -464,6 +494,8 @@ export function registerFacebookLeadAdsRoutes(app: Express) {
                   });
                 }
               }
+
+              totalLeads += formLeads.length;
             } catch (formError: any) {
               console.error(`Error processing form ${form.id}:`, formError);
               errorDetails.push({

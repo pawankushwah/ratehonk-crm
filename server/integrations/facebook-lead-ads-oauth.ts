@@ -5,7 +5,6 @@
 
 import { Express } from "express";
 import { sql } from "../db";
-import { FacebookService } from "../facebook-service";
 import crypto from "crypto";
 
 // Facebook OAuth Scopes
@@ -124,7 +123,9 @@ export function registerFacebookLeadAdsOAuthRoutes(app: Express) {
           }
         }
 
-        const redirectUri = `${req.protocol}://${req.get("host")}/fb/callback`;
+        // Use BASE_URL from env if available, otherwise construct from request
+        const BASE_URL = process.env.BASE_URL || process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
+        const redirectUri = `${BASE_URL}/fb/callback`;
         const state = await generateOAuthState(tenantId, redirectUri);
 
         // Get app credentials (from DB or .env)
@@ -137,16 +138,13 @@ export function registerFacebookLeadAdsOAuthRoutes(app: Express) {
           process.env.FACEBOOK_APP_SECRET ||
           process.env.FB_APP_SECRET;
 
-        const facebookService = new FacebookService(appId!, appSecret!);
-        const authUrl = `https://www.facebook.com/v19.0/dialog/oauth?${new URLSearchParams(
-          {
-            client_id: appId!,
-            redirect_uri: redirectUri,
-            scope: FACEBOOK_SCOPES.join(","),
-            response_type: "code",
-            state: state,
-          }
-        ).toString()}`;
+        // Build authorization URL using URL object for better compatibility
+        const authUrl = new URL("https://www.facebook.com/v18.0/dialog/oauth");
+      authUrl.searchParams.set("client_id", appId!);
+      authUrl.searchParams.set("redirect_uri", redirectUri);
+      authUrl.searchParams.set("scope", FACEBOOK_SCOPES.join(","));
+      authUrl.searchParams.set("state", state);
+      authUrl.searchParams.set("response_type", "code");
 
         res.json({ authUrl });
       } catch (error: any) {
@@ -291,22 +289,58 @@ export function registerFacebookLeadAdsOAuthRoutes(app: Express) {
         throw new Error("Facebook credentials not configured");
       }
 
-      // Exchange code for access token
-      const facebookService = new FacebookService(appId, appSecret);
-      const tokenData = await facebookService.exchangeCodeForToken(
-        code as string,
-        redirectUri
-      );
+      // Exchange code for access token using Graph API directly
+      const tokenUrl = new URL("https://graph.facebook.com/v18.0/oauth/access_token");
+      tokenUrl.searchParams.set("client_id", appId);
+      tokenUrl.searchParams.set("client_secret", appSecret);
+      tokenUrl.searchParams.set("redirect_uri", redirectUri);
+      tokenUrl.searchParams.set("code", code as string);
+
+      const tokenResponse = await fetch(tokenUrl.toString(), {
+        method: "GET",
+      });
+
+      if (!tokenResponse.ok) {
+        const errorData = await tokenResponse.json().catch(() => ({}));
+        throw new Error(errorData.error?.message || "Failed to exchange code for token");
+      }
+
+      const tokens = await tokenResponse.json();
 
       // Exchange for long-lived token (60 days)
-      const longLivedToken = await facebookService.getLongLivedToken(
-        tokenData.access_token
-      );
+      const longLivedTokenUrl = new URL("https://graph.facebook.com/v18.0/oauth/access_token");
+      longLivedTokenUrl.searchParams.set("grant_type", "fb_exchange_token");
+      longLivedTokenUrl.searchParams.set("client_id", appId);
+      longLivedTokenUrl.searchParams.set("client_secret", appSecret);
+      longLivedTokenUrl.searchParams.set("fb_exchange_token", tokens.access_token);
+
+      const longLivedResponse = await fetch(longLivedTokenUrl.toString(), {
+        method: "GET",
+      });
+
+      let accessToken = tokens.access_token;
+      let expiresIn = tokens.expires_in || 3600; // Default to 1 hour if not provided
+
+      if (longLivedResponse.ok) {
+        const longLivedTokens = await longLivedResponse.json();
+        accessToken = longLivedTokens.access_token;
+        expiresIn = longLivedTokens.expires_in || 5184000; // 60 days in seconds
+      }
+
+      const longLivedToken = {
+        access_token: accessToken,
+        expires_in: expiresIn,
+      };
 
       // Get user info
-      const userInfo = await facebookService.getUser(
-        longLivedToken.access_token
+      const userInfoResponse = await fetch(
+        `https://graph.facebook.com/v18.0/me?fields=id,name,email&access_token=${longLivedToken.access_token}`
       );
+      
+      let userInfo: any = {};
+      if (userInfoResponse.ok) {
+        userInfo = await userInfoResponse.json();
+      }
 
       // Store integration with credentials
       // Check if integration exists for facebook-lead-ads
