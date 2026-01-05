@@ -226,7 +226,7 @@ const socialLinks = [
   },
   {
     name: "Facebook",
-    href: "/facebook-business-suite",
+    href: "/social-integrations",
     icon: Facebook,
     color: "text-blue-600",
     isCustom: false,

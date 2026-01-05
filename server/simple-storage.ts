@@ -1189,11 +1189,16 @@ export class SimpleStorage {
         LEFT JOIN leads l ON l.assigned_user_id = u.id AND l.tenant_id = ${tenantId}
         WHERE u.tenant_id = ${tenantId} 
           AND u.is_active = true
-          AND (r.permissions->>'leads' IS NOT NULL OR r.is_default = true)
+          AND (
+            (r.permissions IS NOT NULL AND (r.permissions->>'leads') IS NOT NULL) 
+            OR r.is_default = true
+          )
         GROUP BY u.id, u.role_id, u.reporting_user_id, r.name, r.hierarchy_level, r.permissions
         HAVING (
-          r.permissions->>'leads' LIKE '%"view"%' OR 
-          r.permissions->>'leads' LIKE '%"create"%' OR
+          (r.permissions IS NOT NULL AND (
+            (r.permissions->>'leads')::text LIKE '%"view"%' OR 
+            (r.permissions->>'leads')::text LIKE '%"create"%'
+          )) OR
           r.is_default = true
         )
         ORDER BY 
@@ -1967,13 +1972,8 @@ async getAllLeadsByTenant(
       // Auto-assign lead if userId not provided
       let finalUserId = userId;
       if (!finalUserId && tenantId) {
-        // Get role ID from lead type if available (for role-based assignment)
-        const [leadType] = leadData.leadTypeId 
-          ? await sql`SELECT id, preferred_role_id FROM lead_types WHERE id = ${leadData.leadTypeId} AND tenant_id = ${tenantId}`
-          : [null];
-        
-        const preferredRoleId = leadType?.preferred_role_id || null;
-        finalUserId = await this.autoAssignLead(tenantId, finalLeadTypeId, preferredRoleId);
+        // Auto-assign lead (without preferred_role_id since column doesn't exist)
+        finalUserId = await this.autoAssignLead(tenantId, finalLeadTypeId, undefined);
       }
 
       // Handle type_specific_data - convert to JSON string for postgres.js JSONB column
@@ -2033,15 +2033,21 @@ async getAllLeadsByTenant(
 
       console.log("🔍 Lead created successfully:", lead.id);
 
-      await this.saveLeadActivity({
-        tenant_id: lead.tenantId,
-        lead_id: lead.id,
-        user_id: userId, // or the real user ID
-        activity_type: 1, // assuming 'LEAD_CREATED' maps to 1
-        activity_title: `Lead Created ${lead.firstName} ${lead.lastName}`,
-        activity_description: `Summary : ${tenantId}, ${finalLeadTypeId}, ${finalFirstName}, ${finalLastName}, ${finalName}, ${email || ""}, ${phone || null}, ${source || null}, ${status || "new"}, ${notes || null}, ${budgetRange || null}, ${priority || "medium"}, ${country || null}, ${state || null}, ${city || null}`,
-        activity_status: 1,
-      });
+      // Save lead activity - use finalUserId (assigned user) or userId (creator) or skip if both are null
+      const activityUserId = finalUserId || userId;
+      if (activityUserId) {
+        await this.saveLeadActivity({
+          tenant_id: lead.tenantId,
+          lead_id: lead.id,
+          user_id: activityUserId,
+          activity_type: 1, // assuming 'LEAD_CREATED' maps to 1
+          activity_title: `Lead Created ${lead.firstName} ${lead.lastName}`,
+          activity_description: `Summary : ${tenantId}, ${finalLeadTypeId}, ${finalFirstName}, ${finalLastName}, ${finalName}, ${email || ""}, ${phone || null}, ${source || null}, ${status || "new"}, ${notes || null}, ${budgetRange || null}, ${priority || "medium"}, ${country || null}, ${state || null}, ${city || null}`,
+          activity_status: 1,
+        });
+      } else {
+        console.log("⚠️ Skipping lead activity creation - no user_id available");
+      }
 
       // Handle dynamic field data if provided
       if (

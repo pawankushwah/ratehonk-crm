@@ -1436,11 +1436,35 @@ export default function SocialIntegrations() {
                             Manage Leads
                           </Button>
                           <Button 
-                            variant="outline"
-                            onClick={() => window.location.href = '/facebook-manage'}
+                            variant="destructive"
+                            onClick={async () => {
+                              if (confirm("Are you sure you want to disconnect Facebook Lead Ads? You will need to reconnect to sync leads again.")) {
+                                try {
+                                  const response = await apiRequest(
+                                    "DELETE",
+                                    `/api/integrations/facebook-lead-ads/disconnect?tenantId=${tenant?.id}`
+                                  );
+                                  if (!response.ok) {
+                                    const error = await response.json();
+                                    throw new Error(error.error || "Failed to disconnect");
+                                  }
+                                  toast({
+                                    title: "Disconnected Successfully",
+                                    description: "Facebook Lead Ads integration has been disconnected.",
+                                  });
+                                  queryClient.invalidateQueries({ queryKey: [`/api/tenants/${tenant?.id}/social-integrations`] });
+                                } catch (error: any) {
+                                  toast({
+                                    title: "Disconnect Failed",
+                                    description: error.message || "Failed to disconnect Facebook Lead Ads",
+                                    variant: "destructive",
+                                  });
+                                }
+                              }
+                            }}
                           >
-                            <Settings className="h-4 w-4 mr-2" />
-                            Manage Integration
+                            <XCircle className="h-4 w-4 mr-2" />
+                            Disconnect
                           </Button>
                         </div>
                       ) : (

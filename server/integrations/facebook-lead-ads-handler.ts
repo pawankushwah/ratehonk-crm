@@ -20,7 +20,7 @@ function extractFieldValue(fieldData: any[], fieldName: string): string | null {
 }
 
 /**
- * Process a single Facebook lead and create/update contact
+ * Process a single Facebook lead and create/update lead in leads table
  */
 async function processLead(
   lead: any,
@@ -85,44 +85,55 @@ async function processLead(
   customFields.facebook_page_name = pageName;
   customFields.synced_at = new Date().toISOString();
 
-  // Check if contact exists (by phone or email)
-  let existingContact = null;
-  if (phoneNumber) {
-    existingContact = await simpleStorage.getCustomerByPhone(phoneNumber, tenantId);
-  }
-  if (!existingContact && email) {
-    existingContact = await simpleStorage.getCustomerByEmail(email, tenantId);
+  // Check if lead exists in leads table (by email)
+  let existingLead = null;
+  if (email) {
+    const [leadResult] = await sql`
+      SELECT id, first_name, last_name, email, phone, notes, type_specific_data, created_at
+      FROM leads 
+      WHERE tenant_id = ${tenantId} AND LOWER(email) = LOWER(${email})
+      ORDER BY created_at DESC
+      LIMIT 1
+    `;
+    existingLead = leadResult;
   }
 
-  if (existingContact) {
-    // Update existing contact
+  if (existingLead) {
+    // Update existing lead - add previous lead info to notes
+    const existingNotes = existingLead.notes || "";
+    const createdDate = existingLead.created_at 
+      ? new Date(existingLead.created_at).toLocaleString() 
+      : "Unknown";
+    const previousLeadInfo = `\n\n--- Previous Lead Information ---\nLead ID: ${existingLead.id}\nName: ${existingLead.first_name || ""} ${existingLead.last_name || ""}\nEmail: ${existingLead.email || ""}\nPhone: ${existingLead.phone || ""}\nCreated: ${createdDate}`;
+    
+    const syncNote = `\n\n[Facebook Lead Sync ${new Date().toLocaleString()}]\nForm: ${formName}\nPage: ${pageName}\nFacebook Lead ID: ${lead.id}`;
+    const updatedNotes = existingNotes + previousLeadInfo + syncNote;
+
+    // Merge custom fields
+    const existingCustomFields = existingLead.type_specific_data || {};
     const updatedCustomFields = {
-      ...(existingContact.customFields || {}),
+      ...existingCustomFields,
       ...customFields,
       last_synced_at: new Date().toISOString(),
     };
 
-    // Update notes
-    const notes = existingContact.notes || "";
-    const syncNote = `\n[Facebook Lead Sync ${new Date().toLocaleString()}] Form: ${formName}, Page: ${pageName}`;
-    const updatedNotes = notes + syncNote;
-
     await sql`
-      UPDATE customers 
+      UPDATE leads 
       SET 
-        first_name = COALESCE(${firstName || existingContact.firstName}, first_name),
-        last_name = COALESCE(${lastName || existingContact.lastName}, last_name),
-        email = COALESCE(${email || existingContact.email}, email),
-        phone = COALESCE(${phoneNumber || existingContact.phone}, phone),
-        custom_fields = ${JSON.stringify(updatedCustomFields)}::jsonb,
+        first_name = COALESCE(${firstName || existingLead.first_name}, first_name),
+        last_name = COALESCE(${lastName || existingLead.last_name}, last_name),
+        email = COALESCE(${email || existingLead.email}, email),
+        phone = COALESCE(${phoneNumber || existingLead.phone}, phone),
+        source = 'facebook',
+        type_specific_data = ${JSON.stringify(updatedCustomFields)}::jsonb,
         notes = ${updatedNotes},
         updated_at = NOW()
-      WHERE id = ${existingContact.id}
+      WHERE id = ${existingLead.id}
     `;
 
-    return { created: false, contactId: existingContact.id, skipped: false };
+    return { created: false, contactId: existingLead.id, skipped: false };
   } else {
-    // Create new contact (lead)
+    // Create new lead in leads table
     // First, get default lead type
     const [defaultLeadType] = await sql`
       SELECT id FROM lead_types WHERE tenant_id = ${tenantId} ORDER BY id LIMIT 1
@@ -142,7 +153,7 @@ async function processLead(
       source: "facebook",
       status: "new",
       typeSpecificData: customFields,
-      notes: `Imported from Facebook Lead Ads\nForm: ${formName}\nPage: ${pageName}\nSynced: ${new Date().toLocaleString()}`,
+      notes: `Imported from Facebook Lead Ads\nForm: ${formName}\nPage: ${pageName}\nFacebook Lead ID: ${lead.id}\nSynced: ${new Date().toLocaleString()}`,
     };
 
     const newLead = await simpleStorage.createLead(leadData);
@@ -220,8 +231,8 @@ export function registerFacebookLeadAdsRoutes(app: Express) {
   // Get lead forms for a page
   app.get("/api/integrations/facebook-lead-ads/forms/:pageId", async (req, res) => {
     try {
-      const { pageId } = req.params;
       const tenantId = parseInt(req.query.tenantId as string);
+      const { pageId } = req.params;
       if (!tenantId) {
         return res.status(400).json({ error: "tenantId is required" });
       }
@@ -238,24 +249,13 @@ export function registerFacebookLeadAdsRoutes(app: Express) {
         });
       }
 
-      // Get pages to get page access token
-      const [appCreds] = await sql`
-        SELECT app_id, app_secret FROM social_integrations 
-        WHERE tenant_id = ${tenantId} AND platform = 'facebook' AND is_active = true
-      `;
-
-      const appId =
-        appCreds?.app_id ||
-        process.env.FACEBOOK_APP_ID ||
-        process.env.FB_APP_ID;
-      const appSecret =
-        appCreds?.app_secret ||
-        process.env.FACEBOOK_APP_SECRET ||
-        process.env.FB_APP_SECRET;
-
-      if (!appId || !appSecret) {
-        return res.status(400).json({
-          error: "Facebook app credentials not configured",
+      // Check token expiration
+      if (
+        integration.token_expires_at &&
+        new Date(integration.token_expires_at) < new Date()
+      ) {
+        return res.status(401).json({
+          error: "Facebook access token has expired. Please reconnect.",
         });
       }
 
@@ -287,16 +287,11 @@ export function registerFacebookLeadAdsRoutes(app: Express) {
 
       res.json({
         success: true,
-        forms: forms.map((f: any) => ({
-          id: f.id,
-          name: f.name,
-          status: f.status,
-          leads_count: f.leads_count || 0,
-        })),
+        forms,
         count: forms.length,
       });
     } catch (error: any) {
-      console.error("Error fetching lead forms:", error);
+      console.error("Error fetching Facebook lead forms:", error);
       res.status(500).json({
         error: error.message || "Failed to fetch lead forms",
       });
@@ -369,6 +364,7 @@ export function registerFacebookLeadAdsRoutes(app: Express) {
       let skippedContactsCount = 0;
       const syncedContactIds: number[] = [];
       const errorDetails: any[] = [];
+      let allLeads: any[] = []; // Initialize allLeads array
 
       // Process each page
       for (const page of pagesToProcess) {
@@ -520,10 +516,12 @@ export function registerFacebookLeadAdsRoutes(app: Express) {
         WHERE tenant_id = ${tenantId} AND platform = 'facebook-lead-ads'
       `;
 
+      console.log(`[Facebook Leads] Sync completed: ${syncedContactsCount} created, ${updatedContactsCount} updated, ${skippedContactsCount} skipped`);
+
       res.json({
         success: true,
-        leads: [], // Don't return all leads for performance
-        count: totalLeads,
+        leads: allLeads,
+        count: allLeads.length,
         syncedContactsCount,
         updatedContactsCount,
         skippedContactsCount,
@@ -533,56 +531,60 @@ export function registerFacebookLeadAdsRoutes(app: Express) {
         pagesProcessed: pagesToProcess.length,
       });
     } catch (error: any) {
-      console.error("Error syncing Facebook leads:", error);
+      console.error("Facebook Lead Ads sync error:", error);
       res.status(500).json({
-        error: error.message || "Failed to sync leads",
+        error: error.message || "Failed to sync leads from Facebook Lead Ads",
       });
     }
   });
 
-  // Webhook verification (GET)
-  app.get("/api/integrations/facebook-lead-ads/webhook", (req, res) => {
-    const mode = req.query["hub.mode"];
-    const token = req.query["hub.verify_token"];
-    const challenge = req.query["hub.challenge"];
+  // Webhook endpoint for Facebook Lead Ads (for real-time lead notifications)
+  app.get("/api/integrations/facebook-lead-ads/webhook", async (req, res) => {
+    try {
+      // Facebook webhook verification
+      const mode = req.query["hub.mode"];
+      const token = req.query["hub.verify_token"];
+      const challenge = req.query["hub.challenge"];
 
-    const verifyToken =
-      process.env.FACEBOOK_WEBHOOK_VERIFY_TOKEN || "your_webhook_verify_token";
+      // Verify the webhook token (set this in your Facebook App settings)
+      const VERIFY_TOKEN = process.env.FACEBOOK_WEBHOOK_VERIFY_TOKEN || "your_webhook_verify_token";
 
-    if (mode === "subscribe" && token === verifyToken) {
-      res.status(200).send(challenge);
-    } else {
-      res.sendStatus(403);
+      if (mode === "subscribe" && token === VERIFY_TOKEN) {
+        console.log("Facebook webhook verified");
+        res.status(200).send(challenge);
+      } else {
+        res.status(403).json({ message: "Forbidden" });
+      }
+    } catch (error: any) {
+      console.error("Facebook webhook verification error:", error);
+      res.status(500).json({ message: "Failed to verify webhook" });
     }
   });
 
-  // Webhook handler (POST)
+  // Handle incoming lead webhook events
   app.post("/api/integrations/facebook-lead-ads/webhook", async (req, res) => {
     try {
-      const { object, entry } = req.body;
+      const body = req.body;
 
-      if (object !== "page") {
-        return res.sendStatus(200);
-      }
+      // Facebook sends webhook data in a specific format
+      if (body.object === "page") {
+        const entries = body.entry || [];
+        for (const entry of entries) {
+          const changes = entry.changes || [];
+          for (const change of changes) {
+            if (change.field === "leadgen") {
+              const leadId = change.value.leadgen_id;
+              const formId = change.value.form_id;
+              const pageId = change.value.page_id;
 
-      // Process webhook entries
-      for (const entryItem of entry) {
-        for (const change of entryItem.changes || []) {
-          if (change.field === "leadgen") {
-            const { leadgen_id, form_id, page_id } = change.value;
+              console.log(`New lead received: ${leadId} from form ${formId} on page ${pageId}`);
 
-            console.log("New Facebook lead received:", {
-              leadgen_id,
-              form_id,
-              page_id,
-            });
+              // TODO: Fetch full lead details and process
+              // You can fetch lead details using:
+              // GET /{lead-id}?access_token={page-access-token}
 
-            // TODO: Fetch full lead details and process
-            // For now, just log it
-            // In production, you would:
-            // 1. Get tenant ID from page_id mapping
-            // 2. Fetch lead details using Graph API
-            // 3. Call processLead function
+              // TODO: Store lead in managed contacts or trigger webhooks
+            }
           }
         }
       }
@@ -593,5 +595,35 @@ export function registerFacebookLeadAdsRoutes(app: Express) {
       res.sendStatus(200); // Always return 200 to Facebook
     }
   });
-}
 
+  // Disconnect Facebook Lead Ads integration
+  app.delete("/api/integrations/facebook-lead-ads/disconnect", async (req, res) => {
+    try {
+      const tenantId = parseInt(req.query.tenantId as string);
+      if (!tenantId) {
+        return res.status(400).json({ error: "tenantId is required" });
+      }
+
+      // Remove access token and mark as inactive
+      await sql`
+        UPDATE social_integrations 
+        SET 
+          access_token = NULL,
+          token_expires_at = NULL,
+          is_active = false,
+          updated_at = NOW()
+        WHERE tenant_id = ${tenantId} AND platform = 'facebook-lead-ads'
+      `;
+
+      res.json({
+        success: true,
+        message: "Facebook Lead Ads integration disconnected successfully",
+      });
+    } catch (error: any) {
+      console.error("Error disconnecting Facebook Lead Ads:", error);
+      res.status(500).json({
+        error: error.message || "Failed to disconnect Facebook Lead Ads integration",
+      });
+    }
+  });
+}
