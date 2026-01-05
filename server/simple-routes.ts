@@ -22,6 +22,8 @@ import {
   sendWhatsAppCustomMessage,
 } from "./whatsapp-routes";
 import { registerMeetingRoutes } from "./meeting-routes";
+import { registerFacebookLeadAdsOAuthRoutes } from "./integrations/facebook-lead-ads-oauth";
+import { registerFacebookLeadAdsRoutes } from "./integrations/facebook-lead-ads-handler";
 
 import { sql, db } from "./db";
 import { eq, and, desc, asc } from "drizzle-orm";
@@ -866,6 +868,10 @@ const authenticateToken = async (req: any, res: any, next: any) => {
 
 export async function registerSimpleRoutes(app: Express): Promise<Server> {
   console.log("🔧 Starting registerSimpleRoutes function...");
+  
+  // Register Facebook Lead Ads integration routes
+  registerFacebookLeadAdsOAuthRoutes(app);
+  registerFacebookLeadAdsRoutes(app);
   console.log("🔧 Express app object received:", typeof app);
   console.log("🔧 App has get method:", typeof app.get);
 
