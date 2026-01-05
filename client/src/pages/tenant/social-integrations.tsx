@@ -19,6 +19,7 @@ import { useAuth } from "@/components/auth/auth-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { Celebration } from "@/components/ui/celebration";
+import { FacebookLeadsManager } from "@/components/facebook-leads-manager";
 
 interface SocialIntegration {
   id?: number;
@@ -42,6 +43,7 @@ export default function SocialIntegrations() {
     platform: string;
     stats?: any;
   }>({ platform: '' });
+  const [isFacebookLeadsManagerOpen, setIsFacebookLeadsManagerOpen] = useState(false);
 
   const { data: integrations = [], isLoading } = useQuery<SocialIntegration[]>({
     queryKey: [`/api/tenants/${tenant?.id}/social-integrations`],
@@ -1420,21 +1422,11 @@ export default function SocialIntegrations() {
                       {(facebookStatus as any)?.isConnected ? (
                         <div className="flex gap-3">
                           <Button 
-                            onClick={() => syncFacebookLeadsMutation.mutate()}
-                            disabled={syncFacebookLeadsMutation.isPending}
+                            onClick={() => setIsFacebookLeadsManagerOpen(true)}
                             className="bg-blue-600 hover:bg-blue-700"
                           >
-                            {syncFacebookLeadsMutation.isPending ? (
-                              <>
-                                <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                                Syncing Leads...
-                              </>
-                            ) : (
-                              <>
-                                <RefreshCw className="h-4 w-4 mr-2" />
-                                Sync Facebook Leads Now
-                              </>
-                            )}
+                            <Users className="h-4 w-4 mr-2" />
+                            Manage Leads
                           </Button>
                           <Button 
                             variant="outline"
@@ -1446,21 +1438,72 @@ export default function SocialIntegrations() {
                         </div>
                       ) : (
                         <Button 
-                          onClick={() => connectFacebookMutation.mutate()}
-                          disabled={connectFacebookMutation.isPending}
+                          onClick={async () => {
+                            try {
+                              const response = await apiRequest(
+                                "GET",
+                                `/api/integrations/facebook-lead-ads/oauth/authorize?tenantId=${tenant?.id}`
+                              );
+                              if (!response.ok) {
+                                const error = await response.json();
+                                throw new Error(error.error || "Failed to get auth URL");
+                              }
+                              const { authUrl } = await response.json();
+                              
+                              // Open OAuth popup
+                              const width = 600;
+                              const height = 700;
+                              const left = (window.screen.width - width) / 2;
+                              const top = (window.screen.height - height) / 2;
+                              
+                              const popup = window.open(
+                                authUrl,
+                                'Facebook Lead Ads OAuth',
+                                `width=${width},height=${height},left=${left},top=${top},toolbar=no,menubar=no,scrollbars=yes,resizable=yes`
+                              );
+                              
+                              // Listen for success message
+                              const messageListener = (event: MessageEvent) => {
+                                if (event.data.type === 'FACEBOOK_OAUTH_SUCCESS' && event.data.integration === 'facebook-lead-ads') {
+                                  window.removeEventListener('message', messageListener);
+                                  popup?.close();
+                                  toast({
+                                    title: "Facebook Lead Ads Connected!",
+                                    description: "You can now sync leads from Facebook Lead Ads.",
+                                  });
+                                  queryClient.invalidateQueries({ queryKey: [`/api/tenants/${tenant?.id}/social-integrations`] });
+                                } else if (event.data.type === 'FACEBOOK_OAUTH_ERROR') {
+                                  window.removeEventListener('message', messageListener);
+                                  popup?.close();
+                                  toast({
+                                    title: "Connection Failed",
+                                    description: event.data.error || "Failed to connect Facebook Lead Ads",
+                                    variant: "destructive",
+                                  });
+                                }
+                              };
+                              
+                              window.addEventListener('message', messageListener);
+                              
+                              // Check if popup closed manually
+                              const checkPopup = setInterval(() => {
+                                if (popup?.closed) {
+                                  clearInterval(checkPopup);
+                                  window.removeEventListener('message', messageListener);
+                                }
+                              }, 500);
+                            } catch (error: any) {
+                              toast({
+                                title: "Connection Failed",
+                                description: error.message || "Failed to initiate Facebook Lead Ads connection",
+                                variant: "destructive",
+                              });
+                            }
+                          }}
                           className="bg-blue-600 hover:bg-blue-700"
                         >
-                          {connectFacebookMutation.isPending ? (
-                            <>
-                              <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                              Connecting...
-                            </>
-                          ) : (
-                            <>
-                              <Facebook className="h-4 w-4 mr-2" />
-                              Connect Facebook Lead Ads
-                            </>
-                          )}
+                          <Facebook className="h-4 w-4 mr-2" />
+                          Connect Facebook Lead Ads
                         </Button>
                       )}
                     </div>
@@ -1901,6 +1944,15 @@ export default function SocialIntegrations() {
           stats={celebrationData.stats}
         />
       </div>
+
+      {/* Facebook Leads Manager Dialog */}
+      {tenant && (
+        <FacebookLeadsManager
+          isOpen={isFacebookLeadsManagerOpen}
+          onClose={() => setIsFacebookLeadsManagerOpen(false)}
+          tenantId={tenant.id}
+        />
+      )}
     </Layout>
   );
 }
