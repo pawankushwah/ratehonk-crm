@@ -2086,6 +2086,38 @@ app.get("/api/All-leads", authenticateToken, async (req, res) => {
       const tenantIdFromQuery = req.query.tenantId ? parseInt(String(req.query.tenantId)) : null;
       const tenantId = tenantIdFromQuery || req.user.tenantId;
       
+      // Handle action=get-customers case (for dropdown compatibility)
+      const action = req.query.action as string;
+      if (action === "get-customers" && tenantId) {
+        const allParam = req.query.all as string;
+        const searchParam = req.query.search as string || "";
+        const statusParam = req.query.status as string || "";
+        const sortByParam = req.query.sortBy as string || "created_at";
+        const sortOrderParam = req.query.sortOrder as string || "desc";
+        const offsetParam = req.query.offset as string;
+
+        const limit = (allParam === "true" || String(allParam).toLowerCase() === "true")
+          ? 10000 
+          : 50;
+        const offset = offsetParam ? parseInt(offsetParam, 10) : 0;
+
+        const result = await simpleStorage.getCustomersByTenant({
+          tenantId,
+          search: searchParam,
+          status: statusParam,
+          sortBy: sortByParam,
+          sortOrder: sortOrderParam,
+          limit,
+          offset,
+        });
+        
+        console.log("🔍 ✅ CUSTOMERS FETCHED (action=get-customers) - Count:", result?.data?.length || 0, "Total:", result?.total || 0);
+        
+        // Return customers array directly for frontend compatibility
+        const customers = result?.data || (Array.isArray(result) ? result : []);
+        return res.json(customers);
+      }
+      
       if (!tenantId) {
         return res
           .status(400)
@@ -2110,13 +2142,20 @@ app.get("/api/All-leads", authenticateToken, async (req, res) => {
         page = "1",
         limit = "50",
         offset = "0",
+        all = "",
       } = req.query;
 
       console.log("🔍 Customers API - Date filters:", { startDate, endDate, filterType });
+      console.log("🔍 Customers API - all parameter:", all);
+
+      // If all=true, set limit to 10000 to fetch all customers
+      const finalLimit = (all === "true" || String(all).toLowerCase() === "true")
+        ? 10000 
+        : Number(limit);
 
       // Calculate offset from page if not provided
       const calculatedOffset =
-        Number(offset) || (Number(page) - 1) * Number(limit);
+        Number(offset) || (Number(page) - 1) * finalLimit;
 
       const customers = await simpleStorage.getCustomersByTenant({
         tenantId,
@@ -2126,19 +2165,24 @@ app.get("/api/All-leads", authenticateToken, async (req, res) => {
         endDate: String(endDate),
         sortBy: String(sortBy),
         sortOrder: String(sortOrder),
-        limit: Number(limit),
+        limit: finalLimit,
         offset: calculatedOffset,
       });
 
       console.log(`🔍 Customers API - Returned ${customers?.data?.length || 0} customers (total: ${customers?.total || 0})`);
 
-      // Return paginated response with total count
+      // If all=true, return just the data array for dropdown compatibility
+      // Otherwise return paginated response with total count
+      if (all === "true" || String(all).toLowerCase() === "true") {
+        return res.json(customers?.data || []);
+      }
+
       res.json(
         customers || {
           data: [],
           total: 0,
           page: 1,
-          limit: Number(limit),
+          limit: finalLimit,
           totalPages: 0,
         },
       );
@@ -7339,13 +7383,42 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
           return res.status(401).json({ message: "No authorization header" });
         }
 
-        const customers = await simpleStorage.getCustomersByTenant(
-          parseInt(tenantId as string),
-        );
-        console.log("🔍 ✅ CUSTOMERS FETCHED - Count:", customers?.length || 0);
+        // Support query parameters for pagination and dropdown usage
+        // If limit is provided, use it; otherwise default to 50 for backward compatibility
+        // If all=true is provided, fetch all customers (limit = 10000)
+        const limitParam = req.query.limit as string;
+        const allParam = req.query.all as string;
+        const searchParam = req.query.search as string || "";
+        const statusParam = req.query.status as string || "";
+        const sortByParam = req.query.sortBy as string || "created_at";
+        const sortOrderParam = req.query.sortOrder as string || "desc";
+        const offsetParam = req.query.offset as string;
+
+        // Determine limit: if all=true, use 10000; otherwise use provided limit or default 50
+        const limit = allParam === "true" 
+          ? 10000 
+          : limitParam 
+            ? parseInt(limitParam, 10) 
+            : 50;
+        const offset = offsetParam ? parseInt(offsetParam, 10) : 0;
+
+        const result = await simpleStorage.getCustomersByTenant({
+          tenantId: parseInt(tenantId as string),
+          search: searchParam,
+          status: statusParam,
+          sortBy: sortByParam,
+          sortOrder: sortOrderParam,
+          limit,
+          offset,
+        });
+        
+        console.log("🔍 ✅ CUSTOMERS FETCHED - Count:", result?.data?.length || 0, "Total:", result?.total || 0);
 
         // Return customers array directly for frontend compatibility
-        return res.json(customers || []);
+        // If the result has a 'data' property (paginated response), return that
+        // Otherwise return the result itself (for backward compatibility)
+        const customers = result?.data || (Array.isArray(result) ? result : []);
+        return res.json(customers);
       } catch (error: any) {
         console.error("🔍 ❌ Get customers error:", error);
         return res.status(500).json({
@@ -20359,138 +20432,16 @@ Happy travels! 🌍✈️`,
           tenantId: parseInt(tenantId),
         };
 
-        const newInvoice = await simpleStorage.createInvoice(invoiceData);
-
-        // Create expenses if provided
-        if (
-          req.body.expenses &&
-          Array.isArray(req.body.expenses) &&
-          req.body.expenses.length > 0
-        ) {
-          console.log(
-            `📊 Creating ${req.body.expenses.length} expenses from invoice ${newInvoice.invoiceNumber}`,
-          );
-
-          const postgres = (await import("postgres")).default;
-          const connectionString = process.env.DATABASE_URL;
-          const expenseSql = postgres(connectionString, { ssl: "require" });
-
-          // Get expense settings for default prefix
-          const expenseSettings = await simpleStorage.getExpenseSettings(parseInt(tenantId));
-          const defaultPrefix = expenseSettings?.expenseNumberPrefix || "EXP";
-
-          // Split expense number helper
-          const splitExpenseNumber = (fullNumber: string, defaultPrefix: string = "EXP"): { prefix: string; number: string } => {
-            if (!fullNumber) {
-              return { prefix: defaultPrefix, number: "" };
-            }
-            const matchWithSeparator = fullNumber.match(/^([A-Za-z0-9]+)[\s-]+(.+)$/);
-            if (matchWithSeparator) {
-              return { prefix: matchWithSeparator[1].toUpperCase(), number: matchWithSeparator[2] };
-            }
-            const numberMatch = fullNumber.match(/^([A-Za-z]+)(\d+.*)$/);
-            if (numberMatch) {
-              return { prefix: numberMatch[1].toUpperCase(), number: numberMatch[2] };
-            }
-            if (/^\d+/.test(fullNumber)) {
-              return { prefix: defaultPrefix, number: fullNumber };
-            }
-            return { prefix: defaultPrefix, number: fullNumber };
-          };
-
-          for (const expenseData of req.body.expenses) {
-            try {
-              const expenseAmount = parseFloat(expenseData.amount?.toString() || "0");
-              const expenseTaxAmount = parseFloat(expenseData.taxAmount?.toString() || "0");
-              const expenseTaxRate = parseFloat(expenseData.taxRate?.toString() || "0");
-              const expenseQuantity = parseFloat(expenseData.quantity?.toString() || "1");
-              const expenseAmountPaid = parseFloat(expenseData.amountPaid?.toString() || "0");
-              const expenseAmountDue = parseFloat(expenseData.amountDue?.toString() || expenseAmount.toString() || "0");
-              const totalAmount = expenseAmount + expenseTaxAmount;
-
-              // Split expense number
-              const fullExpenseNumber = expenseData.expenseNumber || "";
-              const { prefix: expensePrefix, number: expenseNumber } = splitExpenseNumber(fullExpenseNumber, defaultPrefix);
-
-              // Create expense header
-              const expenseResult = await expenseSql`
-                INSERT INTO expenses (
-                  tenant_id, expense_prefix, expense_number, created_by, title, description, quantity, amount, currency,
-                  category, subcategory, expense_date, payment_method, payment_reference,
-                  vendor_id, lead_type_id, expense_type, receipt_url,
-                  tax_amount, tax_rate, is_reimbursable, is_recurring,
-                  recurring_frequency, status, amount_paid, amount_due, tags, notes
-                ) VALUES (
-                  ${parseInt(tenantId)},
-                  ${expensePrefix},
-                  ${expenseNumber || null},
-                  ${req.user?.id || 1},
-                  ${expenseData.title || ""},
-                  ${expenseData.description || null},
-                  1,
-                  ${totalAmount},
-                  ${expenseData.currency || "USD"},
-                  ${expenseData.category || "purchase"},
-                  ${expenseData.subcategory || null},
-                  ${expenseData.expenseDate || new Date().toISOString()},
-                  ${expenseData.paymentMethod || "other"},
-                  ${expenseData.paymentReference || null},
-                  ${expenseData.vendorId || null},
-                  ${expenseData.leadTypeId || null},
-                  ${expenseData.expenseType || "purchase"},
-                  null,
-                  ${expenseTaxAmount},
-                  ${expenseTaxRate},
-                  ${expenseData.isReimbursable || false},
-                  ${expenseData.isRecurring || false},
-                  ${expenseData.recurringFrequency || null},
-                  ${expenseData.status || "approved"},
-                  ${expenseAmountPaid},
-                  ${expenseAmountDue},
-                  ${expenseData.tags ? JSON.stringify(expenseData.tags) : "[]"},
-                  ${expenseData.notes || null}
-                )
-                RETURNING id
-              `;
-
-              // Create line item for this expense
-              const paymentStatus = expenseData.status === "paid" ? "paid" : (expenseData.status === "due" ? "due" : "credit");
-              await expenseSql`
-                INSERT INTO expense_line_items (
-                  expense_id, category, title, description, quantity, amount, tax_rate_id, tax_amount, tax_rate,
-                  total_amount, vendor_id, lead_type_id, payment_method, payment_status, amount_paid, amount_due,
-                  receipt_url, notes, display_order
-                ) VALUES (
-                  ${expenseResult[0].id},
-                  ${expenseData.category || "purchase"},
-                  ${expenseData.title || ""},
-                  ${expenseData.description || null},
-                  ${expenseQuantity},
-                  ${expenseAmount},
-                  ${expenseData.taxRateId || null},
-                  ${expenseTaxAmount},
-                  ${expenseTaxRate},
-                  ${totalAmount},
-                  ${expenseData.vendorId || null},
-                  ${expenseData.leadTypeId || null},
-                  ${expenseData.paymentMethod || "other"},
-                  ${paymentStatus},
-                  ${expenseAmountPaid},
-                  ${expenseAmountDue},
-                  ${expenseData.receiptUrl || null},
-                  ${expenseData.notes || null},
-                  0
-                )
-              `;
-
-              console.log(`✅ Created expense with line item: ${expenseData.title}`);
-            } catch (expenseError) {
-              console.error("❌ Error creating expense:", expenseError);
-            }
-          }
-
-          await expenseSql.end();
+        // Include userId from authenticated user if available
+        if (req.user?.id) {
+          invoiceData.userId = req.user.id;
         }
+
+        const newInvoice = await simpleStorage.createInvoice(invoiceData);
+        
+        // Note: Expenses are already handled inside createInvoice() function
+        // No need to create them separately here to avoid duplicates
+        
         res.status(201).json(newInvoice);
       } catch (error) {
         console.error("Create invoice error:", error);
@@ -20550,6 +20501,25 @@ Happy travels! 🌍✈️`,
   );
 
   // Export expenses - Supports CSV, Excel, and PDF formats - MUST be before /expenses route to avoid route conflict
+  // Update expenses with missing invoice_id
+  app.post(
+    "/api/expenses/update-missing-invoice-id",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        const result = await simpleStorage.updateExpensesWithMissingInvoiceId();
+        res.json(result);
+      } catch (error: any) {
+        console.error("Error updating expenses with missing invoice_id:", error);
+        res.status(500).json({
+          success: false,
+          message: "Failed to update expenses",
+          error: error.message,
+        });
+      }
+    },
+  );
+
   app.get("/api/tenants/:tenantId/expenses/export", authenticateToken, async (req, res) => {
     try {
       const { tenantId } = req.params;
@@ -26303,6 +26273,57 @@ Happy travels! 🌍✈️`,
         RETURNING *
       `;
 
+      // If status was updated, also update all expense line items' payment_status and amount_paid
+      const newStatus = expenseHeader.status !== undefined ? expenseHeader.status : existingExpense.status;
+      const oldStatus = existingExpense.status;
+      
+      console.log(`🔍 Status change check for expense ${expenseId}: oldStatus=${oldStatus}, newStatus=${newStatus}, statusChanged=${newStatus !== oldStatus}`);
+      
+      if (newStatus !== oldStatus) {
+        // Map expense status to payment_status for line items
+        let paymentStatus = "pending";
+        if (newStatus === "paid") {
+          paymentStatus = "paid";
+        } else if (newStatus === "approved") {
+          paymentStatus = "paid"; // When expense is approved, mark line items as paid
+        } else if (newStatus === "rejected") {
+          paymentStatus = "credit";
+        } else {
+          paymentStatus = "pending";
+        }
+        
+        // If status changed to "paid" or "approved", update amount_paid = amount_due for expense and line items
+        if (newStatus === "paid" || newStatus === "approved") {
+          // Update expense amount_paid to amount_due (using SQL to set amount_paid = amount_due directly)
+          await sql`
+            UPDATE expenses
+            SET amount_paid = amount_due, updated_at = NOW()
+            WHERE id = ${expenseId}
+          `;
+          
+          // Update all expense line items: payment_status = "paid" and amount_paid = amount_due
+          await sql`
+            UPDATE expense_line_items
+            SET 
+              payment_status = ${paymentStatus},
+              amount_paid = amount_due,
+              updated_at = NOW()
+            WHERE expense_id = ${expenseId}
+          `;
+          
+          console.log(`✅ Updated expense ${expenseId} to ${newStatus}: amount_paid = amount_due, and all line items payment_status = paid, amount_paid = amount_due`);
+        } else {
+          // For other status changes, update payment_status for line items
+          await sql`
+            UPDATE expense_line_items
+            SET payment_status = ${paymentStatus}, updated_at = NOW()
+            WHERE expense_id = ${expenseId}
+          `;
+          
+          console.log(`✅ Updated payment_status for all line items of expense ${expenseId} to ${paymentStatus} (expense status: ${newStatus})`);
+        }
+      }
+
       // Update line items if provided
       if (lineItems.length > 0) {
         // Delete existing line items
@@ -28116,9 +28137,18 @@ Happy travels! 🌍✈️`,
       }
 
       // Get filename from query parameter, header, or use a default
-      const filename = (req.query.filename as string) || 
-                      (req.headers["x-filename"] as string) || 
-                      `file-${Date.now()}`;
+      // Decode the filename if it was encoded (handles special characters)
+      const rawFilename = (req.query.filename as string) || 
+                          (req.headers["x-filename"] as string) || 
+                          `file-${Date.now()}`;
+      // Safely decode - try decodeURIComponent, fallback to original if it fails
+      let filename: string;
+      try {
+        filename = decodeURIComponent(rawFilename);
+      } catch (e) {
+        // If decoding fails, use the original filename (it might not have been encoded)
+        filename = rawFilename;
+      }
       const contentType = req.headers["content-type"] || "application/octet-stream";
 
       // Generate a unique object path

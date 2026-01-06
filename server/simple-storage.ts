@@ -5026,6 +5026,18 @@ async getAllLeadsByTenant(
         hasCancellationCharge: invoice.has_cancellation_charge || false,
         cancellationChargeAmount: parseFloat(invoice.cancellation_charge_amount || "0"),
         cancellationChargeNotes: invoice.cancellation_charge_notes || null,
+        travelDate: invoice.travel_date || null,
+        departureDate: invoice.departure_date || null,
+        arrivalDate: invoice.arrival_date || null,
+        attachments: invoice.attachments ? (() => {
+          try {
+            return typeof invoice.attachments === 'string' 
+              ? JSON.parse(invoice.attachments) 
+              : invoice.attachments;
+          } catch {
+            return [];
+          }
+        })() : [],
         lineItems: finalLineItems,
         installments: installments.length > 0 ? installments : undefined,
         createdAt: invoice.created_at,
@@ -5733,6 +5745,8 @@ async getAllLeadsByTenant(
 
         if (existingInvoices.length > 0) {
           // Extract numbers from existing invoices
+          // Filter out invalid numbers (like timestamps) - max reasonable invoice number is 1 million
+          const MAX_SAFE_INVOICE_NUMBER = 1000000;
           const invoiceNumbers = existingInvoices
             .map((inv: any) => {
               const invPrefix = inv.invoice_prefix || defaultPrefix;
@@ -5744,13 +5758,17 @@ async getAllLeadsByTenant(
               // Pattern 1: PREFIX-NUMBER (e.g., INV-001)
               const matchWithDash = invNum.match(/^(\d+)$/);
               if (matchWithDash) {
-                return parseInt(matchWithDash[1], 10);
+                const num = parseInt(matchWithDash[1], 10);
+                // Filter out invalid numbers (timestamps, etc.)
+                return num > 0 && num < MAX_SAFE_INVOICE_NUMBER ? num : 0;
               }
               
               // Pattern 2: Just numbers
               const matchNumbers = invNum.match(/(\d+)/);
               if (matchNumbers) {
-                return parseInt(matchNumbers[1], 10);
+                const num = parseInt(matchNumbers[1], 10);
+                // Filter out invalid numbers (timestamps, etc.)
+                return num > 0 && num < MAX_SAFE_INVOICE_NUMBER ? num : 0;
               }
               
               return 0;
@@ -5804,6 +5822,8 @@ async getAllLeadsByTenant(
 
         if (existingInvoices.length > 0) {
           // Extract numbers from existing invoices
+          // Filter out invalid numbers (like timestamps) - max reasonable invoice number is 1 million
+          const MAX_SAFE_INVOICE_NUMBER = 1000000;
           const invoiceNumbers = existingInvoices
             .map((inv: any) => {
               const invPrefix = inv.invoice_prefix || defaultPrefix;
@@ -5814,7 +5834,9 @@ async getAllLeadsByTenant(
               // Try to extract number - handle multiple formats
               const matchNumbers = invNum.match(/(\d+)/);
               if (matchNumbers) {
-                return parseInt(matchNumbers[1], 10);
+                const num = parseInt(matchNumbers[1], 10);
+                // Filter out invalid numbers (timestamps, etc.)
+                return num > 0 && num < MAX_SAFE_INVOICE_NUMBER ? num : 0;
               }
               
               return 0;
@@ -5862,6 +5884,16 @@ async getAllLeadsByTenant(
       // Store full line items as JSON for complete data preservation
       const lineItemsJson = JSON.stringify(invoiceData.lineItems || invoiceData.items || []);
 
+      // Prepare travel dates
+      const travelDate = invoiceData.travelDate || null;
+      const departureDate = invoiceData.departureDate || null;
+      const arrivalDate = invoiceData.arrivalDate || null;
+
+      // Prepare attachments JSON
+      const attachmentsJson = invoiceData.attachments && Array.isArray(invoiceData.attachments) && invoiceData.attachments.length > 0
+        ? JSON.stringify(invoiceData.attachments)
+        : null;
+
       // Build the INSERT query with all available fields
       // Note: Some columns may not exist in the database yet - they should be added via migration
       const invoice = await sql`
@@ -5869,7 +5901,8 @@ async getAllLeadsByTenant(
           tenant_id, customer_id, booking_id, invoice_prefix, invoice_number, status,
           invoice_date, issue_date, due_date, subtotal, tax_amount, discount_amount, total_amount, 
           paid_amount, currency, payment_method, payment_terms, is_tax_inclusive,
-          notes, additional_notes, enable_reminder, reminder_frequency, reminder_specific_date, line_items
+          notes, additional_notes, enable_reminder, reminder_frequency, reminder_specific_date, line_items,
+          travel_date, departure_date, arrival_date, attachments
         ) VALUES (
           ${invoiceData.tenantId},
           ${invoiceData.customerId},
@@ -5894,12 +5927,20 @@ async getAllLeadsByTenant(
           ${invoiceData.enableReminder || false},
           ${invoiceData.reminderFrequency || null},
           ${invoiceData.reminderSpecificDate || null},
-          ${lineItemsJson}
+          ${lineItemsJson},
+          ${travelDate},
+          ${departureDate},
+          ${arrivalDate},
+          ${attachmentsJson}
         )
         RETURNING *
       `;
 
       const newInvoice = invoice[0];
+      
+      // Debug: Log invoice creation
+      console.log("✅ Invoice created with ID:", newInvoice.id);
+      console.log("📋 Invoice data expenses:", invoiceData.expenses?.length || 0, "expenses");
 
       // Handle line items - check both lineItems and items for compatibility
       const lineItems = invoiceData.lineItems || invoiceData.items || [];
@@ -5936,6 +5977,9 @@ async getAllLeadsByTenant(
       // Create expenses if provided (consolidate all expenses into ONE expense record with multiple line items)
       if (invoiceData.expenses && Array.isArray(invoiceData.expenses) && invoiceData.expenses.length > 0) {
         try {
+          console.log("📦 Creating expenses for invoice ID:", newInvoice.id);
+          console.log("📦 Number of expenses to create:", invoiceData.expenses.length);
+          
           // Calculate totals for all expenses
           let totalExpenseAmount = 0;
           let totalTaxAmount = 0;
@@ -5947,8 +5991,17 @@ async getAllLeadsByTenant(
           const defaultPrefix = expenseSettings?.expenseNumberPrefix || "EXP";
           
           // Generate expense number based on invoice number
-          const invoiceNumber = invoiceData.invoiceNumber || newInvoice.invoice_number || "";
-          const expenseNumber = `${invoiceNumber}-EXP`;
+          // Extract just the numeric part from invoice number (e.g., "168" from "INV168")
+          const fullInvoiceNumber = invoiceData.invoiceNumber || newInvoice.invoice_number || "";
+          const numericPart = fullInvoiceNumber.replace(/^[A-Za-z]+/, ""); // Remove prefix, keep number
+          const expenseNumber = numericPart ? `${numericPart}-EXP` : null;
+
+          console.log("🔍 Expense creation debug:", {
+            fullInvoiceNumber,
+            numericPart,
+            expenseNumber,
+            invoiceId: newInvoice.id
+          });
 
           // Calculate totals from all expenses
           for (const expense of invoiceData.expenses) {
@@ -5964,8 +6017,28 @@ async getAllLeadsByTenant(
           }
 
           const grandTotal = totalExpenseAmount + totalTaxAmount;
+          
+          console.log("📦 Creating expense with invoice_id:", newInvoice.id, "auto_generated: true");
 
           // Create ONE expense header for all expenses (auto-generated from invoice)
+          // Ensure expense_date is a proper timestamp
+          const expenseDateValue = issueDate ? new Date(issueDate).toISOString() : new Date().toISOString();
+          
+          // Pre-compute all string values to avoid nested template literal issues
+          const expenseTitle = `Expenses for Invoice ${fullInvoiceNumber}`;
+          const expenseDescription = `Multiple expense line items for invoice ${fullInvoiceNumber}`;
+          const expenseNotes = `Expenses from invoice ${fullInvoiceNumber}`;
+          const expenseCurrency = invoiceData.currency || "USD";
+          const expenseCategory = "General";
+          const expenseSubcategory = "General";
+          const expensePaymentMethod = "bank_transfer";
+          const expenseType = "purchase";
+          const expenseStatus = "pending";
+          const expenseTags = JSON.stringify([]);
+          const expenseTaxRate = totalTaxAmount > 0 && totalExpenseAmount > 0 
+            ? (totalTaxAmount / totalExpenseAmount) * 100 
+            : 0;
+          
           const [createdExpense] = await sql`
             INSERT INTO expenses (
               tenant_id, expense_prefix, expense_number, title, description, quantity, amount, currency, category, subcategory,
@@ -5976,36 +6049,42 @@ async getAllLeadsByTenant(
               ${invoiceData.tenantId},
               ${defaultPrefix},
               ${expenseNumber},
-              ${`Expenses for Invoice ${invoiceNumber}`},
-              ${`Multiple expense line items for invoice ${invoiceNumber}`},
+              ${expenseTitle},
+              ${expenseDescription},
               1,
               ${grandTotal},
-              ${invoiceData.currency || "USD"},
-              ${"General"},
-              ${"General"},
-              ${issueDate},
-              ${"bank_transfer"},
+              ${expenseCurrency},
+              ${expenseCategory},
+              ${expenseSubcategory},
+              ${expenseDateValue},
+              ${expensePaymentMethod},
               ${null},
               ${null},
               ${null},
-              ${newInvoice.id}, // Link expense to the invoice being created
-              ${"purchase"},
-              null,
+              ${newInvoice.id},
+              ${expenseType},
+              ${null},
               ${totalTaxAmount},
-              ${totalTaxAmount > 0 && totalExpenseAmount > 0 ? (totalTaxAmount / totalExpenseAmount) * 100 : 0},
+              ${expenseTaxRate},
               ${false},
               ${false},
               ${null},
-              ${"pending"},
+              ${expenseStatus},
               ${totalAmountPaid},
               ${totalAmountDue},
-              ${JSON.stringify([])},
-              ${`Expenses from invoice ${invoiceNumber}`},
-              ${true}, // Mark as auto-generated from invoice
+              ${expenseTags},
+              ${expenseNotes},
+              ${true},
               ${invoiceData.userId || null}
             )
-            RETURNING id
+            RETURNING id, invoice_id, auto_generated
           `;
+          
+          console.log("✅ Expense created:", {
+            id: createdExpense.id,
+            invoice_id: createdExpense.invoice_id,
+            auto_generated: createdExpense.auto_generated
+          });
 
           // Create line items for each expense
           let displayOrder = 0;
@@ -6118,7 +6197,11 @@ async getAllLeadsByTenant(
       try {
         // Extract the numeric part from the invoice number
         const invoiceNumberValue = parseInt(newInvNumber, 10);
-        if (!isNaN(invoiceNumberValue)) {
+        // PostgreSQL integer max value is 2,147,483,647
+        // Only update if the number is reasonable (less than 1 million to be safe)
+        const MAX_SAFE_INVOICE_NUMBER = 1000000;
+        
+        if (!isNaN(invoiceNumberValue) && invoiceNumberValue < MAX_SAFE_INVOICE_NUMBER) {
           // Increment the starting number to be one more than the current invoice number
           const nextStartNumber = invoiceNumberValue + 1;
           
@@ -6132,6 +6215,8 @@ async getAllLeadsByTenant(
           });
           
           console.log(`✅ Updated invoice settings: invoiceNumberStart set to ${nextStartNumber} (was ${currentSettings.invoiceNumberStart || startNumber})`);
+        } else {
+          console.log(`⚠️ Skipping invoice settings update: invoice number ${invoiceNumberValue} is too large or invalid (max: ${MAX_SAFE_INVOICE_NUMBER})`);
         }
       } catch (settingsError) {
         console.error("⚠️ Failed to update invoice settings starting number:", settingsError);
@@ -6250,6 +6335,12 @@ async getAllLeadsByTenant(
         hasCancellationCharge: invoiceData.hasCancellationCharge !== undefined ? invoiceData.hasCancellationCharge : null,
         cancellationChargeAmount: invoiceData.cancellationChargeAmount !== undefined ? parseFloat(invoiceData.cancellationChargeAmount?.toString() || "0") : null,
         cancellationChargeNotes: invoiceData.cancellationChargeNotes || null,
+        travelDate: invoiceData.travelDate || null,
+        departureDate: invoiceData.departureDate || null,
+        arrivalDate: invoiceData.arrivalDate || null,
+        attachments: invoiceData.attachments && Array.isArray(invoiceData.attachments) && invoiceData.attachments.length > 0
+          ? JSON.stringify(invoiceData.attachments)
+          : null,
       };
 
       console.log("Clean update data:", cleanData);
@@ -6283,6 +6374,10 @@ async getAllLeadsByTenant(
           has_cancellation_charge = COALESCE(${cleanData.hasCancellationCharge}, has_cancellation_charge),
           cancellation_charge_amount = COALESCE(${cleanData.cancellationChargeAmount}, cancellation_charge_amount),
           cancellation_charge_notes = COALESCE(${cleanData.cancellationChargeNotes}, cancellation_charge_notes),
+          travel_date = COALESCE(${cleanData.travelDate}, travel_date),
+          departure_date = COALESCE(${cleanData.departureDate}, departure_date),
+          arrival_date = COALESCE(${cleanData.arrivalDate}, arrival_date),
+          attachments = COALESCE(${cleanData.attachments}, attachments),
           updated_at = NOW()
         WHERE id = ${invoiceId}
         RETURNING *
@@ -6423,22 +6518,32 @@ async getAllLeadsByTenant(
               const grandTotal = totalExpenseAmount + totalTaxAmount;
 
               // Update expense header
+              // Use direct assignment for required fields, COALESCE only for optional fields that might be null
+              const expenseTitle = expense.title || "Expense";
+              const expenseCategory = expense.category || "General";
+              const expenseSubcategory = expense.subcategory || expense.category || "General";
+              const expenseVendorId = expense.vendorId || null;
+              const expenseDateValue = expense.expenseDate || issueDate;
+              const calculatedTaxRate = totalTaxAmount > 0 && totalExpenseAmount > 0 ? (totalTaxAmount / totalExpenseAmount) * 100 : 0;
+              
               await sql`
                 UPDATE expenses
                 SET 
-                  title = COALESCE(${expense.title}, title),
+                  title = ${expenseTitle},
                   amount = ${grandTotal},
                   tax_amount = ${totalTaxAmount},
-                  tax_rate = ${totalTaxAmount > 0 && totalExpenseAmount > 0 ? (totalTaxAmount / totalExpenseAmount) * 100 : 0},
+                  tax_rate = ${calculatedTaxRate},
                   amount_paid = ${totalAmountPaid},
                   amount_due = ${totalAmountDue},
-                  category = COALESCE(${expense.category}, category),
-                  subcategory = COALESCE(${expense.subcategory}, subcategory),
-                  vendor_id = COALESCE(${expense.vendorId}, vendor_id),
-                  expense_date = COALESCE(${expense.expenseDate || issueDate}, expense_date),
+                  category = ${expenseCategory},
+                  subcategory = ${expenseSubcategory},
+                  vendor_id = ${expenseVendorId},
+                  expense_date = ${expenseDateValue},
                   updated_at = NOW()
                 WHERE id = ${expenseId}
               `;
+              
+              console.log(`✅ Updated expense ${expenseId}: amount=${grandTotal}, lineItems=${safeLineItems.length}`);
 
               // Handle line items - update existing or create new
               // Always process line items, even if empty array (to handle deletions)
@@ -6484,60 +6589,86 @@ async getAllLeadsByTenant(
                   
                   if (lineItem.id && typeof lineItem.id === 'number' && lineItem.id > 0) {
                     // Update existing line item
+                    // Pre-compute values to avoid issues with null/undefined
+                    const lineItemCategory = lineItem.category || "General";
+                    const lineItemTitle = lineItem.title || "Expense";
+                    const lineItemDescription = lineItem.description || lineItem.notes || null;
+                    const lineItemTaxRateId = lineItem.taxRateId || null;
+                    const lineItemVendorId = lineItem.vendorId || null;
+                    const lineItemLeadTypeId = lineItem.leadTypeId || null;
+                    const lineItemPaymentMethod = lineItem.paymentMethod || "bank_transfer";
+                    const lineItemReceiptUrl = lineItem.receiptUrl || null;
+                    const lineItemNotes = lineItem.notes || null;
+                    
                     await sql`
                       UPDATE expense_line_items
                       SET 
-                        expense_id = COALESCE(${lineItemExpenseId}, expense_id),
-                        category = COALESCE(${lineItem.category}, category),
-                        title = COALESCE(${lineItem.title}, title),
-                        description = COALESCE(${lineItem.description || lineItem.notes || null}, description),
+                        expense_id = ${lineItemExpenseId},
+                        category = ${lineItemCategory},
+                        title = ${lineItemTitle},
+                        description = ${lineItemDescription},
                         quantity = ${lineQuantity},
                         amount = ${lineAmount},
-                        tax_rate_id = COALESCE(${lineItem.taxRateId || null}, tax_rate_id),
+                        tax_rate_id = ${lineItemTaxRateId},
                         tax_amount = ${lineTaxAmount},
                         tax_rate = ${lineTaxRate},
                         total_amount = ${totalAmount},
-                        vendor_id = COALESCE(${lineItem.vendorId || null}, vendor_id),
-                        lead_type_id = COALESCE(${lineItem.leadTypeId || null}, lead_type_id),
-                        payment_method = COALESCE(${lineItem.paymentMethod || "bank_transfer"}, payment_method),
-                        payment_status = COALESCE(${paymentStatus}, payment_status),
+                        vendor_id = ${lineItemVendorId},
+                        lead_type_id = ${lineItemLeadTypeId},
+                        payment_method = ${lineItemPaymentMethod},
+                        payment_status = ${paymentStatus},
                         amount_paid = ${lineAmountPaid},
                         amount_due = ${lineAmountDue},
-                        receipt_url = COALESCE(${lineItem.receiptUrl || null}, receipt_url),
-                        notes = COALESCE(${lineItem.notes || null}, notes),
+                        receipt_url = ${lineItemReceiptUrl},
+                        notes = ${lineItemNotes},
                         display_order = ${displayOrder},
                         updated_at = NOW()
                       WHERE id = ${lineItem.id}
                     `;
+                    
+                    console.log(`✅ Updated expense line item ${lineItem.id} for expense ${lineItemExpenseId}`);
                   } else {
                     // Create new line item - use expenseId from line item if provided
+                    // Pre-compute values to avoid issues with null/undefined
+                    const newLineItemCategory = lineItem.category || "General";
+                    const newLineItemTitle = lineItem.title || "Expense";
+                    const newLineItemDescription = lineItem.description || lineItem.notes || null;
+                    const newLineItemTaxRateId = lineItem.taxRateId || null;
+                    const newLineItemVendorId = lineItem.vendorId || null;
+                    const newLineItemLeadTypeId = lineItem.leadTypeId || null;
+                    const newLineItemPaymentMethod = lineItem.paymentMethod || "bank_transfer";
+                    const newLineItemReceiptUrl = lineItem.receiptUrl || null;
+                    const newLineItemNotes = lineItem.notes || null;
+                    
                     await sql`
                       INSERT INTO expense_line_items (
                         expense_id, category, title, description, quantity, amount, tax_rate_id, tax_amount, tax_rate,
                         total_amount, vendor_id, lead_type_id, payment_method, payment_status, amount_paid, amount_due,
                         receipt_url, notes, display_order
                       ) VALUES (
-                        ${lineItemExpenseId}, // Use expenseId from line item if provided, otherwise use parent expense ID
-                        ${lineItem.category || "General"},
-                        ${lineItem.title || "Expense"},
-                        ${lineItem.description || lineItem.notes || null},
+                        ${lineItemExpenseId},
+                        ${newLineItemCategory},
+                        ${newLineItemTitle},
+                        ${newLineItemDescription},
                         ${lineQuantity},
                         ${lineAmount},
-                        ${lineItem.taxRateId || null},
+                        ${newLineItemTaxRateId},
                         ${lineTaxAmount},
                         ${lineTaxRate},
                         ${totalAmount},
-                        ${lineItem.vendorId || null},
-                        ${lineItem.leadTypeId || null},
-                        ${lineItem.paymentMethod || "bank_transfer"},
+                        ${newLineItemVendorId},
+                        ${newLineItemLeadTypeId},
+                        ${newLineItemPaymentMethod},
                         ${paymentStatus},
                         ${lineAmountPaid},
                         ${lineAmountDue},
-                        ${lineItem.receiptUrl || null},
-                        ${lineItem.notes || null},
+                        ${newLineItemReceiptUrl},
+                        ${newLineItemNotes},
                         ${displayOrder}
                       )
                     `;
+                    
+                    console.log(`✅ Created new expense line item for expense ${lineItemExpenseId}`);
                   }
                   
                   displayOrder++;
@@ -6621,7 +6752,7 @@ async getAllLeadsByTenant(
                   ${totalAmountDue},
                   ${JSON.stringify([])},
                   ${expense.notes || `Expense from invoice ${invoiceNumber}`},
-                  ${expense.autoGenerated !== false}, // Default to auto-generated unless explicitly false
+                  ${expense.autoGenerated !== false ? true : false},
                   ${invoiceData.userId || null}
                 )
                 RETURNING id
@@ -15127,6 +15258,100 @@ async getDashboardMetrics(
       throw error;
     }
   }
+
+  /**
+   * Update all expenses where invoice_id is missing
+   * Matches expenses to invoices based on:
+   * 1. Notes containing invoice numbers (e.g., "Expenses from invoice 169")
+   * 2. Expense numbers matching invoice numbers (e.g., "169-EXP" matching invoice "169" or "INV169")
+   * 3. Same tenant_id
+   */
+  async updateExpensesWithMissingInvoiceId() {
+    try {
+      console.log("🔄 Starting update of expenses with missing invoice_id...");
+
+      // Step 1: Update expenses based on expense notes pattern
+      // Pattern: "Expenses from invoice {invoiceNumber}" or "Auto-generated from invoice {invoiceNumber}"
+      const step1Result = await sql`
+        UPDATE expenses e
+        SET invoice_id = (
+          SELECT i.id
+          FROM invoices i
+          WHERE i.tenant_id = e.tenant_id
+            AND (
+              -- Match full invoice number (prefix + number) - try different formats
+              e.notes LIKE '%from invoice ' || (i.invoice_prefix || i.invoice_number) || '%'
+              OR e.notes LIKE '%from invoice ' || (i.invoice_prefix || '-' || i.invoice_number) || '%'
+              OR e.notes LIKE '%from invoice ' || i.invoice_number || '%'
+              OR e.notes LIKE '%invoice ' || (i.invoice_prefix || i.invoice_number) || '%'
+              OR e.notes LIKE '%invoice ' || (i.invoice_prefix || '-' || i.invoice_number) || '%'
+              OR e.notes LIKE '%invoice ' || i.invoice_number || '%'
+            )
+          LIMIT 1
+        )
+        WHERE e.invoice_id IS NULL
+          AND e.notes IS NOT NULL
+          AND (e.notes LIKE '%from invoice%' OR e.notes LIKE '%invoice%')
+        RETURNING e.id
+      `;
+      console.log(`✅ Step 1: Updated ${step1Result.length} expenses based on notes pattern`);
+
+      // Step 2: Update expenses based on expense number pattern
+      // Pattern: "{invoiceNumber}-EXP" or "{numericPart}-EXP" matching invoice numbers
+      const step2Result = await sql`
+        UPDATE expenses e
+        SET invoice_id = (
+          SELECT i.id
+          FROM invoices i
+          WHERE i.tenant_id = e.tenant_id
+            AND e.expense_number IS NOT NULL
+            AND (
+              -- Match full invoice number (with prefix) - e.g., "INV169-EXP" matches "INV169"
+              (i.invoice_prefix || i.invoice_number) = SPLIT_PART(e.expense_number, '-EXP', 1)
+              OR (i.invoice_prefix || '-' || i.invoice_number) = SPLIT_PART(e.expense_number, '-EXP', 1)
+              -- Match just the numeric part - e.g., "169-EXP" matches invoice number "169"
+              OR i.invoice_number = SPLIT_PART(e.expense_number, '-EXP', 1)
+              -- Also handle cases where expense number is just the numeric part
+              OR i.invoice_number = e.expense_number
+              OR (i.invoice_prefix || i.invoice_number) = e.expense_number
+            )
+          LIMIT 1
+        )
+        WHERE e.invoice_id IS NULL
+          AND e.expense_number IS NOT NULL
+          AND (e.expense_number LIKE '%-EXP%' OR e.expense_number ~ '^[0-9]+$')
+        RETURNING e.id
+      `;
+      console.log(`✅ Step 2: Updated ${step2Result.length} expenses based on expense number pattern`);
+
+      // Step 3: Get summary
+      const summary = await sql`
+        SELECT 
+          COUNT(*) as total_expenses,
+          COUNT(invoice_id) as expenses_with_invoice_id,
+          COUNT(*) - COUNT(invoice_id) as expenses_without_invoice_id
+        FROM expenses
+      `;
+
+      const stats = summary[0];
+      console.log(`📊 Summary:`);
+      console.log(`   Total expenses: ${stats.total_expenses}`);
+      console.log(`   Expenses with invoice_id: ${stats.expenses_with_invoice_id}`);
+      console.log(`   Expenses without invoice_id: ${stats.expenses_without_invoice_id}`);
+
+      return {
+        success: true,
+        updated: step1Result.length + step2Result.length,
+        totalExpenses: stats.total_expenses,
+        expensesWithInvoiceId: stats.expenses_with_invoice_id,
+        expensesWithoutInvoiceId: stats.expenses_without_invoice_id,
+      };
+    } catch (error) {
+      console.error("❌ Error updating expenses with missing invoice_id:", error);
+      throw error;
+    }
+  }
 }
 
 export const simpleStorage = new SimpleStorage();
+

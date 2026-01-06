@@ -62,7 +62,6 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ModernTemplate, InvoiceData } from "@/components/invoices/invoice-templates";
-import { ObjectUploader } from "@/components/ObjectUploader";
 import type { UploadResult } from "@uppy/core";
 
 export default function InvoiceEdit() {
@@ -91,6 +90,7 @@ export default function InvoiceEdit() {
       travelCategory: "",
       vendor: "",
       serviceProviderId: "",
+      packageId: "",
       itemTitle: "",
       invoiceNumber: "",
       voucherNumber: "",
@@ -131,6 +131,11 @@ export default function InvoiceEdit() {
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [invoiceNumberOnly, setInvoiceNumberOnly] = useState(""); // Just the number part without prefix
 
+  // Travel dates
+  const [travelDate, setTravelDate] = useState("");
+  const [departureDate, setDepartureDate] = useState("");
+  const [arrivalDate, setArrivalDate] = useState("");
+
   // Payment reminder states
   const [enableReminder, setEnableReminder] = useState(false);
   const [reminderFrequency, setReminderFrequency] = useState("weekly");
@@ -169,8 +174,9 @@ export default function InvoiceEdit() {
   // Notes state for rich text editor
   const [notesContent, setNotesContent] = useState("");
   const [additionalNotesContent, setAdditionalNotesContent] = useState("");
-  // Notes attachments state
-  const [invoiceAttachments, setInvoiceAttachments] = useState<Array<{ id: string; name: string; url: string; type?: string }>>([]);
+  // Notes attachments state - store File objects until invoice is saved
+  const [invoiceAttachments, setInvoiceAttachments] = useState<Array<{ id: string; file: File; name: string; type?: string }>>([]);
+  const [uploadedAttachments, setUploadedAttachments] = useState<Array<{ id: string; name: string; url: string; type?: string }>>([]);
 
   // Preview state
   const [showPreview, setShowPreview] = useState(false);
@@ -431,7 +437,7 @@ export default function InvoiceEdit() {
     queryFn: async () => {
       const token = auth.getToken();
       const response = await fetch(
-        `/api/customers?action=get-customers&tenantId=${tenant?.id}`,
+        `/api/customers?action=get-customers&tenantId=${tenant?.id}&all=true`,
         {
           headers: { Authorization: `Bearer ${token}` },
         },
@@ -471,6 +477,21 @@ export default function InvoiceEdit() {
       if (!response.ok) return [];
       const result = await response.json();
       return Array.isArray(result) ? result : result.leadTypes || [];
+    },
+  });
+
+  // Fetch packages
+  const { data: packages = [] } = useQuery<any[]>({
+    queryKey: [`/api/tenants/${tenant?.id}/packages`],
+    enabled: !!tenant?.id,
+    queryFn: async () => {
+      const token = auth.getToken();
+      const response = await fetch(`/api/tenants/${tenant?.id}/packages`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) return [];
+      const result = await response.json();
+      return Array.isArray(result) ? result : [];
     },
   });
 
@@ -579,16 +600,20 @@ export default function InvoiceEdit() {
 
   // Fetch ALL expenses linked to this invoice when editing
   // Show all expenses (both auto-generated and manual) linked to the invoice
-  const { data: existingExpenses = [], isLoading: isLoadingExpenses } = useQuery({
+  const { data: existingExpenses = [], isLoading: isLoadingExpenses, refetch: refetchExpenses } = useQuery({
     queryKey: [`/api/expenses`, invoiceId, 'all'],
     enabled: isEditMode && !!invoiceId && !!tenant?.id,
     queryFn: async () => {
       const token = auth.getToken();
-      const url = `/api/expenses?invoiceId=${invoiceId}&limit=1000&page=1`;
+      // Add timestamp to prevent caching
+      const url = `/api/expenses?invoiceId=${invoiceId}&limit=1000&page=1&t=${Date.now()}`;
       const response = await fetch(url, {
         headers: { 
           Authorization: `Bearer ${token}`,
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache',
         },
+        cache: 'no-store', // Bypass browser cache completely
       });
       if (!response.ok) return [];
       const result = await response.json();
@@ -604,6 +629,12 @@ export default function InvoiceEdit() {
       console.log("📦 Fetched expenses from API:", expenses.length, expenses);
       return expenses;
     },
+    // Force refetch every time to ensure fresh data when editing
+    refetchOnMount: true,
+    refetchOnWindowFocus: false,
+    staleTime: 0, // Always consider data stale, so it refetches
+    gcTime: 0, // Don't cache, always fetch fresh data
+    retry: 2,
   });
 
   // Fetch all expenses (including from expense page) for profit calculation only
@@ -642,18 +673,19 @@ export default function InvoiceEdit() {
         console.log("🔄 Invoice ID changed from", previousInvoiceId, "to", invoiceId);
         invoiceDataLoadedRef.current = null; // Reset before refetch
         // Force refetch when invoiceId changes
-        if (isEditMode && refetchInvoice) {
+        if (isEditMode) {
           console.log("🔄 Forcing refetch for new invoice ID:", invoiceId);
           setTimeout(() => {
-            refetchInvoice();
+            if (refetchInvoice) refetchInvoice();
+            if (refetchExpenses) refetchExpenses();
           }, 100);
         }
       }
-    } else {
-      // Reset when not in edit mode
-      invoiceDataLoadedRef.current = null;
-    }
-  }, [invoiceId, isEditMode, refetchInvoice]);
+      } else {
+        // Reset when not in edit mode
+        invoiceDataLoadedRef.current = null;
+      }
+    }, [invoiceId, isEditMode, refetchInvoice, refetchExpenses]);
 
   // Populate form fields when invoice data loads
   useEffect(() => {
@@ -745,7 +777,13 @@ export default function InvoiceEdit() {
         setInvoiceNumberOnly(numberPart);
       }
       setIsTaxInclusive(invoice.isTaxInclusive || false);
-      // Parse notes and extract attachments (links in HTML)
+      
+      // Load travel dates
+      setTravelDate(invoice.travelDate || invoice.travel_date || "");
+      setDepartureDate(invoice.departureDate || invoice.departure_date || "");
+      setArrivalDate(invoice.arrivalDate || invoice.arrival_date || "");
+      
+      // Parse notes and extract attachments (links in HTML) - keep for backward compatibility
       const notesHtml = invoice.notes || "";
       const notesAttachmentsFound: Array<{ id: string; name: string; url: string }> = [];
       const notesWithoutAttachments = notesHtml.replace(/<p><a href="([^"]+)"[^>]*>📎 ([^<]+)<\/a><\/p>/g, (match, url, name) => {
@@ -758,7 +796,7 @@ export default function InvoiceEdit() {
       }).trim();
       setNotesContent(notesWithoutAttachments);
       
-      // Parse additional notes and extract attachments
+      // Parse additional notes and extract attachments - keep for backward compatibility
       const additionalNotesHtml = invoice.additionalNotes || "";
       const additionalNotesAttachmentsFound: Array<{ id: string; name: string; url: string }> = [];
       const additionalNotesWithoutAttachments = additionalNotesHtml.replace(/<p><a href="([^"]+)"[^>]*>📎 ([^<]+)<\/a><\/p>/g, (match, url, name) => {
@@ -771,8 +809,22 @@ export default function InvoiceEdit() {
       }).trim();
       setAdditionalNotesContent(additionalNotesWithoutAttachments);
       
-      // Combine all attachments into one array
-      setInvoiceAttachments([...notesAttachmentsFound, ...additionalNotesAttachmentsFound]);
+      // Load attachments from invoice data (new system - from invoice.attachments)
+      const invoiceAttachmentsData = invoice.attachments || [];
+      const invoiceAttachmentsParsed = Array.isArray(invoiceAttachmentsData) 
+        ? invoiceAttachmentsData.map((att: any, index: number) => ({
+            id: `uploaded-${index}`,
+            name: att.name || att.fileName || `Attachment ${index + 1}`,
+            url: att.url || att.publicUrl || att.objectPath || att.location || "",
+            type: att.type || att.contentType || "application/octet-stream",
+          }))
+        : [];
+      
+      // Set uploaded attachments (already uploaded, read-only)
+      setUploadedAttachments(invoiceAttachmentsParsed);
+      
+      // Clear any new file attachments (they will be uploaded on save)
+      setInvoiceAttachments([]);
       
       setEnableReminder(invoice.enableReminder || false);
       setReminderFrequency(invoice.reminderFrequency || "weekly");
@@ -818,6 +870,7 @@ export default function InvoiceEdit() {
           travelCategory: item.travelCategory || "",
           vendor: item.vendor?.toString() || item.vendorId?.toString() || "",
           serviceProviderId: item.serviceProviderId?.toString() || "",
+          packageId: item.packageId?.toString() || "",
           itemTitle: item.itemTitle || item.description || "",
           invoiceNumber: item.invoiceNumber || "",
           voucherNumber: item.voucherNumber || "",
@@ -903,16 +956,24 @@ export default function InvoiceEdit() {
           // Calculate purchase price per unit
           const purchasePrice = quantity > 0 ? (amount / quantity).toFixed(2) : amount.toFixed(2);
           
+          // Get lead_type_id from line item
+          const leadTypeId = lineItem.lead_type_id || lineItem.leadTypeId || null;
+          // Find the lead type by ID to get its name for the category field
+          const leadType = leadTypes.find((lt: any) => lt.id === leadTypeId);
+          const categoryValue = leadType ? (leadType.name || leadType.type_name || leadType.typeName || "other") : "other";
+          
           const lineItemData = {
             id: lineItem.id,
             expenseId: exp.id,
             title: lineItem.title || exp.title || "",
             purchasePrice: purchasePrice,
             amount: amount.toFixed(2),
-            category: lineItem.category || exp.category || "",
+            category: categoryValue, // Use lead type name from lead_type_id
+            packageId: leadTypeId ? leadTypeId.toString() : "", // Store lead_type_id as packageId for saving
             vendorId: (lineItem.vendor_id || lineItem.vendorId || exp.vendor_id || exp.vendorId)?.toString() || "",
             quantity: quantity.toString(),
             notes: lineItem.notes || exp.notes || "",
+            leadTypeId: leadTypeId, // Store lead_type_id for reference
             isFromAPI: true,
             isLineItem: true,
             isExisting: true, // Mark as existing line item
@@ -938,6 +999,12 @@ export default function InvoiceEdit() {
           const quantity = parseInt(exp.quantity || "1");
           const purchasePrice = quantity > 0 ? (amount / quantity).toFixed(2) : amount.toFixed(2);
           
+          // Get lead_type_id from expense
+          const leadTypeId = exp.lead_type_id || exp.leadTypeId || null;
+          // Find the lead type by ID to get its name for the category field
+          const leadType = leadTypes.find((lt: any) => lt.id === leadTypeId);
+          const categoryValue = leadType ? (leadType.name || leadType.type_name || leadType.typeName || "other") : "other";
+          
           // Create a line item from the expense itself when no line items exist
           // Use a negative ID to distinguish from actual line item IDs
           processedLineItems.push({
@@ -946,10 +1013,12 @@ export default function InvoiceEdit() {
             title: exp.title || "",
             purchasePrice: purchasePrice,
             amount: amount.toFixed(2),
-            category: exp.category || "",
+            category: categoryValue, // Use lead type name from lead_type_id
+            packageId: leadTypeId ? leadTypeId.toString() : "", // Store lead_type_id as packageId for saving
             vendorId: (exp.vendor_id || exp.vendorId)?.toString() || "",
             quantity: quantity.toString(),
             notes: exp.notes || "",
+            leadTypeId: leadTypeId, // Store lead_type_id for reference
             isFromAPI: true,
             isLineItem: false, // This is the expense itself, not a line item
             isExisting: true,
@@ -1009,11 +1078,19 @@ export default function InvoiceEdit() {
         title: "Invoice Updated",
         description: "Invoice has been updated successfully.",
       });
+      // Invalidate all related queries to ensure fresh data
       queryClient.invalidateQueries({
         queryKey: [`/api/tenants/${tenant?.id}/invoices`],
       });
       queryClient.invalidateQueries({
         queryKey: [`/api/tenants/${tenant?.id}/invoices/${invoiceId}`],
+      });
+      // Invalidate expenses query to refresh expense line items
+      queryClient.invalidateQueries({
+        queryKey: [`/api/expenses`, invoiceId, 'all'],
+      });
+      queryClient.invalidateQueries({
+        queryKey: [`/api/expenses`, invoiceId, 'all-for-profit'],
       });
       // Invalidate customer activities to refresh activity list
       if (selectedCustomerId) {
@@ -1189,6 +1266,55 @@ export default function InvoiceEdit() {
     ];
   };
 
+  // Check if category has lead_type_category of 3, 8, or 4
+  const shouldShowPackageColumn = (categoryName: string): boolean => {
+    try {
+      if (!categoryName || !leadTypes || leadTypes.length === 0) return false;
+      const leadType = leadTypes.find(
+        (lt: any) => (lt.name || lt.type_name || lt.typeName) === categoryName,
+      );
+      if (!leadType || leadType.lead_type_category === undefined || leadType.lead_type_category === null) return false;
+      
+      // Convert to number for comparison (handles both string and number)
+      const categoryId = typeof leadType.lead_type_category === 'string' 
+        ? parseInt(leadType.lead_type_category, 10) 
+        : leadType.lead_type_category;
+      
+      // Check if categoryId is 3, 8, or 4
+      return categoryId === 3 || categoryId === 8 || categoryId === 4;
+    } catch (error) {
+      console.error("Error checking package column:", error);
+      return false;
+    }
+  };
+
+  // Check if any line item should show package column
+  const shouldShowPackageColumnForAnyItem = useMemo(() => {
+    if (!lineItems || lineItems.length === 0) return false;
+    return lineItems.some((item) => 
+      item.travelCategory && shouldShowPackageColumn(item.travelCategory)
+    );
+  }, [lineItems, leadTypes]);
+
+  // Get package options
+  const getPackageOptions = (): AutocompleteOption[] => {
+    if (!packages || !Array.isArray(packages) || packages.length === 0) {
+      return [{ value: "", label: "Select..." }];
+    }
+    try {
+      return [
+        { value: "", label: "Select..." },
+        ...packages.map((pkg: any) => ({
+          value: pkg.id?.toString() || "",
+          label: pkg.name || `Package ${pkg.id || ""}`,
+        })),
+      ];
+    } catch (error) {
+      console.error("Error getting package options:", error);
+      return [{ value: "", label: "Select..." }];
+    }
+  };
+
   // Get payment status options
   // Get payment status options - show all options when editing existing invoice
   const getPaymentStatusOptions = (): AutocompleteOption[] => {
@@ -1263,13 +1389,14 @@ export default function InvoiceEdit() {
     }
 
     // Additional commission is now a direct value (not percentage-based)
-    const additionalCommission = parseFloat(item.additionalCommission || "0") || 0;
+    // Keep as string like unitPrice and sellingPrice - only parse when needed for calculations
+    const additionalCommission = item.additionalCommission || "";
 
     return {
       ...item,
       tax: taxAmount ? taxAmount.toFixed(2) : "",
       totalAmount,
-      additionalCommission: additionalCommission > 0 ? additionalCommission.toFixed(2) : "" as any,
+      additionalCommission: additionalCommission, // Keep as string, don't format during input
     } as typeof item;
   };
 
@@ -1307,9 +1434,10 @@ export default function InvoiceEdit() {
     setLineItems([
       ...lineItems,
       {
-        travelCategory: "",
+        travelCategory: "other",
         vendor: "",
         serviceProviderId: "",
+        packageId: "",
         itemTitle: "",
         invoiceNumber: "",
         voucherNumber: "",
@@ -1443,18 +1571,22 @@ export default function InvoiceEdit() {
         const purchasePrice = parseFloat(item.purchasePrice || "0");
         const quantity = parseInt(item.quantity || "1");
         
+        // Get lead type ID from packageId (packageId is the lead_type_id)
+        const leadTypeId = item.packageId && item.packageId !== "" ? parseInt(item.packageId) : null;
+        const selectedLeadType = leadTypes.find((lt: any) => lt.id === leadTypeId);
+        
         return {
           itemIndex: index,
-          title: item.itemTitle || `Expense for ${item.travelCategory}`,
+          title: item.itemTitle || `Expense for ${item.travelCategory || "other"}`,
           purchasePrice: purchasePrice, // Purchase price per unit
           amount: purchasePrice * quantity, // Multiply purchase price by quantity
-          category: item.travelCategory || "General",
+          category: "other", // Always set category to "other" for new line items
           vendorId: item.vendor !== "none" ? parseInt(item.vendor) : null,
           vendorName: vendor
             ? vendor.companyName || vendor.name
             : "Not specified",
-          leadTypeId: leadType?.id || null,
-          leadTypeName: item.travelCategory || "Not specified",
+          leadTypeId: leadTypeId, // Use packageId as lead_type_id
+          leadTypeName: selectedLeadType?.name || selectedLeadType?.type_name || selectedLeadType?.typeName || "Not specified",
           expenseType: "purchase",
           quantity: quantity,
           invoiceNumber: item.invoiceNumber,
@@ -1654,7 +1786,20 @@ export default function InvoiceEdit() {
       setCurrentItemIndex(index);
       setIsLeadTypePanelOpen(true);
     } else {
-      updateLineItem(index, "travelCategory", value);
+      // Find the lead type by name to get its ID
+      const selectedLeadType = leadTypes.find((lt: any) => 
+        (lt.name || lt.type_name || lt.typeName) === value
+      );
+      const packageId = selectedLeadType ? selectedLeadType.id.toString() : "";
+      
+      // Update both travelCategory (for display) and packageId (for lead_type_id) in a single update
+      const updatedItems = [...lineItems];
+      updatedItems[index] = {
+        ...updatedItems[index],
+        travelCategory: value,
+        packageId: packageId,
+      };
+      setLineItems(updatedItems);
     }
   };
 
@@ -1835,16 +1980,22 @@ export default function InvoiceEdit() {
           const hasTitle = item.itemTitle && item.itemTitle.trim() !== "";
           const hasPrice = sellingPrice > 0;
           const hasTotal = totalAmount > 0;
-          const hasCategory = item.travelCategory && item.travelCategory.trim() !== "";
+          const hasLeadType = item.packageId && item.packageId.trim() !== "";
           
-          // Include items that have any meaningful data (title, price, total, or category)
-          if (!hasTitle && !hasPrice && !hasTotal && !hasCategory) {
+          // Include items that have any meaningful data (title, price, total, or lead_type_id)
+          if (!hasTitle && !hasPrice && !hasTotal && !hasLeadType) {
             return null;
           }
           
           // Build description from available data
           let description = item.itemTitle?.trim();
-          if (!description && hasCategory) {
+          if (!description && hasLeadType) {
+            // Try to get lead type name from packageId
+            const leadTypeId = item.packageId ? parseInt(item.packageId) : null;
+            const leadType = leadTypes.find((lt: any) => lt.id === leadTypeId);
+            description = leadType ? (leadType.name || leadType.type_name || leadType.typeName) : item.travelCategory;
+          }
+          if (!description && item.travelCategory) {
             description = item.travelCategory;
           }
           if (!description) {
@@ -1940,38 +2091,6 @@ export default function InvoiceEdit() {
       };
     });
 
-    // Manual expenses - all new expenses (from line items or manually added) should be added to auto-generated expense
-    // In edit mode, all expenses (auto-generated from line items + manual) are consolidated into the auto-generated expense
-    const newManualExpenses: any[] = [];
-    
-    // Only include expenses that are NOT from API (new expenses being added)
-    manualExpenses.filter((expense) => !expense.isFromAPI).forEach((expense) => {
-      const purchasePrice = parseFloat(expense.purchasePrice || "0");
-      const quantity = parseInt(expense.quantity || "1");
-      const amount = purchasePrice * quantity;
-      
-      newManualExpenses.push({
-        title: expense.title || "Manual Expense",
-        amount: amount,
-        quantity: quantity,
-        category: expense.category || "General",
-        subcategory: expense.category || "General",
-        vendorId: expense.vendorId && expense.vendorId !== "none" ? parseInt(expense.vendorId) : null,
-        leadTypeId: null,
-        expenseType: "manual",
-        expenseDate: formData.get("issueDate") as string,
-        expenseNumber: expense.expenseNumber || `${invoiceNumber}-MAN-${newManualExpenses.length + 1}`,
-        paymentMethod: "bank_transfer",
-        currency: invoiceSettings?.defaultCurrency || "USD",
-        taxAmount: 0,
-        taxRate: 0,
-        amountPaid: 0,
-        amountDue: amount,
-        status: "pending",
-        notes: `Manual expense from invoice ${invoiceNumber}`,
-      });
-    });
-
     // Include edited expense line items from API (excluding deleted ones)
     // Group edited line items by their expense ID
     const expensesWithLineItems: Map<number, any> = new Map();
@@ -1999,10 +2118,10 @@ export default function InvoiceEdit() {
               title: editedData.title || "Expense",
               amount: amount,
               quantity: quantity,
-              category: editedData.category || "General",
-              subcategory: editedData.category || "General",
+              category: "other", // Always set category to "other"
+              subcategory: "other", // Always set subcategory to "other"
               vendorId: editedData.vendorId && editedData.vendorId !== "none" ? parseInt(editedData.vendorId) : null,
-              leadTypeId: null,
+              leadTypeId: editedData.leadTypeId || (editedData.packageId && editedData.packageId !== "" ? parseInt(editedData.packageId) : null),
               expenseType: "purchase",
               expenseDate: formData.get("issueDate") as string,
               paymentMethod: "bank_transfer",
@@ -2029,10 +2148,10 @@ export default function InvoiceEdit() {
               title: editedData.title || "Expense",
               amount: amount,
               quantity: quantity,
-              category: editedData.category || "General",
-              subcategory: editedData.category || "General",
+              category: "other", // Always set category to "other"
+              subcategory: "other", // Always set subcategory to "other"
               vendorId: editedData.vendorId && editedData.vendorId !== "none" ? parseInt(editedData.vendorId) : null,
-              leadTypeId: null,
+              leadTypeId: editedData.leadTypeId || (editedData.packageId && editedData.packageId !== "" ? parseInt(editedData.packageId) : null),
               expenseType: "purchase",
               expenseDate: formData.get("issueDate") as string,
               paymentMethod: "bank_transfer",
@@ -2061,10 +2180,10 @@ export default function InvoiceEdit() {
         quantity: lineItemsForExpense.length > 0
           ? lineItemsForExpense.reduce((sum, item) => sum + (parseInt(item.quantity) || 1), 0)
           : parseFloat(expenseGroup.quantity || "1") || 1,
-        category: lineItemsForExpense[0]?.category || expenseGroup.category || "General",
-        subcategory: lineItemsForExpense[0]?.category || expenseGroup.category || "General",
+        category: "other", // Always set category to "other"
+        subcategory: "other", // Always set subcategory to "other"
         vendorId: lineItemsForExpense[0]?.vendorId || expenseGroup.vendorId || null,
-        leadTypeId: null,
+        leadTypeId: lineItemsForExpense[0]?.leadTypeId || null,
         expenseType: "purchase",
         expenseDate: formData.get("issueDate") as string,
         expenseNumber: expenseGroup.expenseNumber || `${invoiceNumber}-EXP-1`,
@@ -2102,10 +2221,10 @@ export default function InvoiceEdit() {
               title: editedData.title || lineItem.title || "Expense",
               amount: amount,
               quantity: quantity,
-              category: editedData.category || lineItem.category || "General",
-              subcategory: editedData.category || lineItem.category || "General",
+              category: "other", // Always set category to "other"
+              subcategory: "other", // Always set subcategory to "other"
               vendorId: editedData.vendorId && editedData.vendorId !== "none" ? parseInt(editedData.vendorId) : (lineItem.vendor_id || lineItem.vendorId || null),
-              leadTypeId: null,
+              leadTypeId: editedData.leadTypeId || lineItem.lead_type_id || lineItem.leadTypeId || null,
               expenseType: "purchase",
               expenseDate: formData.get("issueDate") as string,
               paymentMethod: "bank_transfer",
@@ -2131,10 +2250,10 @@ export default function InvoiceEdit() {
           quantity: lineItemsForExpense.length > 0
             ? lineItemsForExpense.reduce((sum, item) => sum + (parseInt(item.quantity) || 1), 0)
             : parseFloat(exp.quantity || "1") || 1,
-          category: lineItemsForExpense[0]?.category || exp.category || "General",
-          subcategory: lineItemsForExpense[0]?.category || exp.category || "General",
+          category: "other", // Always set category to "other"
+          subcategory: "other", // Always set subcategory to "other"
           vendorId: lineItemsForExpense[0]?.vendorId || exp.vendor_id || exp.vendorId || null,
-          leadTypeId: null,
+          leadTypeId: lineItemsForExpense[0]?.leadTypeId || exp.lead_type_id || exp.leadTypeId || null,
           expenseType: "purchase",
           expenseDate: formData.get("issueDate") as string,
           expenseNumber: exp.expense_number || exp.expenseNumber || `${invoiceNumber}-EXP-1`,
@@ -2159,8 +2278,8 @@ export default function InvoiceEdit() {
         title: expense.title,
         amount: expense.amount,
         quantity: expense.quantity || 1,
-        category: expense.category,
-        subcategory: expense.category,
+        category: "other", // Always set category to "other"
+        subcategory: "other", // Always set subcategory to "other"
         vendorId: expense.vendorId,
         leadTypeId: expense.leadTypeId,
         expenseType: expense.expenseType,
@@ -2179,7 +2298,7 @@ export default function InvoiceEdit() {
           title: expense.title,
           amount: expense.amount,
           quantity: expense.quantity || 1,
-          category: expense.category,
+          category: "other", // Always set category to "other"
           vendorId: expense.vendorId,
           leadTypeId: expense.leadTypeId,
           expenseType: expense.expenseType,
@@ -2194,6 +2313,86 @@ export default function InvoiceEdit() {
       });
     });
     
+    // Process manual expenses - if there's an existing expense for this invoice, add manual expenses as line items to it
+    // Otherwise, create new expenses
+    const newManualExpenses: any[] = [];
+    
+    // Check if there's an existing expense for this invoice (after processing existing expenses)
+    const existingExpenseId = expensesWithLineItems.size > 0 
+      ? Array.from(expensesWithLineItems.keys()).find(id => id > 0) // Find first positive (existing) expense ID
+      : null;
+    
+    // Only include expenses that are NOT from API (new expenses being added)
+    manualExpenses.filter((expense) => !expense.isFromAPI).forEach((expense) => {
+      const purchasePrice = parseFloat(expense.purchasePrice || "0");
+      const quantity = parseInt(expense.quantity || "1");
+      const amount = purchasePrice * quantity;
+      
+      // If there's an existing expense, add this as a line item to it instead of creating a new expense
+      if (existingExpenseId && existingExpenseId > 0) {
+        const existingExpense = expensesWithLineItems.get(existingExpenseId);
+        if (existingExpense) {
+          // Add as a new line item to the existing expense
+          const newLineItem = {
+            // No id - new line item to be created
+            expenseId: existingExpenseId, // Associate with existing expense
+            title: expense.title || "Manual Expense",
+            amount: amount,
+            quantity: quantity,
+            category: "other", // Always set category to "other"
+            subcategory: "other", // Always set subcategory to "other"
+            vendorId: expense.vendorId && expense.vendorId !== "none" ? parseInt(expense.vendorId) : null,
+            leadTypeId: expense.leadTypeId || expense.packageId && expense.packageId !== "" ? parseInt(expense.packageId) : null,
+            expenseType: "manual",
+            expenseDate: formData.get("issueDate") as string,
+            paymentMethod: "bank_transfer",
+            currency: invoiceSettings?.defaultCurrency || "USD",
+            taxAmount: 0,
+            taxRate: 0,
+            amountPaid: 0,
+            amountDue: amount,
+            status: "pending",
+            notes: `Manual expense from invoice ${invoiceNumber}`,
+          };
+          
+          // Add to existing expense's line items
+          existingExpense.lineItems = existingExpense.lineItems || [];
+          existingExpense.lineItems.push(newLineItem);
+          
+          // Update the expense amount to include the new line item
+          existingExpense.amount = (parseFloat(existingExpense.amount?.toString() || "0") || 0) + amount;
+          
+          // Update the expense in the map
+          expensesWithLineItems.set(existingExpenseId, existingExpense);
+          
+          console.log(`📦 Added manual expense as line item to existing expense ${existingExpenseId}`);
+          return; // Skip adding as new expense
+        }
+      }
+      
+      // If no existing expense, create a new expense
+      newManualExpenses.push({
+        title: expense.title || "Manual Expense",
+        amount: amount,
+        quantity: quantity,
+        category: "other", // Always set category to "other"
+        subcategory: "other", // Always set subcategory to "other"
+        vendorId: expense.vendorId && expense.vendorId !== "none" ? parseInt(expense.vendorId) : null,
+        leadTypeId: expense.leadTypeId || expense.packageId && expense.packageId !== "" ? parseInt(expense.packageId) : null,
+        expenseType: "manual",
+        expenseDate: formData.get("issueDate") as string,
+        expenseNumber: expense.expenseNumber || `${invoiceNumber}-MAN-${newManualExpenses.length + 1}`,
+        paymentMethod: "bank_transfer",
+        currency: invoiceSettings?.defaultCurrency || "USD",
+        taxAmount: 0,
+        taxRate: 0,
+        amountPaid: 0,
+        amountDue: amount,
+        status: "pending",
+        notes: `Manual expense from invoice ${invoiceNumber}`,
+      });
+    });
+
     // Add new manual expenses (without expense ID - will be created)
     newManualExpenses.forEach((expense, index) => {
       // Use a temporary negative ID to mark as new (will be removed before sending)
@@ -2202,8 +2401,8 @@ export default function InvoiceEdit() {
         title: expense.title,
         amount: expense.amount,
         quantity: expense.quantity,
-        category: expense.category,
-        subcategory: expense.subcategory,
+        category: "other", // Always set category to "other"
+        subcategory: "other", // Always set subcategory to "other"
         vendorId: expense.vendorId,
         leadTypeId: expense.leadTypeId,
         expenseType: expense.expenseType,
@@ -2222,7 +2421,7 @@ export default function InvoiceEdit() {
           title: expense.title,
           amount: expense.amount,
           quantity: expense.quantity,
-          category: expense.category,
+          category: "other", // Always set category to "other"
           vendorId: expense.vendorId,
           leadTypeId: expense.leadTypeId,
           expenseType: expense.expenseType,
@@ -2265,6 +2464,70 @@ export default function InvoiceEdit() {
       lineItems: exp.lineItems?.map((li: any) => ({ id: li.id || "NEW", title: li.title }))
     })));
 
+    // Upload files first if there are any attachments
+    let allAttachments: Array<{ name: string; url: string; type?: string }> = [];
+    if (invoiceAttachments.length > 0) {
+      try {
+        const uploadedUrls: Array<{ name: string; url: string; type?: string }> = [];
+        
+        for (const attachment of invoiceAttachments) {
+          const token = auth.getToken();
+          // Encode filename to handle special characters (non-ISO-8859-1)
+          const encodedFilename = encodeURIComponent(attachment.name);
+          
+          const uploadResponse = await fetch('/api/objects/store', {
+            method: 'PUT',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'X-Filename': encodedFilename,
+              'Content-Type': attachment.type || 'application/octet-stream',
+            },
+            body: attachment.file,
+          });
+          
+          if (!uploadResponse.ok) {
+            const errorText = await uploadResponse.text();
+            throw new Error(`Failed to upload ${attachment.name}: ${errorText}`);
+          }
+          
+          const uploadResult = await uploadResponse.json();
+          const fileUrl = uploadResult.publicUrl || uploadResult.objectPath || uploadResult.url || uploadResult.location;
+          
+          if (fileUrl) {
+            uploadedUrls.push({
+              name: attachment.name,
+              url: fileUrl.startsWith('http') ? fileUrl : fileUrl.startsWith('/') ? fileUrl : `/${fileUrl}`,
+              type: attachment.type,
+            });
+          }
+        }
+        
+        // Combine existing uploaded attachments with newly uploaded ones
+        const existingAttachments = uploadedAttachments.map(a => ({ name: a.name, url: a.url, type: a.type }));
+        allAttachments = [...existingAttachments, ...uploadedUrls];
+        
+        if (uploadedUrls.length > 0) {
+          toast({
+            title: "Files Uploaded",
+            description: `${uploadedUrls.length} file(s) uploaded successfully`,
+          });
+        }
+      } catch (error: any) {
+        console.error("Error uploading files:", error);
+        toast({
+          title: "Upload Error",
+          description: `Failed to upload some files: ${error.message}`,
+          variant: "destructive",
+        });
+        // Continue with invoice update even if file upload fails
+        // Use existing attachments if upload fails
+        allAttachments = uploadedAttachments.map(a => ({ name: a.name, url: a.url, type: a.type }));
+      }
+    } else {
+      // If no new files, just use existing uploaded attachments
+      allAttachments = uploadedAttachments.map(a => ({ name: a.name, url: a.url, type: a.type }));
+    }
+
     const invoiceData = {
       invoiceNumber: formData.get("invoiceNumber") as string,
       customerId: parseInt(selectedCustomerId),
@@ -2293,17 +2556,16 @@ export default function InvoiceEdit() {
       cancellationChargeNotes: paymentStatus === "cancelled" && hasCancellationCharge ? cancellationChargeNotes : "",
       notes: notesContent || undefined,
       additionalNotes: additionalNotesContent || undefined,
-      attachments: invoiceAttachments.length > 0 ? invoiceAttachments.map(a => ({
-        name: a.name,
-        url: a.url,
-        type: a.type,
-      })) : undefined,
+      attachments: allAttachments.length > 0 ? allAttachments : undefined,
       paymentTerms: paymentTerms || undefined,
       paymentMethod: paymentMethod.length > 0 ? paymentMethod : ["credit_card"],
       isTaxInclusive: isTaxInclusive,
       enableReminder,
       reminderFrequency: enableReminder ? reminderFrequency : null,
       reminderSpecificDate: enableReminder && reminderFrequency === "specific_date" ? reminderSpecificDate : null,
+      travelDate: travelDate || undefined,
+      departureDate: departureDate || undefined,
+      arrivalDate: arrivalDate || undefined,
       lineItems: lineItems.map((item) => ({
         ...item,
         quantity: parseInt(item.quantity || "1"),
@@ -2312,6 +2574,7 @@ export default function InvoiceEdit() {
         purchasePrice: parseFloat(item.purchasePrice || "0"),
         tax: parseFloat(item.tax || "0"),
         additionalCommission: parseFloat(item.additionalCommission || "0"),
+        packageId: item.packageId || null,
       })),
       expenses, // Include auto-generated expenses
       installments: enableInstallments ? calculateInstallments().map(inst => ({
@@ -2373,6 +2636,7 @@ export default function InvoiceEdit() {
       'minmax(180px, 1.5fr)', // Category - reduced width (flexible, min 180px)
       ...(invoiceSettings?.showVendor ? ['minmax(180px, 1.5fr)'] : []), // Vendor - reduced width (flexible, min 180px)
       ...(invoiceSettings?.showProvider ? ['minmax(180px, 1.5fr)'] : []), // Provider - reduced width (flexible, min 180px)
+      ...(shouldShowPackageColumnForAnyItem ? ['minmax(180px, 1.5fr)'] : []), // Package - conditional, after Provider
       'minmax(60px, 1fr)', // Pax - small (flexible, min 60px)
       ...(invoiceSettings?.showUnitPrice ? ['minmax(130px, 1fr)'] : []), // Unit Price - small (flexible, min 100px)
       'minmax(130px, 1fr)', // Selling Price - small (flexible, min 100px)
@@ -2384,7 +2648,7 @@ export default function InvoiceEdit() {
       '50px', // Delete button - small (fixed)
     ];
     return columns.join(' ');
-  }, [invoiceSettings?.showVendor, invoiceSettings?.showProvider, invoiceSettings?.showUnitPrice, invoiceSettings?.showTax, invoiceSettings?.showAdditionalCommission, invoiceSettings?.showVoucherInvoice]);
+  }, [invoiceSettings?.showVendor, invoiceSettings?.showProvider, invoiceSettings?.showUnitPrice, invoiceSettings?.showTax, invoiceSettings?.showAdditionalCommission, invoiceSettings?.showVoucherInvoice, shouldShowPackageColumnForAnyItem]);
 
   // Grid template for expense table
   const expenseGridTemplate = useMemo(() => {
@@ -2602,7 +2866,7 @@ export default function InvoiceEdit() {
               </div>
 
               {/* Payment Method and Status Row */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-7 gap-4">
                 <div>
                   <Label htmlFor="paymentMethod">Payment Method *</Label>
                   <Popover>
@@ -2691,6 +2955,39 @@ export default function InvoiceEdit() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                <div>
+                  <Label htmlFor="travelDate">Travel Date</Label>
+                  <DatePicker
+                    value={travelDate}
+                    onChange={setTravelDate}
+                    placeholder="Select travel date"
+                    className="w-full"
+                  />
+                  <input type="hidden" name="travelDate" value={travelDate} />
+                </div>
+
+                <div>
+                  <Label htmlFor="departureDate">Departure Date</Label>
+                  <DatePicker
+                    value={departureDate}
+                    onChange={setDepartureDate}
+                    placeholder="Select departure date"
+                    className="w-full"
+                  />
+                  <input type="hidden" name="departureDate" value={departureDate} />
+                </div>
+
+                <div>
+                  <Label htmlFor="arrivalDate">Arrival Date</Label>
+                  <DatePicker
+                    value={arrivalDate}
+                    onChange={setArrivalDate}
+                    placeholder="Select arrival date"
+                    className="w-full"
+                  />
+                  <input type="hidden" name="arrivalDate" value={arrivalDate} />
+                </div>
               </div>
 
               {/* Line Items */}
@@ -2714,6 +3011,7 @@ export default function InvoiceEdit() {
                     <div className="flex items-center">Category *</div>
                     {invoiceSettings?.showVendor && <div className="flex items-center">Vendor</div>}
                     {invoiceSettings?.showProvider && <div className="flex items-center">Provider</div>}
+                    {shouldShowPackageColumnForAnyItem && <div className="flex items-center">Package</div>}
                     <div className="flex items-center">Pax *</div>
                     {invoiceSettings?.showUnitPrice && <div className="flex items-center">Unit Price ({currencySymbol}) *</div>}
                     <div className="flex items-center">Selling Price ({currencySymbol}) *</div>
@@ -2777,6 +3075,21 @@ export default function InvoiceEdit() {
                             }
                             placeholder="Select..."
                             emptyText="No providers found"
+                          />
+                        </div>
+                      )}
+
+                      {shouldShowPackageColumn(item.travelCategory) && (
+                        <div className="flex items-center">
+                          <AutocompleteInput
+                            data-testid={`autocomplete-package-${index}`}
+                            suggestions={getPackageOptions()}
+                            value={item.packageId}
+                            onValueChange={(value) =>
+                              updateLineItem(index, "packageId", value)
+                            }
+                            placeholder="Select..."
+                            emptyText="No packages found"
                           />
                         </div>
                       )}
@@ -2892,16 +3205,19 @@ export default function InvoiceEdit() {
                             type="text"
                             value={item.additionalCommission || ""}
                             onChange={(e) => {
-                              // Only allow numeric input (no decimals)
-                              const value = e.target.value.replace(/[^0-9]/g, '');
-                              updateLineItem(
-                                index,
-                                "additionalCommission",
-                                value,
-                              );
+                              // Allow numeric input with decimals (same as unit price and selling price)
+                              const value = e.target.value;
+                              // Allow numbers, decimal point, and empty string
+                              if (value === "" || /^\d*\.?\d*$/.test(value)) {
+                                updateLineItem(
+                                  index,
+                                  "additionalCommission",
+                                  value,
+                                );
+                              }
                             }}
-                            onKeyPress={handleIntegerKeyPress}
-                            placeholder="0"
+                            onKeyPress={handleNumericKeyPress}
+                            placeholder="0.00"
                           />
                         </div>
                       )}
@@ -3363,105 +3679,141 @@ export default function InvoiceEdit() {
                       Upload files and images to attach to this invoice.
                     </p>
                     
-                    {/* Display uploaded attachments */}
-                    {invoiceAttachments.length > 0 && (
+                    {/* Display previously uploaded attachments (read-only) */}
+                    {uploadedAttachments.length > 0 && (
                       <div className="mb-4">
-                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                          {invoiceAttachments.map((attachment) => (
-                            <div
+                        <Label className="text-sm font-medium mb-2 block">Previously Uploaded Files</Label>
+                        <div className="flex flex-wrap gap-2">
+                          {uploadedAttachments.map((attachment) => (
+                            <a
                               key={attachment.id}
-                              className="relative group border rounded-lg overflow-hidden bg-gray-50 dark:bg-gray-800"
+                              href={attachment.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-2 px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-sm"
                             >
                               {attachment.type?.startsWith('image/') ? (
-                                <div className="aspect-square">
-                                  <img
-                                    src={attachment.url}
-                                    alt={attachment.name}
-                                    className="w-full h-full object-cover"
-                                  />
-                                  <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-50 transition-opacity flex items-center justify-center">
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setInvoiceAttachments(invoiceAttachments.filter(a => a.id !== attachment.id));
-                                      }}
-                                      className="opacity-0 group-hover:opacity-100 text-white bg-red-600 hover:bg-red-700 rounded-full p-2 transition-opacity"
-                                      title="Remove"
-                                    >
-                                      <X className="h-4 w-4" />
-                                    </button>
-                                  </div>
-                                </div>
+                                <ImageIcon className="h-4 w-4" />
+                              ) : attachment.name.toLowerCase().endsWith('.pdf') ? (
+                                <FileText className="h-4 w-4" />
                               ) : (
-                                <div className="p-4 flex flex-col items-center justify-center min-h-[100px]">
-                                  {attachment.name.toLowerCase().endsWith('.pdf') ? (
-                                    <FileText className="h-8 w-8 text-red-600 mb-2" />
-                                  ) : (
-                                    <File className="h-8 w-8 text-gray-600 mb-2" />
-                                  )}
-                                  <p className="text-xs text-center text-gray-700 dark:text-gray-300 truncate w-full px-2" title={attachment.name}>
-                                    {attachment.name}
-                                  </p>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setInvoiceAttachments(invoiceAttachments.filter(a => a.id !== attachment.id));
-                                    }}
-                                    className="mt-2 text-red-600 hover:text-red-800"
-                                    title="Remove"
-                                  >
-                                    <X className="h-4 w-4" />
-                                  </button>
-                                </div>
+                                <File className="h-4 w-4" />
                               )}
-                            </div>
+                              <span className="truncate max-w-[200px]">{attachment.name}</span>
+                            </a>
                           ))}
                         </div>
                       </div>
                     )}
                     
-                    {/* Upload Button */}
-                    <ObjectUploader
-                      maxNumberOfFiles={10}
-                      maxFileSize={50 * 1024 * 1024} // 50MB
-                      endpoint="/api/objects/store"
-                      customerId={selectedCustomerId}
-                      tenantId={tenant?.id}
-                      onComplete={(result: UploadResult<Record<string, unknown>, Record<string, unknown>>) => {
-                        if (result.successful.length > 0) {
-                          const uploadedFile = result.successful[0];
-                          const file = uploadedFile.data as File;
-                          let responseBody = (uploadedFile as any).response?.body;
-                          const fullResponse = (uploadedFile as any).response;
-                          
-                          if (!responseBody && fullResponse && typeof fullResponse === 'object') {
-                            if (fullResponse.publicUrl || fullResponse.objectPath || fullResponse.success) {
-                              responseBody = fullResponse;
-                            }
-                          }
-                          
-                          const objectPath = responseBody?.publicUrl || responseBody?.objectPath || responseBody?.location || responseBody?.url;
-                          
-                          if (objectPath) {
-                            const newAttachment = {
-                              id: `${Date.now()}-${Math.random()}`,
+                    {/* Display selected files (not uploaded yet) */}
+                    {invoiceAttachments.length > 0 && (
+                      <div className="mb-4">
+                        <Label className="text-sm font-medium mb-2 block">Selected Files (will be uploaded on save)</Label>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                          {invoiceAttachments.map((attachment) => {
+                            const fileUrl = URL.createObjectURL(attachment.file);
+                            return (
+                              <div
+                                key={attachment.id}
+                                className="relative group border rounded-lg overflow-hidden bg-gray-50 dark:bg-gray-800"
+                              >
+                                {attachment.type?.startsWith('image/') ? (
+                                  <div className="aspect-square">
+                                    <img
+                                      src={fileUrl}
+                                      alt={attachment.name}
+                                      className="w-full h-full object-cover"
+                                      onLoad={() => URL.revokeObjectURL(fileUrl)}
+                                    />
+                                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-50 transition-opacity flex items-center justify-center">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setInvoiceAttachments(invoiceAttachments.filter(a => a.id !== attachment.id));
+                                        }}
+                                        className="opacity-0 group-hover:opacity-100 text-white bg-red-600 hover:bg-red-700 rounded-full p-2 transition-opacity"
+                                        title="Remove"
+                                      >
+                                        <X className="h-4 w-4" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="p-4 flex flex-col items-center justify-center min-h-[100px]">
+                                    {attachment.name.toLowerCase().endsWith('.pdf') ? (
+                                      <FileText className="h-8 w-8 text-red-600 mb-2" />
+                                    ) : (
+                                      <File className="h-8 w-8 text-gray-600 mb-2" />
+                                    )}
+                                    <p className="text-xs text-center text-gray-700 dark:text-gray-300 truncate w-full px-2" title={attachment.name}>
+                                      {attachment.name}
+                                    </p>
+                                    <p className="text-xs text-gray-500 mt-1">
+                                      {(attachment.file.size / 1024).toFixed(1)} KB
+                                    </p>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setInvoiceAttachments(invoiceAttachments.filter(a => a.id !== attachment.id));
+                                      }}
+                                      className="mt-2 text-red-600 hover:text-red-800"
+                                      title="Remove"
+                                    >
+                                      <X className="h-4 w-4" />
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* File Input - Files will be uploaded when invoice is saved */}
+                    <div>
+                      <input
+                        type="file"
+                        id="file-upload"
+                        multiple
+                        accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"
+                        className="hidden"
+                        onChange={(e) => {
+                          const files = Array.from(e.target.files || []);
+                          if (files.length > 0) {
+                            const newAttachments = files.map((file) => ({
+                              id: `attachment-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                              file: file,
                               name: file.name,
-                              url: objectPath,
                               type: file.type,
-                            };
-                            setInvoiceAttachments([...invoiceAttachments, newAttachment]);
+                            }));
+                            setInvoiceAttachments((prev) => [...prev, ...newAttachments]);
                             toast({
-                              title: "Success",
-                              description: "File uploaded successfully",
+                              title: "Files Selected",
+                              description: `${files.length} file(s) selected. They will be uploaded when you save the invoice.`,
                             });
+                            // Reset input
+                            e.target.value = '';
                           }
-                        }
-                      }}
-                      buttonClassName="bg-cyan-600 hover:bg-cyan-700 text-white text-sm"
-                    >
-                      <Paperclip className="h-4 w-4 mr-2" />
-                      Attach Files
-                    </ObjectUploader>
+                        }}
+                      />
+                      <Button
+                        type="button"
+                        onClick={() => {
+                          document.getElementById('file-upload')?.click();
+                        }}
+                        className="bg-cyan-600 hover:bg-cyan-700 text-white text-sm"
+                      >
+                        <Paperclip className="h-4 w-4 mr-2" />
+                        Select Files ({invoiceAttachments.length})
+                      </Button>
+                      {invoiceAttachments.length > 0 && (
+                        <p className="text-xs text-gray-500 mt-2">
+                          {invoiceAttachments.length} file(s) selected. Files will be uploaded when you save the invoice.
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
@@ -3558,9 +3910,19 @@ export default function InvoiceEdit() {
                                     <div className="flex items-center">
                                       <AutocompleteInput
                                         suggestions={getTravelCategories().filter((cat) => cat.value !== "create_new")}
-                                        value={displayItem.category}
+                                        value={displayItem.category || ""}
                                         onValueChange={(value) => {
-                                          const updated = { ...displayItem, category: value };
+                                          // Find lead type by name to get its ID
+                                          const selectedLeadType = leadTypes.find((lt: any) => 
+                                            (lt.name || lt.type_name || lt.typeName) === value
+                                          );
+                                          const packageId = selectedLeadType ? selectedLeadType.id.toString() : "";
+                                          const updated = { 
+                                            ...displayItem, 
+                                            category: value,
+                                            packageId: packageId,
+                                            leadTypeId: selectedLeadType ? selectedLeadType.id : null
+                                          };
                                           setEditedExpenseLineItems((prev) => {
                                             const newMap = new Map(prev);
                                             newMap.set(expense.id, updated);

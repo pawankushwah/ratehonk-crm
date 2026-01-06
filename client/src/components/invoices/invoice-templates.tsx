@@ -33,6 +33,9 @@ export interface InvoiceData {
   paymentTerms?: string;
   paymentStatus?: string;
   paidAmount?: number;
+  travelDate?: string;
+  departureDate?: string;
+  arrivalDate?: string;
   installments?: {
     installmentNumber: number;
     dueDate: string;
