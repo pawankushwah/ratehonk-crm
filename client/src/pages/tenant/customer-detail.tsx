@@ -946,7 +946,7 @@ export default function CustomerDetail() {
     queryFn: async () => {
       const token = auth.getToken();
       const response = await fetch(
-        `/api/customers?action=get-customers&tenantId=${tenant?.id}`,
+        `/api/customers?action=get-customers&tenantId=${tenant?.id}&all=true`,
         {
           headers: { Authorization: `Bearer ${token}` },
         },

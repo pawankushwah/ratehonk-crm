@@ -107,54 +107,80 @@ export function ObjectUploader({
         }
         return headers;
       },
-      getResponseData: (responseText: string, response?: XMLHttpRequest) => {
+      getResponseData: (responseText: string | XMLHttpRequest, response?: XMLHttpRequest) => {
         console.log("📁 getResponseData called");
         console.log("📁 Response text parameter:", responseText);
         console.log("📁 Response text type:", typeof responseText);
-        console.log("📁 Response text length:", responseText?.length);
-        console.log("📁 Response object:", response);
-        console.log("📁 Response object keys:", response ? Object.keys(response) : []);
-        console.log("📁 Response status:", response?.status);
-        console.log("📁 Response type:", response?.responseType);
-        console.log("📁 Response URL:", response?.responseURL);
         
-        // Log all possible response properties
-        if (response) {
-          const xhr = response as any;
-          console.log("📁 response.responseText:", xhr.responseText);
-          console.log("📁 response.response:", xhr.response);
-          console.log("📁 response.responseType:", xhr.responseType);
-          console.log("📁 response.readyState:", xhr.readyState);
+        // Handle case where responseText is actually the XMLHttpRequest object
+        let actualXhr: XMLHttpRequest | undefined = response;
+        if (responseText && typeof responseText === 'object' && 'readyState' in responseText) {
+          // responseText is actually the XMLHttpRequest
+          actualXhr = responseText as XMLHttpRequest;
+          console.log("📁 responseText is XMLHttpRequest, using it as xhr");
+        }
+        
+        if (actualXhr) {
+          console.log("📁 Response status:", actualXhr.status);
+          console.log("📁 Response type:", actualXhr.responseType);
+          console.log("📁 Response URL:", actualXhr.responseURL);
+          const xhr = actualXhr as any;
+          console.log("📁 xhr.responseText:", xhr.responseText);
+          console.log("📁 xhr.response:", xhr.response);
+          console.log("📁 xhr.responseType:", xhr.responseType);
+          console.log("📁 xhr.readyState:", xhr.readyState);
         }
         
         // XHRUpload v4 may pass response differently - check multiple sources
         let parsed: any = {};
         let jsonString = "";
         
-        // XHRUpload v4 might pass empty responseText - get it from XMLHttpRequest directly
-        // Priority: responseText param > xhr.responseText > xhr.response (string) > xhr.response (object)
-        
-        if (responseText && typeof responseText === 'string' && responseText.trim().length > 0) {
-          jsonString = responseText;
-          console.log("✅ Using responseText parameter");
-        } else if (response) {
-          const xhr = response as XMLHttpRequest;
+        // Check if responseText is actually a response object with body property (from upload-success event)
+        if (responseText && typeof responseText === 'object') {
+          const responseObj = responseText as any;
           
-          // Try responseText property (most common)
-          if (xhr.responseText && typeof xhr.responseText === 'string' && xhr.responseText.trim().length > 0) {
-            jsonString = xhr.responseText;
-            console.log("✅ Using XMLHttpRequest.responseText:", xhr.responseText.substring(0, 100));
+          // Check for body property first (from upload-success event)
+          if ('body' in responseObj && responseObj.body) {
+            if (typeof responseObj.body === 'object') {
+              parsed = responseObj.body;
+              console.log("✅ Using responseText.body (object):", parsed);
+            } else if (typeof responseObj.body === 'string') {
+              jsonString = responseObj.body;
+              console.log("✅ Using responseText.body (string):", responseObj.body.substring(0, 200));
+            }
           }
-          // Try response property (for different responseType settings like 'json', 'text', etc.)
-          else if (xhr.response !== null && xhr.response !== undefined) {
-            if (typeof xhr.response === 'string' && xhr.response.trim().length > 0) {
-              jsonString = xhr.response;
-              console.log("✅ Using XMLHttpRequest.response (string):", xhr.response.substring(0, 100));
-            } else if (typeof xhr.response === 'object') {
+          // If no body, check if the object itself is the response data
+          else if (!('readyState' in responseObj) && Object.keys(responseObj).length > 0) {
+            // Might be the parsed response object directly
+            parsed = responseObj;
+            console.log("✅ Using responseText as parsed object:", parsed);
+          }
+        }
+        // Check if responseText is a string
+        else if (responseText && typeof responseText === 'string' && responseText.trim().length > 0) {
+          jsonString = responseText;
+          console.log("✅ Using responseText parameter as string");
+        } 
+        // Check XMLHttpRequest object
+        else if (actualXhr) {
+          const xhr = actualXhr as XMLHttpRequest;
+          
+          // First try response property (for responseType='json' it's already parsed)
+          if (xhr.response !== null && xhr.response !== undefined) {
+            if (typeof xhr.response === 'object' && xhr.response !== null) {
               // Already parsed (responseType was 'json')
               parsed = xhr.response;
-              console.log("✅ Using XMLHttpRequest.response (object):", parsed);
+              console.log("✅ Using XMLHttpRequest.response (object - already parsed):", parsed);
+            } else if (typeof xhr.response === 'string' && xhr.response.trim().length > 0) {
+              jsonString = xhr.response;
+              console.log("✅ Using XMLHttpRequest.response (string):", xhr.response.substring(0, 200));
             }
+          }
+          
+          // Fallback to responseText if we still don't have data
+          if (!parsed && !jsonString && xhr.responseText && typeof xhr.responseText === 'string' && xhr.responseText.trim().length > 0) {
+            jsonString = xhr.responseText;
+            console.log("✅ Using XMLHttpRequest.responseText:", xhr.responseText.substring(0, 200));
           }
         }
         
@@ -173,8 +199,8 @@ export function ObjectUploader({
         if (!parsed || Object.keys(parsed).length === 0) {
           console.error("❌ CRITICAL: No response data found after all attempts!");
           console.error("❌ responseText parameter:", responseText);
-          if (response) {
-            const xhr = response as any;
+          if (actualXhr) {
+            const xhr = actualXhr as any;
             console.error("❌ xhr.responseText:", xhr.responseText);
             console.error("❌ xhr.response:", xhr.response);
             console.error("❌ xhr.responseType:", xhr.responseType);
@@ -185,18 +211,18 @@ export function ObjectUploader({
         }
         
         // Get status from response object or assume success
-        const status = response?.status ?? 200;
-        const responseURL = response?.responseURL || "";
+        const status = actualXhr?.status ?? response?.status ?? 200;
+        const responseURL = actualXhr?.responseURL || response?.responseURL || "";
         
         // Validate that we have actual data
         if (!parsed || Object.keys(parsed).length === 0 || !parsed.success) {
           console.error("❌ No valid parsed data!", {
             parsed,
             responseText,
-            response: response ? {
-              status: response.status,
-              responseText: (response as any).responseText,
-              response: (response as any).response,
+            response: actualXhr ? {
+              status: actualXhr.status,
+              responseText: (actualXhr as any).responseText,
+              response: (actualXhr as any).response,
             } : null,
           });
         }
@@ -315,7 +341,16 @@ export function ObjectUploader({
       // Store the file and response for later access in complete handler
       // This helps us debug and potentially fix empty responses
       (file as any)._uploadResponse = response;
+      (file as any)._uploadResponseBody = response?.body; // Store body separately
       (file as any)._uploadSuccessTime = Date.now();
+      
+      // If response.body exists, store it directly on the file for getResponseData to access
+      if (response?.body) {
+        (file as any).response = {
+          ...response,
+          body: response.body,
+        };
+      }
     });
 
     uppyInstance.on("upload", (data) => {

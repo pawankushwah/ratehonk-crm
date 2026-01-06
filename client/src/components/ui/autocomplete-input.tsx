@@ -45,6 +45,8 @@ export function AutocompleteInput({
   const [inputValue, setInputValue] = React.useState("");
   const inputRef = React.useRef<HTMLInputElement>(null);
   const justOpenedRef = React.useRef(false);
+  const isUserTypingRef = React.useRef(false); // Track if user is actively typing
+  const isSelectingRef = React.useRef(false); // Track if user is selecting an item
 
   // Handle open state changes
   const handleOpenChange = React.useCallback((newOpen: boolean) => {
@@ -74,14 +76,17 @@ export function AutocompleteInput({
   }, [suggestions, value]);
 
   // Display label of selected option, or use input value for searching
-  // If popover is open, show input value for searching
+  // If popover is open:
+  //   - If user is typing (inputValue exists), show input value
+  //   - If user cleared input (inputValue empty but was typing), show empty (let them search)
+  //   - Otherwise, show selected label if available
   // If closed and option found, show label
   // If closed and option not found:
   //   - If allowCustomValue is true, show the actual value (custom input)
   //   - Otherwise, show empty string (will show placeholder)
   // This prevents showing the raw value (ID) when option is not yet loaded
-  const displayValue = open 
-    ? inputValue 
+  const displayValue = open
+    ? (inputValue || (isUserTypingRef.current ? "" : selectedOption?.label || ""))
     : (selectedOption?.label || (allowCustomValue && value ? value : ""));
 
   // Filter suggestions based on current input value
@@ -95,14 +100,26 @@ export function AutocompleteInput({
   }, [suggestions, inputValue]);
 
   const handleSelectSuggestion = (selectedValue: string) => {
+    // Mark that we're selecting to prevent blur from clearing input
+    isSelectingRef.current = true;
     onValueChange(selectedValue);
+    // Clear input value to reset search, but keep the selected label visible
     setInputValue("");
+    isUserTypingRef.current = false; // Reset typing flag when selecting
     setOpen(false);
+    // Reset selecting flag after a delay
+    setTimeout(() => {
+      isSelectingRef.current = false;
+    }, 300);
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newValue = e.target.value;
     setInputValue(newValue);
+    
+    // Mark that user is actively typing
+    isUserTypingRef.current = true;
+    
     if (!open) {
       handleOpenChange(true);
     }
@@ -111,6 +128,13 @@ export function AutocompleteInput({
     if (allowCustomValue) {
       onValueChange(newValue);
     }
+    
+    // Reset typing flag after a delay (user stopped typing)
+    setTimeout(() => {
+      if (newValue === "") {
+        isUserTypingRef.current = false;
+      }
+    }, 500);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -129,7 +153,10 @@ export function AutocompleteInput({
 
   const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
     e.stopPropagation();
+    // Clear input value to allow new search
     setInputValue("");
+    // Don't mark as typing yet - wait for user to actually type
+    isUserTypingRef.current = false;
     if (suggestions.length > 0) {
       // Mark as just opened before opening
       justOpenedRef.current = true;
@@ -145,7 +172,11 @@ export function AutocompleteInput({
     // Prevent the PopoverTrigger from toggling
     e.stopPropagation();
     e.preventDefault();
-    setInputValue("");
+    // Only clear input value if user is starting a new search
+    // Don't clear if there's already a selected value - let them see it first
+    if (!value || !selectedOption) {
+      setInputValue("");
+    }
     if (suggestions.length > 0) {
       // Mark as just opened before opening
       justOpenedRef.current = true;
@@ -174,15 +205,30 @@ export function AutocompleteInput({
                 // Prevent PopoverTrigger from toggling when clicking input
                 e.stopPropagation();
               }}
-              onBlur={() => {
+              onBlur={(e) => {
+                // Check if the blur is caused by clicking on a dropdown item
+                const relatedTarget = e.relatedTarget as HTMLElement;
+                const isClickingOnItem = relatedTarget?.closest('[role="option"]') || 
+                                        relatedTarget?.closest('[cmdk-item]') ||
+                                        relatedTarget?.closest('[data-radix-popper-content-wrapper]');
+                
                 // Delay blur handling to allow click events to process first
                 setTimeout(() => {
+                  // Don't clear if user is selecting an item or clicking on dropdown
+                  if (isSelectingRef.current || isClickingOnItem) {
+                    return;
+                  }
                   // If custom values are allowed and there's input, save it before clearing
                   if (allowCustomValue && inputValue) {
                     onValueChange(inputValue);
                   }
-                  setInputValue("");
-                }, 200);
+                  // Only clear inputValue if popover is closed (user clicked outside)
+                  // If popover is still open, user might be clicking on an item
+                  if (!open) {
+                    setInputValue("");
+                    isUserTypingRef.current = false;
+                  }
+                }, 250);
               }}
               onKeyDown={handleKeyDown}
               className={cn(
@@ -202,13 +248,19 @@ export function AutocompleteInput({
         align="start"
         onOpenAutoFocus={(e) => e.preventDefault()}
         onInteractOutside={(e) => {
-          // Prevent closing when clicking on the input field or its container, or if just opened
-          if (justOpenedRef.current) {
+          // Prevent closing when clicking on the input field or its container, or if just opened, or if selecting
+          if (justOpenedRef.current || isSelectingRef.current) {
             e.preventDefault();
             return;
           }
           const target = e.target as HTMLElement;
           const container = inputRef.current?.closest('.relative');
+          // Check if clicking on CommandItem or within PopoverContent
+          const isClickingOnItem = target.closest('[role="option"]') || target.closest('[cmdk-item]') || target.closest('[data-radix-popper-content-wrapper]');
+          if (isClickingOnItem) {
+            e.preventDefault();
+            return;
+          }
           if (inputRef.current && (
             inputRef.current.contains(target) || 
             target === inputRef.current ||
@@ -218,13 +270,19 @@ export function AutocompleteInput({
           }
         }}
         onPointerDownOutside={(e) => {
-          // Prevent closing when clicking on the input field or its container, or if just opened
-          if (justOpenedRef.current) {
+          // Prevent closing when clicking on the input field or its container, or if just opened, or if selecting
+          if (justOpenedRef.current || isSelectingRef.current) {
             e.preventDefault();
             return;
           }
           const target = e.target as HTMLElement;
           const container = inputRef.current?.closest('.relative');
+          // Check if clicking on CommandItem or within PopoverContent
+          const isClickingOnItem = target.closest('[role="option"]') || target.closest('[cmdk-item]') || target.closest('[data-radix-popper-content-wrapper]');
+          if (isClickingOnItem) {
+            e.preventDefault();
+            return;
+          }
           if (inputRef.current && (
             inputRef.current.contains(target) || 
             target === inputRef.current ||
@@ -248,6 +306,11 @@ export function AutocompleteInput({
                     key={suggestion.value}
                     value={suggestion.value}
                     onSelect={() => handleSelectSuggestion(suggestion.value)}
+                    onMouseDown={() => {
+                      // Set selecting flag before blur event fires
+                      // This prevents the blur handler from clearing the input
+                      isSelectingRef.current = true;
+                    }}
                     className={cn(
                       "cursor-pointer rounded-md px-3 py-2.5 text-sm",
                       "hover:bg-cyan-50 dark:hover:bg-cyan-950/30",

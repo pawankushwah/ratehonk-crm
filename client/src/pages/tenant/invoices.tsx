@@ -1178,7 +1178,7 @@ export default function Invoices() {
       const token =
         localStorage.getItem("token") || localStorage.getItem("auth_token");
       const response = await fetch(
-        `/api/customers?action=get-customers&tenantId=${tenant?.id}`,
+        `/api/customers?action=get-customers&tenantId=${tenant?.id}&all=true`,
         {
           headers: { Authorization: `Bearer ${token}` },
         }

@@ -115,30 +115,6 @@ export default function ExpenseCreate() {
     },
   ]);
 
-  // Debug: Log expenseItems changes (throttled to avoid infinite loops)
-  const prevExpenseItemsRef = useRef(expenseItems);
-  useEffect(() => {
-    // Only log if items actually changed (not just reference)
-    const itemsChanged = JSON.stringify(prevExpenseItemsRef.current) !== JSON.stringify(expenseItems);
-    if (itemsChanged) {
-      console.log("📊 expenseItems state changed:", {
-        length: expenseItems.length,
-        items: expenseItems.map((item, idx) => ({
-          index: idx,
-          category: item.category,
-          title: item.title,
-          quantity: item.quantity,
-          amount: item.amount,
-          totalAmount: item.totalAmount,
-          vendorId: item.vendorId,
-          leadTypeId: item.leadTypeId,
-          paymentStatus: item.paymentStatus,
-        })),
-      });
-      prevExpenseItemsRef.current = expenseItems;
-    }
-  }, [expenseItems]);
-
   const [selectedTaxSettingId, setSelectedTaxSettingId] = useState<string>("");
 
   const [expenseDate, setExpenseDate] = useState(new Date().toISOString().split("T")[0]);
@@ -206,6 +182,31 @@ export default function ExpenseCreate() {
 
   // Extract expenses array from response
   const expenses = expensesResponse?.data || [];
+
+  // Fetch invoices for dropdown
+  const { data: invoicesResponse } = useQuery({
+    queryKey: [`/api/tenants/${tenant?.id}/invoices`],
+    enabled: !!tenant?.id,
+    queryFn: async () => {
+      const token = auth.getToken();
+      const params = new URLSearchParams();
+      params.append("page", "1");
+      params.append("pageSize", "1000"); // Get a large number for dropdown
+      const response = await fetch(
+        `/api/tenants/${tenant?.id}/invoices?${params.toString()}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      if (!response.ok) return { data: [] };
+      const result = await response.json();
+      return {
+        data: result.data || result.invoices || [],
+      };
+    },
+  });
+
+  const invoices = invoicesResponse?.data || [];
 
   // Update currency when settings load
   useEffect(() => {
@@ -416,38 +417,8 @@ export default function ExpenseCreate() {
     },
   });
 
-  // Fetch invoices for dropdown
-  const { data: invoicesResponse } = useQuery({
-    queryKey: [`/api/tenants/${tenant?.id}/invoices`],
-    enabled: !!tenant?.id,
-    queryFn: async () => {
-      const token = auth.getToken();
-      const params = new URLSearchParams();
-      params.append("page", "1");
-      params.append("pageSize", "1000"); // Get a large number for dropdown
-      const response = await fetch(
-        `/api/tenants/${tenant?.id}/invoices?${params.toString()}`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
-      );
-      if (!response.ok) return { data: [] };
-      const result = await response.json();
-      return {
-        data: result.data || result.invoices || [],
-      };
-    },
-  });
-
-  const invoices = invoicesResponse?.data || [];
-
   // Track if expense data has been loaded to prevent re-loading
   const expenseDataLoadedRef = useRef<number | null>(null);
-  // Track expenseItems to avoid dependency loop
-  const expenseItemsRef = useRef(expenseItems);
-  useEffect(() => {
-    expenseItemsRef.current = expenseItems;
-  }, [expenseItems]);
 
   // Fetch expense data for edit mode
   const { data: expenseData, isLoading: isLoadingExpense, refetch: refetchExpense } = useQuery({
@@ -498,19 +469,11 @@ export default function ExpenseCreate() {
       }
       const data = await response.json();
       console.log("Expense data fetched (raw):", data);
-      console.log("Raw data keys:", Object.keys(data));
-      console.log("Raw data.lineItems:", data.lineItems);
-      console.log("Raw data.data?.lineItems:", data.data?.lineItems);
       
       // Handle different response formats
       // If response has a 'data' property, use it; otherwise use the response directly
       const expense = data.data || data;
       console.log("Expense data (processed):", expense);
-      console.log("Processed expense keys:", Object.keys(expense));
-      console.log("Expense lineItems:", expense.lineItems);
-      console.log("LineItems type:", Array.isArray(expense.lineItems) ? "array" : typeof expense.lineItems);
-      console.log("LineItems length:", expense.lineItems?.length);
-      console.log("LineItems content:", JSON.stringify(expense.lineItems, null, 2));
       return expense;
     },
     // Force refetch every time to ensure fresh data when editing
@@ -533,15 +496,8 @@ export default function ExpenseCreate() {
       expenseData,
       match,
       params,
-      location,
-      queryEnabled: isEditMode && !!expenseId && !!tenant?.id,
     });
-    
-    // If query should be enabled but isn't loading, log a warning
-    if (isEditMode && expenseId && tenant?.id && !isLoadingExpense && !expenseData) {
-      console.warn("⚠️ Query should be enabled but no data is loading. Check query configuration.");
-    }
-  }, [expenseId, tenant?.id, isEditMode, isLoadingExpense, expenseData, match, params, location]);
+  }, [expenseId, tenant?.id, isEditMode, isLoadingExpense, expenseData, match, params]);
 
   // Reset the loaded flag and force refetch when expenseId changes
   useEffect(() => {
@@ -563,43 +519,17 @@ export default function ExpenseCreate() {
                         Object.keys(expenseData).length > 0 &&
                         (expenseData.id || expenseData.title || expenseData.amount !== undefined);
     
-    // Use ref to avoid dependency loop
-    const currentExpenseItems = expenseItemsRef.current;
-    
     // Check if expenseItems are empty or don't have the expected data
-    const itemsEmpty = currentExpenseItems.length === 0 || 
-                      (currentExpenseItems.length === 1 && !currentExpenseItems[0].title && expenseData?.title);
-    
-    // Check if expense data has line items that aren't loaded yet
-    const lineItems = expenseData?.lineItems || expenseData?.line_items || expenseData?.items || [];
-    const hasLineItemsInData = Array.isArray(lineItems) && lineItems.length > 0;
-    
-    // Check if expenseItems don't match the line items from API
-    // This handles cases where expenseItems has default/empty values but API has real line items
-    const itemsDontMatchLineItems = hasLineItemsInData && (
-      currentExpenseItems.length === 0 ||
-      currentExpenseItems.length !== lineItems.length ||
-      (currentExpenseItems.length === 1 && !currentExpenseItems[0].title && lineItems.length > 0) ||
-      // Check if the first item in expenseItems doesn't match the first line item
-      (currentExpenseItems.length > 0 && lineItems.length > 0 && 
-       (!currentExpenseItems[0].title || currentExpenseItems[0].title !== lineItems[0].title))
-    );
-    
-    // Check if we need to reload because gstRates became available (needed for tax rate ID mapping)
-    const needsGstRatesReload = expenseDataLoadedRef.current === expenseId && 
-                                gstRates && 
-                                gstRates.length > 0 && 
-                                currentExpenseItems.some(item => !item.taxRateId && expenseData?.lineItems?.some((li: any) => li.tax_rate));
+    const itemsEmpty = expenseItems.length === 0 || 
+                      (expenseItems.length === 1 && !expenseItems[0].title && expenseData?.title);
     
     // Only load if we have valid data, not loading, and either:
     // 1. Haven't loaded this expense yet (ref doesn't match), OR
-    // 2. Items are empty even though we have data (fallback case), OR
-    // 3. Expense data has line items that aren't reflected in expenseItems, OR
-    // 4. gstRates became available and we need to map tax rate IDs
+    // 2. Items are empty even though we have data (fallback case)
     const shouldLoad = isEditMode && 
                       hasValidData && 
                       !isLoadingExpense && 
-                      (expenseDataLoadedRef.current !== expenseId || itemsEmpty || itemsDontMatchLineItems || needsGstRatesReload);
+                      (expenseDataLoadedRef.current !== expenseId || itemsEmpty);
     
     console.log("🔍 Data loading check:", {
       isEditMode,
@@ -608,19 +538,11 @@ export default function ExpenseCreate() {
       currentRef: expenseDataLoadedRef.current,
       expenseId,
       itemsEmpty,
-      hasLineItemsInData,
-      itemsDontMatchLineItems,
-      needsGstRatesReload,
-      lineItemsCount: lineItems.length,
       shouldLoad,
       expenseDataKeys: expenseData ? Object.keys(expenseData).length : 0,
       expenseDataTitle: expenseData?.title,
-      expenseItemsLength: currentExpenseItems.length,
-      firstItemTitle: currentExpenseItems[0]?.title,
-      firstItemAmount: currentExpenseItems[0]?.amount,
-      expenseDataLineItems: expenseData?.lineItems,
-      expenseDataLineItemsLength: expenseData?.lineItems?.length,
-      expenseDataFull: expenseData, // Log full expense data for debugging
+      expenseItemsLength: expenseItems.length,
+      firstItemTitle: expenseItems[0]?.title,
     });
     
     if (shouldLoad) {
@@ -732,42 +654,13 @@ export default function ExpenseCreate() {
       // Set expense items from line items or fallback to expense data (for backward compatibility)
       let itemsToLoad: any[] = [];
       
-      console.log("🔍 Checking for line items:", {
-        hasLineItems: !!expense.lineItems,
-        isArray: Array.isArray(expense.lineItems),
-        length: expense.lineItems?.length,
-        lineItems: expense.lineItems,
-        expenseKeys: Object.keys(expense),
-      });
-      
-      // Check for line items in various possible locations
-      const lineItems = expense.lineItems || expense.line_items || expense.items || [];
-      console.log("🔍 Processed line items:", {
-        lineItems,
-        isArray: Array.isArray(lineItems),
-        length: lineItems.length,
-      });
-      
-      if (lineItems && Array.isArray(lineItems) && lineItems.length > 0) {
+      if (expense.lineItems && Array.isArray(expense.lineItems) && expense.lineItems.length > 0) {
         // New format: use line items
-        console.log("🔍 Processing line items, first item raw:", lineItems[0]);
-        itemsToLoad = lineItems.map((item: any) => {
+        itemsToLoad = expense.lineItems.map((item: any) => {
           const itemQuantity = item.quantity ? parseFloat(item.quantity.toString()) : 1;
           const itemTotalAmount = parseFloat(item.total_amount?.toString() || item.totalAmount?.toString() || item.amount?.toString() || "0");
           const itemUnitAmount = itemQuantity > 0 ? itemTotalAmount / itemQuantity : itemTotalAmount;
           const itemTaxAmount = parseFloat(item.tax_amount?.toString() || item.taxAmount?.toString() || "0");
-          
-          console.log("🔍 Processing line item:", {
-            rawItem: item,
-            itemQuantity,
-            itemTotalAmount,
-            itemUnitAmount,
-            itemTaxAmount,
-            category: item.category,
-            title: item.title,
-            vendor_id: item.vendor_id,
-            lead_type_id: item.lead_type_id,
-          });
           
           // Find tax rate ID from tax rate value
           let itemTaxRateId = "";
@@ -853,23 +746,12 @@ export default function ExpenseCreate() {
       }
       
       console.log("Processed expense items:", itemsToLoad);
-      console.log("Processed expense items (detailed):", JSON.stringify(itemsToLoad, null, 2));
       console.log("Original expense data:", expense);
       
       setExpenseItems(itemsToLoad);
       expenseDataLoadedRef.current = expenseId; // Mark as loaded AFTER setting all data
       console.log("✅ Expense items state updated successfully");
       console.log("✅ Expense items count:", itemsToLoad.length);
-      console.log("✅ First item details:", itemsToLoad[0] ? {
-        category: itemsToLoad[0].category,
-        title: itemsToLoad[0].title,
-        quantity: itemsToLoad[0].quantity,
-        amount: itemsToLoad[0].amount,
-        totalAmount: itemsToLoad[0].totalAmount,
-        vendorId: itemsToLoad[0].vendorId,
-        leadTypeId: itemsToLoad[0].leadTypeId,
-        paymentStatus: itemsToLoad[0].paymentStatus,
-      } : "No items");
     } else {
       const skipReason = {
         isEditMode,
@@ -893,31 +775,13 @@ export default function ExpenseCreate() {
         }, 500);
       }
       
-      // If we have data but it's already loaded, check if expenseItems are empty or don't match line items
+      // If we have data but it's already loaded, check if expenseItems are empty
       // This can happen if the data was loaded but items weren't set properly
       if (isEditMode && expenseData && !isLoadingExpense && expenseDataLoadedRef.current === expenseId) {
         console.log("ℹ️ Data already loaded for this expense ID");
-        const apiLineItems = expenseData.lineItems || expenseData.line_items || expenseData.items || [];
-        const hasApiLineItems = Array.isArray(apiLineItems) && apiLineItems.length > 0;
-        
         // Check if expenseItems are empty or don't match the data
-        const currentItems = expenseItemsRef.current;
-        const itemsAreEmpty = currentItems.length === 0 || (currentItems.length === 1 && !currentItems[0].title && expenseData.title);
-        // Check if API has line items but expenseItems don't match
-        const itemsDontMatch = hasApiLineItems && (
-          currentItems.length !== apiLineItems.length ||
-          (currentItems.length > 0 && apiLineItems.length > 0 && currentItems[0].title !== apiLineItems[0].title)
-        );
-        
-        if (itemsAreEmpty || itemsDontMatch) {
-          console.log("⚠️ Expense items don't match API data, forcing reload...", {
-            itemsAreEmpty,
-            itemsDontMatch,
-            expenseItemsLength: currentItems.length,
-            apiLineItemsLength: apiLineItems.length,
-            expenseItemsFirstTitle: currentItems[0]?.title,
-            apiLineItemsFirstTitle: apiLineItems[0]?.title,
-          });
+        if (expenseItems.length === 0 || (expenseItems.length === 1 && !expenseItems[0].title && expenseData.title)) {
+          console.log("⚠️ Expense items are empty but data exists, forcing reload...");
           expenseDataLoadedRef.current = null; // Reset to allow reload
           // Force reload by clearing ref and triggering useEffect again
           setTimeout(() => {
@@ -928,15 +792,14 @@ export default function ExpenseCreate() {
         }
       }
     }
-  }, [isEditMode, expenseData, isLoadingExpense, gstRates, tenant?.id, expenseId, refetchExpense]);
+  }, [isEditMode, expenseData, isLoadingExpense, gstRates, tenant?.id, expenseId, refetchExpense, expenseItems]);
 
   // Fallback: If we have expense data but items are empty, force reload
   useEffect(() => {
     if (isEditMode && expenseData && !isLoadingExpense && expenseId) {
       const hasData = expenseData.title || expenseData.amount;
-      const currentItems = expenseItemsRef.current;
-      const itemsEmpty = currentItems.length === 0 || 
-                        (currentItems.length === 1 && !currentItems[0].title && !currentItems[0].amount);
+      const itemsEmpty = expenseItems.length === 0 || 
+                        (expenseItems.length === 1 && !expenseItems[0].title && !expenseItems[0].amount);
       
       if (hasData && itemsEmpty && expenseDataLoadedRef.current !== expenseId) {
         console.log("🔄 Fallback: Data exists but items are empty, forcing load...");
@@ -945,7 +808,18 @@ export default function ExpenseCreate() {
         // The main useEffect should pick this up on next render
       }
     }
-  }, [isEditMode, expenseData, isLoadingExpense, expenseId]);
+  }, [isEditMode, expenseData, isLoadingExpense, expenseId, expenseItems]);
+
+  // Ensure invoice ID is set after invoices are loaded
+  useEffect(() => {
+    if (isEditMode && expenseData && invoices.length > 0) {
+      const invoiceIdFromExpense = (expenseData as any).invoice_id?.toString() || (expenseData as any).invoiceId?.toString();
+      if (invoiceIdFromExpense && selectedInvoiceId !== invoiceIdFromExpense) {
+        console.log("🔄 Setting invoice ID after invoices loaded:", invoiceIdFromExpense);
+        setSelectedInvoiceId(invoiceIdFromExpense);
+      }
+    }
+  }, [isEditMode, expenseData, invoices, selectedInvoiceId]);
 
   // Fetch all expenses for title suggestions
   const { data: allExpenses = [] } = useQuery({
@@ -1205,6 +1079,20 @@ export default function ExpenseCreate() {
     ];
   };
 
+  // Get lead type options
+  const getLeadTypeOptions = (): AutocompleteOption[] => {
+    const leadTypeOptions = leadTypes.map((type: any) => ({
+      value: type.id.toString(),
+      label: type.name,
+    }));
+
+    return [
+      { value: "none", label: "No Lead Type" },
+      { value: "create_new", label: "➕ Create New Lead Type" },
+      ...leadTypeOptions,
+    ];
+  };
+
   // Get invoice options for dropdown
   const getInvoiceOptions = (): AutocompleteOption[] => {
     const invoiceOptions = invoices.map((invoice: any) => {
@@ -1221,20 +1109,6 @@ export default function ExpenseCreate() {
     return [
       { value: "", label: "No Invoice (Optional)" },
       ...invoiceOptions,
-    ];
-  };
-
-  // Get lead type options
-  const getLeadTypeOptions = (): AutocompleteOption[] => {
-    const leadTypeOptions = leadTypes.map((type: any) => ({
-      value: type.id.toString(),
-      label: type.name,
-    }));
-
-    return [
-      { value: "none", label: "No Lead Type" },
-      { value: "create_new", label: "➕ Create New Lead Type" },
-      ...leadTypeOptions,
     ];
   };
 
@@ -1511,7 +1385,7 @@ export default function ExpenseCreate() {
               </div>
 
               {/* Expense Title and Date Row */}
-              <div className="flex items-end gap-4 flex-wrap">
+              <div className="flex items-end gap-4">
                 <div className="w-auto md:w-48">
                   <Label htmlFor="expenseTitle">Expense Title</Label>
                   <Input

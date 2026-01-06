@@ -781,7 +781,7 @@ export default function Expenses() {
 
       return response.json();
     },
-    onSuccess: () => {
+    onSuccess: (data, variables) => {
       toast({
         title: "Status Updated",
         description: "Expense status has been updated successfully.",
@@ -789,6 +789,10 @@ export default function Expenses() {
 
       queryClient.invalidateQueries({
         queryKey: ["/api/expenses"],
+      });
+      // Also invalidate the specific expense query to ensure preview shows updated data
+      queryClient.invalidateQueries({
+        queryKey: ["/api/expenses", variables.expenseId],
       });
     },
     onError: (error: any) => {
@@ -1017,8 +1021,29 @@ export default function Expenses() {
           <Button
             size="sm"
             variant="outline"
-            onClick={() => {
-              setSelectedExpense(expense);
+            onClick={async () => {
+              // Fetch the latest expense data including updated line items
+              try {
+                const token = auth.getToken();
+                const response = await fetch(`/api/expenses/${expense.id}`, {
+                  headers: {
+                    Authorization: `Bearer ${token}`,
+                    'Cache-Control': 'no-cache',
+                  },
+                  cache: 'no-store',
+                });
+                if (response.ok) {
+                  const updatedExpense = await response.json();
+                  setSelectedExpense(updatedExpense);
+                } else {
+                  // Fallback to existing expense data if fetch fails
+                  setSelectedExpense(expense);
+                }
+              } catch (error) {
+                console.error("Failed to fetch expense details:", error);
+                // Fallback to existing expense data if fetch fails
+                setSelectedExpense(expense);
+              }
               setShowDetailsDialog(true);
             }}
             title="View Details"
@@ -1964,7 +1989,7 @@ export default function Expenses() {
                       </div>
                       <div>
                         <span className="font-medium">Payment Method:</span>
-                        <span className="ml-2 capitalize">{selectedExpense.paymentMethod.replace(/_/g, ' ')}</span>
+                        <span className="ml-2 capitalize">{selectedExpense.paymentMethod ? selectedExpense.paymentMethod.replace(/_/g, ' ') : '-'}</span>
                       </div>
                       {selectedExpense.paymentReference && (
                         <div>
@@ -2033,8 +2058,6 @@ export default function Expenses() {
                               <TableHead>Tax</TableHead>
                               <TableHead>Total</TableHead>
                               <TableHead>Status</TableHead>
-                              <TableHead>Paid</TableHead>
-                              <TableHead>Due</TableHead>
                               {selectedExpense.lineItems.some((item: any) => item.receiptUrl) && (
                                 <TableHead>Receipt</TableHead>
                               )}
@@ -2060,8 +2083,6 @@ export default function Expenses() {
                                     {getStatusConfig(item.paymentStatus || 'paid').label}
                                   </Badge>
                                 </TableCell>
-                                <TableCell>{formatCurrency(item.amountPaid || 0, selectedExpense.currency)}</TableCell>
-                                <TableCell>{formatCurrency(item.amountDue || 0, selectedExpense.currency)}</TableCell>
                                 {selectedExpense.lineItems.some((i: any) => i.receiptUrl) && (
                                   <TableCell>
                                     {item.receiptUrl ? (

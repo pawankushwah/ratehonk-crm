@@ -304,7 +304,7 @@ export function TravelBookingForm({
       const token =
         localStorage.getItem("token") || localStorage.getItem("auth_token");
       const response = await fetch(
-        `/api/customers?action=get-customers&tenantId=${tenantId}`,
+        `/api/customers?action=get-customers&tenantId=${tenantId}&all=true`,
         {
           headers: { Authorization: `Bearer ${token}` },
         },
