@@ -4916,6 +4916,7 @@ app.get("/api/tenants/:tenantId/all-customers-graph", authenticateToken, async (
     }
   });
 
+  // Soft delete lead
   app.delete("/api/tenants/:tenantId/leads/:leadId", authenticateToken, async (req, res) => {
     try {
       const leadId = parseInt(req.params.leadId);
@@ -4928,6 +4929,82 @@ app.get("/api/tenants/:tenantId/all-customers-graph", authenticateToken, async (
     } catch (error: any) {
       console.error("Delete lead error:", error);
       return res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+  });
+
+  // Restore soft-deleted lead
+  app.post("/api/tenants/:tenantId/leads/:leadId/restore", authenticateToken, async (req, res) => {
+    try {
+      const leadId = parseInt(req.params.leadId);
+      await simpleStorage.restoreLead(leadId);
+
+      return res.json({
+        success: true,
+        message: "Lead restored successfully",
+      });
+    } catch (error: any) {
+      console.error("Restore lead error:", error);
+      return res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+  });
+
+  // Permanently delete lead (hard delete)
+  app.delete("/api/tenants/:tenantId/leads/:leadId/force", authenticateToken, async (req, res) => {
+    try {
+      const leadId = parseInt(req.params.leadId);
+      await simpleStorage.forceDeleteLead(leadId);
+
+      return res.json({
+        success: true,
+        message: "Lead permanently deleted",
+      });
+    } catch (error: any) {
+      console.error("Force delete lead error:", error);
+      return res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+  });
+
+  // Migration endpoint: Add deleted_at column to leads table
+  app.post("/api/migrate/leads-soft-delete", authenticateToken, async (req, res) => {
+    try {
+      // Check if column already exists
+      const [columnExists] = await sql`
+        SELECT EXISTS (
+          SELECT 1 
+          FROM information_schema.columns 
+          WHERE table_name = 'leads' 
+          AND column_name = 'deleted_at'
+        ) as exists
+      `;
+
+      if (columnExists?.exists) {
+        return res.json({
+          success: true,
+          message: "Column deleted_at already exists",
+        });
+      }
+
+      // Add deleted_at column
+      await sql`
+        ALTER TABLE leads 
+        ADD COLUMN deleted_at TIMESTAMP NULL
+      `;
+
+      // Create index for better query performance
+      await sql`
+        CREATE INDEX IF NOT EXISTS idx_leads_deleted_at ON leads(deleted_at)
+      `;
+
+      return res.json({
+        success: true,
+        message: "Soft delete column added successfully",
+      });
+    } catch (error: any) {
+      console.error("Migration error:", error);
+      return res.status(500).json({ 
+        message: "Internal server error", 
+        error: error.message 
+      });
     }
   });
 
@@ -8480,7 +8557,7 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
       // Get total leads count from leads table where source contains Facebook
       const totalLeads = await sql`
         SELECT COUNT(*) as count FROM leads 
-        WHERE tenant_id = ${tenantId} AND source LIKE '%Facebook%'
+        WHERE tenant_id = ${tenantId} AND source LIKE '%Facebook%' AND deleted_at IS NULL
       `;
 
       const isConfigured = !!(integration?.appId && integration?.appSecret);
@@ -26519,6 +26596,21 @@ Happy travels! 🌍✈️`,
     try {
       console.log("🔄 Starting expense prefix migration...");
       const result = await simpleStorage.migrateExpensePrefixes();
+      res.json(result);
+    } catch (error: unknown) {
+      console.error("❌ Migration error:", error);
+      res.status(500).json({
+        message: "Migration failed",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  // Update expenses with missing invoice_id
+  app.post("/api/migrate/expenses-invoice-id", authenticateToken, async (req: any, res) => {
+    try {
+      console.log("🔄 Starting update of expenses with missing invoice_id...");
+      const result = await simpleStorage.updateExpensesWithMissingInvoiceId();
       res.json(result);
     } catch (error: unknown) {
       console.error("❌ Migration error:", error);

@@ -30,6 +30,7 @@ interface AutocompleteInputProps extends Omit<React.InputHTMLAttributes<HTMLInpu
   onValueChange: (value: string) => void;
   emptyText?: string;
   allowCustomValue?: boolean;
+  onSearch?: (searchTerm: string) => void;
 }
 
 export function AutocompleteInput({
@@ -38,6 +39,7 @@ export function AutocompleteInput({
   onValueChange,
   emptyText = "No suggestions found.",
   allowCustomValue = false,
+  onSearch,
   className,
   ...props
 }: AutocompleteInputProps) {
@@ -90,14 +92,22 @@ export function AutocompleteInput({
     : (selectedOption?.label || (allowCustomValue && value ? value : ""));
 
   // Filter suggestions based on current input value
+  // If onSearch is provided, don't filter locally (API handles filtering)
+  // Otherwise, filter locally as before
   const filteredSuggestions = React.useMemo(() => {
+    // If onSearch callback is provided, return all suggestions (API handles filtering)
+    if (onSearch) {
+      return suggestions;
+    }
+    
+    // Otherwise, filter locally
     if (!inputValue || inputValue.trim() === "") return suggestions;
     
     const query = inputValue.toLowerCase();
     return suggestions.filter((suggestion) => 
       suggestion.label.toLowerCase().includes(query)
     );
-  }, [suggestions, inputValue]);
+  }, [suggestions, inputValue, onSearch]);
 
   const handleSelectSuggestion = (selectedValue: string) => {
     // Mark that we're selecting to prevent blur from clearing input
@@ -119,6 +129,11 @@ export function AutocompleteInput({
     
     // Mark that user is actively typing
     isUserTypingRef.current = true;
+    
+    // Call onSearch callback if provided (for API-based search)
+    if (onSearch) {
+      onSearch(newValue);
+    }
     
     if (!open) {
       handleOpenChange(true);

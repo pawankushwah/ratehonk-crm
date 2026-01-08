@@ -1429,7 +1429,21 @@ export class SimpleStorage {
     typeSpecificFilters?: string;
   }) {
     try {
+      // Filter out soft-deleted leads (only if column exists)
+      // Check if deleted_at column exists first
+      const [columnExists] = await sql`
+        SELECT EXISTS (
+          SELECT 1 
+          FROM information_schema.columns 
+          WHERE table_name = 'leads' 
+          AND column_name = 'deleted_at'
+        ) as exists
+      `;
+      
       let whereClauses = sql`l.tenant_id = ${tenantId}`;
+      if (columnExists?.exists) {
+        whereClauses = sql`l.tenant_id = ${tenantId} AND l.deleted_at IS NULL`;
+      }
 
       // Filter by allowed user IDs if provided (role-based hierarchy filtering)
       // Show leads assigned to users in the role hierarchy
@@ -1506,7 +1520,7 @@ export class SimpleStorage {
         : "created_at";
       const order = sortOrder.toLowerCase() === "asc" ? sql`ASC` : sql`DESC`;
 
-      // Get total count for pagination
+      // Get total count for pagination (excluding soft-deleted)
       const [countResult] = await sql`
         SELECT COUNT(*)::int as total
         FROM leads l
@@ -1619,7 +1633,22 @@ async getAllLeadsByTenant(
       `;
     }
 
-    let whereClauses = sql`tenant_id = ${tenantId}`;
+    // Check if deleted_at column exists
+    const [columnExists] = await sql`
+      SELECT EXISTS (
+        SELECT 1 
+        FROM information_schema.columns 
+        WHERE table_name = 'leads' 
+        AND column_name = 'deleted_at'
+      ) as exists
+    `;
+    
+    let whereClauses;
+    if (columnExists?.exists) {
+      whereClauses = sql`tenant_id = ${tenantId} AND deleted_at IS NULL`;
+    } else {
+      whereClauses = sql`tenant_id = ${tenantId}`;
+    }
 
     // Filter by allowed user IDs if provided (role-based hierarchy filtering)
     if (teamUserIds && teamUserIds.length > 0) {
@@ -1697,6 +1726,23 @@ async getAllLeadsByTenant(
         tenantId,
       );
 
+      // Check if deleted_at column exists
+      const [columnExists] = await sql`
+        SELECT EXISTS (
+          SELECT 1 
+          FROM information_schema.columns 
+          WHERE table_name = 'leads' 
+          AND column_name = 'deleted_at'
+        ) as exists
+      `;
+      
+      let whereClause;
+      if (columnExists?.exists) {
+        whereClause = sql`l.tenant_id = ${tenantId} AND l.assigned_user_id = ${userId} AND l.deleted_at IS NULL`;
+      } else {
+        whereClause = sql`l.tenant_id = ${tenantId} AND l.assigned_user_id = ${userId}`;
+      }
+      
       // Use direct SQL query to filter leads by assigned_user_id
       const leadResults = await sql`
         SELECT 
@@ -1731,7 +1777,7 @@ async getAllLeadsByTenant(
           lt.color as "leadTypeColor"
         FROM leads l
         LEFT JOIN lead_types lt ON l.lead_type_id = lt.id
-        WHERE l.tenant_id = ${tenantId} AND l.assigned_user_id = ${userId}
+        WHERE ${whereClause}
         ORDER BY l.created_at DESC
       `;
 
@@ -2124,6 +2170,23 @@ async getAllLeadsByTenant(
         tenantId: validTenantId,
       });
 
+      // Check if deleted_at column exists
+      const [columnExists] = await sql`
+        SELECT EXISTS (
+          SELECT 1 
+          FROM information_schema.columns 
+          WHERE table_name = 'leads' 
+          AND column_name = 'deleted_at'
+        ) as exists
+      `;
+      
+      let whereClause;
+      if (columnExists?.exists) {
+        whereClause = sql`l.id = ${validLeadId} AND l.tenant_id = ${validTenantId} AND l.deleted_at IS NULL`;
+      } else {
+        whereClause = sql`l.id = ${validLeadId} AND l.tenant_id = ${validTenantId}`;
+      }
+
       const leadResults = await sql`
         SELECT 
           l.id,
@@ -2156,7 +2219,7 @@ async getAllLeadsByTenant(
           lt.color as "leadTypeColor"
         FROM leads l
         LEFT JOIN lead_types lt ON l.lead_type_id = lt.id
-        WHERE l.id = ${validLeadId} AND l.tenant_id = ${validTenantId}
+        WHERE ${whereClause}
       `;
 
       if (leadResults.length === 0) {
@@ -2197,10 +2260,26 @@ async getAllLeadsByTenant(
       userId,
     });
 
-    // First get the existing lead data
-    const [existingLead] = await sql`
-      SELECT * FROM leads WHERE id = ${leadId}
+    // Check if deleted_at column exists
+    const [columnExists] = await sql`
+      SELECT EXISTS (
+        SELECT 1 
+        FROM information_schema.columns 
+        WHERE table_name = 'leads' 
+        AND column_name = 'deleted_at'
+      ) as exists
     `;
+    
+    let existingLead;
+    if (columnExists?.exists) {
+      [existingLead] = await sql`
+        SELECT * FROM leads WHERE id = ${leadId} AND deleted_at IS NULL
+      `;
+    } else {
+      [existingLead] = await sql`
+        SELECT * FROM leads WHERE id = ${leadId}
+      `;
+    }
 
     console.log(
       "🔍 Existing lead found:",
@@ -3684,6 +3763,54 @@ async getAllLeadsByTenant(
   }
 
   async deleteLead(leadId: number) {
+    // Check if deleted_at column exists
+    const [columnExists] = await sql`
+      SELECT EXISTS (
+        SELECT 1 
+        FROM information_schema.columns 
+        WHERE table_name = 'leads' 
+        AND column_name = 'deleted_at'
+      ) as exists
+    `;
+    
+    if (columnExists?.exists) {
+      // Soft delete - set deleted_at timestamp instead of actually deleting
+      await sql`
+        UPDATE leads 
+        SET deleted_at = NOW() 
+        WHERE id = ${leadId} AND deleted_at IS NULL
+      `;
+    } else {
+      // Fallback to hard delete if column doesn't exist
+      await sql`DELETE FROM leads WHERE id = ${leadId}`;
+    }
+  }
+
+  // Restore a soft-deleted lead
+  async restoreLead(leadId: number) {
+    // Check if deleted_at column exists
+    const [columnExists] = await sql`
+      SELECT EXISTS (
+        SELECT 1 
+        FROM information_schema.columns 
+        WHERE table_name = 'leads' 
+        AND column_name = 'deleted_at'
+      ) as exists
+    `;
+    
+    if (columnExists?.exists) {
+      await sql`
+        UPDATE leads 
+        SET deleted_at = NULL 
+        WHERE id = ${leadId} AND deleted_at IS NOT NULL
+      `;
+    } else {
+      throw new Error("Soft delete is not enabled. Please run the migration to add deleted_at column.");
+    }
+  }
+
+  // Permanently delete a lead (hard delete)
+  async forceDeleteLead(leadId: number) {
     await sql`DELETE FROM leads WHERE id = ${leadId}`;
   }
 
@@ -3892,10 +4019,26 @@ async getAllLeadsByTenant(
     try {
       console.log("🔄 Converting lead to customer, leadId:", leadId);
 
-      // Get the lead data
-      const leads = await sql`
-        SELECT * FROM leads WHERE id = ${leadId}
+      // Check if deleted_at column exists
+      const [columnExists] = await sql`
+        SELECT EXISTS (
+          SELECT 1 
+          FROM information_schema.columns 
+          WHERE table_name = 'leads' 
+          AND column_name = 'deleted_at'
+        ) as exists
       `;
+      
+      let leads;
+      if (columnExists?.exists) {
+        leads = await sql`
+          SELECT * FROM leads WHERE id = ${leadId} AND deleted_at IS NULL
+        `;
+      } else {
+        leads = await sql`
+          SELECT * FROM leads WHERE id = ${leadId}
+        `;
+      }
 
       if (leads.length === 0) {
         throw new Error("Lead not found");
@@ -7763,8 +7906,22 @@ async getAllLeadsByTenant(
       // Get current assignment for history tracking
       let previousUserId = null;
       if (entityType === "lead") {
-        const [currentLead] =
-          await sql`SELECT assigned_user_id FROM leads WHERE id = ${entityId}`;
+        // Check if deleted_at column exists
+        const [columnExists] = await sql`
+          SELECT EXISTS (
+            SELECT 1 
+            FROM information_schema.columns 
+            WHERE table_name = 'leads' 
+            AND column_name = 'deleted_at'
+          ) as exists
+        `;
+        
+        let currentLead;
+        if (columnExists?.exists) {
+          [currentLead] = await sql`SELECT assigned_user_id FROM leads WHERE id = ${entityId} AND deleted_at IS NULL`;
+        } else {
+          [currentLead] = await sql`SELECT assigned_user_id FROM leads WHERE id = ${entityId}`;
+        }
         previousUserId = currentLead?.assigned_user_id;
 
         // Update lead assignment (allow null to unassign)
@@ -7810,6 +7967,7 @@ async getAllLeadsByTenant(
       // For leads, also log to lead activities
       if (entityType === "lead" && userId) {
         try {
+          // Note: For activity logging, we allow soft-deleted leads
           const [lead] = await sql`SELECT first_name, last_name, name FROM leads WHERE id = ${entityId}`;
           const leadName = lead?.name || `${lead?.first_name || ''} ${lead?.last_name || ''}`.trim() || `Lead #${entityId}`;
           const [previousUser] = previousUserId 
@@ -8074,6 +8232,7 @@ RateHonk CRM Team`,
   ): Promise<number> {
     let result;
     if (entityType === "lead") {
+      // Note: For tenant lookup, we allow soft-deleted leads
       result = await sql`SELECT tenant_id FROM leads WHERE id = ${entityId}`;
     } else if (entityType === "customer") {
       result =
@@ -8173,10 +8332,27 @@ RateHonk CRM Team`,
         `;
       }
 
+      // Check if deleted_at column exists
+      const [columnExists] = await sql`
+        SELECT EXISTS (
+          SELECT 1 
+          FROM information_schema.columns 
+          WHERE table_name = 'leads' 
+          AND column_name = 'deleted_at'
+        ) as exists
+      `;
+      
+      let whereClause;
+      if (columnExists?.exists) {
+        whereClause = sql`assigned_user_id = ${userId} AND tenant_id = ${tenantId} AND deleted_at IS NULL`;
+      } else {
+        whereClause = sql`assigned_user_id = ${userId} AND tenant_id = ${tenantId}`;
+      }
+      
       const recentLeads = await sql`
         SELECT id, name, status, created_at, priority 
         FROM leads 
-        WHERE assigned_user_id = ${userId} AND tenant_id = ${tenantId}
+        WHERE ${whereClause}
         ORDER BY created_at DESC 
         LIMIT 5
       `;

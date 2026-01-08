@@ -46,6 +46,60 @@ const createMockLeads = (tenantId: number) => [
 ];
 
 export const directLeadsApi = {
+  // Get a single lead by ID
+  async getLeadById(tenantId: number, leadId: number): Promise<any> {
+    try {
+      const response = await fetch(
+        `/api/tenants/${tenantId}/leads/${leadId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem("token")}`,
+            "Content-Type": "application/json",
+          },
+        },
+      );
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          return null;
+        }
+        throw new Error(`Failed to fetch lead: ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      const lead = result.lead || result;
+      
+      // Normalize the lead data structure to match what the form expects
+      // The API returns camelCase, but ensure we have both formats for compatibility
+      if (lead) {
+        // Ensure typeSpecificData is available (API returns it as camelCase)
+        if (lead.typeSpecificData && !lead.type_specific_data) {
+          lead.type_specific_data = lead.typeSpecificData;
+        }
+        // Ensure dynamicData is available
+        if (lead.dynamicData && typeof lead.dynamicData === 'object') {
+          lead.dynamicData = lead.dynamicData;
+        }
+        // Ensure firstName/lastName are available (API returns camelCase)
+        if (lead.firstName && !lead.first_name) {
+          lead.first_name = lead.firstName;
+        }
+        if (lead.lastName && !lead.last_name) {
+          lead.last_name = lead.lastName;
+        }
+        // Ensure leadTypeId is available
+        if (lead.leadTypeId && !lead.lead_type_id) {
+          lead.lead_type_id = lead.leadTypeId;
+        }
+      }
+      
+      return lead;
+    } catch (error) {
+      console.error("Error fetching lead by ID:", error);
+      throw error;
+    }
+  },
+
   // Get leads - now using real API endpoint
   async getLeads(
     tenantId: number,

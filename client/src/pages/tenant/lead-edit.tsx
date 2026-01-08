@@ -20,8 +20,8 @@ export default function LeadEdit() {
   const { data: lead, isLoading: isLoadingLead } = useQuery({
     queryKey: [`lead-${leadId}`],
     queryFn: async () => {
-      const leads = await directLeadsApi.getLeads(tenant?.id!);
-      return leads.find((l: Lead) => String(l.id) === leadId);
+      if (!leadId || !tenant?.id) return null;
+      return await directLeadsApi.getLeadById(tenant.id, Number(leadId));
     },
     enabled: !!leadId && !!tenant?.id,
   });
@@ -44,8 +44,10 @@ export default function LeadEdit() {
         String(l.id) === leadId ? updatedLead : l
       );
       queryClient.setQueryData([`leads-tenant-${tenant?.id}`], updatedLeads);
+      // Invalidate all leads queries to ensure fresh data
+      // The leads query uses ["leads", tenantId, ...] as the key
       queryClient.invalidateQueries({
-        queryKey: [`leads-tenant-${tenant?.id}`],
+        queryKey: ["leads"],
       });
       queryClient.invalidateQueries({
         queryKey: [`lead-${leadId}`],
@@ -55,7 +57,11 @@ export default function LeadEdit() {
         title: "Success",
         description: "Lead updated successfully",
       });
-      setLocation("/leads");
+      // Preserve pagination params from URL
+      const urlParams = new URLSearchParams(window.location.search);
+      const page = urlParams.get("page") || "1";
+      const pageSize = urlParams.get("pageSize") || "10";
+      setLocation(`/leads?page=${page}&pageSize=${pageSize}`);
     },
     onError: (error: any) => {
       toast({
@@ -71,7 +77,11 @@ export default function LeadEdit() {
   };
 
   const onCancel = () => {
-    setLocation("/leads");
+    // Preserve pagination params from URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const page = urlParams.get("page") || "1";
+    const pageSize = urlParams.get("pageSize") || "10";
+    setLocation(`/leads?page=${page}&pageSize=${pageSize}`);
   };
 
   if (isLoadingLead) {

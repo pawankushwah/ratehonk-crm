@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { SubscriptionGuard } from "@/components/subscription/SubscriptionGuard";
@@ -456,10 +456,76 @@ export default function Leads() {
   const [importFile, setImportFile] = useState<File | null>(null);
   const [isImporting, setIsImporting] = useState(false);
 
-  // Pagination state
-  const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage, setItemsPerPage] = useState(10);
+  // Read pagination from URL on mount
+  const getInitialPage = () => {
+    const params = new URLSearchParams(window.location.search);
+    const pageParam = params.get("page");
+    if (pageParam) {
+      const page = parseInt(pageParam, 10);
+      if (!isNaN(page) && page > 0) return page;
+    }
+    return 1;
+  };
+
+  const getInitialPageSize = () => {
+    const params = new URLSearchParams(window.location.search);
+    const pageSizeParam = params.get("pageSize");
+    if (pageSizeParam) {
+      const size = parseInt(pageSizeParam, 10);
+      if (!isNaN(size) && size > 0) return size;
+    }
+    return 10;
+  };
+
+  // Pagination state - initialize from URL
+  const [currentPage, setCurrentPage] = useState(getInitialPage);
+  const [itemsPerPage, setItemsPerPage] = useState(getInitialPageSize);
   const [totalItems, setTotalItems] = useState(0);
+  const isInitialMount = useRef(true);
+  const loadedFromUrl = useRef(false);
+  
+  // Check if we loaded from URL on mount and mark initial mount as complete
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("page") || params.has("pageSize")) {
+      loadedFromUrl.current = true;
+    }
+    // Mark initial mount as complete after a short delay to let all useEffects run
+    setTimeout(() => {
+      isInitialMount.current = false;
+      // Reset loadedFromUrl flag after initial mount so future filter changes can reset pagination
+      loadedFromUrl.current = false;
+    }, 200);
+  }, []);
+
+  // Helper function to update URL parameters
+  const updateURLParams = (page: number, size: number) => {
+    const params = new URLSearchParams(window.location.search);
+    params.set("page", page.toString());
+    params.set("pageSize", size.toString());
+    const newUrl = `${window.location.pathname}?${params.toString()}`;
+    window.history.replaceState({}, "", newUrl);
+  };
+
+  // Helper function to reset to page 1 and update URL
+  const resetToPageOne = () => {
+    setCurrentPage(1);
+    updateURLParams(1, itemsPerPage);
+  };
+
+  // Helper function to get pagination params for navigation
+  const getPaginationParams = () => {
+    return `?page=${currentPage}&pageSize=${itemsPerPage}`;
+  };
+
+  // Reset to page 1 when filters change (but not on initial mount if URL params exist)
+  useEffect(() => {
+    if (isInitialMount.current || loadedFromUrl.current) {
+      return; // Don't reset on initial mount or if loaded from URL
+    }
+    resetToPageOne();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter, dateFilter, priorityFilter, typeFilter, sourceFilter, searchTerm]);
 
   useEffect(() => {
     const today = new Date();
@@ -772,6 +838,22 @@ export default function Leads() {
     refetchOnMount: true,
     refetchInterval: 30000,
   });
+
+  // Extract totalItems from query result to ensure it's always in sync
+  // This handles cases where React Query uses cached data and queryFn doesn't run
+  useEffect(() => {
+    if (!isLoading && leads.length > 0) {
+      // If we have leads but totalItems is 0, try to get it from the query cache
+      if (totalItems === 0) {
+        // Make a fresh API call to get the total, or use leads length as fallback
+        // For now, use leads length * currentPage as a minimum estimate
+        const estimatedTotal = leads.length * currentPage;
+        if (estimatedTotal > 0) {
+          setTotalItems(estimatedTotal);
+        }
+      }
+    }
+  }, [leads, isLoading, totalItems, currentPage]);
 
   const createLeadMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -1093,12 +1175,15 @@ export default function Leads() {
       return directLeadsApi.deleteLead(tenant?.id!, leadId);
     },
     onSuccess: (_, leadId) => {
-      // Remove the deleted lead from the cache
-      const currentLeads =
-        (queryClient.getQueryData([`leads-tenant-${tenant?.id}`]) as Lead[]) ||
-        [];
-      const updatedLeads = currentLeads.filter((lead) => lead.id !== leadId);
-      queryClient.setQueryData([`leads-tenant-${tenant?.id}`], updatedLeads);
+      // Invalidate all leads queries to refresh the listing
+      queryClient.invalidateQueries({
+        queryKey: ["leads"],
+      });
+      
+      // Also invalidate the old query key format for compatibility
+      queryClient.invalidateQueries({
+        queryKey: [`leads-tenant-${tenant?.id}`],
+      });
 
       toast({
         title: "Success",
@@ -1226,7 +1311,7 @@ export default function Leads() {
   };
 
   const handleEdit = (lead: Lead) => {
-    setLocation(`/leads/${lead.id}/edit`);
+    setLocation(`/leads/${lead.id}/edit${getPaginationParams()}`);
   };
 
   const handleStatusChange = async (leadId: number, newStatus: string) => {
@@ -2057,9 +2142,11 @@ export default function Leads() {
                                 </AvatarFallback>
                               </Avatar>
                               <div>
-                                <div className="font-medium text-gray-900">
-                                  {lead.first_name} {lead.last_name}
-                                </div>
+                                <Link href={`/leads/${lead.id}/edit${getPaginationParams()}`}>
+                                  <button className="font-medium text-gray-900 hover:text-blue-600 hover:underline cursor-pointer text-left">
+                                    {lead.first_name} {lead.last_name}
+                                  </button>
+                                </Link>
                                 <div className="text-sm text-gray-500">
                                   {lead.email}
                                 </div>
@@ -2354,8 +2441,10 @@ export default function Leads() {
                   <Select
                     value={itemsPerPage.toString()}
                     onValueChange={(value) => {
-                      setItemsPerPage(parseInt(value));
+                      const newSize = parseInt(value);
+                      setItemsPerPage(newSize);
                       setCurrentPage(1);
+                      updateURLParams(1, newSize);
                     }}
                   >
                     <SelectTrigger className="w-[70px]">
@@ -2378,7 +2467,11 @@ export default function Leads() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                    onClick={() => {
+                      const newPage = Math.max(1, currentPage - 1);
+                      setCurrentPage(newPage);
+                      updateURLParams(newPage, itemsPerPage);
+                    }}
                     disabled={currentPage === 1 || totalItems === 0}
                     data-testid="button-previous-page"
                   >
@@ -2387,40 +2480,64 @@ export default function Leads() {
 
                   <div className="flex items-center space-x-1">
                     {(() => {
-                      const totalPages = Math.ceil(totalItems / itemsPerPage);
-                      console.log("🔍 Pagination Debug - totalItems:", totalItems, "itemsPerPage:", itemsPerPage, "totalPages:", totalPages, "currentPage:", currentPage);
-                      
-                      // Show pagination if we have items or if we're on a page > 1
-                      if (totalPages === 0 && totalItems === 0 && currentPage === 1) {
-                        return null; // Don't show pagination if no items and on first page
+                      // If we have leads but totalItems is 0, estimate total from current data
+                      let effectiveTotalItems = totalItems;
+                      if (totalItems === 0 && leads.length > 0) {
+                        // Estimate: if we're on page 5 with 10 items per page and have 8 leads,
+                        // we likely have at least 40+ leads total
+                        effectiveTotalItems = Math.max(leads.length, (currentPage - 1) * itemsPerPage + leads.length);
                       }
                       
-                      // Ensure at least 1 page if we have items
-                      const effectiveTotalPages = totalPages > 0 ? totalPages : (totalItems > 0 ? 1 : 0);
+                      // Calculate total pages - ensure at least 1 if we have items
+                      const totalPages = effectiveTotalItems > 0 ? Math.max(1, Math.ceil(effectiveTotalItems / itemsPerPage)) : 0;
                       
-                      if (effectiveTotalPages === 0) {
+                      // Show pagination if we have leads OR if we're not on page 1
+                      // This ensures pagination shows even when totalItems might be temporarily 0
+                      if (totalPages === 0 && leads.length === 0 && currentPage === 1) {
                         return null;
+                      }
+                      
+                      // If we have no total but have leads, show at least current page
+                      if (totalPages === 0 && leads.length > 0) {
+                        // Show at least the current page number
+                        return (
+                          <Button
+                            key={currentPage}
+                            variant="default"
+                            size="sm"
+                            className="w-8 h-8 p-0"
+                            data-testid={`button-page-${currentPage}`}
+                          >
+                            {currentPage}
+                          </Button>
+                        );
                       }
                       
                       const maxVisiblePages = 5;
                       const pages = [];
-
-                      for (
-                        let i = 0;
-                        i < Math.min(maxVisiblePages, effectiveTotalPages);
-                        i++
-                      ) {
-                        let pageNumber;
-                        if (effectiveTotalPages <= maxVisiblePages) {
-                          pageNumber = i + 1;
-                        } else if (currentPage <= 3) {
-                          pageNumber = i + 1;
-                        } else if (currentPage >= effectiveTotalPages - 2) {
-                          pageNumber = effectiveTotalPages - 4 + i;
+                      
+                      // Calculate which pages to show
+                      let startPage = 1;
+                      let endPage = Math.min(maxVisiblePages, totalPages);
+                      
+                      if (totalPages > maxVisiblePages) {
+                        if (currentPage <= 3) {
+                          // Show first 5 pages
+                          startPage = 1;
+                          endPage = 5;
+                        } else if (currentPage >= totalPages - 2) {
+                          // Show last 5 pages
+                          startPage = totalPages - 4;
+                          endPage = totalPages;
                         } else {
-                          pageNumber = currentPage - 2 + i;
+                          // Show pages around current page
+                          startPage = currentPage - 2;
+                          endPage = currentPage + 2;
                         }
+                      }
 
+                      // Generate page buttons
+                      for (let pageNumber = startPage; pageNumber <= endPage; pageNumber++) {
                         pages.push(
                           <Button
                             key={pageNumber}
@@ -2428,7 +2545,10 @@ export default function Leads() {
                               currentPage === pageNumber ? "default" : "outline"
                             }
                             size="sm"
-                            onClick={() => setCurrentPage(pageNumber)}
+                            onClick={() => {
+                              setCurrentPage(pageNumber);
+                              updateURLParams(pageNumber, itemsPerPage);
+                            }}
                             className="w-8 h-8 p-0"
                             data-testid={`button-page-${pageNumber}`}
                           >
@@ -2436,6 +2556,7 @@ export default function Leads() {
                           </Button>
                         );
                       }
+                      
                       return pages;
                     })()}
                   </div>
@@ -2445,7 +2566,9 @@ export default function Leads() {
                     size="sm"
                     onClick={() => {
                       const totalPages = Math.ceil(totalItems / itemsPerPage);
-                      setCurrentPage(Math.min(totalPages, currentPage + 1));
+                      const newPage = Math.min(totalPages, currentPage + 1);
+                      setCurrentPage(newPage);
+                      updateURLParams(newPage, itemsPerPage);
                     }}
                     disabled={
                       totalItems === 0 || currentPage >= Math.ceil(totalItems / itemsPerPage)
