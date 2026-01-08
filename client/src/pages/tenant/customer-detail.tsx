@@ -186,6 +186,15 @@ export default function CustomerDetail() {
   const { customerId } = useParams();
   const { tenant, user } = useAuth();
   const [, navigate] = useLocation();
+
+  // Helper function to navigate back to customers with pagination
+  const navigateToCustomers = () => {
+    // Preserve pagination params from URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const page = urlParams.get("page") || "1";
+    const pageSize = urlParams.get("pageSize") || "10";
+    navigate(`/customers?page=${page}&pageSize=${pageSize}`);
+  };
   const [activeTab, setActiveTab] = useState("notes");
   const [customerDetailsOpen, setCustomerDetailsOpen] = useState(true);
   const [organizationDetailsOpen, setOrganizationDetailsOpen] = useState(false);
@@ -3214,7 +3223,12 @@ export default function CustomerDetail() {
               <h1 className="text-xl font-bold text-gray-900 mb-4">
                 Customer not found
               </h1>
-              <Link href="/customers">
+              <Link href={`/customers${(() => {
+                const urlParams = new URLSearchParams(window.location.search);
+                const page = urlParams.get("page") || "1";
+                const pageSize = urlParams.get("pageSize") || "10";
+                return `?page=${page}&pageSize=${pageSize}`;
+              })()}`}>
                 <Button>Back to Customers</Button>
               </Link>
             </div>
@@ -3314,7 +3328,12 @@ export default function CustomerDetail() {
           <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-gray-200 p-6">
             <div className="flex items-center space-x-2 text-sm text-gray-600 mb-4">
               <Link
-                href="/customers"
+                href={`/customers${(() => {
+                  const urlParams = new URLSearchParams(window.location.search);
+                  const page = urlParams.get("page") || "1";
+                  const pageSize = urlParams.get("pageSize") || "10";
+                  return `?page=${page}&pageSize=${pageSize}`;
+                })()}`}
                 className="bg-gray-100 px-3 py-1 rounded-md hover:bg-gray-200"
               >
                 Customer

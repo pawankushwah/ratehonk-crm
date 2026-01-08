@@ -53,6 +53,8 @@ import { useAuth } from "@/components/auth/auth-provider";
 import { auth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation, useRoute } from "wouter";
+import { useDebounce } from "@/hooks/use-debounce";
+import { directCustomersApi } from "@/lib/direct-customers-api";
 import { CustomerCreateForm } from "@/components/forms/customer-create-form";
 import { VendorCreateForm } from "@/components/forms/vendor-create-form";
 import { LeadTypeCreateForm } from "@/components/forms/lead-type-create-form";
@@ -73,6 +75,14 @@ export default function InvoiceCreate() {
   const [match, params] = useRoute("/invoice-create/:id?");
   const invoiceId = params?.id ? parseInt(params.id) : null;
   const isEditMode = !!invoiceId;
+
+  // Helper function to navigate back to invoices with pagination
+  const navigateToInvoices = () => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const page = urlParams.get("page") || "1";
+    const pageSize = urlParams.get("pageSize") || "10";
+    navigate(`/invoices?page=${page}&pageSize=${pageSize}`);
+  };
 
   const [lineItems, setLineItems] = useState([
     {
@@ -97,6 +107,8 @@ export default function InvoiceCreate() {
 
   const [selectedBookingId, setSelectedBookingId] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
+  const [customerSearch, setCustomerSearch] = useState("");
+  const debouncedCustomerSearch = useDebounce(customerSearch, 500);
   const [redirectTo, setRedirectTo] = useState<string | null>(null);
   const [discountAmount, setDiscountAmount] = useState("");
   const [amountPaid, setAmountPaid] = useState("");
@@ -412,24 +424,36 @@ export default function InvoiceCreate() {
     }
   }, [invoiceNumber, invoiceSettings?.invoiceNumberPrefix]); // Note: intentionally not including invoiceNumberOnly to avoid loops
 
-  // Fetch customers - use all=true to get all customers for dropdown
+  // Fetch customers with search - fetch when user types (debounced) or when dropdown opens
+  // If search is empty, fetch first 20 customers; if search has value, search API
   const { data: customers = [] } = useQuery({
-    queryKey: [`customers-tenant-${tenant?.id}-all`],
+    queryKey: [`customers-tenant-${tenant?.id}`, debouncedCustomerSearch],
     enabled: !!tenant?.id,
     queryFn: async () => {
-      const token = auth.getToken();
-      const response = await fetch(
-        `/api/customers?action=get-customers&tenantId=${tenant?.id}&all=true`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        },
-      );
-      if (!response.ok) return [];
-      const result = await response.json();
-      return Array.isArray(result)
-        ? result
-        : result.customers || result.data || result.rows || [];
+      try {
+        const result = await directCustomersApi.getCustomers(tenant?.id!, {
+          search: debouncedCustomerSearch || undefined,
+          limit: debouncedCustomerSearch ? 50 : 20, // Limit initial results, more when searching
+        });
+        
+        // Handle paginated response
+        if (result && typeof result === "object" && "data" in result) {
+          return result.data;
+        }
+        
+        // Handle direct array response
+        if (Array.isArray(result)) {
+          return result;
+        }
+        
+        return [];
+      } catch (error) {
+        console.error("Error fetching customers:", error);
+        return [];
+      }
     },
+    staleTime: 0,
+    gcTime: 0,
   });
 
   // Fetch vendors
@@ -1051,7 +1075,7 @@ export default function InvoiceCreate() {
       if (redirectTo) {
         navigate(redirectTo);
       } else {
-        navigate("/invoices");
+        navigateToInvoices();
       }
     },
     onError: () => {
@@ -1104,7 +1128,7 @@ export default function InvoiceCreate() {
       if (redirectTo) {
         navigate(redirectTo);
       } else {
-        navigate("/invoices");
+        navigateToInvoices();
       }
     },
     onError: () => {
@@ -2458,6 +2482,7 @@ export default function InvoiceCreate() {
                     suggestions={getCustomerOptions()}
                     value={selectedCustomerId}
                     onValueChange={handleCustomerSelection}
+                    onSearch={setCustomerSearch}
                     placeholder="Search customer..."
                     emptyText="No customers found"
                     required
@@ -2632,7 +2657,8 @@ export default function InvoiceCreate() {
                   </Select>
                 </div>
 
-                <div>
+                {/* Travel Date field hidden */}
+                <div className="hidden">
                   <Label htmlFor="travelDate">Travel Date</Label>
                   <DatePicker
                     value={travelDate}

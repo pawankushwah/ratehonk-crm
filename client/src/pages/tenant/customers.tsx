@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useDebounce } from "@/hooks/use-debounce";
@@ -124,13 +124,29 @@ export default function Customers() {
   // Debounce search term to avoid multiple API calls while typing
   const debouncedSearchTerm = useDebounce(searchTerm, 500);
 
-  // Reset to page 1 when debounced search term changes
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [debouncedSearchTerm]);
+  // Read pagination from URL on mount
+  const getInitialPage = () => {
+    const params = new URLSearchParams(window.location.search);
+    const pageParam = params.get("page");
+    if (pageParam) {
+      const page = parseInt(pageParam, 10);
+      if (!isNaN(page) && page > 0) return page;
+    }
+    return 1;
+  };
+
+  const getInitialPageSize = () => {
+    const params = new URLSearchParams(window.location.search);
+    const pageSizeParam = params.get("pageSize");
+    if (pageSizeParam) {
+      const size = parseInt(pageSizeParam, 10);
+      if (!isNaN(size) && size > 0) return size;
+    }
+    return 10;
+  };
 
   const [selectedFilter, setSelectedFilter] = useState("all");
-  const [dateFilter, setDateFilter] = useState("this_year");
+  const [dateFilter, setDateFilter] = useState("all");
   const [customDateFrom, setCustomDateFrom] = useState<Date | null>(null);
   const [customDateTo, setCustomDateTo] = useState<Date | null>(null);
 
@@ -139,10 +155,63 @@ export default function Customers() {
   const [typeFilter, setTypeFilter] = useState("all");
   const [sourceFilter, setSourceFilter] = useState("all");
 
-  // Pagination states
-  const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage, setItemsPerPage] = useState(10);
+  // Pagination states - initialize from URL
+  const [currentPage, setCurrentPage] = useState(getInitialPage);
+  const [itemsPerPage, setItemsPerPage] = useState(getInitialPageSize);
   const [totalItems, setTotalItems] = useState(0);
+  const isInitialMount = useRef(true);
+  const loadedFromUrl = useRef(false);
+  
+  // Check if we loaded from URL on mount and mark initial mount as complete
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("page") || params.has("pageSize")) {
+      loadedFromUrl.current = true;
+    }
+    // Mark initial mount as complete after a short delay to let all useEffects run
+    setTimeout(() => {
+      isInitialMount.current = false;
+      // Reset loadedFromUrl flag after initial mount so future filter changes can reset pagination
+      loadedFromUrl.current = false;
+    }, 200);
+  }, []);
+
+  // Helper function to update URL parameters
+  const updateURLParams = (page: number, size: number) => {
+    const params = new URLSearchParams(window.location.search);
+    params.set("page", page.toString());
+    params.set("pageSize", size.toString());
+    const newUrl = `${window.location.pathname}?${params.toString()}`;
+    window.history.replaceState({}, "", newUrl);
+  };
+
+  // Helper function to reset to page 1 and update URL
+  const resetToPageOne = () => {
+    setCurrentPage(1);
+    updateURLParams(1, itemsPerPage);
+  };
+
+  // Helper function to get pagination params for navigation
+  const getPaginationParams = () => {
+    return `?page=${currentPage}&pageSize=${itemsPerPage}`;
+  };
+
+  // Reset to page 1 when debounced search term changes (but not on initial mount if URL params exist)
+  useEffect(() => {
+    if (isInitialMount.current || loadedFromUrl.current) {
+      return; // Don't reset on initial mount or if loaded from URL
+    }
+    resetToPageOne();
+  }, [debouncedSearchTerm]);
+
+  // Reset to page 1 when filters change (but not on initial mount if URL params exist)
+  useEffect(() => {
+    if (isInitialMount.current || loadedFromUrl.current) {
+      return; // Don't reset on initial mount or if loaded from URL
+    }
+    resetToPageOne();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedFilter, dateFilter, priorityFilter, typeFilter, sourceFilter]);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
@@ -876,17 +945,39 @@ export default function Customers() {
                 <div className="flex items-center space-x-2">
                   <DateFilter
                     dateFilter={dateFilter}
-                    setDateFilter={setDateFilter}
+                    setDateFilter={(value) => {
+                      setDateFilter(value);
+                      if (!isInitialMount.current) {
+                        resetToPageOne();
+                      }
+                    }}
                     customDateFrom={customDateFrom}
-                    setCustomDateFrom={setCustomDateFrom}
+                    setCustomDateFrom={(date) => {
+                      setCustomDateFrom(date);
+                      setDateFilter("custom");
+                      if (!isInitialMount.current) {
+                        resetToPageOne();
+                      }
+                    }}
                     customDateTo={customDateTo}
-                    setCustomDateTo={setCustomDateTo}
+                    setCustomDateTo={(date) => {
+                      setCustomDateTo(date);
+                      setDateFilter("custom");
+                      if (!isInitialMount.current) {
+                        resetToPageOne();
+                      }
+                    }}
                   />
 
                   {/* Status Filter */}
                   <Select
                     value={selectedFilter}
-                    onValueChange={setSelectedFilter}
+                    onValueChange={(value) => {
+                      setSelectedFilter(value);
+                      if (!isInitialMount.current) {
+                        resetToPageOne();
+                      }
+                    }}
                   >
                     <SelectTrigger
                       className="w-32"
@@ -1028,9 +1119,11 @@ export default function Customers() {
                               </AvatarFallback>
                             </Avatar>
                             <div className="flex flex-col">
-                              <div className="font-medium text-gray-900">
-                                {getDisplayName(customer)}
-                              </div>
+                              <Link href={`/customers/${customer.id}${getPaginationParams()}`}>
+                                <button className="font-medium text-gray-900 hover:text-blue-600 hover:underline cursor-pointer text-left">
+                                  {getDisplayName(customer)}
+                                </button>
+                              </Link>
                               <div className="text-sm text-gray-500">
                                 {customer.email}
                               </div>
@@ -1071,7 +1164,7 @@ export default function Customers() {
                             >
                               <Phone className="h-4 w-4" />
                             </Button>
-                            <Link href={`/customers/${customer.id}`}>
+                            <Link href={`/customers/${customer.id}${getPaginationParams()}`}>
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -1126,8 +1219,10 @@ export default function Customers() {
                   <Select
                     value={itemsPerPage.toString()}
                     onValueChange={(value) => {
-                      setItemsPerPage(Number(value));
+                      const newSize = Number(value);
+                      setItemsPerPage(newSize);
                       setCurrentPage(1);
+                      updateURLParams(1, newSize);
                     }}
                   >
                     <SelectTrigger
@@ -1160,9 +1255,11 @@ export default function Customers() {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() =>
-                        setCurrentPage(Math.max(1, currentPage - 1))
-                      }
+                      onClick={() => {
+                        const newPage = Math.max(1, currentPage - 1);
+                        setCurrentPage(newPage);
+                        updateURLParams(newPage, itemsPerPage);
+                      }}
                       disabled={currentPage <= 1}
                       data-testid="button-prev-page"
                     >
@@ -1182,7 +1279,10 @@ export default function Customers() {
                               variant={
                                 currentPage === i ? "default" : "outline"
                               }
-                              onClick={() => setCurrentPage(i)}
+                              onClick={() => {
+                                setCurrentPage(i);
+                                updateURLParams(i, itemsPerPage);
+                              }}
                               className="w-8 h-8 p-0"
                               data-testid={`button-page-${i}`}
                             >
@@ -1197,9 +1297,11 @@ export default function Customers() {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() =>
-                        setCurrentPage(Math.min(totalPages, currentPage + 1))
-                      }
+                      onClick={() => {
+                        const newPage = Math.min(totalPages, currentPage + 1);
+                        setCurrentPage(newPage);
+                        updateURLParams(newPage, itemsPerPage);
+                      }}
                       disabled={currentPage >= totalPages}
                       data-testid="button-next-page"
                     >

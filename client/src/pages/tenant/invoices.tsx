@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Layout } from "@/components/layout/layout";
 import { Button } from "@/components/ui/button";
@@ -49,6 +49,7 @@ import {
   ChevronDown,
   Upload,
   FileDown,
+  MoreVertical,
 } from "lucide-react";
 import {
   Sheet,
@@ -140,7 +141,7 @@ export default function Invoices() {
   const { tenant } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
   // Local filter states (not applied until "Apply Filters" is clicked)
   const [localSearchTerm, setLocalSearchTerm] = useState("");
   const [localStatusFilter, setLocalStatusFilter] = useState("all");
@@ -165,8 +166,29 @@ export default function Invoices() {
   const [customDateFrom, setCustomDateFrom] = useState<Date | null>(null);
   const [customDateTo, setCustomDateTo] = useState<Date | null>(null);
 
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  // Read pagination from URL on mount
+  const getInitialPage = () => {
+    const params = new URLSearchParams(window.location.search);
+    const pageParam = params.get("page");
+    if (pageParam) {
+      const page = parseInt(pageParam, 10);
+      if (!isNaN(page) && page > 0) return page;
+    }
+    return 1;
+  };
+
+  const getInitialPageSize = () => {
+    const params = new URLSearchParams(window.location.search);
+    const pageSizeParam = params.get("pageSize");
+    if (pageSizeParam) {
+      const size = parseInt(pageSizeParam, 10);
+      if (!isNaN(size) && size > 0) return size;
+    }
+    return 10;
+  };
+
+  const [currentPage, setCurrentPage] = useState(getInitialPage);
+  const [pageSize, setPageSize] = useState(getInitialPageSize);
   const [sortBy, setSortBy] = useState<string | null>(null);
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
@@ -185,6 +207,27 @@ export default function Invoices() {
   const [cancellationChargeNotes, setCancellationChargeNotes] = useState("");
   const [showCancellationChargeFields, setShowCancellationChargeFields] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const isInitialMount = useRef(true);
+
+  // Helper function to update URL parameters
+  const updateURLParams = (page: number, size: number) => {
+    const params = new URLSearchParams(window.location.search);
+    params.set("page", page.toString());
+    params.set("pageSize", size.toString());
+    const newUrl = `${window.location.pathname}?${params.toString()}`;
+    window.history.replaceState({}, "", newUrl);
+  };
+
+  // Helper function to get pagination params for navigation
+  const getPaginationParams = () => {
+    return `?page=${currentPage}&pageSize=${pageSize}`;
+  };
+
+  // Helper function to reset to page 1 and update URL
+  const resetToPageOne = () => {
+    setCurrentPage(1);
+    updateURLParams(1, pageSize);
+  };
 
   // Import handlers
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1528,26 +1571,46 @@ export default function Invoices() {
       label: "Invoice #",
       sortable: true,
       render: (value, invoice) => (
-        <div className="font-medium">{value || `INV-${invoice.id}`}</div>
+        <button
+          onClick={() => {
+            navigate(`/invoice-edit/${invoice.id}${getPaginationParams()}`);
+          }}
+          className="font-medium text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+        >
+          {value || `INV-${invoice.id}`}
+        </button>
       ),
     },
     {
       key: "customerName",
       label: "Customer",
       sortable: true,
-      render: (customerName, invoice) => (
-        <div className="flex flex-col">
-          <div className="font-medium">
-            {customerName ||
-              customers.find((c) => c.id === invoice.customerId)?.name ||
-              "Unknown"}
+      render: (customerName, invoice) => {
+        const customer = customers.find((c) => c.id === invoice.customerId);
+        const displayName = customerName || customer?.name || "Unknown";
+        const customerId = invoice.customerId;
+        
+        return (
+          <div className="flex flex-col">
+            {customerId ? (
+              <button
+                onClick={() => {
+                  navigate(`/customers/${customerId}`);
+                }}
+                className="font-medium text-blue-600 hover:text-blue-800 hover:underline cursor-pointer text-left"
+              >
+                {displayName}
+              </button>
+            ) : (
+              <div className="font-medium">{displayName}</div>
+            )}
+            <div className="text-sm text-gray-500 flex items-center mt-1">
+              <Mail className="h-3 w-3 mr-1" />
+              {customer?.email || ""}
+            </div>
           </div>
-          <div className="text-sm text-gray-500 flex items-center mt-1">
-            <Mail className="h-3 w-3 mr-1" />
-            {customers.find((c) => c.id === invoice.customerId)?.email || ""}
-          </div>
-        </div>
-      ),
+        );
+      },
     },
     // Booking column hidden as per request
     // {
@@ -1762,7 +1825,7 @@ export default function Invoices() {
       sortable: false,
       className: "text-right",
       render: (_, invoice) => (
-        <div className="flex justify-end space-x-2">
+        <div className="flex justify-end items-center space-x-2">
           <Button
             size="sm"
             variant="outline"
@@ -1774,64 +1837,75 @@ export default function Invoices() {
           >
             <Eye className="h-4 w-4" />
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              // Navigate to invoice edit page
-              navigate(`/invoice-edit/${invoice.id}`);
-            }}
-            title="Edit Invoice"
-          >
-            <Edit className="h-4 w-4" />
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              setSelectedInvoiceForFollowUp(invoice);
-              setFollowUpDialogOpen(true);
-            }}
-            className="text-purple-600 hover:text-purple-700"
-            title="Add Follow-Up"
-          >
-            <Target className="h-4 w-4" />
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => handleDownloadPDF(invoice)}
-            className="text-blue-600 hover:text-blue-700"
-            title="Download PDF"
-          >
-            <Download className="h-4 w-4" />
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => handleSendEmail(invoice)}
-            className="text-green-600 hover:text-green-700"
-            title="Send Email"
-          >
-            <Mail className="h-4 w-4" />
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => handleSendWhatsApp(invoice)}
-            className="text-green-600 hover:text-green-700"
-            title="Send WhatsApp"
-          >
-            <MessageCircle className="h-4 w-4" />
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="sm"
+                variant="outline"
+                title="More Actions"
+              >
+                <MoreVertical className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                onClick={() => {
+                  navigate(`/invoice-edit/${invoice.id}${getPaginationParams()}`);
+                }}
+              >
+                <Edit className="h-4 w-4 mr-2" />
+                Edit Invoice
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => {
+                  setSelectedInvoiceForFollowUp(invoice);
+                  setFollowUpDialogOpen(true);
+                }}
+              >
+                <Target className="h-4 w-4 mr-2" />
+                Add Follow-Up
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => handleDownloadPDF(invoice)}
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Download PDF
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => handleSendEmail(invoice)}
+              >
+                <Mail className="h-4 w-4 mr-2" />
+                Send Email
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => handleSendWhatsApp(invoice)}
+              >
+                <MessageCircle className="h-4 w-4 mr-2" />
+                Send WhatsApp
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       ),
     },
   ];
 
-  // Reset to page 1 when applied filters change
+  // Reset to page 1 when applied filters change (but not on initial mount if URL params exist)
   useEffect(() => {
-    setCurrentPage(1);
+    // Skip reset on initial mount if URL has pagination params
+    if (isInitialMount.current) {
+      const params = new URLSearchParams(window.location.search);
+      if (params.has("page") || params.has("pageSize")) {
+        isInitialMount.current = false;
+        return; // Don't reset if we're loading from URL params
+      }
+      isInitialMount.current = false;
+      return; // Don't reset on initial mount even without URL params (let initial state handle it)
+    }
+    
+    // Only reset if filters actually changed (not on initial mount)
+    resetToPageOne();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     statusFilter,
     customerFilter,
@@ -1881,7 +1955,7 @@ export default function Invoices() {
       setSortBy(apiField);
       setSortOrder("asc");
     }
-    setCurrentPage(1); // Reset to first page when sorting changes
+    resetToPageOne(); // Reset to first page when sorting changes
   };
 
   // Auto-update date filters when dateFilter changes (for predefined ranges)
@@ -1913,7 +1987,7 @@ export default function Invoices() {
     setDateFilter(localDateFilter);
     setCustomDateFrom(localCustomDateFrom);
     setCustomDateTo(localCustomDateTo);
-    setCurrentPage(1);
+    resetToPageOne();
   };
 
   // Reset filters function
@@ -1936,7 +2010,7 @@ export default function Invoices() {
     setDateFilter("all");
     setCustomDateFrom(null);
     setCustomDateTo(null);
-    setCurrentPage(1);
+    resetToPageOne();
   };
 
   // Multi-select customer component
@@ -2259,7 +2333,7 @@ export default function Invoices() {
               setIsAnalyticsOpen={setIsAnalyticsOpen}
             />
 
-            <Link href="/invoice-create">
+            <Link href={`/invoice-create${getPaginationParams()}`}>
               <Button data-testid="button-create-invoice">
                 <Plus className="mr-2 h-4 w-4" />
                 Create Invoice
@@ -2297,7 +2371,7 @@ export default function Invoices() {
                     setDateFilter={(value) => {
                       setLocalDateFilter(value);
                       setDateFilter(value);
-                      setCurrentPage(1);
+                      resetToPageOne();
                     }}
                     customDateFrom={localCustomDateFrom}
                     setCustomDateFrom={(date) => {
@@ -2305,7 +2379,7 @@ export default function Invoices() {
                       setCustomDateFrom(date);
                       setDateFilter("custom");
                       setLocalDateFilter("custom");
-                      setCurrentPage(1);
+                      resetToPageOne();
                     }}
                     customDateTo={localCustomDateTo}
                     setCustomDateTo={(date) => {
@@ -2313,7 +2387,7 @@ export default function Invoices() {
                       setCustomDateTo(date);
                       setDateFilter("custom");
                       setLocalDateFilter("custom");
-                      setCurrentPage(1);
+                      resetToPageOne();
                     }}
                   />
                 </div>
@@ -2325,7 +2399,7 @@ export default function Invoices() {
                     onValueChange={(value) => {
                       setLocalStatusFilter(value);
                       setStatusFilter(value);
-                      setCurrentPage(1);
+                      resetToPageOne();
                     }}
                   >
                     <SelectTrigger className="h-9 text-sm">
@@ -2356,7 +2430,7 @@ export default function Invoices() {
                     onValueChange={(value) => {
                       setLocalLeadTypeFilter(value);
                       setLeadTypeFilter(value);
-                      setCurrentPage(1);
+                      resetToPageOne();
                     }}
                   >
                     <SelectTrigger className="h-9 text-sm">
@@ -2379,7 +2453,7 @@ export default function Invoices() {
                     onValueChange={(value) => {
                       setLocalVendorFilter(value);
                       setVendorFilter(value);
-                      setCurrentPage(1);
+                      resetToPageOne();
                     }}
                   >
                     <SelectTrigger className="h-9 text-sm">
@@ -2402,7 +2476,7 @@ export default function Invoices() {
                     onValueChange={(value) => {
                       setLocalProviderFilter(value);
                       setProviderFilter(value);
-                      setCurrentPage(1);
+                      resetToPageOne();
                     }}
                   >
                     <SelectTrigger className="h-9 text-sm">
@@ -2480,8 +2554,10 @@ export default function Invoices() {
                   <Select
                     value={pageSize.toString()}
                     onValueChange={(value) => {
-                      setPageSize(parseInt(value));
+                      const newSize = parseInt(value);
+                      setPageSize(newSize);
                       setCurrentPage(1); // Reset to first page when changing page size
+                      updateURLParams(1, newSize);
                     }}
                   >
                     <SelectTrigger id="pageSize" className="w-20 h-8">
@@ -2501,7 +2577,11 @@ export default function Invoices() {
                     variant="outline"
                     size="sm"
                     disabled={currentPage === 1}
-                    onClick={() => setCurrentPage(currentPage - 1)}
+                    onClick={() => {
+                      const newPage = currentPage - 1;
+                      setCurrentPage(newPage);
+                      updateURLParams(newPage, pageSize);
+                    }}
                   >
                     Previous
                   </Button>
@@ -2533,7 +2613,10 @@ export default function Invoices() {
                               currentPage === pageNum ? "default" : "outline"
                             }
                             size="sm"
-                            onClick={() => setCurrentPage(pageNum)}
+                            onClick={() => {
+                              setCurrentPage(pageNum);
+                              updateURLParams(pageNum, pageSize);
+                            }}
                             className="min-w-[2.5rem]"
                           >
                             {pageNum}
