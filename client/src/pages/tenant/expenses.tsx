@@ -590,6 +590,8 @@ export default function Expenses() {
       setTotalItems(expenses.length);
       return expenses;
     },
+    refetchOnMount: true, // Refetch when component mounts (navigation)
+    staleTime: 0, // Always consider data stale, so it refetches when navigating to the page
   });
 
   const { data: vendors = [] } = useQuery<Vendor[]>({
