@@ -5232,6 +5232,7 @@ async getAllLeadsByTenant(
       pageSize?: number;
       sortBy?: string;
       sortOrder?: 'asc' | 'desc';
+      userId?: number; // Optional: filter by user role
     }
   ) {
     try {
@@ -5261,6 +5262,34 @@ async getAllLeadsByTenant(
       if (columnExists?.exists) {
         whereClause = sql`${whereClause} AND invoices.deleted_at IS NULL`;
       }
+      
+      // Apply role-based filtering if userId is provided
+      if (filters?.userId) {
+        const userId = filters.userId;
+        const user = await this.getUserWithRole(userId);
+        if (user) {
+          const userRole = user.role || user.roleName;
+          const canSeeAll = userRole === 'tenant_admin' || userRole === 'owner' || (user.rolePermissions && user.rolePermissions.isDefault);
+          
+          if (!canSeeAll) {
+            // Get user's team IDs (user + all subordinates)
+            const userTeamIds = await this.getUserTeamIds(userId, tenantId);
+            // Check if created_by column exists in invoices table
+            const [createdByExists] = await sql`
+              SELECT EXISTS (
+                SELECT 1 
+                FROM information_schema.columns 
+                WHERE table_name = 'invoices' 
+                AND column_name = 'created_by'
+              ) as exists
+            `;
+            if (createdByExists?.exists) {
+              whereClause = sql`${whereClause} AND invoices.created_by = ANY(${sql.array(userTeamIds)}::int[])`;
+            }
+          }
+        }
+      }
+      
       let needsJoin = false;
 
       console.log("🔍 Initial WHERE clause: invoices.tenant_id =", tenantId);
@@ -5417,42 +5446,48 @@ async getAllLeadsByTenant(
         }
       }
 
+      // Always include LEFT JOINs for customer and booking data to avoid N+1 queries
+      let customerJoin = sql`LEFT JOIN customers cust ON invoices.customer_id = cust.id`;
+      let bookingJoin = sql`LEFT JOIN bookings b ON invoices.booking_id = b.id`;
+      
+      // Combine existing join clause with customer and booking joins
+      let finalJoinClause = sql``;
+      if (needsJoin) {
+        // If we already have a join (for search), combine them
+        finalJoinClause = sql`${joinClause} ${customerJoin} ${bookingJoin}`;
+      } else {
+        finalJoinClause = sql`${customerJoin} ${bookingJoin}`;
+      }
+
       let invoices;
       if (shouldFilterAfterFetch) {
         // Fetch all matching invoices (without pagination limit) to filter by line items
         // Then apply pagination after filtering
-        if (needsJoin) {
-          invoices = await sql`
-            SELECT invoices.* FROM invoices
-            ${joinClause}
-            WHERE ${whereClause}
-            ORDER BY ${orderByColumn} ${orderDirection}
-          `;
-        } else {
-          invoices = await sql`
-            SELECT * FROM invoices 
-            WHERE ${whereClause}
-            ORDER BY ${orderByColumn} ${orderDirection}
-          `;
-        }
+        invoices = await sql`
+          SELECT 
+            invoices.*,
+            cust.name as customer_name,
+            cust.email as customer_email,
+            b.booking_number as booking_number
+          FROM invoices
+          ${finalJoinClause}
+          WHERE ${whereClause}
+          ORDER BY ${orderByColumn} ${orderDirection}
+        `;
       } else {
         // Apply pagination in SQL for better performance when no line item filters
-        if (needsJoin) {
-          invoices = await sql`
-            SELECT invoices.* FROM invoices
-            ${joinClause}
-            WHERE ${whereClause}
-            ORDER BY ${orderByColumn} ${orderDirection}
-            LIMIT ${pageSize} OFFSET ${offset}
-          `;
-        } else {
-          invoices = await sql`
-            SELECT * FROM invoices 
-            WHERE ${whereClause}
-            ORDER BY ${orderByColumn} ${orderDirection}
-            LIMIT ${pageSize} OFFSET ${offset}
-          `;
-        }
+        invoices = await sql`
+          SELECT 
+            invoices.*,
+            cust.name as customer_name,
+            cust.email as customer_email,
+            b.booking_number as booking_number
+          FROM invoices
+          ${finalJoinClause}
+          WHERE ${whereClause}
+          ORDER BY ${orderByColumn} ${orderDirection}
+          LIMIT ${pageSize} OFFSET ${offset}
+        `;
       }
 
       // Get total count - will be recalculated after filtering if needed
@@ -5475,40 +5510,12 @@ async getAllLeadsByTenant(
         }
       }
 
-      // Fetch customer and booking details separately for each invoice
-      const invoicesWithDetails = await Promise.all(
-        invoices.map(async (invoice) => {
-          let customerName = null;
-          let customerEmail = null;
-          let bookingNumber = null;
-
-          try {
-            if (invoice.customer_id) {
-              const customers = await sql`
-              SELECT name, email 
-              FROM customers 
-              WHERE id = ${invoice.customer_id}
-            `;
-              if (customers.length > 0) {
-                const customer = customers[0];
-                customerName = customer.name || null;
-                customerEmail = customer.email;
-              }
-            }
-
-            if (invoice.booking_id) {
-              const bookings = await sql`
-              SELECT booking_number 
-              FROM bookings 
-              WHERE id = ${invoice.booking_id}
-            `;
-              if (bookings.length > 0) {
-                bookingNumber = bookings[0].booking_number;
-              }
-            }
-          } catch (joinError) {
-            console.warn("Error fetching invoice details:", joinError);
-          }
+      // Customer and booking details are already fetched via JOINs, no need for separate queries
+      const invoicesWithDetails = invoices.map((invoice) => {
+          // Data is already available from JOINs
+          const customerName = invoice.customer_name || null;
+          const customerEmail = invoice.customer_email || null;
+          const bookingNumber = invoice.booking_number || null;
 
           // Parse line items from JSON string if present
           let lineItems = [];
@@ -5636,8 +5643,7 @@ async getAllLeadsByTenant(
             customerEmail: customerEmail,
             bookingNumber: bookingNumber,
           };
-        }),
-      );
+        });
 
       // Filter out null values
       let filteredInvoices = invoicesWithDetails.filter((inv) => inv !== null);
@@ -11460,15 +11466,40 @@ RateHonk CRM Team`,
   }
 
   // Calendar Events Management
-  async getCalendarEventsByTenant(tenantId: number) {
+  async getCalendarEventsByTenant(tenantId: number, userId?: number) {
     try {
       console.log(
-        `📅 Getting real-time calendar events for tenant ${tenantId}`,
+        `📅 Getting real-time calendar events for tenant ${tenantId}${userId ? `, user ${userId}` : ''}`,
       );
+
+      // Get user role and team IDs for filtering
+      let userRole = null;
+      let userTeamIds: number[] = [];
+      let canSeeAll = false;
+
+      if (userId) {
+        const user = await this.getUserWithRole(userId);
+        if (user) {
+          userRole = user.role || user.roleName;
+          // Tenant admins and owners can see all data
+          canSeeAll = userRole === 'tenant_admin' || userRole === 'owner' || (user.rolePermissions && user.rolePermissions.isDefault);
+          
+          if (!canSeeAll) {
+            // Get user's team IDs (user + all subordinates)
+            userTeamIds = await this.getUserTeamIds(userId, tenantId);
+            console.log(`📅 User ${userId} (${userRole}) team IDs:`, userTeamIds);
+          } else {
+            console.log(`📅 User ${userId} (${userRole}) can see all data`);
+          }
+        }
+      }
 
       let calendarEvents = [];
       let bookings = [];
       let leads = [];
+      let tasks = [];
+      let followUps = [];
+      let invoices = [];
 
       // Get calendar_events from database (if table exists)
       try {
@@ -11480,12 +11511,49 @@ RateHonk CRM Team`,
         `;
 
         if (result[0].exists) {
+          // Check if selected_users column exists
+          const [selectedUsersColumnExists] = await sql`
+            SELECT EXISTS (
+              SELECT 1 
+              FROM information_schema.columns 
+              WHERE table_name = 'calendar_events' 
+              AND column_name = 'selected_users'
+            ) as exists
+          `;
+
+          // Build WHERE clause based on user role
+          let calendarWhereClause = sql`tenant_id = ${tenantId}`;
+          if (userId && !canSeeAll) {
+            // Regular users see:
+            // 1. Events they created
+            // 2. Events where they are in attendees
+            // 3. Events where they are in selected_users (if column exists)
+            if (selectedUsersColumnExists?.exists) {
+              // Check if user ID is in selected_users JSON array
+              calendarWhereClause = sql`${calendarWhereClause} AND (
+                created_by = ${userId} 
+                OR attendees::text LIKE ${'%' + userId + '%'}
+                OR selected_users::text LIKE ${'%user-' + userId + '%'}
+                OR selected_users::text LIKE ${'%"user-' + userId + '"%'}
+              )`;
+            } else {
+              // Fallback to original logic if column doesn't exist
+              calendarWhereClause = sql`${calendarWhereClause} AND (created_by = ${userId} OR attendees::text LIKE ${'%' + userId + '%'})`;
+            }
+          }
+          
+          // Select selected_users if column exists
+          let selectColumns = sql`id, tenant_id, title, description, start_time, end_time, 
+            location, attendees, color, is_recurring, status, visibility, created_at, created_by`;
+          
+          if (selectedUsersColumnExists?.exists) {
+            selectColumns = sql`${selectColumns}, selected_users`;
+          }
+          
           calendarEvents = await sql`
-            SELECT 
-              id, tenant_id, title, description, start_time, end_time, 
-              location, attendees, color, is_recurring, status, visibility, created_at
+            SELECT ${selectColumns}
             FROM calendar_events 
-            WHERE tenant_id = ${tenantId}
+            WHERE ${calendarWhereClause}
             ORDER BY start_time ASC
           `;
           console.log(`📅 Found ${calendarEvents.length} calendar events`);
@@ -11498,15 +11566,22 @@ RateHonk CRM Team`,
         calendarEvents = [];
       }
 
-      // Get real bookings data
+      // Get real bookings data (filtered by role if userId provided)
       try {
+        let bookingWhereClause = sql`b.tenant_id = ${tenantId} AND b.travel_date IS NOT NULL`;
+        if (userId && !canSeeAll) {
+          // Check if bookings table has created_by or assigned_user_id
+          // For now, skip bookings filtering as we're removing bookings from calendar
+          // bookings = []; // Skip bookings for now
+        }
+        
         bookings = await sql`
           SELECT 
-            b.id, b.travel_date, b.total_amount, b.status, b.booking_number, b.number_of_travelers,
+            b.id, b.travel_date, b.total_amount, b.status, b.booking_number, b.travelers as number_of_travelers,
             c.name as customer_name, c.email as customer_email, c.phone as customer_phone
           FROM bookings b
           LEFT JOIN customers c ON b.customer_id = c.id
-          WHERE b.tenant_id = ${tenantId} AND b.travel_date IS NOT NULL
+          WHERE ${bookingWhereClause}
           ORDER BY b.travel_date ASC
         `;
         console.log(
@@ -11526,16 +11601,27 @@ RateHonk CRM Team`,
         bookings = [];
       }
 
-      // Get real leads data
+      // Get real leads data (filtered by role if userId provided)
       try {
+        let leadWhereClause = sql`l.tenant_id = ${tenantId}`;
+        if (userId && !canSeeAll) {
+          // Filter leads by assigned_user_id or created_by for team members
+          if (userTeamIds.length > 0) {
+            leadWhereClause = sql`${leadWhereClause} AND (l.assigned_user_id = ANY(${sql.array(userTeamIds)}::int[]) OR l.created_by = ANY(${sql.array(userTeamIds)}::int[]))`;
+          } else {
+            // User with no team sees only their own leads
+            leadWhereClause = sql`${leadWhereClause} AND (l.assigned_user_id = ${userId} OR l.created_by = ${userId})`;
+          }
+        }
+        
         leads = await sql`
           SELECT 
             l.id, 
             COALESCE(l.name, CONCAT(l.first_name, ' ', l.last_name)) as name,
             l.email, l.phone, l.status, l.budget_range, 
-            l.created_at, l.notes, l.source
+            l.created_at, l.notes, l.source, l.assigned_user_id, l.created_by
           FROM leads l
-          WHERE l.tenant_id = ${tenantId}
+          WHERE ${leadWhereClause}
           ORDER BY l.created_at DESC
         `;
         console.log(`📅 Found ${leads.length} leads for tenant ${tenantId}`);
@@ -11604,7 +11690,136 @@ RateHonk CRM Team`,
         }
       });
 
-      // Transform leads to follow-up calendar events with real data
+      // Get tasks (filtered by role if userId provided)
+      try {
+        let taskWhereClause = sql`t.tenant_id = ${tenantId}`;
+        if (userId && !canSeeAll) {
+          // Filter tasks by assigned_to_id or created_by for team members
+          if (userTeamIds.length > 0) {
+            taskWhereClause = sql`${taskWhereClause} AND (t.assigned_to_id = ANY(${sql.array(userTeamIds)}::int[]) OR t.created_by = ANY(${sql.array(userTeamIds)}::int[]))`;
+          } else {
+            // User with no team sees only their own tasks
+            taskWhereClause = sql`${taskWhereClause} AND (t.assigned_to_id = ${userId} OR t.created_by = ${userId})`;
+          }
+        }
+        
+        const [tableExists] = await sql`
+          SELECT EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_name = 'tasks'
+          )
+        `;
+        
+        if (tableExists?.exists) {
+          tasks = await sql`
+            SELECT 
+              t.*,
+              cust.name as customer_name,
+              l.name as lead_name
+            FROM tasks t
+            LEFT JOIN customers cust ON t.customer_id = cust.id
+            LEFT JOIN leads l ON t.lead_id = l.id
+            WHERE ${taskWhereClause} AND t.due_date IS NOT NULL
+            ORDER BY t.due_date ASC
+          `;
+          console.log(`📅 Found ${tasks.length} tasks for tenant ${tenantId}`);
+        }
+      } catch (err: any) {
+        console.log("📅 Error fetching tasks:", err.message);
+        tasks = [];
+      }
+
+      // Get follow-ups (filtered by role if userId provided)
+      try {
+        let followUpWhereClause = sql`f.tenant_id = ${tenantId}`;
+        if (userId && !canSeeAll) {
+          // Filter follow-ups by assigned user or created by for team members
+          // Check if follow_ups table has assigned_user_id or created_by
+          const [assignedExists] = await sql`
+            SELECT EXISTS (
+              SELECT 1 
+              FROM information_schema.columns 
+              WHERE table_name = 'follow_ups' 
+              AND column_name = 'assigned_user_id'
+            ) as exists
+          `;
+          if (assignedExists?.exists) {
+            if (userTeamIds.length > 0) {
+              followUpWhereClause = sql`${followUpWhereClause} AND (f.assigned_user_id = ANY(${sql.array(userTeamIds)}::int[]) OR f.created_by = ANY(${sql.array(userTeamIds)}::int[]))`;
+            } else {
+              followUpWhereClause = sql`${followUpWhereClause} AND (f.assigned_user_id = ${userId} OR f.created_by = ${userId})`;
+            }
+          }
+        }
+        
+        followUps = await sql`
+          SELECT 
+            f.*,
+            t.title as task_title
+          FROM follow_ups f
+          LEFT JOIN tasks t ON f.task_id = t.id
+          WHERE ${followUpWhereClause} AND f.scheduled_date IS NOT NULL
+          ORDER BY f.scheduled_date ASC
+        `;
+        console.log(`📅 Found ${followUps.length} follow-ups for tenant ${tenantId}`);
+      } catch (err: any) {
+        console.log("📅 Error fetching follow-ups:", err.message);
+        followUps = [];
+      }
+
+      // Get invoices with due dates (filtered by role if userId provided)
+      try {
+        // Check if deleted_at column exists for invoices
+        const [invoiceDeletedAtExists] = await sql`
+          SELECT EXISTS (
+            SELECT 1 
+            FROM information_schema.columns 
+            WHERE table_name = 'invoices' 
+            AND column_name = 'deleted_at'
+          ) as exists
+        `;
+        
+        let invoiceWhereClause = sql`i.tenant_id = ${tenantId} AND i.due_date IS NOT NULL`;
+        if (invoiceDeletedAtExists?.exists) {
+          invoiceWhereClause = sql`${invoiceWhereClause} AND i.deleted_at IS NULL`;
+        }
+        
+        if (userId && !canSeeAll) {
+          // Filter invoices by created_by for team members
+          const [createdByExists] = await sql`
+            SELECT EXISTS (
+              SELECT 1 
+              FROM information_schema.columns 
+              WHERE table_name = 'invoices' 
+              AND column_name = 'created_by'
+            ) as exists
+          `;
+          if (createdByExists?.exists) {
+            if (userTeamIds.length > 0) {
+              invoiceWhereClause = sql`${invoiceWhereClause} AND i.created_by = ANY(${sql.array(userTeamIds)}::int[])`;
+            } else {
+              invoiceWhereClause = sql`${invoiceWhereClause} AND i.created_by = ${userId}`;
+            }
+          }
+        }
+        
+        invoices = await sql`
+          SELECT 
+            i.id, i.invoice_number, i.invoice_prefix, i.due_date, i.total_amount, 
+            i.paid_amount, i.status, i.customer_id,
+            c.name as customer_name, c.email as customer_email
+          FROM invoices i
+          LEFT JOIN customers c ON i.customer_id = c.id
+          WHERE ${invoiceWhereClause}
+          ORDER BY i.due_date ASC
+        `;
+        console.log(`📅 Found ${invoices.length} invoices with due dates for tenant ${tenantId}`);
+      } catch (err: any) {
+        console.log("📅 Error fetching invoices:", err.message);
+        invoices = [];
+      }
+
+      // Transform leads to follow-up calendar events with real data (only for role-based users)
       leads.forEach((lead) => {
         const followUpDate = new Date(lead.created_at);
         followUpDate.setDate(followUpDate.getDate() + 1);
@@ -11635,8 +11850,91 @@ RateHonk CRM Team`,
         });
       });
 
+      // Transform tasks to calendar events
+      tasks.forEach((task: any) => {
+        if (task.due_date) {
+          const dueDate = new Date(task.due_date);
+          const endDate = task.end_date ? new Date(task.end_date) : new Date(dueDate.getTime() + (task.estimated_duration || 30) * 60 * 1000);
+          
+          allEvents.push({
+            id: `task-${task.id}`,
+            tenantId: tenantId,
+            title: `✓ ${task.title}`,
+            description: `Task: ${task.title} | Type: ${task.type} | Priority: ${task.priority} | Status: ${task.status} | ${task.customer_name ? `Customer: ${task.customer_name}` : ''} ${task.lead_name ? `Lead: ${task.lead_name}` : ''}`,
+            startTime: dueDate.toISOString(),
+            endTime: endDate.toISOString(),
+            location: null,
+            attendees: [],
+            status: task.status === 'completed' ? 'confirmed' : task.status === 'overdue' ? 'cancelled' : 'tentative',
+            color: task.status === 'completed' ? '#10b981' : task.status === 'overdue' ? '#ef4444' : task.priority === 'urgent' ? '#f59e0b' : '#3b82f6',
+            isRecurring: false,
+            type: 'task',
+            taskTitle: task.title,
+            taskDescription: task.description,
+            priority: task.priority,
+            taskStatus: task.status,
+            customerName: task.customer_name,
+            leadName: task.lead_name,
+          });
+        }
+      });
+
+      // Transform follow-ups to calendar events
+      followUps.forEach((followUp: any) => {
+        if (followUp.scheduled_date) {
+          const scheduledDate = new Date(followUp.scheduled_date);
+          const endDate = new Date(scheduledDate.getTime() + 30 * 60 * 1000); // 30 minutes default
+          
+          allEvents.push({
+            id: `followup-${followUp.id}`,
+            tenantId: tenantId,
+            title: `📞 ${followUp.task_title || 'Follow-up'}`,
+            description: `Follow-up: ${followUp.message || followUp.task_title || 'Follow-up reminder'} | Type: ${followUp.type}`,
+            startTime: scheduledDate.toISOString(),
+            endTime: endDate.toISOString(),
+            location: null,
+            attendees: [],
+            status: followUp.is_completed ? 'confirmed' : 'tentative',
+            color: followUp.is_completed ? '#10b981' : '#8b5cf6',
+            isRecurring: false,
+            type: 'follow_up',
+            taskTitle: followUp.task_title,
+            message: followUp.message,
+          });
+        }
+      });
+
+      // Transform invoices to calendar events (due dates)
+      invoices.forEach((invoice: any) => {
+        if (invoice.due_date) {
+          const dueDate = new Date(invoice.due_date);
+          const invoiceNumber = `${invoice.invoice_prefix || 'INV'}${invoice.invoice_number || ''}`;
+          
+          allEvents.push({
+            id: `invoice-${invoice.id}`,
+            tenantId: tenantId,
+            title: `📄 Invoice ${invoiceNumber} - ${invoice.customer_name || 'Customer'}`,
+            description: `Invoice: ${invoiceNumber} | Amount: $${invoice.total_amount} | Paid: $${invoice.paid_amount || 0} | Due: ${invoice.due_date} | Status: ${invoice.status} | Customer: ${invoice.customer_name || 'N/A'}`,
+            startTime: dueDate.toISOString(),
+            endTime: new Date(dueDate.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+            location: null,
+            attendees: invoice.customer_email ? [invoice.customer_email] : [],
+            status: invoice.status === 'paid' ? 'confirmed' : invoice.status === 'overdue' ? 'cancelled' : 'tentative',
+            color: invoice.status === 'paid' ? '#10b981' : invoice.status === 'overdue' ? '#ef4444' : '#3b82f6',
+            isRecurring: false,
+            type: 'invoice',
+            invoiceNumber: invoiceNumber,
+            invoiceAmount: parseFloat(invoice.total_amount || '0'),
+            invoiceStatus: invoice.status,
+            invoiceDueDate: invoice.due_date,
+            customerName: invoice.customer_name,
+            customerEmail: invoice.customer_email,
+          });
+        }
+      });
+
       console.log(
-        `✅ Real-time data: ${calendarEvents.length} calendar events, ${bookings.length} bookings, ${leads.length} leads`,
+        `✅ Real-time data: ${calendarEvents.length} calendar events, ${bookings.length} bookings, ${leads.length} leads, ${tasks.length} tasks, ${followUps.length} follow-ups, ${invoices.length} invoices`,
       );
       console.log(
         `✅ Total events returned: ${allEvents.length} with authentic business data`,
@@ -11653,40 +11951,68 @@ RateHonk CRM Team`,
     try {
       console.log("📅 Creating calendar event with data:", eventData);
 
+      // Check if reminder_email_recipients column exists
+      const [reminderColumnExists] = await sql`
+        SELECT EXISTS (
+          SELECT 1 
+          FROM information_schema.columns 
+          WHERE table_name = 'calendar_events' 
+          AND column_name = 'reminder_email_recipients'
+        ) as exists
+      `;
+
+      // Build INSERT statement dynamically based on column existence
+      let insertColumns = sql`
+        tenant_id, title, description, start_time, end_time, location, attendees,
+        color, is_recurring, recurrence_pattern, reminders, created_by, timezone, status, visibility
+      `;
+      let insertValues = sql`
+        ${eventData.tenantId}, ${eventData.title}, ${eventData.description || ""}, ${eventData.startTime},
+        ${eventData.endTime}, ${eventData.location || ""}, ${eventData.attendees ? JSON.stringify(eventData.attendees) : ""},
+        ${eventData.color || "#3B82F6"}, ${eventData.isRecurring || false}, ${eventData.recurrencePattern || ""},
+        ${eventData.reminders ? JSON.stringify(eventData.reminders) : ""}, ${eventData.createdBy || 1},
+        ${eventData.timezone || "UTC"}, ${eventData.status || "confirmed"}, ${eventData.visibility || "public"}
+      `;
+
+      // Check if reminder_sent column exists
+      const [reminderSentColumnExists] = await sql`
+        SELECT EXISTS (
+          SELECT 1 
+          FROM information_schema.columns 
+          WHERE table_name = 'calendar_events' 
+          AND column_name = 'reminder_sent'
+        ) as exists
+      `;
+
+      // Check if selected_users column exists
+      const [selectedUsersColumnExists] = await sql`
+        SELECT EXISTS (
+          SELECT 1 
+          FROM information_schema.columns 
+          WHERE table_name = 'calendar_events' 
+          AND column_name = 'selected_users'
+        ) as exists
+      `;
+
+      if (reminderColumnExists?.exists) {
+        insertColumns = sql`${insertColumns}, reminder_email_recipients, send_reminder_email`;
+        insertValues = sql`${insertValues}, ${eventData.reminderEmailRecipients ? JSON.stringify(eventData.reminderEmailRecipients) : null}, ${eventData.sendReminderEmail || false}`;
+        
+        if (reminderSentColumnExists?.exists) {
+          insertColumns = sql`${insertColumns}, reminder_sent`;
+          insertValues = sql`${insertValues}, false`;
+        }
+      }
+
+      // Store selected users if column exists
+      if (selectedUsersColumnExists?.exists && eventData.selectedUsers && eventData.selectedUsers.length > 0) {
+        insertColumns = sql`${insertColumns}, selected_users`;
+        insertValues = sql`${insertValues}, ${JSON.stringify(eventData.selectedUsers)}`;
+      }
+
       const [newEvent] = await sql`
-        INSERT INTO calendar_events (
-          tenant_id,
-          title,
-          description,
-          start_time,
-          end_time,
-          location,
-          attendees,
-          color,
-          is_recurring,
-          recurrence_pattern,
-          reminders,
-          created_by,
-          timezone,
-          status,
-          visibility
-        ) VALUES (
-          ${eventData.tenantId},
-          ${eventData.title},
-          ${eventData.description || ""},
-          ${eventData.startTime},
-          ${eventData.endTime},
-          ${eventData.location || ""},
-          ${eventData.attendees ? JSON.stringify(eventData.attendees) : ""},
-          ${eventData.color || "#3B82F6"},
-          ${eventData.isRecurring || false},
-          ${eventData.recurrencePattern || ""},
-          ${eventData.reminders ? JSON.stringify(eventData.reminders) : ""},
-          ${eventData.createdBy || 1},
-          ${eventData.timezone || "UTC"},
-          ${eventData.status || "confirmed"},
-          ${eventData.visibility || "public"}
-        )
+        INSERT INTO calendar_events (${insertColumns})
+        VALUES (${insertValues})
         RETURNING *
       `;
 
@@ -12556,6 +12882,7 @@ RateHonk CRM Team`,
     offset = 0,
     page = 1,
     pageSize = 10,
+    userId, // Optional: filter by user role
   }: {
     tenantId: number;
     search?: string;
@@ -12568,10 +12895,37 @@ RateHonk CRM Team`,
     offset?: number;
     page?: number;
     pageSize?: number;
+    userId?: number;
   }) {
     console.log("Fetching estimates for tenantId:", tenantId);
 
     let whereClauses = sql`e.tenant_id = ${tenantId}`;
+    
+    // Apply role-based filtering if userId is provided
+    if (userId) {
+      const user = await this.getUserWithRole(userId);
+      if (user) {
+        const userRole = user.role || user.roleName;
+        const canSeeAll = userRole === 'tenant_admin' || userRole === 'owner' || (user.rolePermissions && user.rolePermissions.isDefault);
+        
+        if (!canSeeAll) {
+          // Get user's team IDs (user + all subordinates)
+          const userTeamIds = await this.getUserTeamIds(userId, tenantId);
+          // Check if created_by column exists in estimates table
+          const [createdByExists] = await sql`
+            SELECT EXISTS (
+              SELECT 1 
+              FROM information_schema.columns 
+              WHERE table_name = 'estimates' 
+              AND column_name = 'created_by'
+            ) as exists
+          `;
+          if (createdByExists?.exists) {
+            whereClauses = sql`${whereClauses} AND e.created_by = ANY(${sql.array(userTeamIds)}::int[])`;
+          }
+        }
+      }
+    }
 
     if (search) {
       whereClauses = sql`${whereClauses} AND (

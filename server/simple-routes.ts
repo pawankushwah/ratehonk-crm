@@ -22,6 +22,7 @@ import {
   sendWhatsAppCustomMessage,
 } from "./whatsapp-routes";
 import { registerMeetingRoutes } from "./meeting-routes";
+import { processCalendarReminders } from "./calendar-reminder-scheduler";
 import { registerFacebookLeadAdsOAuthRoutes } from "./integrations/facebook-lead-ads-oauth";
 import { registerFacebookLeadAdsRoutes } from "./integrations/facebook-lead-ads-handler";
 
@@ -5639,7 +5640,9 @@ app.get("/api/tenants/:tenantId/all-customers-graph", authenticateToken, async (
   app.get("/api/tenants/:tenantId/invoices", authenticateToken, async (req, res) => {
     try {
       const tenantId = parseInt(req.params.tenantId);
-      const invoices = await simpleStorage.getInvoicesByTenant(tenantId, req.query);
+      const userId = req.user?.id; // Get user ID for role-based filtering
+      const filters = { ...req.query, userId }; // Include userId in filters
+      const invoices = await simpleStorage.getInvoicesByTenant(tenantId, filters);
       return res.json(invoices);
     } catch (error: any) {
       console.error("Get invoices error:", error);
@@ -7250,15 +7253,14 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
   app.get("/api/tenants/:tenantId/calendar-events", authenticateToken, async (req, res) => {
     try {
       const tenantId = parseInt(req.params.tenantId);
-      const result = await sql`
-        SELECT * FROM calendar_events 
-        WHERE tenant_id = ${tenantId}
-        ORDER BY start_time ASC
-      `;
+      const userId = req.user?.id; // Get user ID from authenticated request
+      
+      // Use the storage method which now supports role-based filtering
+      const events = await simpleStorage.getCalendarEventsByTenant(tenantId, userId);
 
       return res.json({
         success: true,
-        events: result,
+        events: events,
         message: "Calendar events retrieved successfully",
       });
     } catch (error: any) {
@@ -8392,15 +8394,12 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
           return res.status(401).json({ message: "No authorization header" });
         }
 
-        const result = await sql`
-          SELECT * FROM calendar_events 
-          WHERE tenant_id = ${parseInt(tenantId as string)}
-          ORDER BY start_time ASC
-        `;
+        const userId = req.user?.id; // Get user ID from authenticated request
+        const events = await simpleStorage.getCalendarEventsByTenant(parseInt(tenantId as string), userId);
 
         return res.json({
           success: true,
-          events: result,
+          events: events,
           message: "Calendar events retrieved successfully",
         });
       } catch (error: any) {
@@ -25337,6 +25336,33 @@ Happy travels! 🌍✈️`,
       let whereClause = sql`e.tenant_id = ${req.user.tenantId}`;
       if (columnExists?.exists) {
         whereClause = sql`${whereClause} AND e.deleted_at IS NULL`;
+      }
+      
+      // Apply role-based filtering
+      const userId = req.user?.id;
+      if (userId) {
+        const user = await simpleStorage.getUserWithRole(userId);
+        if (user) {
+          const userRole = user.role || user.roleName;
+          const canSeeAll = userRole === 'tenant_admin' || userRole === 'owner' || (user.rolePermissions && user.rolePermissions.isDefault);
+          
+          if (!canSeeAll) {
+            // Get user's team IDs (user + all subordinates)
+            const userTeamIds = await simpleStorage.getUserTeamIds(userId, req.user.tenantId);
+            // Check if created_by column exists in expenses table
+            const [createdByExists] = await sql`
+              SELECT EXISTS (
+                SELECT 1 
+                FROM information_schema.columns 
+                WHERE table_name = 'expenses' 
+                AND column_name = 'created_by'
+              ) as exists
+            `;
+            if (createdByExists?.exists) {
+              whereClause = sql`${whereClause} AND e.created_by = ANY(${sql.array(userTeamIds)}::int[])`;
+            }
+          }
+        }
       }
 
       if (search) {
