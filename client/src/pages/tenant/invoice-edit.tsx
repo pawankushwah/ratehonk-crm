@@ -2758,7 +2758,7 @@ export default function InvoiceEdit() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => navigate("/invoices")}
+                  onClick={navigateToInvoices}
                   data-testid="button-back"
                   className="flex-shrink-0"
                 >
@@ -4331,7 +4331,7 @@ export default function InvoiceEdit() {
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => navigate("/invoices")}
+                  onClick={navigateToInvoices}
                   data-testid="button-cancel"
                 >
                   Cancel
