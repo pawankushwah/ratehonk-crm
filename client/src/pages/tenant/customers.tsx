@@ -567,9 +567,7 @@ export default function Customers() {
     },
     staleTime: 0,
     gcTime: 1000 * 60 * 1,
-    refetchOnWindowFocus: true,
-    refetchOnMount: true,
-    refetchInterval: 30000,
+    refetchOnMount: true, // Refetch when component mounts (navigation)
   });
 
   const [formValidationErrors, setFormValidationErrors] = useState<

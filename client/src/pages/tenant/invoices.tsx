@@ -1362,8 +1362,7 @@ export default function Invoices() {
       sortOrder,
     ],
     enabled: !!tenant?.id,
-    refetchOnWindowFocus: true,
-    refetchInterval: 30000,
+    refetchOnMount: true, // Refetch when component mounts (navigation)
     staleTime: 0,
     gcTime: 0,
     queryFn: async () => {

@@ -660,7 +660,7 @@ export default function Leads() {
   }, [typeFilter]);
 
   // Separate query for Kanban view (all leads, no pagination)
-  const { data: kanbanLeads = [], isLoading: isLoadingKanban } = useQuery<Lead[]>({
+  const { data: kanbanLeads = [], isLoading: isLoadingKanban, refetch: refetchKanbanLeads } = useQuery<Lead[]>({
     queryKey: [
       "kanban-leads",
       tenant?.id,
@@ -717,13 +717,12 @@ export default function Leads() {
       
       return result.data || [];
     },
-    refetchOnWindowFocus: true,
-    refetchOnMount: true,
-    refetchInterval: 30000,
+    refetchOnMount: true, // Refetch when component mounts (navigation)
+    staleTime: 0, // Always consider data stale, so it refetches when navigating to the page
   });
 
   // Regular query for table/list view (with pagination)
-  const { data: leads = [], isLoading } = useQuery<Lead[]>({
+  const { data: leads = [], isLoading, refetch: refetchLeads } = useQuery<Lead[]>({
     queryKey: [
       "leads",
       tenant?.id,
@@ -834,9 +833,8 @@ export default function Leads() {
       setTotalItems(0);
       return [];
     },
-    refetchOnWindowFocus: true,
-    refetchOnMount: true,
-    refetchInterval: 30000,
+    refetchOnMount: true, // Refetch when component mounts (navigation)
+    staleTime: 0, // Always consider data stale, so it refetches when navigating to the page
   });
 
   // Extract totalItems from query result to ensure it's always in sync
