@@ -5417,42 +5417,48 @@ async getAllLeadsByTenant(
         }
       }
 
+      // Always include LEFT JOINs for customer and booking data to avoid N+1 queries
+      let customerJoin = sql`LEFT JOIN customers cust ON invoices.customer_id = cust.id`;
+      let bookingJoin = sql`LEFT JOIN bookings b ON invoices.booking_id = b.id`;
+      
+      // Combine existing join clause with customer and booking joins
+      let finalJoinClause = sql``;
+      if (needsJoin) {
+        // If we already have a join (for search), combine them
+        finalJoinClause = sql`${joinClause} ${customerJoin} ${bookingJoin}`;
+      } else {
+        finalJoinClause = sql`${customerJoin} ${bookingJoin}`;
+      }
+
       let invoices;
       if (shouldFilterAfterFetch) {
         // Fetch all matching invoices (without pagination limit) to filter by line items
         // Then apply pagination after filtering
-        if (needsJoin) {
-          invoices = await sql`
-            SELECT invoices.* FROM invoices
-            ${joinClause}
-            WHERE ${whereClause}
-            ORDER BY ${orderByColumn} ${orderDirection}
-          `;
-        } else {
-          invoices = await sql`
-            SELECT * FROM invoices 
-            WHERE ${whereClause}
-            ORDER BY ${orderByColumn} ${orderDirection}
-          `;
-        }
+        invoices = await sql`
+          SELECT 
+            invoices.*,
+            cust.name as customer_name,
+            cust.email as customer_email,
+            b.booking_number as booking_number
+          FROM invoices
+          ${finalJoinClause}
+          WHERE ${whereClause}
+          ORDER BY ${orderByColumn} ${orderDirection}
+        `;
       } else {
         // Apply pagination in SQL for better performance when no line item filters
-        if (needsJoin) {
-          invoices = await sql`
-            SELECT invoices.* FROM invoices
-            ${joinClause}
-            WHERE ${whereClause}
-            ORDER BY ${orderByColumn} ${orderDirection}
-            LIMIT ${pageSize} OFFSET ${offset}
-          `;
-        } else {
-          invoices = await sql`
-            SELECT * FROM invoices 
-            WHERE ${whereClause}
-            ORDER BY ${orderByColumn} ${orderDirection}
-            LIMIT ${pageSize} OFFSET ${offset}
-          `;
-        }
+        invoices = await sql`
+          SELECT 
+            invoices.*,
+            cust.name as customer_name,
+            cust.email as customer_email,
+            b.booking_number as booking_number
+          FROM invoices
+          ${finalJoinClause}
+          WHERE ${whereClause}
+          ORDER BY ${orderByColumn} ${orderDirection}
+          LIMIT ${pageSize} OFFSET ${offset}
+        `;
       }
 
       // Get total count - will be recalculated after filtering if needed
@@ -5475,40 +5481,12 @@ async getAllLeadsByTenant(
         }
       }
 
-      // Fetch customer and booking details separately for each invoice
-      const invoicesWithDetails = await Promise.all(
-        invoices.map(async (invoice) => {
-          let customerName = null;
-          let customerEmail = null;
-          let bookingNumber = null;
-
-          try {
-            if (invoice.customer_id) {
-              const customers = await sql`
-              SELECT name, email 
-              FROM customers 
-              WHERE id = ${invoice.customer_id}
-            `;
-              if (customers.length > 0) {
-                const customer = customers[0];
-                customerName = customer.name || null;
-                customerEmail = customer.email;
-              }
-            }
-
-            if (invoice.booking_id) {
-              const bookings = await sql`
-              SELECT booking_number 
-              FROM bookings 
-              WHERE id = ${invoice.booking_id}
-            `;
-              if (bookings.length > 0) {
-                bookingNumber = bookings[0].booking_number;
-              }
-            }
-          } catch (joinError) {
-            console.warn("Error fetching invoice details:", joinError);
-          }
+      // Customer and booking details are already fetched via JOINs, no need for separate queries
+      const invoicesWithDetails = invoices.map((invoice) => {
+          // Data is already available from JOINs
+          const customerName = invoice.customer_name || null;
+          const customerEmail = invoice.customer_email || null;
+          const bookingNumber = invoice.booking_number || null;
 
           // Parse line items from JSON string if present
           let lineItems = [];
@@ -5636,8 +5614,7 @@ async getAllLeadsByTenant(
             customerEmail: customerEmail,
             bookingNumber: bookingNumber,
           };
-        }),
-      );
+        });
 
       // Filter out null values
       let filteredInvoices = invoicesWithDetails.filter((inv) => inv !== null);
