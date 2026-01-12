@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Layout } from "@/components/layout/layout";
-import { Calendar, CalendarDays, Clock, MapPin, Users, Plus, Edit, Trash2, ChevronLeft, ChevronRight, Video, Copy, ExternalLink } from "lucide-react";
+import { Calendar, CalendarDays, Clock, MapPin, Users, Plus, Edit, Trash2, ChevronLeft, ChevronRight, Video, Copy, ExternalLink, Settings2 } from "lucide-react";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -37,21 +38,34 @@ interface CalendarEvent {
   timezone?: string;
   status: 'confirmed' | 'tentative' | 'cancelled';
   visibility?: 'public' | 'private' | 'confidential';
-  type?: 'event' | 'booking' | 'lead' | 'task';
+  type?: 'event' | 'invoice' | 'expense' | 'estimate' | 'lead' | 'task' | 'follow_up';
   // Meeting link fields
   zoomMeetingLink?: string;
   zoomMeetingId?: string;
   zoomMeetingPassword?: string;
   googleMeetLink?: string;
+  teamsMeetingLink?: string;
+  teamsMeetingId?: string;
   meetingProvider?: string;
-  // Booking specific fields
-  amount?: number;
+  // Invoice specific fields
+  invoiceNumber?: string;
+  invoiceAmount?: number;
+  invoiceStatus?: string;
+  invoiceDueDate?: string;
+  // Expense specific fields
+  expenseNumber?: string;
+  expenseAmount?: number;
+  expenseStatus?: string;
+  expenseCategory?: string;
+  // Estimate specific fields
+  estimateNumber?: string;
+  estimateAmount?: number;
+  estimateStatus?: string;
+  estimateValidUntil?: string;
+  // Common fields
   customerName?: string;
   customerEmail?: string;
   customerPhone?: string;
-  packageName?: string;
-  destination?: string;
-  bookingStatus?: string;
   // Lead specific fields
   leadName?: string;
   leadEmail?: string;
@@ -74,6 +88,10 @@ const eventSchema = z.object({
   endTime: z.string().min(1, "End time is required"),
   location: z.string().optional(),
   attendees: z.string().optional(),
+  selectedLeads: z.array(z.string()).optional(),
+  selectedCustomers: z.array(z.string()).optional(),
+  selectedUsers: z.array(z.string()).optional(),
+  sendReminderEmail: z.boolean().default(true),
   color: z.string().default("#3B82F6"),
   timezone: z.string().default("UTC"),
   isRecurring: z.boolean().default(false),
@@ -84,6 +102,8 @@ const eventSchema = z.object({
   zoomMeetingId: z.string().optional(),
   zoomMeetingPassword: z.string().optional(),
   googleMeetLink: z.string().optional(),
+  teamsMeetingLink: z.string().optional(),
+  teamsMeetingId: z.string().optional(),
   meetingProvider: z.enum(['zoom', 'google_meet', 'teams', 'none']).optional()
 });
 
@@ -414,9 +434,42 @@ export default function CalendarPage() {
   const [isEventDetailOpen, setIsEventDetailOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [isGeneratingMeet, setIsGeneratingMeet] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const { toast } = useToast();
-  const { user } = useAuth();
+  const { user, tenant } = useAuth();
   const queryClient = useQueryClient();
+
+  // Load metric visibility settings from localStorage
+  const loadMetricSettings = () => {
+    const saved = localStorage.getItem('calendar_metric_settings');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch {
+        // If parsing fails, return defaults
+      }
+    }
+    // Default: all metrics visible
+    return {
+      totalEvents: true,
+      invoices: true,
+      expenses: true,
+      estimates: true,
+      leadFollowUps: true,
+      createdEvents: true,
+      totalRevenue: true,
+      today: true,
+    };
+  };
+
+  const [metricSettings, setMetricSettings] = useState(loadMetricSettings);
+
+  // Save settings to localStorage whenever they change
+  const updateMetricSetting = (key: string, value: boolean) => {
+    const newSettings = { ...metricSettings, [key]: value };
+    setMetricSettings(newSettings);
+    localStorage.setItem('calendar_metric_settings', JSON.stringify(newSettings));
+  };
 
   const form = useForm<z.infer<typeof eventSchema>>({
     resolver: zodResolver(eventSchema),
@@ -436,8 +489,176 @@ export default function CalendarPage() {
       zoomMeetingId: "",
       zoomMeetingPassword: "",
       googleMeetLink: "",
-      meetingProvider: "none"
+      teamsMeetingLink: "",
+      teamsMeetingId: "",
+      meetingProvider: "none",
+      selectedLeads: [],
+      selectedCustomers: [],
+      selectedUsers: [],
+      sendReminderEmail: true
     }
+  });
+
+  // Check if user is admin or owner to show revenue
+  const canSeeRevenue = user?.role === 'tenant_admin' || user?.role === 'owner';
+  
+  // Fetch leads for multi-select
+  const { data: leadsData = [] } = useQuery({
+    queryKey: ["leads", tenant?.id, "for-calendar"],
+    enabled: !!tenant?.id && isCreateEventOpen,
+    queryFn: async () => {
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch(`/api/tenants/${tenant?.id}/leads?limit=1000`, {
+        headers: {
+          ...(token && { 'Authorization': `Bearer ${token}` }),
+          'Content-Type': 'application/json'
+        }
+      });
+      if (!response.ok) return [];
+      const data = await response.json();
+      const leads = Array.isArray(data) ? data : (data.data || []);
+      return leads.filter((lead: any) => lead.email).map((lead: any) => ({
+        value: `lead-${lead.id}`,
+        label: lead.name || `${lead.firstName || ''} ${lead.lastName || ''}`.trim(),
+        email: lead.email,
+        phone: lead.phone,
+        type: 'lead' as const
+      }));
+    },
+    staleTime: 0,
+  });
+
+  // Fetch customers for multi-select
+  const { data: customersData = [] } = useQuery({
+    queryKey: ["customers", tenant?.id, "for-calendar"],
+    enabled: !!tenant?.id && isCreateEventOpen,
+    queryFn: async () => {
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch(`/api/tenants/${tenant?.id}/customers?limit=1000`, {
+        headers: {
+          ...(token && { 'Authorization': `Bearer ${token}` }),
+          'Content-Type': 'application/json'
+        }
+      });
+      if (!response.ok) return [];
+      const data = await response.json();
+      const customers = Array.isArray(data) ? data : (data.data || []);
+      return customers.filter((customer: any) => customer.email).map((customer: any) => ({
+        value: `customer-${customer.id}`,
+        label: customer.name || `${customer.firstName || ''} ${customer.lastName || ''}`.trim(),
+        email: customer.email,
+        phone: customer.phone,
+        type: 'customer' as const
+      }));
+    },
+    staleTime: 0,
+  });
+
+  // Fetch internal users for multi-select
+  const { data: usersData = [] } = useQuery({
+    queryKey: ["users", tenant?.id, "for-calendar"],
+    enabled: !!tenant?.id && isCreateEventOpen,
+    queryFn: async () => {
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch(`/api/tenants/${tenant?.id}/users`, {
+        headers: {
+          ...(token && { 'Authorization': `Bearer ${token}` }),
+          'Content-Type': 'application/json'
+        }
+      });
+      if (!response.ok) return [];
+      const data = await response.json();
+      const users = Array.isArray(data) ? data : (data.data || []);
+      return users.filter((user: any) => user.email && user.isActive).map((user: any) => ({
+        value: `user-${user.id}`,
+        label: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
+        email: user.email,
+        phone: user.phone,
+        type: 'user' as const
+      }));
+    },
+    staleTime: 0,
+  });
+
+  
+  // Fetch invoices, expenses, and estimates for revenue calculation
+  const { data: invoices = [] } = useQuery({
+    queryKey: ["invoices", tenant?.id],
+    enabled: !!tenant?.id,
+    queryFn: async () => {
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch(`/api/tenants/${tenant?.id}/invoices`, {
+        headers: {
+          ...(token && { 'Authorization': `Bearer ${token}` }),
+          'Content-Type': 'application/json'
+        }
+      });
+      if (!response.ok) return [];
+      const data = await response.json();
+      return Array.isArray(data) ? data : data.data || [];
+    },
+    refetchOnMount: true,
+    staleTime: 0,
+  });
+
+  const { data: expenses = [] } = useQuery({
+    queryKey: ["expenses", tenant?.id],
+    enabled: !!tenant?.id,
+    queryFn: async () => {
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch(`/api/expenses?tenantId=${tenant?.id}`, {
+        headers: {
+          ...(token && { 'Authorization': `Bearer ${token}` }),
+          'Content-Type': 'application/json'
+        }
+      });
+      if (!response.ok) return [];
+      const data = await response.json();
+      return Array.isArray(data) ? data : data.data || [];
+    },
+    refetchOnMount: true,
+    staleTime: 0,
+  });
+
+  const { data: estimates = [] } = useQuery({
+    queryKey: ["estimates", tenant?.id],
+    enabled: !!tenant?.id,
+    queryFn: async () => {
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch(`/api/estimates?tenantId=${tenant?.id}`, {
+        headers: {
+          ...(token && { 'Authorization': `Bearer ${token}` }),
+          'Content-Type': 'application/json'
+        }
+      });
+      if (!response.ok) return [];
+      const data = await response.json();
+      return Array.isArray(data) ? data : data.data || [];
+    },
+    refetchOnMount: true,
+    staleTime: 0,
+  });
+
+  // Fetch follow-ups for lead follow-ups count
+  const { data: followUps = [] } = useQuery({
+    queryKey: [`/api/tenants/${tenant?.id}/follow-ups`],
+    enabled: !!tenant?.id,
+    queryFn: async () => {
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch(`/api/tenants/${tenant?.id}/follow-ups`, {
+        headers: {
+          ...(token && { 'Authorization': `Bearer ${token}` }),
+          'Content-Type': 'application/json'
+        }
+      });
+      if (!response.ok) return [];
+      const data = await response.json();
+      // Filter for lead-related follow-ups (where relatedTableName is 'leads')
+      const allFollowUps = Array.isArray(data) ? data : data.data || [];
+      return allFollowUps.filter((fu: any) => fu.relatedTableName === 'leads' || fu.type === 'lead');
+    },
+    refetchOnMount: true,
+    staleTime: 0,
   });
 
   // Fetch real-time calendar events with robust error handling
@@ -624,17 +845,58 @@ export default function CalendarPage() {
   // Create event mutation with immediate cache refresh
   const createEventMutation = useMutation({
     mutationFn: async (eventData: z.infer<typeof eventSchema>) => {
+      // Collect all email addresses from selected leads, customers, users, and additional attendees
+      const allEmails: string[] = [];
+      
+      // Get emails from selected leads
+      if (eventData.selectedLeads && eventData.selectedLeads.length > 0) {
+        eventData.selectedLeads.forEach((leadId: string) => {
+          const lead = leadsData.find((l: any) => l.value === leadId);
+          if (lead?.email) allEmails.push(lead.email);
+        });
+      }
+      
+      // Get emails from selected customers
+      if (eventData.selectedCustomers && eventData.selectedCustomers.length > 0) {
+        eventData.selectedCustomers.forEach((customerId: string) => {
+          const customer = customersData.find((c: any) => c.value === customerId);
+          if (customer?.email) allEmails.push(customer.email);
+        });
+      }
+      
+      // Get emails from selected users
+      if (eventData.selectedUsers && eventData.selectedUsers.length > 0) {
+        eventData.selectedUsers.forEach((userId: string) => {
+          const user = usersData.find((u: any) => u.value === userId);
+          if (user?.email) allEmails.push(user.email);
+        });
+      }
+      
+      // Add additional email addresses from attendees field
+      if (eventData.attendees) {
+        const additionalEmails = eventData.attendees.split(',').map((email: string) => email.trim()).filter(Boolean);
+        allEmails.push(...additionalEmails);
+      }
+      
       const processedData = {
         ...eventData,
-        attendees: eventData.attendees ? eventData.attendees.split(',').map((email: string) => email.trim()) : [],
-        reminders: [15, 5], // Default reminders
+        attendees: [...new Set(allEmails)], // Remove duplicates
+        reminders: eventData.sendReminderEmail ? [15] : [], // 15 minutes reminder if enabled
         // Normalize meeting provider - don't send "none" to backend
         meetingProvider: eventData.meetingProvider === 'none' ? null : eventData.meetingProvider,
         // Clear meeting link fields if provider is "none"
         zoomMeetingLink: eventData.meetingProvider === 'zoom' ? eventData.zoomMeetingLink : null,
         zoomMeetingId: eventData.meetingProvider === 'zoom' ? eventData.zoomMeetingId : null,
         zoomMeetingPassword: eventData.meetingProvider === 'zoom' ? eventData.zoomMeetingPassword : null,
-        googleMeetLink: eventData.meetingProvider === 'google_meet' ? eventData.googleMeetLink : null
+        googleMeetLink: eventData.meetingProvider === 'google_meet' ? eventData.googleMeetLink : null,
+        teamsMeetingLink: eventData.meetingProvider === 'teams' ? eventData.teamsMeetingLink : null,
+        teamsMeetingId: eventData.meetingProvider === 'teams' ? eventData.teamsMeetingId : null,
+        // Store reminder email recipients
+        reminderEmailRecipients: eventData.sendReminderEmail ? [...new Set(allEmails)] : [],
+        sendReminderEmail: eventData.sendReminderEmail || false,
+        selectedLeads: eventData.selectedLeads || [],
+        selectedCustomers: eventData.selectedCustomers || [],
+        selectedUsers: eventData.selectedUsers || []
       };
       
       console.log('🔍 API Request - Method:', `/api/tenants/${user?.tenantId}/calendar/events`);
@@ -812,15 +1074,25 @@ export default function CalendarPage() {
     }
   });
 
-  // Calculate real-time statistics
+  // Calculate real-time statistics from invoices, expenses, and estimates
   const realTimeStats = {
     totalEvents: events.length,
-    bookings: events.filter((e: CalendarEvent) => e.type === 'booking').length,
-    leads: events.filter((e: CalendarEvent) => e.type === 'lead').length,
+    invoices: invoices.length,
+    expenses: expenses.length,
+    estimates: estimates.length,
+    leads: followUps.length, // Count actual lead follow-ups from follow-ups API
     createdEvents: events.filter((e: CalendarEvent) => e.type === 'event').length,
-    totalRevenue: events
-      .filter((e: CalendarEvent) => e.type === 'booking')
-      .reduce((sum: number, e: CalendarEvent) => sum + (e.amount || 0), 0),
+    // Total revenue from invoices (paid amount) minus expenses (only for admin/owner)
+    totalRevenue: canSeeRevenue 
+      ? invoices.reduce((sum: number, inv: any) => sum + (parseFloat(inv.paidAmount || inv.amountPaid || 0)), 0) - 
+        expenses.reduce((sum: number, exp: any) => sum + (parseFloat(exp.amount || 0)), 0)
+      : 0,
+    // Total invoice amount (not just paid)
+    totalInvoiceAmount: invoices.reduce((sum: number, inv: any) => sum + (parseFloat(inv.totalAmount || 0)), 0),
+    // Total expense amount
+    totalExpenseAmount: expenses.reduce((sum: number, exp: any) => sum + (parseFloat(exp.amount || 0)), 0),
+    // Total estimate amount
+    totalEstimateAmount: estimates.reduce((sum: number, est: any) => sum + (parseFloat(est.totalAmount || est.amount || 0)), 0),
     upcomingToday: events.filter((e: CalendarEvent) => {
       const eventDate = new Date(e.startTime);
       const today = new Date();
@@ -904,23 +1176,124 @@ export default function CalendarPage() {
           <div className="flex items-center space-x-4">
             <div className="flex items-center space-x-2">
               <Calendar className="h-8 w-8 text-blue-600" />
-              <h1 className="text-3xl font-bold">Calendar</h1>
+              <h1 className="text-3xl font-bold text-gray-900">Calendar</h1>
             </div>
-            <div className="flex items-center space-x-2">
-              <Button variant="outline" size="sm" onClick={() => navigate('prev')}>
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => setCurrentDate(new Date())}>
-                Today
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => navigate('next')}>
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            </div>
-            <h2 className="text-xl font-semibold">{getViewTitle()}</h2>
           </div>
           
           <div className="flex items-center space-x-2">
+            <Sheet open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
+              <SheetTrigger asChild>
+                <Button variant="outline" size="sm">
+                  <Settings2 className="h-4 w-4 mr-2" />
+                  Settings
+                </Button>
+              </SheetTrigger>
+              <SheetContent>
+                <SheetHeader>
+                  <SheetTitle>Calendar Settings</SheetTitle>
+                  <SheetDescription>
+                    Configure which metric cards to display on the calendar page.
+                  </SheetDescription>
+                </SheetHeader>
+                <div className="mt-6 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="totalEvents">Total Events</Label>
+                      <p className="text-sm text-muted-foreground">Show total events count</p>
+                    </div>
+                    <Switch
+                      id="totalEvents"
+                      checked={metricSettings.totalEvents}
+                      onCheckedChange={(checked) => updateMetricSetting('totalEvents', checked)}
+                    />
+                  </div>
+                  
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="invoices">Invoices</Label>
+                      <p className="text-sm text-muted-foreground">Show invoices count</p>
+                    </div>
+                    <Switch
+                      id="invoices"
+                      checked={metricSettings.invoices}
+                      onCheckedChange={(checked) => updateMetricSetting('invoices', checked)}
+                    />
+                  </div>
+                  
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="expenses">Expenses</Label>
+                      <p className="text-sm text-muted-foreground">Show expenses count</p>
+                    </div>
+                    <Switch
+                      id="expenses"
+                      checked={metricSettings.expenses}
+                      onCheckedChange={(checked) => updateMetricSetting('expenses', checked)}
+                    />
+                  </div>
+                  
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="estimates">Estimates</Label>
+                      <p className="text-sm text-muted-foreground">Show estimates count</p>
+                    </div>
+                    <Switch
+                      id="estimates"
+                      checked={metricSettings.estimates}
+                      onCheckedChange={(checked) => updateMetricSetting('estimates', checked)}
+                    />
+                  </div>
+                  
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="leadFollowUps">Lead Follow-ups</Label>
+                      <p className="text-sm text-muted-foreground">Show lead follow-ups count</p>
+                    </div>
+                    <Switch
+                      id="leadFollowUps"
+                      checked={metricSettings.leadFollowUps}
+                      onCheckedChange={(checked) => updateMetricSetting('leadFollowUps', checked)}
+                    />
+                  </div>
+                  
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="createdEvents">Created Events</Label>
+                      <p className="text-sm text-muted-foreground">Show created events count</p>
+                    </div>
+                    <Switch
+                      id="createdEvents"
+                      checked={metricSettings.createdEvents}
+                      onCheckedChange={(checked) => updateMetricSetting('createdEvents', checked)}
+                    />
+                  </div>
+                  
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="totalRevenue">Total Revenue</Label>
+                      <p className="text-sm text-muted-foreground">Show total revenue amount</p>
+                    </div>
+                    <Switch
+                      id="totalRevenue"
+                      checked={metricSettings.totalRevenue}
+                      onCheckedChange={(checked) => updateMetricSetting('totalRevenue', checked)}
+                    />
+                  </div>
+                  
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="today">Today</Label>
+                      <p className="text-sm text-muted-foreground">Show today's events count</p>
+                    </div>
+                    <Switch
+                      id="today"
+                      checked={metricSettings.today}
+                      onCheckedChange={(checked) => updateMetricSetting('today', checked)}
+                    />
+                  </div>
+                </div>
+              </SheetContent>
+            </Sheet>
             <Button onClick={() => setIsCreateEventOpen(true)}>
               <Plus className="h-4 w-4 mr-2" />
               Create Event
@@ -930,99 +1303,187 @@ export default function CalendarPage() {
 
         {/* Real-time Data Statistics */}
         <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-6">
-          <Card className="p-4 border-blue-200 bg-blue-50">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-blue-600">Total Events</p>
-                <p className="text-2xl font-bold text-blue-800">{realTimeStats.totalEvents}</p>
+          {metricSettings.totalEvents && (
+            <Card className="p-4 border-blue-200 bg-blue-50">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-blue-600">Total Events</p>
+                  <p className="text-2xl font-bold text-blue-800">{realTimeStats.totalEvents}</p>
+                </div>
+                <Calendar className="h-8 w-8 text-blue-600" />
               </div>
-              <Calendar className="h-8 w-8 text-blue-600" />
-            </div>
-          </Card>
+            </Card>
+          )}
           
-          <Card className="p-4 border-green-200 bg-green-50">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-green-600">Bookings</p>
-                <p className="text-2xl font-bold text-green-800">{realTimeStats.bookings}</p>
+          {metricSettings.invoices && (
+            <Card className="p-4 border-green-200 bg-green-50">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-green-600">Invoices</p>
+                  <p className="text-2xl font-bold text-green-800">{realTimeStats.invoices}</p>
+                </div>
+                <div className="h-8 w-8 bg-green-600 rounded flex items-center justify-center">
+                  <span className="text-white text-sm font-bold">📄</span>
+                </div>
               </div>
-              <div className="h-8 w-8 bg-green-600 rounded flex items-center justify-center">
-                <span className="text-white text-sm font-bold">✈️</span>
-              </div>
-            </div>
-          </Card>
+            </Card>
+          )}
           
-          <Card className="p-4 border-purple-200 bg-purple-50">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-purple-600">Lead Follow-ups</p>
-                <p className="text-2xl font-bold text-purple-800">{realTimeStats.leads}</p>
+          {metricSettings.expenses && (
+            <Card className="p-4 border-red-200 bg-red-50">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-red-600">Expenses</p>
+                  <p className="text-2xl font-bold text-red-800">{realTimeStats.expenses}</p>
+                </div>
+                <div className="h-8 w-8 bg-red-600 rounded flex items-center justify-center">
+                  <span className="text-white text-sm font-bold">💰</span>
+                </div>
               </div>
-              <div className="h-8 w-8 bg-purple-600 rounded flex items-center justify-center">
-                <span className="text-white text-sm font-bold">🎯</span>
-              </div>
-            </div>
-          </Card>
+            </Card>
+          )}
           
-          <Card className="p-4 border-indigo-200 bg-indigo-50">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-indigo-600">Created Events</p>
-                <p className="text-2xl font-bold text-indigo-800">{realTimeStats.createdEvents}</p>
+          {metricSettings.estimates && (
+            <Card className="p-4 border-yellow-200 bg-yellow-50">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-yellow-600">Estimates</p>
+                  <p className="text-2xl font-bold text-yellow-800">{realTimeStats.estimates}</p>
+                </div>
+                <div className="h-8 w-8 bg-yellow-600 rounded flex items-center justify-center">
+                  <span className="text-white text-sm font-bold">📊</span>
+                </div>
               </div>
-              <Plus className="h-8 w-8 text-indigo-600" />
-            </div>
-          </Card>
+            </Card>
+          )}
           
-          <Card className="p-4 border-emerald-200 bg-emerald-50">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-emerald-600">Total Revenue</p>
-                <p className="text-2xl font-bold text-emerald-800">${realTimeStats.totalRevenue.toLocaleString()}</p>
+          {metricSettings.leadFollowUps && (
+            <Card className="p-4 border-purple-200 bg-purple-50">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-purple-600">Lead Follow-ups</p>
+                  <p className="text-2xl font-bold text-purple-800">{realTimeStats.leads}</p>
+                </div>
+                <div className="h-8 w-8 bg-purple-600 rounded flex items-center justify-center">
+                  <span className="text-white text-sm font-bold">🎯</span>
+                </div>
               </div>
-              <div className="h-8 w-8 bg-emerald-600 rounded flex items-center justify-center">
-                <span className="text-white text-sm font-bold">$</span>
-              </div>
-            </div>
-          </Card>
+            </Card>
+          )}
           
-          <Card className="p-4 border-orange-200 bg-orange-50">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-orange-600">Today</p>
-                <p className="text-2xl font-bold text-orange-800">{realTimeStats.upcomingToday}</p>
+          {metricSettings.createdEvents && (
+            <Card className="p-4 border-indigo-200 bg-indigo-50">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-indigo-600">Created Events</p>
+                  <p className="text-2xl font-bold text-indigo-800">{realTimeStats.createdEvents}</p>
+                </div>
+                <Plus className="h-8 w-8 text-indigo-600" />
               </div>
-              <div className="h-8 w-8 bg-orange-600 rounded flex items-center justify-center">
-                <span className="text-white text-sm font-bold">📅</span>
+            </Card>
+          )}
+          
+          {metricSettings.totalRevenue && canSeeRevenue && (
+            <Card className="p-4 border-emerald-200 bg-emerald-50">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-emerald-600">Net Revenue</p>
+                  <p className="text-2xl font-bold text-emerald-800">${realTimeStats.totalRevenue.toLocaleString()}</p>
+                  <p className="text-xs text-emerald-600 mt-1">
+                    (Invoices: ${realTimeStats.totalInvoiceAmount.toLocaleString()} - Expenses: ${realTimeStats.totalExpenseAmount.toLocaleString()})
+                  </p>
+                </div>
+                <div className="h-8 w-8 bg-emerald-600 rounded flex items-center justify-center">
+                  <span className="text-white text-sm font-bold">$</span>
+                </div>
               </div>
-            </div>
-          </Card>
+            </Card>
+          )}
+          
+          {metricSettings.today && (
+            <Card className="p-4 border-orange-200 bg-orange-50">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-orange-600">Today</p>
+                  <p className="text-2xl font-bold text-orange-800">{realTimeStats.upcomingToday}</p>
+                </div>
+                <div className="h-8 w-8 bg-orange-600 rounded flex items-center justify-center">
+                  <span className="text-white text-sm font-bold">📅</span>
+                </div>
+              </div>
+            </Card>
+          )}
         </div>
 
-        {/* Refresh Button */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center space-x-2 text-sm text-gray-600">
-            <div className="flex items-center space-x-1">
-              <div className="h-2 w-2 bg-green-500 rounded-full animate-pulse"></div>
-              <span>Live Data - Updates every 30s</span>
+        {/* Calendar Header with Navigation */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <div className="flex items-center space-x-4">
+              <div className="flex items-center space-x-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const newDate = new Date(currentDate);
+                    if (currentView === 'month') {
+                      newDate.setMonth(newDate.getMonth() - 1);
+                    } else if (currentView === 'week') {
+                      newDate.setDate(newDate.getDate() - 7);
+                    } else {
+                      newDate.setDate(newDate.getDate() - 1);
+                    }
+                    setCurrentDate(newDate);
+                  }}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentDate(new Date())}
+                >
+                  Today
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const newDate = new Date(currentDate);
+                    if (currentView === 'month') {
+                      newDate.setMonth(newDate.getMonth() + 1);
+                    } else if (currentView === 'week') {
+                      newDate.setDate(newDate.getDate() + 7);
+                    } else {
+                      newDate.setDate(newDate.getDate() + 1);
+                    }
+                    setCurrentDate(newDate);
+                  }}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+              <div className="text-xl font-bold text-gray-900">
+                {currentView === 'month' && format(currentDate, 'MMMM yyyy')}
+                {currentView === 'week' && `Week of ${format(currentDate, 'MMM d, yyyy')}`}
+                {currentView === 'day' && format(currentDate, 'EEEE, MMMM d, yyyy')}
+                {currentView === 'agenda' && 'Upcoming Events'}
+              </div>
             </div>
-            <Button variant="outline" size="sm" onClick={() => refetch()}>
-              <div className="h-4 w-4 mr-2">🔄</div>
-              Refresh Now
-            </Button>
+            <div className="flex items-center space-x-2">
+              <Tabs value={currentView} onValueChange={(v) => setCurrentView(v as any)}>
+                <TabsList className="bg-gray-100">
+                  <TabsTrigger value="month" className="data-[state=active]:bg-white data-[state=active]:shadow-sm">Month</TabsTrigger>
+                  <TabsTrigger value="week" className="data-[state=active]:bg-white data-[state=active]:shadow-sm">Week</TabsTrigger>
+                  <TabsTrigger value="day" className="data-[state=active]:bg-white data-[state=active]:shadow-sm">Day</TabsTrigger>
+                  <TabsTrigger value="agenda" className="data-[state=active]:bg-white data-[state=active]:shadow-sm">Agenda</TabsTrigger>
+                </TabsList>
+              </Tabs>
+              <Button variant="outline" size="sm" onClick={() => refetch()}>
+                <div className="h-4 w-4 mr-2">🔄</div>
+                Refresh
+              </Button>
+            </div>
           </div>
-        </div>
-
-        {/* View Selector */}
-        <div className="flex items-center space-x-2 mb-6">
-          <Tabs value={currentView} onValueChange={(v) => setCurrentView(v as any)}>
-            <TabsList>
-              <TabsTrigger value="month">Month</TabsTrigger>
-              <TabsTrigger value="week">Week</TabsTrigger>
-              <TabsTrigger value="day">Day</TabsTrigger>
-              <TabsTrigger value="agenda">Agenda</TabsTrigger>
-            </TabsList>
-          </Tabs>
         </div>
 
         {/* Calendar Content */}
@@ -1115,7 +1576,7 @@ export default function CalendarPage() {
                 )}
                 
                 {/* Meeting Links Display */}
-                {(selectedEvent.zoomMeetingLink || selectedEvent.googleMeetLink) && (
+                {(selectedEvent.zoomMeetingLink || selectedEvent.googleMeetLink || selectedEvent.teamsMeetingLink) && (
                   <div className="border-t pt-4 space-y-3">
                     <h4 className="font-medium text-gray-900 flex items-center space-x-2">
                       <Video className="h-4 w-4" />
@@ -1179,7 +1640,39 @@ export default function CalendarPage() {
                           size="sm"
                           variant="ghost"
                           onClick={() => {
-                            navigator.clipboard.writeText(selectedEvent.googleMeetLink);
+                            navigator.clipboard.writeText(selectedEvent.googleMeetLink || '');
+                            toast({ title: "Link copied to clipboard" });
+                          }}
+                        >
+                          <Copy className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    )}
+
+                    {selectedEvent.teamsMeetingLink && (
+                      <div className="flex items-center justify-between p-3 bg-blue-50 rounded-lg">
+                        <div className="flex-1">
+                          <div className="text-sm font-medium text-blue-900 flex items-center gap-2">
+                            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M19.5 4.5c-1.103 0-2 .897-2 2v11c0 1.103.897 2 2 2s2-.897 2-2v-11c0-1.103-.897-2-2-2zm-12.5 0c-1.103 0-2 .897-2 2v11c0 1.103.897 2 2 2s2-.897 2-2v-11c0-1.103-.897-2-2-2zm6.25 0c-1.103 0-2 .897-2 2v11c0 1.103.897 2 2 2s2-.897 2-2v-11c0-1.103-.897-2-2-2z"/>
+                            </svg>
+                            Microsoft Teams
+                          </div>
+                          <a 
+                            href={selectedEvent.teamsMeetingLink} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="text-sm text-blue-600 hover:text-blue-800 flex items-center space-x-1"
+                          >
+                            <span className="truncate max-w-[300px]">{selectedEvent.teamsMeetingLink}</span>
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            navigator.clipboard.writeText(selectedEvent.teamsMeetingLink || '');
                             toast({ title: "Link copied to clipboard" });
                           }}
                         >
@@ -1420,10 +1913,63 @@ export default function CalendarPage() {
                             const endTime = form.getValues('endTime');
                             const description = form.getValues('description');
 
-                            if (!title || !startTime || !endTime) {
+                            // Validate inputs - check for empty strings and invalid dates
+                            if (!title || !title.trim()) {
                               toast({
                                 title: "Missing Information",
-                                description: "Please fill in title, start time, and end time first",
+                                description: "Please enter an event title",
+                                variant: "destructive"
+                              });
+                              return;
+                            }
+
+                            // Validate start time - check if it exists and is a valid date
+                            const startTimeValue = startTime?.toString().trim();
+                            if (!startTimeValue || startTimeValue === '') {
+                              toast({
+                                title: "Missing Information",
+                                description: "Please select a start time",
+                                variant: "destructive"
+                              });
+                              return;
+                            }
+                            
+                            const startDateObj = new Date(startTimeValue);
+                            if (isNaN(startDateObj.getTime())) {
+                              toast({
+                                title: "Invalid Start Time",
+                                description: "Please select a valid start time",
+                                variant: "destructive"
+                              });
+                              return;
+                            }
+
+                            // Validate end time - check if it exists and is a valid date
+                            const endTimeValue = endTime?.toString().trim();
+                            if (!endTimeValue || endTimeValue === '') {
+                              toast({
+                                title: "Missing Information",
+                                description: "Please select an end time",
+                                variant: "destructive"
+                              });
+                              return;
+                            }
+                            
+                            const endDateObj = new Date(endTimeValue);
+                            if (isNaN(endDateObj.getTime())) {
+                              toast({
+                                title: "Invalid End Time",
+                                description: "Please select a valid end time",
+                                variant: "destructive"
+                              });
+                              return;
+                            }
+
+                            // Check if end time is after start time
+                            if (endDateObj <= startDateObj) {
+                              toast({
+                                title: "Invalid Time Range",
+                                description: "End time must be after start time",
                                 variant: "destructive"
                               });
                               return;
@@ -1432,19 +1978,32 @@ export default function CalendarPage() {
                             try {
                               setIsGeneratingMeet(true);
 
+                              // Use the validated date objects from validation above
+                              const startDateTime = startDateObj.toISOString();
+                              const endDateTime = endDateObj.toISOString();
+                              
+                              console.log('📅 Generating Zoom meeting:', { startDateTime, endDateTime, title });
+
+                              const token = localStorage.getItem('auth_token');
                               const response = await fetch(`/api/tenants/${user?.tenantId}/calendar/generate-zoom`, {
                                 method: 'POST',
                                 headers: {
                                   'Content-Type': 'application/json',
+                                  ...(token && { 'Authorization': `Bearer ${token}` })
                                 },
                                 body: JSON.stringify({
                                   title,
                                   description,
-                                  startDateTime: startTime,
-                                  endDateTime: endTime,
+                                  startDateTime,
+                                  endDateTime,
                                   timezone: form.getValues('timezone') || 'UTC',
                                 }),
                               });
+
+                              if (!response.ok) {
+                                const errorData = await response.json().catch(() => ({ message: 'Failed to generate Zoom meeting' }));
+                                throw new Error(errorData.message || `HTTP ${response.status}: ${response.statusText}`);
+                              }
 
                               const data = await response.json();
 
@@ -1520,7 +2079,12 @@ export default function CalendarPage() {
                 
                 {form.watch('meetingProvider') === 'google_meet' && (
                   <div className="space-y-2">
-                    <Label htmlFor="googleMeetLink">Google Meet Link</Label>
+                    <Label htmlFor="googleMeetLink" className="flex items-center gap-2">
+                      <svg className="h-4 w-4 text-green-600" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/>
+                      </svg>
+                      Google Meet Link
+                    </Label>
                     <div className="flex gap-2">
                       <Input 
                         id="googleMeetLink" 
@@ -1538,10 +2102,63 @@ export default function CalendarPage() {
                           const description = form.getValues('description');
                           const attendees = form.getValues('attendees');
 
-                          if (!title || !startTime || !endTime) {
+                          // Validate inputs - check for empty strings and invalid dates
+                          if (!title || !title.trim()) {
                             toast({
                               title: "Missing Information",
-                              description: "Please fill in title, start time, and end time first",
+                              description: "Please enter an event title",
+                              variant: "destructive"
+                            });
+                            return;
+                          }
+
+                          // Validate start time - check if it exists and is a valid date
+                          const startTimeValue = startTime?.toString().trim();
+                          if (!startTimeValue || startTimeValue === '') {
+                            toast({
+                              title: "Missing Information",
+                              description: "Please select a start time",
+                              variant: "destructive"
+                            });
+                            return;
+                          }
+                          
+                          const startDateObj = new Date(startTimeValue);
+                          if (isNaN(startDateObj.getTime())) {
+                            toast({
+                              title: "Invalid Start Time",
+                              description: "Please select a valid start time",
+                              variant: "destructive"
+                            });
+                            return;
+                          }
+
+                          // Validate end time - check if it exists and is a valid date
+                          const endTimeValue = endTime?.toString().trim();
+                          if (!endTimeValue || endTimeValue === '') {
+                            toast({
+                              title: "Missing Information",
+                              description: "Please select an end time",
+                              variant: "destructive"
+                            });
+                            return;
+                          }
+                          
+                          const endDateObj = new Date(endTimeValue);
+                          if (isNaN(endDateObj.getTime())) {
+                            toast({
+                              title: "Invalid End Time",
+                              description: "Please select a valid end time",
+                              variant: "destructive"
+                            });
+                            return;
+                          }
+
+                          // Check if end time is after start time
+                          if (endDateObj <= startDateObj) {
+                            toast({
+                              title: "Invalid Time Range",
+                              description: "End time must be after start time",
                               variant: "destructive"
                             });
                             return;
@@ -1550,20 +2167,32 @@ export default function CalendarPage() {
                           try {
                             setIsGeneratingMeet(true);
 
+                            // Convert datetime-local format to ISO format
+                            // Use the validated date objects from above
+                            const startDateTime = startDateObj.toISOString();
+                            const endDateTime = endDateObj.toISOString();
+
+                            const token = localStorage.getItem('auth_token');
                             const response = await fetch(`/api/tenants/${user?.tenantId}/calendar/generate-google-meet`, {
                               method: 'POST',
                               headers: {
                                 'Content-Type': 'application/json',
+                                ...(token && { 'Authorization': `Bearer ${token}` })
                               },
                               body: JSON.stringify({
                                 title,
                                 description,
-                                startDateTime: startTime,
-                                endDateTime: endTime,
+                                startDateTime,
+                                endDateTime,
                                 timezone: form.getValues('timezone') || 'UTC',
                                 attendees: attendees ? attendees.split(',').map((email: string) => email.trim()) : []
                               }),
                             });
+
+                            if (!response.ok) {
+                              const errorData = await response.json().catch(() => ({ message: 'Failed to generate Google Meet link' }));
+                              throw new Error(errorData.message || `HTTP ${response.status}: ${response.statusText}`);
+                            }
 
                             const data = await response.json();
 
@@ -1605,17 +2234,367 @@ export default function CalendarPage() {
                         )}
                       </Button>
                     </div>
+                    {form.watch('googleMeetLink') && (
+                      <p className="text-xs text-green-600 flex items-center gap-1">
+                        <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                        </svg>
+                        Google Meet link ready
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {form.watch('meetingProvider') === 'teams' && (
+                  <div className="space-y-2">
+                    <Label htmlFor="teamsMeetingLink" className="flex items-center gap-2">
+                      <svg className="h-4 w-4 text-blue-600" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M19.5 4.5c-1.103 0-2 .897-2 2v11c0 1.103.897 2 2 2s2-.897 2-2v-11c0-1.103-.897-2-2-2zm-12.5 0c-1.103 0-2 .897-2 2v11c0 1.103.897 2 2 2s2-.897 2-2v-11c0-1.103-.897-2-2-2zm6.25 0c-1.103 0-2 .897-2 2v11c0 1.103.897 2 2 2s2-.897 2-2v-11c0-1.103-.897-2-2-2z"/>
+                      </svg>
+                      Microsoft Teams Meeting Link
+                    </Label>
+                    <div className="flex gap-2">
+                      <Input 
+                        id="teamsMeetingLink" 
+                        {...form.register('teamsMeetingLink')}
+                        placeholder="https://teams.microsoft.com/l/meetup-join/..." 
+                        className="flex-1"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={async () => {
+                          const title = form.getValues('title');
+                          const startTime = form.getValues('startTime');
+                          const endTime = form.getValues('endTime');
+                          const description = form.getValues('description');
+                          const attendees = form.getValues('attendees');
+
+                          // Validate inputs - check for empty strings and invalid dates
+                          if (!title || !title.trim()) {
+                            toast({
+                              title: "Missing Information",
+                              description: "Please enter an event title",
+                              variant: "destructive"
+                            });
+                            return;
+                          }
+
+                          // Validate start time - check if it exists and is a valid date
+                          const startTimeValue = startTime?.toString().trim();
+                          if (!startTimeValue || startTimeValue === '') {
+                            toast({
+                              title: "Missing Information",
+                              description: "Please select a start time",
+                              variant: "destructive"
+                            });
+                            return;
+                          }
+                          
+                          const startDateObj = new Date(startTimeValue);
+                          if (isNaN(startDateObj.getTime())) {
+                            toast({
+                              title: "Invalid Start Time",
+                              description: "Please select a valid start time",
+                              variant: "destructive"
+                            });
+                            return;
+                          }
+
+                          // Validate end time - check if it exists and is a valid date
+                          const endTimeValue = endTime?.toString().trim();
+                          if (!endTimeValue || endTimeValue === '') {
+                            toast({
+                              title: "Missing Information",
+                              description: "Please select an end time",
+                              variant: "destructive"
+                            });
+                            return;
+                          }
+                          
+                          const endDateObj = new Date(endTimeValue);
+                          if (isNaN(endDateObj.getTime())) {
+                            toast({
+                              title: "Invalid End Time",
+                              description: "Please select a valid end time",
+                              variant: "destructive"
+                            });
+                            return;
+                          }
+
+                          // Check if end time is after start time
+                          if (endDateObj <= startDateObj) {
+                            toast({
+                              title: "Invalid Time Range",
+                              description: "End time must be after start time",
+                              variant: "destructive"
+                            });
+                            return;
+                          }
+
+                          try {
+                            setIsGeneratingMeet(true);
+
+                            // Convert datetime-local format to ISO format
+                            // Use the validated date objects from above
+                            const startDateTime = startDateObj.toISOString();
+                            const endDateTime = endDateObj.toISOString();
+
+                            const token = localStorage.getItem('auth_token');
+                            const response = await fetch(`/api/tenants/${user?.tenantId}/calendar/generate-teams`, {
+                              method: 'POST',
+                              headers: {
+                                'Content-Type': 'application/json',
+                                ...(token && { 'Authorization': `Bearer ${token}` })
+                              },
+                              body: JSON.stringify({
+                                title,
+                                description,
+                                startDateTime,
+                                endDateTime,
+                                timezone: form.getValues('timezone') || 'UTC',
+                                attendees: attendees ? attendees.split(',').map((email: string) => email.trim()) : []
+                              }),
+                            });
+
+                            if (!response.ok) {
+                              const errorData = await response.json().catch(() => ({ message: 'Failed to generate Teams meeting' }));
+                              throw new Error(errorData.message || `HTTP ${response.status}: ${response.statusText}`);
+                            }
+
+                            const data = await response.json();
+
+                            if (data.success && data.teamsMeetingLink) {
+                              form.setValue('teamsMeetingLink', data.teamsMeetingLink);
+                              if (data.meetingId) {
+                                form.setValue('teamsMeetingId', data.meetingId);
+                              }
+                              toast({
+                                title: data.needsConfiguration ? "⚠️ Teams Link Generated" : "✅ Teams Meeting Created",
+                                description: data.message || "Teams meeting link has been created successfully",
+                                variant: data.needsConfiguration ? "default" : "default"
+                              });
+                            } else {
+                              throw new Error(data.message || 'Failed to generate link');
+                            }
+                          } catch (error: any) {
+                            console.error('Error generating Teams meeting:', error);
+                            toast({
+                              title: "❌ Generation Failed",
+                              description: error.message || "Could not generate Teams meeting link. Please try again.",
+                              variant: "destructive"
+                            });
+                          } finally {
+                            setIsGeneratingMeet(false);
+                          }
+                        }}
+                        disabled={isGeneratingMeet}
+                        className="whitespace-nowrap"
+                      >
+                        {isGeneratingMeet ? (
+                          <>
+                            <div className="animate-spin mr-2 h-4 w-4 border-2 border-current border-t-transparent rounded-full" />
+                            Generating...
+                          </>
+                        ) : (
+                          <>
+                            <svg className="mr-2 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                            </svg>
+                            Auto-generate
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                    {form.watch('teamsMeetingLink') && (
+                      <p className="text-xs text-blue-600 flex items-center gap-1">
+                        <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                        </svg>
+                        Teams meeting link ready
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
               
-              <div>
-                <Label htmlFor="attendees">Attendees</Label>
-                <Input 
-                  id="attendees" 
-                  {...form.register('attendees')}
-                  placeholder="Enter email addresses (comma-separated)" 
-                />
+              <div className="space-y-3">
+                <div>
+                  <Label>Select Leads</Label>
+                  <Select
+                    value={form.watch('selectedLeads')?.[0] || ""}
+                    onValueChange={(value) => {
+                      const currentLeads = form.getValues('selectedLeads') || [];
+                      if (value && !currentLeads.includes(value)) {
+                        form.setValue('selectedLeads', [...currentLeads, value]);
+                      }
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select leads..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {leadsData.map((lead: any) => (
+                        <SelectItem key={lead.value} value={lead.value}>
+                          <div>
+                            <div className="font-medium">{lead.label}</div>
+                            {lead.email && (
+                              <div className="text-xs text-gray-500">{lead.email}</div>
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {form.watch('selectedLeads') && form.watch('selectedLeads')!.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {form.watch('selectedLeads')!.map((leadId) => {
+                        const lead = leadsData.find((l: any) => l.value === leadId);
+                        return lead ? (
+                          <Badge key={leadId} variant="secondary" className="flex items-center gap-1">
+                            {lead.label}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const current = form.getValues('selectedLeads') || [];
+                                form.setValue('selectedLeads', current.filter(id => id !== leadId));
+                              }}
+                              className="ml-1 hover:text-red-500"
+                            >
+                              ×
+                            </button>
+                          </Badge>
+                        ) : null;
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <Label>Select Customers</Label>
+                  <Select
+                    value={form.watch('selectedCustomers')?.[0] || ""}
+                    onValueChange={(value) => {
+                      const currentCustomers = form.getValues('selectedCustomers') || [];
+                      if (value && !currentCustomers.includes(value)) {
+                        form.setValue('selectedCustomers', [...currentCustomers, value]);
+                      }
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select customers..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {customersData.map((customer: any) => (
+                        <SelectItem key={customer.value} value={customer.value}>
+                          <div>
+                            <div className="font-medium">{customer.label}</div>
+                            {customer.email && (
+                              <div className="text-xs text-gray-500">{customer.email}</div>
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {form.watch('selectedCustomers') && form.watch('selectedCustomers')!.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {form.watch('selectedCustomers')!.map((customerId) => {
+                        const customer = customersData.find((c: any) => c.value === customerId);
+                        return customer ? (
+                          <Badge key={customerId} variant="secondary" className="flex items-center gap-1">
+                            {customer.label}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const current = form.getValues('selectedCustomers') || [];
+                                form.setValue('selectedCustomers', current.filter(id => id !== customerId));
+                              }}
+                              className="ml-1 hover:text-red-500"
+                            >
+                              ×
+                            </button>
+                          </Badge>
+                        ) : null;
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <Label>Select Internal Users</Label>
+                  <Select
+                    value={form.watch('selectedUsers')?.[0] || ""}
+                    onValueChange={(value) => {
+                      const currentUsers = form.getValues('selectedUsers') || [];
+                      if (value && !currentUsers.includes(value)) {
+                        form.setValue('selectedUsers', [...currentUsers, value]);
+                      }
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select internal users..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {usersData.map((user: any) => (
+                        <SelectItem key={user.value} value={user.value}>
+                          <div>
+                            <div className="font-medium">{user.label}</div>
+                            {user.email && (
+                              <div className="text-xs text-gray-500">{user.email}</div>
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {form.watch('selectedUsers') && form.watch('selectedUsers')!.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {form.watch('selectedUsers')!.map((userId) => {
+                        const user = usersData.find((u: any) => u.value === userId);
+                        return user ? (
+                          <Badge key={userId} variant="secondary" className="flex items-center gap-1">
+                            {user.label}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const current = form.getValues('selectedUsers') || [];
+                                form.setValue('selectedUsers', current.filter(id => id !== userId));
+                              }}
+                              className="ml-1 hover:text-red-500"
+                            >
+                              ×
+                            </button>
+                          </Badge>
+                        ) : null;
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <Label htmlFor="attendees">Additional Email Addresses (Optional)</Label>
+                  <Input 
+                    id="attendees" 
+                    {...form.register('attendees')}
+                    placeholder="Enter additional email addresses (comma-separated)" 
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Add email addresses that are not in the list above
+                  </p>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="sendReminderEmail"
+                    checked={form.watch('sendReminderEmail')}
+                    onChange={(e) => form.setValue('sendReminderEmail', e.target.checked)}
+                    className="h-4 w-4 rounded border-gray-300"
+                  />
+                  <Label htmlFor="sendReminderEmail" className="text-sm font-normal cursor-pointer">
+                    Send reminder email 15 minutes before event
+                  </Label>
+                </div>
               </div>
               
               <div className="grid grid-cols-2 gap-4">

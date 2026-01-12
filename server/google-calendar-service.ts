@@ -1,39 +1,47 @@
 import { google } from 'googleapis';
+import { OAuth2Client } from 'google-auth-library';
 
-let connectionSettings: any;
+/**
+ * Get Google Calendar access token from environment variables
+ * Uses GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REFRESH_TOKEN from .env
+ */
+async function getAccessToken(): Promise<string> {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
+  const accessToken = process.env.GOOGLE_ACCESS_TOKEN;
 
-async function getAccessToken() {
-  if (connectionSettings && connectionSettings.settings.expires_at && new Date(connectionSettings.settings.expires_at).getTime() > Date.now()) {
-    return connectionSettings.settings.access_token;
-  }
-  
-  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
-  const xReplitToken = process.env.REPL_IDENTITY 
-    ? 'repl ' + process.env.REPL_IDENTITY 
-    : process.env.WEB_REPL_RENEWAL 
-    ? 'depl ' + process.env.WEB_REPL_RENEWAL 
-    : null;
-
-  if (!xReplitToken) {
-    throw new Error('X_REPLIT_TOKEN not found for repl/depl');
+  if (!clientId || !clientSecret) {
+    throw new Error('Google Calendar credentials not configured. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in your .env file.');
   }
 
-  connectionSettings = await fetch(
-    'https://' + hostname + '/api/v2/connection?include_secrets=true&connector_names=google-calendar',
-    {
-      headers: {
-        'Accept': 'application/json',
-        'X_REPLIT_TOKEN': xReplitToken
-      }
+  try {
+    const oauth2Client = new OAuth2Client(
+      clientId,
+      clientSecret,
+      process.env.GOOGLE_REDIRECT_URI || 'http://localhost:5000/api/auth/google/callback'
+    );
+
+    // If we have a refresh token, use it to get a new access token
+    if (refreshToken) {
+      oauth2Client.setCredentials({
+        refresh_token: refreshToken
+      });
+
+      const { credentials: newCredentials } = await oauth2Client.refreshAccessToken();
+      return newCredentials.access_token || '';
     }
-  ).then(res => res.json()).then(data => data.items?.[0]);
 
-  const accessToken = connectionSettings?.settings?.access_token || connectionSettings.settings?.oauth?.credentials?.access_token;
+    // If we have an access token, use it directly (for testing)
+    if (accessToken) {
+      return accessToken;
+    }
 
-  if (!connectionSettings || !accessToken) {
-    throw new Error('Google Calendar not connected');
+    throw new Error('Google Calendar access token not available. Please set GOOGLE_REFRESH_TOKEN or GOOGLE_ACCESS_TOKEN in your .env file.');
+  } catch (error: any) {
+    console.error('Error getting Google Calendar access token:', error);
+    throw new Error(`Google Calendar authentication failed: ${error.message}`);
   }
-  return accessToken;
 }
 
 // WARNING: Never cache this client.
@@ -59,11 +67,22 @@ interface GoogleMeetOptions {
   attendees?: string[];
 }
 
+/**
+ * Generate a manual Google Meet link (fallback when API is not configured)
+ */
+export function generateManualGoogleMeetLink(): string {
+  // Generate a random meeting code
+  const meetingCode = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 10);
+  return `https://meet.google.com/${meetingCode}`;
+}
+
 export async function createGoogleMeetLink(options: GoogleMeetOptions): Promise<{
   meetLink: string;
   eventId: string;
+  needsConfiguration?: boolean;
 }> {
   try {
+    // Try to create via Google Calendar API
     const calendar = await getUncachableGoogleCalendarClient();
     
     const event = {
@@ -105,7 +124,20 @@ export async function createGoogleMeetLink(options: GoogleMeetOptions): Promise<
       eventId: response.data.id || '',
     };
   } catch (error: any) {
-    console.error('Error creating Google Meet link:', error);
+    console.error('Error creating Google Meet link via API:', error);
+    
+    // If credentials are not configured, generate a manual link
+    if (error.message?.includes('credentials not configured') || error.message?.includes('not available')) {
+      console.log('⚠️ Google Calendar credentials not configured, generating manual link');
+      const manualLink = generateManualGoogleMeetLink();
+      
+      return {
+        meetLink: manualLink,
+        eventId: '',
+        needsConfiguration: true,
+      };
+    }
+    
     throw new Error(`Failed to create Google Meet link: ${error.message}`);
   }
 }
