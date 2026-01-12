@@ -27,7 +27,7 @@ import {
   Edit, Eye, CheckCircle, XCircle, AlertCircle, Clock,
   Download, FileText, Tag, TrendingUp, Users, Package,
   MapPin, Wallet, Calculator, RefreshCw, Archive, BarChart3,
-  FileSpreadsheet, ChevronDown, Upload, FileDown
+  FileSpreadsheet, ChevronDown, Upload, FileDown, Copy
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -432,6 +432,8 @@ export default function Expenses() {
   const [viewMode, setViewMode] = useState<"table" | "grid">("table");
   const [showDetailsDialog, setShowDetailsDialog] = useState(false);
   const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null);
+  const [isDuplicateDialogOpen, setIsDuplicateDialogOpen] = useState(false);
+  const [expenseToDuplicate, setExpenseToDuplicate] = useState<Expense | null>(null);
   
   // Date filter state
   const [dateFilter, setDateFilter] = useState("all");
@@ -759,6 +761,69 @@ export default function Expenses() {
     }
   });
 
+  // Duplicate expense mutation
+  const duplicateExpenseMutation = useMutation({
+    mutationFn: async (expenseId: number) => {
+      const token = auth.getToken();
+      const response = await fetch(`/api/expenses/${expenseId}/duplicate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        let errorMessage = `Failed to duplicate expense: ${response.status}`;
+        try {
+          const errorJson = JSON.parse(errorText);
+          errorMessage = errorJson.message || errorMessage;
+        } catch {
+          errorMessage = `${errorMessage} - ${errorText}`;
+        }
+        throw new Error(errorMessage);
+      }
+
+      return response.json();
+    },
+    onSuccess: (result) => {
+      toast({
+        title: "Expense Duplicated Successfully",
+        description: `New expense ${result.expense?.expenseNumber || "created"} has been created with all related data.`,
+      });
+
+      queryClient.invalidateQueries({
+        queryKey: ["/api/expenses"],
+      });
+      
+      setIsDuplicateDialogOpen(false);
+      setExpenseToDuplicate(null);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Expense Duplication Failed",
+        description:
+          error.message || "Failed to duplicate expense. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Handle duplicate confirmation
+  const handleDuplicateConfirm = () => {
+    if (!expenseToDuplicate) {
+      toast({
+        title: "Error",
+        description: "No expense selected for duplication.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    duplicateExpenseMutation.mutate(expenseToDuplicate.id);
+  };
+
   // Status update mutation
   const updateStatusMutation = useMutation({
     mutationFn: async ({ expenseId, status }: { expenseId: number; status: string }) => {
@@ -1069,15 +1134,35 @@ export default function Expenses() {
               <Download className="h-4 w-4" />
             </Button>
           )}
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => handleDelete(expense.id)}
-            className="text-red-600 hover:text-red-700"
-            title="Delete Expense"
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="sm"
+                variant="outline"
+                title="More Actions"
+              >
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                onClick={() => {
+                  setExpenseToDuplicate(expense);
+                  setIsDuplicateDialogOpen(true);
+                }}
+              >
+                <Copy className="h-4 w-4 mr-2" />
+                Duplicate Expense
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => handleDelete(expense.id)}
+                className="text-red-600"
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete Expense
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       ),
     },
@@ -1103,6 +1188,50 @@ export default function Expenses() {
             </CardContent>
           </Card>
         </div>
+      {/* Duplicate Expense Dialog */}
+      <Dialog open={isDuplicateDialogOpen} onOpenChange={setIsDuplicateDialogOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Duplicate Expense</DialogTitle>
+            <DialogDescription>
+              Create a copy of expense{" "}
+              {expenseToDuplicate?.expenseNumber || expenseToDuplicate?.id
+                ? `${expenseToDuplicate.expenseNumber || `#${expenseToDuplicate.id}`}`
+                : ""}
+              . All line items and related data will be duplicated.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="text-sm text-gray-600">
+              The duplicate will have:
+              <ul className="list-disc list-inside mt-2 space-y-1">
+                <li>A new expense number</li>
+                <li>All line items copied</li>
+                <li>Status reset to "pending"</li>
+                <li>Payment amounts reset to 0</li>
+              </ul>
+            </div>
+            <div className="flex justify-end gap-2 pt-4">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setIsDuplicateDialogOpen(false);
+                  setExpenseToDuplicate(null);
+                }}
+                disabled={duplicateExpenseMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleDuplicateConfirm}
+                disabled={duplicateExpenseMutation.isPending}
+              >
+                {duplicateExpenseMutation.isPending ? "Duplicating..." : "Yes, Duplicate"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
       </Layout>
     );
   }

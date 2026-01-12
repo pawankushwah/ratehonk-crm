@@ -20527,6 +20527,42 @@ Happy travels! 🌍✈️`,
     },
   );
 
+  // Duplicate invoice endpoint
+  app.post(
+    "/api/tenants/:tenantId/invoices/:invoiceId/duplicate",
+    authenticateToken,
+    async (req, res) => {
+      try {
+        const { tenantId, invoiceId } = req.params;
+        const { customerId } = req.body; // Optional: new customer ID
+
+        // Verify user has access to this tenant
+        if (req.user.tenantId !== parseInt(tenantId)) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+
+        const newCustomerId = customerId ? parseInt(customerId) : undefined;
+        const duplicatedInvoice = await simpleStorage.duplicateInvoice(
+          parseInt(tenantId),
+          parseInt(invoiceId),
+          newCustomerId
+        );
+
+        res.status(201).json({
+          success: true,
+          invoice: duplicatedInvoice,
+          message: "Invoice duplicated successfully",
+        });
+      } catch (error: any) {
+        console.error("Duplicate invoice error:", error);
+        res.status(500).json({
+          success: false,
+          message: error.message || "Failed to duplicate invoice",
+        });
+      }
+    },
+  );
+
   app.put(
     "/api/tenants/:tenantId/invoices/:invoiceId",
     authenticateToken,
@@ -25287,8 +25323,21 @@ Happy travels! 🌍✈️`,
         sortOrder,
       });
 
+      // Check if deleted_at column exists
+      const [columnExists] = await sql`
+        SELECT EXISTS (
+          SELECT 1 
+          FROM information_schema.columns 
+          WHERE table_name = 'expenses' 
+          AND column_name = 'deleted_at'
+        ) as exists
+      `;
+
       // Build WHERE clause dynamically
       let whereClause = sql`e.tenant_id = ${req.user.tenantId}`;
+      if (columnExists?.exists) {
+        whereClause = sql`${whereClause} AND e.deleted_at IS NULL`;
+      }
 
       if (search) {
         const searchPattern = `%${search}%`;
@@ -25732,22 +25781,52 @@ Happy travels! 🌍✈️`,
       `;
     }
 
-    // ---------- FETCH EXPENSES ----------
-    const expenses = await sql`
-      SELECT 
-        e.*,
-        v.name as vendor_name,
-        lt.name as lead_type_name,
-        lt.color as lead_type_color,
-        u.first_name || ' ' || u.last_name as created_by_name
-      FROM expenses e
-      LEFT JOIN vendors v ON e.vendor_id = v.id
-      LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
-      LEFT JOIN users u ON e.created_by = u.id
-      WHERE e.tenant_id = ${req.user.tenantId}
-        AND ${dateFilter}
-      ORDER BY e.expense_date DESC, e.created_at DESC
+    // Check if deleted_at column exists
+    const [columnExists] = await sql`
+      SELECT EXISTS (
+        SELECT 1 
+        FROM information_schema.columns 
+        WHERE table_name = 'expenses' 
+        AND column_name = 'deleted_at'
+      ) as exists
     `;
+
+    // ---------- FETCH EXPENSES ----------
+    let expenses;
+    if (columnExists?.exists) {
+      expenses = await sql`
+        SELECT 
+          e.*,
+          v.name as vendor_name,
+          lt.name as lead_type_name,
+          lt.color as lead_type_color,
+          u.first_name || ' ' || u.last_name as created_by_name
+        FROM expenses e
+        LEFT JOIN vendors v ON e.vendor_id = v.id
+        LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+        LEFT JOIN users u ON e.created_by = u.id
+        WHERE e.tenant_id = ${req.user.tenantId}
+          AND e.deleted_at IS NULL
+          AND ${dateFilter}
+        ORDER BY e.expense_date DESC, e.created_at DESC
+      `;
+    } else {
+      expenses = await sql`
+        SELECT 
+          e.*,
+          v.name as vendor_name,
+          lt.name as lead_type_name,
+          lt.color as lead_type_color,
+          u.first_name || ' ' || u.last_name as created_by_name
+        FROM expenses e
+        LEFT JOIN vendors v ON e.vendor_id = v.id
+        LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+        LEFT JOIN users u ON e.created_by = u.id
+        WHERE e.tenant_id = ${req.user.tenantId}
+          AND ${dateFilter}
+        ORDER BY e.expense_date DESC, e.created_at DESC
+      `;
+    }
 
     console.log("💰 GET /api/all-expenses - Found:", expenses.length);
 
@@ -26174,6 +26253,35 @@ Happy travels! 🌍✈️`,
   });
 
   // Update expense
+  // Duplicate expense endpoint
+  app.post(
+    "/api/expenses/:id/duplicate",
+    authenticateVendor,
+    async (req: any, res) => {
+      try {
+        const expenseId = parseInt(req.params.id);
+        const tenantId = req.user.tenantId;
+
+        const duplicatedExpense = await simpleStorage.duplicateExpense(
+          tenantId,
+          expenseId
+        );
+
+        res.status(201).json({
+          success: true,
+          expense: duplicatedExpense,
+          message: "Expense duplicated successfully",
+        });
+      } catch (error: any) {
+        console.error("Duplicate expense error:", error);
+        res.status(500).json({
+          success: false,
+          message: error.message || "Failed to duplicate expense",
+        });
+      }
+    },
+  );
+
   app.put("/api/expenses/:id", expenseBillUpload.any(), authenticateVendor, async (req: any, res) => {
     try {
       const { ObjectStorageService } = await import("./objectStorage.js");
@@ -26457,53 +26565,113 @@ Happy travels! 🌍✈️`,
     try {
       const expenseId = parseInt(req.params.id);
       
-      // Explicitly list all columns to avoid cached plan issues after schema changes
-      const [expense] = await sql`
-        SELECT 
-          e.id,
-          e.tenant_id,
-          e.expense_prefix,
-          e.expense_number,
-          e.title,
-          e.description,
-          e.quantity,
-          e.amount,
-          e.currency,
-          e.category,
-          e.subcategory,
-          e.expense_date,
-          e.payment_method,
-          e.payment_reference,
-          e.vendor_id,
-          e.lead_type_id,
-          e.expense_type,
-          e.receipt_url,
-          e.tax_amount,
-          e.tax_rate,
-          e.is_reimbursable,
-          e.is_recurring,
-          e.recurring_frequency,
-          e.status,
-          e.amount_paid,
-          e.amount_due,
-          e.approved_by,
-          e.approved_at,
-          e.rejection_reason,
-          e.tags,
-          e.notes,
-          e.created_by,
-          e.created_at,
-          e.updated_at,
-          e.invoice_id,
-          e.auto_generated,
-          v.name as vendor_name,
-          lt.name as lead_type_name,
-          lt.color as lead_type_color
-        FROM expenses e
-        LEFT JOIN vendors v ON e.vendor_id = v.id
-        LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
-        WHERE e.id = ${expenseId} AND e.tenant_id = ${req.user.tenantId}
+      // Check if deleted_at column exists
+      const [columnExists] = await sql`
+        SELECT EXISTS (
+          SELECT 1 
+          FROM information_schema.columns 
+          WHERE table_name = 'expenses' 
+          AND column_name = 'deleted_at'
+        ) as exists
       `;
+      
+      // Explicitly list all columns to avoid cached plan issues after schema changes
+      let expense;
+      if (columnExists?.exists) {
+        [expense] = await sql`
+          SELECT 
+            e.id,
+            e.tenant_id,
+            e.expense_prefix,
+            e.expense_number,
+            e.title,
+            e.description,
+            e.quantity,
+            e.amount,
+            e.currency,
+            e.category,
+            e.subcategory,
+            e.expense_date,
+            e.payment_method,
+            e.payment_reference,
+            e.vendor_id,
+            e.lead_type_id,
+            e.expense_type,
+            e.receipt_url,
+            e.tax_amount,
+            e.tax_rate,
+            e.is_reimbursable,
+            e.is_recurring,
+            e.recurring_frequency,
+            e.status,
+            e.amount_paid,
+            e.amount_due,
+            e.approved_by,
+            e.approved_at,
+            e.rejection_reason,
+            e.tags,
+            e.notes,
+            e.created_by,
+            e.created_at,
+            e.updated_at,
+            e.invoice_id,
+            e.auto_generated,
+            v.name as vendor_name,
+            lt.name as lead_type_name,
+            lt.color as lead_type_color
+          FROM expenses e
+          LEFT JOIN vendors v ON e.vendor_id = v.id
+          LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+          WHERE e.id = ${expenseId} AND e.tenant_id = ${req.user.tenantId} AND e.deleted_at IS NULL
+        `;
+      } else {
+        [expense] = await sql`
+          SELECT 
+            e.id,
+            e.tenant_id,
+            e.expense_prefix,
+            e.expense_number,
+            e.title,
+            e.description,
+            e.quantity,
+            e.amount,
+            e.currency,
+            e.category,
+            e.subcategory,
+            e.expense_date,
+            e.payment_method,
+            e.payment_reference,
+            e.vendor_id,
+            e.lead_type_id,
+            e.expense_type,
+            e.receipt_url,
+            e.tax_amount,
+            e.tax_rate,
+            e.is_reimbursable,
+            e.is_recurring,
+            e.recurring_frequency,
+            e.status,
+            e.amount_paid,
+            e.amount_due,
+            e.approved_by,
+            e.approved_at,
+            e.rejection_reason,
+            e.tags,
+            e.notes,
+            e.created_by,
+            e.created_at,
+            e.updated_at,
+            e.invoice_id,
+            e.auto_generated,
+            v.name as vendor_name,
+            lt.name as lead_type_name,
+            lt.color as lead_type_color
+          FROM expenses e
+          LEFT JOIN vendors v ON e.vendor_id = v.id
+          LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+          WHERE e.id = ${expenseId} AND e.tenant_id = ${req.user.tenantId}
+        `;
+      }
 
       if (!expense) {
         return res.status(404).json({ message: "Expense not found" });
@@ -26578,10 +26746,30 @@ Happy travels! 🌍✈️`,
     try {
       const expenseId = parseInt(req.params.id);
 
-      await sql`
-        DELETE FROM expenses 
-        WHERE id = ${expenseId} AND tenant_id = ${req.user.tenantId}
+      // Check if deleted_at column exists
+      const [columnExists] = await sql`
+        SELECT EXISTS (
+          SELECT 1 
+          FROM information_schema.columns 
+          WHERE table_name = 'expenses' 
+          AND column_name = 'deleted_at'
+        ) as exists
       `;
+
+      if (columnExists?.exists) {
+        // Soft delete: set deleted_at timestamp
+        await sql`
+          UPDATE expenses 
+          SET deleted_at = NOW()
+          WHERE id = ${expenseId} AND tenant_id = ${req.user.tenantId} AND deleted_at IS NULL
+        `;
+      } else {
+        // Hard delete if column doesn't exist (backward compatibility)
+        await sql`
+          DELETE FROM expenses 
+          WHERE id = ${expenseId} AND tenant_id = ${req.user.tenantId}
+        `;
+      }
 
       res.status(200).json({ message: "Expense deleted successfully" });
     } catch (error: unknown) {

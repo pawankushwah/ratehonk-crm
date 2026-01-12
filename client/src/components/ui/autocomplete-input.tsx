@@ -333,11 +333,20 @@ export function AutocompleteInput({
                       value === suggestion.value && "bg-cyan-50 dark:bg-cyan-950/30"
                     )}
                   >
-                    <span className="flex-1 font-medium text-gray-900 dark:text-gray-100">
-                      {suggestion.label}
-                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-gray-900 dark:text-gray-100 truncate">
+                        {suggestion.label.includes(" | ") 
+                          ? suggestion.label.split(" | ")[0] 
+                          : suggestion.label}
+                      </div>
+                      {(suggestion.email || suggestion.phone) && (
+                        <div className="text-xs text-gray-500 dark:text-gray-400 truncate mt-0.5">
+                          {[suggestion.email, suggestion.phone].filter(Boolean).join(" | ")}
+                        </div>
+                      )}
+                    </div>
                     {value === suggestion.value && (
-                      <Check className="h-4 w-4 text-cyan-600 dark:text-cyan-400" />
+                      <Check className="h-4 w-4 text-cyan-600 dark:text-cyan-400 ml-2 flex-shrink-0" />
                     )}
                   </CommandItem>
                 ))}

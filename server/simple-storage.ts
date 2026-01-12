@@ -5016,12 +5016,32 @@ async getAllLeadsByTenant(
   // Invoice management methods
   async getInvoiceById(tenantId: number, invoiceId: number) {
     try {
-      // Fetch invoice by ID and tenant ID
-      const invoices = await sql`
-        SELECT * FROM invoices 
-        WHERE id = ${invoiceId} AND tenant_id = ${tenantId}
-        LIMIT 1
+      // Check if deleted_at column exists
+      const [columnExists] = await sql`
+        SELECT EXISTS (
+          SELECT 1 
+          FROM information_schema.columns 
+          WHERE table_name = 'invoices' 
+          AND column_name = 'deleted_at'
+        ) as exists
       `;
+      
+      let invoices;
+      if (columnExists?.exists) {
+        // Filter out soft-deleted invoices
+        invoices = await sql`
+          SELECT * FROM invoices 
+          WHERE id = ${invoiceId} AND tenant_id = ${tenantId} AND deleted_at IS NULL
+          LIMIT 1
+        `;
+      } else {
+        // Backward compatibility: don't filter by deleted_at if column doesn't exist
+        invoices = await sql`
+          SELECT * FROM invoices 
+          WHERE id = ${invoiceId} AND tenant_id = ${tenantId}
+          LIMIT 1
+        `;
+      }
 
       if (invoices.length === 0) {
         throw new Error("Invoice not found");
@@ -5226,8 +5246,21 @@ async getAllLeadsByTenant(
       console.log("🔍 getInvoicesByTenant - Tenant ID:", tenantId);
       console.log("🔍 getInvoicesByTenant - Page:", page, "PageSize:", pageSize, "Offset:", offset);
 
+      // Check if deleted_at column exists
+      const [columnExists] = await sql`
+        SELECT EXISTS (
+          SELECT 1 
+          FROM information_schema.columns 
+          WHERE table_name = 'invoices' 
+          AND column_name = 'deleted_at'
+        ) as exists
+      `;
+
       // Build WHERE clause dynamically - always use table prefix to avoid ambiguity
       let whereClause = sql`invoices.tenant_id = ${tenantId}`;
+      if (columnExists?.exists) {
+        whereClause = sql`${whereClause} AND invoices.deleted_at IS NULL`;
+      }
       let needsJoin = false;
 
       console.log("🔍 Initial WHERE clause: invoices.tenant_id =", tenantId);
@@ -6106,7 +6139,7 @@ async getAllLeadsByTenant(
             INSERT INTO invoice_items (
               invoice_id, description, quantity, unit_price, total_price, package_id
             ) VALUES (
-              ${newInvoice.id},
+              ${newInvoiceId},
               ${description},
               ${quantity},
               ${unitPrice},
@@ -6204,7 +6237,7 @@ async getAllLeadsByTenant(
               ${null},
               ${null},
               ${null},
-              ${newInvoice.id},
+              ${newInvoiceId},
               ${expenseType},
               ${null},
               ${totalTaxAmount},
@@ -6289,7 +6322,7 @@ async getAllLeadsByTenant(
                 invoice_id, tenant_id, installment_number, amount, due_date, 
                 status, paid_amount, payment_method, notes, created_at, updated_at
               ) VALUES (
-                ${newInvoice.id},
+                ${newInvoiceId},
                 ${invoiceData.tenantId},
                 ${installment.installmentNumber || 1},
                 ${parseFloat(installment.amount?.toString() || "0")},
@@ -6404,6 +6437,747 @@ async getAllLeadsByTenant(
       };
     } catch (error) {
       console.error("Invoice creation error:", error);
+      throw error;
+    }
+  }
+
+  async duplicateInvoice(tenantId: number, invoiceId: number, newCustomerId?: number) {
+    try {
+      console.log(`🔄 Duplicating invoice ${invoiceId} for tenant ${tenantId}${newCustomerId ? ` with new customer ${newCustomerId}` : ''}`);
+
+      // Fetch the original invoice
+      const originalInvoice = await this.getInvoiceById(tenantId, invoiceId);
+      
+      if (!originalInvoice) {
+        throw new Error("Original invoice not found");
+      }
+
+      // Get invoice settings for number generation
+      const tenantSettings = await this.getInvoiceSettings(tenantId);
+      const defaultPrefix = tenantSettings?.invoiceNumberPrefix || "INV";
+      const startNumber = tenantSettings?.invoiceNumberStart || 1;
+
+      // Generate new invoice number
+      const existingInvoices = await sql`
+        SELECT invoice_prefix, invoice_number 
+        FROM invoices 
+        WHERE tenant_id = ${tenantId}
+        ORDER BY created_at DESC
+        LIMIT 100
+      `;
+
+      let nextNumber = startNumber;
+      if (existingInvoices.length > 0) {
+        const MAX_SAFE_INVOICE_NUMBER = 1000000;
+        const invoiceNumbers = existingInvoices
+          .map((inv: any) => {
+            const invNum = inv.invoice_number || "";
+            if (!invNum) return 0;
+            const matchNumbers = invNum.match(/(\d+)/);
+            if (matchNumbers) {
+              const num = parseInt(matchNumbers[1], 10);
+              return num > 0 && num < MAX_SAFE_INVOICE_NUMBER ? num : 0;
+            }
+            return 0;
+          })
+          .filter((num: number) => num > 0);
+
+        if (invoiceNumbers.length > 0) {
+          const maxNumber = Math.max(...invoiceNumbers);
+          nextNumber = Math.max(maxNumber + 1, startNumber);
+        }
+      }
+
+      const newInvoicePrefix = defaultPrefix;
+      const newInvoiceNumber = String(nextNumber).padStart(3, '0');
+      const fullInvoiceNumber = `${newInvoicePrefix}${newInvoiceNumber}`;
+
+      // Prepare new invoice data (use new customer ID if provided, otherwise use original)
+      const newInvoiceData = {
+        tenantId: tenantId,
+        customerId: newCustomerId || originalInvoice.customerId,
+        bookingId: originalInvoice.bookingId, // Keep original booking ID
+        status: "draft", // Always set to draft for duplicates
+        invoicePrefix: newInvoicePrefix,
+        invoiceNumber: newInvoiceNumber,
+        issueDate: new Date().toISOString().split('T')[0], // Current date
+        dueDate: originalInvoice.dueDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        subtotal: originalInvoice.subtotal,
+        taxAmount: originalInvoice.taxAmount,
+        discountAmount: originalInvoice.discountAmount,
+        totalAmount: originalInvoice.totalAmount,
+        paidAmount: 0, // Reset paid amount for duplicate
+        currency: originalInvoice.currency,
+        paymentMethod: originalInvoice.paymentMethod,
+        paymentTerms: originalInvoice.paymentTerms,
+        isTaxInclusive: originalInvoice.isTaxInclusive,
+        notes: originalInvoice.notes,
+        additionalNotes: originalInvoice.additionalNotes,
+        enableReminder: originalInvoice.enableReminder,
+        reminderFrequency: originalInvoice.reminderFrequency,
+        reminderSpecificDate: originalInvoice.reminderSpecificDate,
+        travelDate: originalInvoice.travelDate,
+        departureDate: originalInvoice.departureDate,
+        arrivalDate: originalInvoice.arrivalDate,
+        attachments: originalInvoice.attachments,
+        lineItems: originalInvoice.lineItems || [],
+      };
+
+      // Create the new invoice directly (we'll handle items separately)
+      // First, fix the sequence
+      await sql`SELECT setval('invoices_id_seq', (SELECT COALESCE(MAX(id), 0) + 1 FROM invoices), false)`;
+
+      const subtotal = parseFloat(originalInvoice.subtotal?.toString() || "0");
+      const taxAmount = parseFloat(originalInvoice.taxAmount?.toString() || "0");
+      const totalAmount = parseFloat(originalInvoice.totalAmount?.toString() || "0");
+      const discountAmount = parseFloat(originalInvoice.discountAmount?.toString() || "0");
+
+      // Store full line items as JSON
+      const lineItemsJson = JSON.stringify(originalInvoice.lineItems || []);
+
+      // Prepare attachments JSON
+      const attachmentsJson = originalInvoice.attachments && Array.isArray(originalInvoice.attachments) && originalInvoice.attachments.length > 0
+        ? JSON.stringify(originalInvoice.attachments)
+        : null;
+
+      // Insert the new invoice
+      const [newInvoiceRow] = await sql`
+        INSERT INTO invoices (
+          tenant_id, customer_id, booking_id, invoice_prefix, invoice_number, status,
+          invoice_date, issue_date, due_date, subtotal, tax_amount, discount_amount, total_amount, 
+          paid_amount, currency, payment_method, payment_terms, is_tax_inclusive,
+          notes, additional_notes, enable_reminder, reminder_frequency, reminder_specific_date, line_items,
+          travel_date, departure_date, arrival_date, attachments
+        ) VALUES (
+          ${tenantId},
+          ${newCustomerId || originalInvoice.customerId},
+          ${originalInvoice.bookingId || null},
+          ${newInvoicePrefix},
+          ${newInvoiceNumber},
+          'draft',
+          ${newInvoiceData.issueDate},
+          ${newInvoiceData.issueDate},
+          ${newInvoiceData.dueDate},
+          ${subtotal},
+          ${taxAmount},
+          ${discountAmount},
+          ${totalAmount},
+          0,
+          ${originalInvoice.currency || "USD"},
+          ${originalInvoice.paymentMethod ? (Array.isArray(originalInvoice.paymentMethod) ? JSON.stringify(originalInvoice.paymentMethod) : originalInvoice.paymentMethod) : null},
+          ${originalInvoice.paymentTerms || null},
+          ${originalInvoice.isTaxInclusive !== undefined ? originalInvoice.isTaxInclusive : false},
+          ${originalInvoice.notes || null},
+          ${originalInvoice.additionalNotes || null},
+          ${originalInvoice.enableReminder || false},
+          ${originalInvoice.reminderFrequency || null},
+          ${originalInvoice.reminderSpecificDate || null},
+          ${lineItemsJson},
+          ${originalInvoice.travelDate || null},
+          ${originalInvoice.departureDate || null},
+          ${originalInvoice.arrivalDate || null},
+          ${attachmentsJson}
+        )
+        RETURNING *
+      `;
+
+      const newInvoiceId = newInvoiceRow.id;
+
+      // Fetch and duplicate invoice_items with all fields
+      try {
+        const originalItems = await sql`
+          SELECT * FROM invoice_items 
+          WHERE invoice_id = ${invoiceId}
+          ORDER BY id
+        `;
+
+        // Copy all invoice_items with all fields (matching createInvoice structure)
+        for (const item of originalItems) {
+          await sql`
+            INSERT INTO invoice_items (
+              invoice_id, description, quantity, unit_price, total_price, package_id
+            ) VALUES (
+              ${newInvoiceId},
+              ${item.description},
+              ${item.quantity},
+              ${item.unit_price},
+              ${item.total_price},
+              ${item.package_id}
+            )
+          `;
+        }
+        console.log(`✅ Duplicated ${originalItems.length} invoice items`);
+      } catch (itemsError) {
+        console.error("⚠️ Error duplicating invoice items:", itemsError);
+      }
+
+      // Fetch and duplicate payment_installments
+      try {
+        const originalInstallments = await sql`
+          SELECT * FROM payment_installments 
+          WHERE invoice_id = ${invoiceId} AND tenant_id = ${tenantId}
+          ORDER BY installment_number ASC
+        `;
+
+        // Get expense settings for expense number generation
+        const expenseSettings = await this.getExpenseSettings(tenantId);
+        const expensePrefix = expenseSettings?.expenseNumberPrefix || "EXP";
+
+        for (const installment of originalInstallments) {
+          await sql`
+            INSERT INTO payment_installments (
+              invoice_id, tenant_id, installment_number, amount, due_date, 
+              status, paid_amount, payment_method, notes, created_at, updated_at
+            ) VALUES (
+              ${newInvoiceId},
+              ${tenantId},
+              ${installment.installment_number},
+              ${installment.amount},
+              ${installment.due_date},
+              'pending', -- Reset status to pending
+              ${0}, -- Reset paid amount
+              ${installment.payment_method},
+              ${installment.notes || null},
+              NOW(),
+              NOW()
+            )
+          `;
+        }
+        console.log(`✅ Duplicated ${originalInstallments.length} payment installments`);
+      } catch (installmentError) {
+        console.error("⚠️ Error duplicating payment installments:", installmentError);
+      }
+
+      // Fetch and duplicate expenses linked to the invoice
+      // Expenses are stored as expense records with expense_line_items, similar to how createInvoice handles them
+      try {
+        const originalExpenses = await sql`
+          SELECT * FROM expenses 
+          WHERE invoice_id = ${invoiceId} AND tenant_id = ${tenantId}
+          ORDER BY id
+        `;
+
+        console.log(`🔍 Found ${originalExpenses.length} expenses to duplicate for invoice ${invoiceId}`);
+
+        if (originalExpenses.length > 0) {
+          // Get expense settings for expense number generation
+          const expenseSettings = await this.getExpenseSettings(tenantId);
+          const defaultPrefix = expenseSettings?.expenseNumberPrefix || "EXP";
+
+          // Generate expense number based on new invoice number (same format as createInvoice)
+          // Extract just the numeric part from invoice number (e.g., "185" from "INV185")
+          // fullInvoiceNumber is already in format "INV185", so extract numeric part
+          const numericPart = fullInvoiceNumber.replace(/^[A-Za-z]+/, ""); // Remove prefix, keep number
+          const baseExpenseNumber = numericPart ? `${numericPart}-EXP` : `EXP-${Date.now()}`; // Fallback if no numeric part
+
+          console.log("🔍 Expense duplication debug:", {
+            fullInvoiceNumber,
+            numericPart,
+            baseExpenseNumber,
+            newInvoiceId,
+            expensesToDuplicate: originalExpenses.length
+          });
+
+          // For each expense record, duplicate it with all its line items
+          // If multiple expenses exist, they'll share the same base number pattern (like createInvoice creates one expense)
+          // But each will get the same expense number format since they're for the same invoice
+          for (let expenseIndex = 0; expenseIndex < originalExpenses.length; expenseIndex++) {
+            const expense = originalExpenses[expenseIndex];
+            // Use base expense number, or add index if multiple expenses (though typically there's only one)
+            const expenseNumber = expenseIndex === 0 ? baseExpenseNumber : (numericPart ? `${numericPart}-${expenseIndex + 1}-EXP` : `EXP-${Date.now()}-${expenseIndex + 1}`);
+            // Fetch expense line items for this expense
+            const expenseLineItems = await sql`
+              SELECT * FROM expense_line_items 
+              WHERE expense_id = ${expense.id}
+              ORDER BY display_order ASC, id ASC
+            `;
+
+            console.log(`🔍 Duplicating expense ${expense.id} with ${expenseLineItems.length} line items`);
+
+            // Calculate totals from line items (similar to createInvoice logic)
+            let totalExpenseAmount = 0;
+            let totalTaxAmount = 0;
+            let totalAmountPaid = 0;
+            let totalAmountDue = 0;
+
+            if (expenseLineItems.length > 0) {
+              for (const lineItem of expenseLineItems) {
+                const itemAmount = parseFloat(lineItem.amount?.toString() || "0");
+                const itemTaxAmount = parseFloat(lineItem.tax_amount?.toString() || "0");
+                const itemAmountPaid = parseFloat(lineItem.amount_paid?.toString() || "0");
+                const itemAmountDue = parseFloat(lineItem.amount_due?.toString() || lineItem.total_amount?.toString() || "0");
+                
+                totalExpenseAmount += itemAmount;
+                totalTaxAmount += itemTaxAmount;
+                totalAmountPaid += itemAmountPaid;
+                totalAmountDue += itemAmountDue;
+              }
+            } else {
+              // If no line items, use the expense record's own values (old format)
+              totalExpenseAmount = parseFloat(expense.amount?.toString() || "0");
+              totalTaxAmount = parseFloat(expense.tax_amount?.toString() || "0");
+              totalAmountPaid = parseFloat(expense.amount_paid?.toString() || "0");
+              totalAmountDue = parseFloat(expense.amount_due?.toString() || expense.amount?.toString() || "0");
+            }
+
+            const grandTotal = totalExpenseAmount + totalTaxAmount;
+            
+            // Ensure expense_date is in the correct format (YYYY-MM-DD)
+            let expenseDateValue: string;
+            if (expense.expense_date) {
+              // If it's already a date string in YYYY-MM-DD format, use it
+              if (typeof expense.expense_date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(expense.expense_date)) {
+                expenseDateValue = expense.expense_date.split('T')[0]; // Take just the date part
+              } else {
+                // Convert to date string
+                expenseDateValue = new Date(expense.expense_date).toISOString().split('T')[0];
+              }
+            } else {
+              expenseDateValue = new Date().toISOString().split('T')[0];
+            }
+            
+            // Pre-compute all values
+            const expenseTitle = expense.title || `Expenses for Invoice ${fullInvoiceNumber}`;
+            const expenseDescription = expense.description || `Expenses duplicated from invoice ${originalInvoice.invoiceNumber}`;
+            const expenseNotes = expense.notes || `Expenses from invoice ${fullInvoiceNumber}`;
+            const expenseCurrency = expense.currency || originalInvoice.currency || "USD";
+            const expenseCategory = expense.category || "General";
+            const expenseSubcategory = expense.subcategory || expense.category || "General";
+            const expensePaymentMethod = expense.payment_method || "bank_transfer";
+            const expenseType = expense.expense_type || "purchase";
+            const expenseStatus = "pending"; // Reset status
+            // Handle tags - ensure it's a JSON string
+            let expenseTags: string;
+            if (expense.tags) {
+              if (typeof expense.tags === 'string') {
+                expenseTags = expense.tags;
+              } else if (Array.isArray(expense.tags)) {
+                expenseTags = JSON.stringify(expense.tags);
+              } else {
+                expenseTags = JSON.stringify([]);
+              }
+            } else {
+              expenseTags = JSON.stringify([]);
+            }
+            const expenseTaxRate = totalTaxAmount > 0 && totalExpenseAmount > 0 
+              ? (totalTaxAmount / totalExpenseAmount) * 100 
+              : parseFloat(expense.tax_rate?.toString() || "0");
+
+            // Determine auto_generated value (convert to boolean)
+            const isAutoGenerated = expense.auto_generated === true || expense.auto_generated === 1 || expense.auto_generated === "1";
+
+            // Create new expense header (similar to createInvoice)
+            let createdExpense: any;
+            try {
+              [createdExpense] = await sql`
+                INSERT INTO expenses (
+                  tenant_id, expense_prefix, expense_number, title, description, quantity, amount, currency, category, subcategory,
+                  expense_date, payment_method, payment_reference, vendor_id, lead_type_id, invoice_id, expense_type,
+                  receipt_url, tax_amount, tax_rate, is_reimbursable, is_recurring, recurring_frequency,
+                  status, amount_paid, amount_due, tags, notes, auto_generated, created_by
+                ) VALUES (
+                  ${tenantId},
+                  ${defaultPrefix},
+                  ${expenseNumber},
+                  ${expenseTitle},
+                  ${expenseDescription},
+                  ${expense.quantity || 1},
+                  ${grandTotal},
+                  ${expenseCurrency},
+                  ${expenseCategory},
+                  ${expenseSubcategory},
+                  ${expenseDateValue},
+                  ${expensePaymentMethod},
+                  ${expense.payment_reference || null},
+                  ${expense.vendor_id || null},
+                  ${expense.lead_type_id || null},
+                  ${newInvoiceId}, -- Link to new invoice
+                  ${expenseType},
+                  ${expense.receipt_url || null},
+                  ${totalTaxAmount},
+                  ${expenseTaxRate},
+                  ${expense.is_reimbursable || false},
+                  ${expense.is_recurring || false},
+                  ${expense.recurring_frequency || null},
+                  ${expenseStatus},
+                  ${0}, -- Reset amount_paid
+                  ${totalAmountDue},
+                  ${expenseTags},
+                  ${expenseNotes},
+                  ${isAutoGenerated}, -- Keep auto_generated flag from original
+                  ${expense.created_by || null}
+                )
+                RETURNING id, invoice_id, auto_generated, expense_number
+              `;
+              
+              if (!createdExpense || !createdExpense.id) {
+                throw new Error(`Failed to create expense - no ID returned`);
+              }
+
+              console.log("✅ Expense header created:", {
+                id: createdExpense.id,
+                invoice_id: createdExpense.invoice_id,
+                auto_generated: createdExpense.auto_generated,
+                expenseNumber: createdExpense.expense_number
+              });
+            } catch (insertError: any) {
+              console.error(`❌ Failed to create expense header:`, {
+                error: insertError?.message,
+                stack: insertError?.stack,
+                expenseNumber,
+                newInvoiceId,
+                tenantId,
+              });
+              throw insertError; // Re-throw to be caught by outer try-catch
+            }
+
+            // Create line items for the expense
+            let displayOrder = 0;
+            if (expenseLineItems.length > 0) {
+              // Duplicate all line items
+              for (const lineItem of expenseLineItems) {
+                const itemAmount = parseFloat(lineItem.amount?.toString() || "0");
+                const itemTaxAmount = parseFloat(lineItem.tax_amount?.toString() || "0");
+                const itemTaxRate = parseFloat(lineItem.tax_rate?.toString() || "0");
+                const itemQuantity = parseFloat(lineItem.quantity?.toString() || "1");
+                const itemAmountPaid = parseFloat(lineItem.amount_paid?.toString() || "0");
+                const itemAmountDue = parseFloat(lineItem.amount_due?.toString() || lineItem.total_amount?.toString() || itemAmount.toString() || "0");
+                const totalAmount = itemAmount + itemTaxAmount;
+                
+                const paymentStatus = "pending"; // Reset payment status
+                
+                await sql`
+                  INSERT INTO expense_line_items (
+                    expense_id, category, title, description, quantity, amount, tax_rate_id, tax_amount, tax_rate,
+                    total_amount, vendor_id, lead_type_id, payment_method, payment_status, amount_paid, amount_due,
+                    receipt_url, notes, display_order
+                  ) VALUES (
+                    ${createdExpense.id},
+                    ${lineItem.category || "General"},
+                    ${lineItem.title || "Expense"},
+                    ${lineItem.description || lineItem.notes || null},
+                    ${itemQuantity},
+                    ${itemAmount},
+                    ${lineItem.tax_rate_id || null},
+                    ${itemTaxAmount},
+                    ${itemTaxRate},
+                    ${totalAmount},
+                    ${lineItem.vendor_id || null},
+                    ${lineItem.lead_type_id || null},
+                    ${lineItem.payment_method || "bank_transfer"},
+                    ${paymentStatus},
+                    ${0}, -- Reset amount_paid
+                    ${itemAmountDue},
+                    ${lineItem.receipt_url || null},
+                    ${lineItem.notes || null},
+                    ${displayOrder}
+                  )
+                `;
+                
+                displayOrder++;
+              }
+            } else {
+              // If no line items exist, create one from the expense record itself (old format compatibility)
+              const itemAmount = parseFloat(expense.amount?.toString() || "0");
+              const itemTaxAmount = parseFloat(expense.tax_amount?.toString() || "0");
+              const itemTaxRate = parseFloat(expense.tax_rate?.toString() || "0");
+              const totalAmount = itemAmount + itemTaxAmount;
+              
+              await sql`
+                INSERT INTO expense_line_items (
+                  expense_id, category, title, description, quantity, amount, tax_rate_id, tax_amount, tax_rate,
+                  total_amount, vendor_id, lead_type_id, payment_method, payment_status, amount_paid, amount_due,
+                  receipt_url, notes, display_order
+                ) VALUES (
+                  ${createdExpense.id},
+                  ${expenseCategory},
+                  ${expenseTitle},
+                  ${expenseDescription},
+                  ${expense.quantity || 1},
+                  ${itemAmount},
+                  ${null}, -- tax_rate_id
+                  ${itemTaxAmount},
+                  ${itemTaxRate},
+                  ${totalAmount},
+                  ${expense.vendor_id || null},
+                  ${expense.lead_type_id || null},
+                  ${expensePaymentMethod},
+                  ${expenseStatus},
+                  ${0}, -- Reset amount_paid
+                  ${totalAmountDue},
+                  ${expense.receipt_url || null},
+                  ${expenseNotes},
+                  ${0}
+                )
+              `;
+            }
+
+            console.log(`✅ Duplicated expense ${expense.id} -> ${createdExpense.id} with ${expenseLineItems.length || 1} line items (linked to invoice ${newInvoiceId})`);
+          }
+          
+          console.log(`✅ Successfully duplicated ${originalExpenses.length} expense(s) for invoice ${newInvoiceId}`);
+        } else {
+          console.log(`ℹ️ No expenses found to duplicate for invoice ${invoiceId}`);
+        }
+      } catch (expenseError: any) {
+        console.error("⚠️ Error duplicating expenses:", expenseError);
+        console.error("⚠️ Expense duplication error details:", {
+          message: expenseError?.message,
+          stack: expenseError?.stack,
+          invoiceId,
+          newInvoiceId,
+          tenantId,
+        });
+        // Don't fail the entire operation if expenses fail, but log the error
+      }
+
+      // Log customer activity for invoice duplication
+      try {
+        await this.createCustomerActivity({
+          tenantId: tenantId,
+          customerId: newCustomerId || originalInvoice.customerId,
+          userId: null,
+          activityType: 12, // Invoice Created
+          activityTitle: `Invoice Duplicated: ${fullInvoiceNumber}`,
+          activityDescription: `Invoice duplicated from ${originalInvoice.invoiceNumber}. Total amount: ${originalInvoice.totalAmount} ${originalInvoice.currency || "USD"}. Status: draft`,
+          activityStatus: 1,
+          activityTableId: newInvoiceId, // Use newInvoiceId instead of newInvoice.id
+          activityTableName: "invoices",
+        });
+      } catch (activityError) {
+        console.error("⚠️ Failed to log duplication activity:", activityError);
+      }
+
+      console.log(`✅ Successfully duplicated invoice ${invoiceId} -> ${newInvoiceId} (${fullInvoiceNumber})`);
+
+      // Return the new invoice with full details
+      return await this.getInvoiceById(tenantId, newInvoiceId);
+    } catch (error) {
+      console.error("❌ Error duplicating invoice:", error);
+      throw error;
+    }
+  }
+
+  async duplicateExpense(tenantId: number, expenseId: number) {
+    try {
+      console.log(`🔄 Duplicating expense ${expenseId} for tenant ${tenantId}`);
+
+      // Fetch the original expense
+      const [originalExpense] = await sql`
+        SELECT * FROM expenses 
+        WHERE id = ${expenseId} AND tenant_id = ${tenantId}
+      `;
+
+      if (!originalExpense) {
+        throw new Error("Original expense not found");
+      }
+
+      // Get expense settings for number generation
+      const expenseSettings = await this.getExpenseSettings(tenantId);
+      const defaultPrefix = expenseSettings?.expenseNumberPrefix || "EXP";
+
+      // Generate new expense number
+      const existingExpenses = await sql`
+        SELECT expense_prefix, expense_number 
+        FROM expenses 
+        WHERE tenant_id = ${tenantId}
+        ORDER BY created_at DESC
+        LIMIT 100
+      `;
+
+      let nextExpenseNumber = 1;
+      if (existingExpenses.length > 0) {
+        const MAX_SAFE_EXPENSE_NUMBER = 1000000;
+        const expenseNumbers = existingExpenses
+          .map((exp: any) => {
+            const expNum = exp.expense_number || "";
+            if (!expNum) return 0;
+            const matchNumbers = expNum.match(/(\d+)/);
+            if (matchNumbers) {
+              const num = parseInt(matchNumbers[1], 10);
+              return num > 0 && num < MAX_SAFE_EXPENSE_NUMBER ? num : 0;
+            }
+            return 0;
+          })
+          .filter((num: number) => num > 0);
+
+        if (expenseNumbers.length > 0) {
+          const maxNumber = Math.max(...expenseNumbers);
+          nextExpenseNumber = maxNumber + 1;
+        }
+      }
+
+      const newExpensePrefix = defaultPrefix;
+      const newExpenseNumber = `${nextExpenseNumber}-${newExpensePrefix}`;
+      const fullExpenseNumber = `${newExpensePrefix}${nextExpenseNumber}`;
+
+      // Fix the sequence first
+      await sql`SELECT setval('expenses_id_seq', (SELECT COALESCE(MAX(id), 0) + 1 FROM expenses), false)`;
+
+      // Create the new expense (duplicate with new number and reset status/amounts)
+      const [newExpenseRow] = await sql`
+        INSERT INTO expenses (
+          tenant_id, expense_prefix, expense_number, title, description, quantity, amount, currency, category, subcategory,
+          expense_date, payment_method, payment_reference, vendor_id, lead_type_id, invoice_id, expense_type,
+          receipt_url, tax_amount, tax_rate, is_reimbursable, is_recurring, recurring_frequency,
+          status, amount_paid, amount_due, tags, notes, auto_generated, created_by, created_at, updated_at
+        ) VALUES (
+          ${tenantId},
+          ${newExpensePrefix},
+          ${newExpenseNumber},
+          ${originalExpense.title || `Expense ${fullExpenseNumber}`},
+          ${originalExpense.description || originalExpense.notes || `Expense duplicated from ${originalExpense.expense_prefix || ""}${originalExpense.expense_number || ""}`},
+          ${originalExpense.quantity || 1},
+          ${originalExpense.amount || 0},
+          ${originalExpense.currency || "USD"},
+          ${originalExpense.category || "General"},
+          ${originalExpense.subcategory || originalExpense.category || "General"},
+          ${originalExpense.expense_date || new Date().toISOString().split('T')[0]},
+          ${originalExpense.payment_method || "bank_transfer"},
+          ${originalExpense.payment_reference || null},
+          ${originalExpense.vendor_id || null},
+          ${originalExpense.lead_type_id || null},
+          ${originalExpense.invoice_id || null}, -- Keep original invoice_id if exists
+          ${originalExpense.expense_type || "purchase"},
+          ${originalExpense.receipt_url || null}, -- Keep receipt URL (if it's a reference)
+          ${originalExpense.tax_amount || 0},
+          ${originalExpense.tax_rate || 0},
+          ${originalExpense.is_reimbursable || false},
+          ${originalExpense.is_recurring || false},
+          ${originalExpense.recurring_frequency || null},
+          'pending', -- Reset status to pending
+          ${0}, -- Reset amount_paid
+          ${originalExpense.amount_due || originalExpense.amount || 0}, -- Keep amount_due or use amount
+          ${originalExpense.tags || JSON.stringify([])},
+          ${originalExpense.notes || `Expense duplicated from ${originalExpense.expense_prefix || ""}${originalExpense.expense_number || ""}`},
+          ${originalExpense.auto_generated || false},
+          ${originalExpense.created_by || null},
+          NOW(),
+          NOW()
+        )
+        RETURNING id
+      `;
+
+      const newExpenseId = newExpenseRow.id;
+
+      // Fetch and duplicate expense_line_items
+      try {
+        const originalLineItems = await sql`
+          SELECT * FROM expense_line_items 
+          WHERE expense_id = ${expenseId}
+          ORDER BY display_order ASC, id ASC
+        `;
+
+        // If there are no line items, this might be an old expense format
+        // In that case, create a line item from the expense itself
+        if (originalLineItems.length === 0) {
+          // Create a single line item from the expense data
+          await sql`
+            INSERT INTO expense_line_items (
+              expense_id, category, title, description, quantity, amount, tax_rate_id, tax_amount, tax_rate,
+              total_amount, vendor_id, lead_type_id, payment_method, payment_status, amount_paid, amount_due,
+              receipt_url, notes, display_order, created_at, updated_at
+            ) VALUES (
+              ${newExpenseId},
+              ${originalExpense.category || "General"},
+              ${originalExpense.title || "Expense Item"},
+              ${originalExpense.description || null},
+              ${originalExpense.quantity || 1},
+              ${originalExpense.amount || 0},
+              ${null}, -- tax_rate_id
+              ${originalExpense.tax_amount || 0},
+              ${originalExpense.tax_rate || 0},
+              ${(originalExpense.amount || 0) + (originalExpense.tax_amount || 0)},
+              ${originalExpense.vendor_id || null},
+              ${originalExpense.lead_type_id || null},
+              ${originalExpense.payment_method || "bank_transfer"},
+              'pending', -- Reset payment status
+              ${0}, -- Reset amount_paid
+              ${originalExpense.amount_due || originalExpense.amount || 0},
+              ${originalExpense.receipt_url || null},
+              ${originalExpense.notes || null},
+              ${0},
+              NOW(),
+              NOW()
+            )
+          `;
+          console.log(`✅ Created single line item from expense data (old format)`);
+        } else {
+          // Duplicate all line items
+          for (const lineItem of originalLineItems) {
+            await sql`
+              INSERT INTO expense_line_items (
+                expense_id, category, title, description, quantity, amount, tax_rate_id, tax_amount, tax_rate,
+                total_amount, vendor_id, lead_type_id, payment_method, payment_status, amount_paid, amount_due,
+                receipt_url, notes, display_order, created_at, updated_at
+              ) VALUES (
+                ${newExpenseId},
+                ${lineItem.category || "General"},
+                ${lineItem.title || "Expense Item"},
+                ${lineItem.description || null},
+                ${lineItem.quantity || 1},
+                ${lineItem.amount || 0},
+                ${lineItem.tax_rate_id || null},
+                ${lineItem.tax_amount || 0},
+                ${lineItem.tax_rate || 0},
+                ${lineItem.total_amount || lineItem.amount || 0},
+                ${lineItem.vendor_id || null},
+                ${lineItem.lead_type_id || null},
+                ${lineItem.payment_method || "bank_transfer"},
+                'pending', -- Reset payment status
+                ${0}, -- Reset amount_paid
+                ${lineItem.amount_due || lineItem.total_amount || lineItem.amount || 0},
+                ${lineItem.receipt_url || null},
+                ${lineItem.notes || null},
+                ${lineItem.display_order || 0},
+                NOW(),
+                NOW()
+              )
+            `;
+          }
+          console.log(`✅ Duplicated ${originalLineItems.length} expense line items`);
+        }
+      } catch (lineItemsError) {
+        console.error("⚠️ Error duplicating expense line items:", lineItemsError);
+        // Don't fail the entire operation
+      }
+
+      console.log(`✅ Successfully duplicated expense ${expenseId} -> ${newExpenseId} (${fullExpenseNumber})`);
+
+      // Return the new expense by fetching it (similar to how getExpenseById works)
+      // We'll use the GET endpoint format for consistency
+      const [newExpense] = await sql`
+        SELECT 
+          e.*,
+          v.name as vendor_name,
+          lt.name as lead_type_name,
+          lt.color as lead_type_color
+        FROM expenses e
+        LEFT JOIN vendors v ON e.vendor_id = v.id
+        LEFT JOIN lead_types lt ON e.lead_type_id = lt.id
+        WHERE e.id = ${newExpenseId} AND e.tenant_id = ${tenantId}
+      `;
+
+      const newLineItems = await sql`
+        SELECT 
+          eli.*,
+          v.name as vendor_name,
+          lt.name as lead_type_name,
+          lt.color as lead_type_color
+        FROM expense_line_items eli
+        LEFT JOIN vendors v ON eli.vendor_id = v.id
+        LEFT JOIN lead_types lt ON eli.lead_type_id = lt.id
+        WHERE eli.expense_id = ${newExpenseId}
+        ORDER BY eli.display_order ASC, eli.id ASC
+      `;
+
+      return {
+        ...newExpense,
+        expenseNumber: `${newExpense.expense_prefix || ""}${newExpense.expense_number || ""}`,
+        lineItems: newLineItems,
+      };
+    } catch (error) {
+      console.error("❌ Error duplicating expense:", error);
       throw error;
     }
   }
@@ -6995,9 +7769,177 @@ async getAllLeadsByTenant(
         }
       }
 
-      // Log customer activity for invoice update
+      // Handle cancellation charges - create expense line item when invoice is cancelled with charges
       const oldStatus = oldInvoice?.status;
       const newStatus = updatedInvoice.status;
+      
+      // Check if status changed to cancelled and cancellation charges were applied
+      const statusChangedToCancelled = oldStatus !== "cancelled" && newStatus === "cancelled";
+      const hasCancellationCharges = updatedInvoice.has_cancellation_charge && updatedInvoice.cancellation_charge_amount;
+      
+      if (statusChangedToCancelled && hasCancellationCharges) {
+        const cancellationChargeAmount = parseFloat(updatedInvoice.cancellation_charge_amount || "0");
+        
+        if (cancellationChargeAmount > 0) {
+          try {
+            const tenantId = updatedInvoice.tenant_id;
+            
+            // Find all expenses linked to this invoice
+            const linkedExpenses = await sql`
+              SELECT id FROM expenses 
+              WHERE invoice_id = ${invoiceId} AND tenant_id = ${tenantId}
+              ORDER BY id ASC
+            `;
+            
+            if (linkedExpenses.length > 0) {
+              // Use the first expense (primary expense for this invoice)
+              const primaryExpenseId = linkedExpenses[0].id;
+              
+              console.log(`🔄 Processing cancellation charges for invoice ${invoiceId}, expense ${primaryExpenseId}, amount: ${cancellationChargeAmount}`);
+              
+              // Check if cancellation charge line item already exists
+              const existingCancellationCharge = await sql`
+                SELECT id, amount FROM expense_line_items
+                WHERE expense_id = ${primaryExpenseId} AND title = 'Cancellation Charge'
+                ORDER BY id DESC
+                LIMIT 1
+              `;
+              
+              // Update all existing expense_line_items payment_status to "cancelled" (except the cancellation charge itself if it exists)
+              if (existingCancellationCharge.length > 0) {
+                // Update all line items except the cancellation charge
+                await sql`
+                  UPDATE expense_line_items
+                  SET payment_status = 'cancelled', updated_at = NOW()
+                  WHERE expense_id = ${primaryExpenseId} AND id != ${existingCancellationCharge[0].id}
+                `;
+              } else {
+                // Update all line items (no cancellation charge exists yet)
+                await sql`
+                  UPDATE expense_line_items
+                  SET payment_status = 'cancelled', updated_at = NOW()
+                  WHERE expense_id = ${primaryExpenseId}
+                `;
+              }
+              
+              console.log(`✅ Updated existing expense line items to cancelled status for expense ${primaryExpenseId}`);
+              
+              if (existingCancellationCharge.length > 0) {
+                // Update existing cancellation charge line item
+                const existingAmount = parseFloat(existingCancellationCharge[0].amount?.toString() || "0");
+                const amountDifference = cancellationChargeAmount - existingAmount;
+                
+                await sql`
+                  UPDATE expense_line_items
+                  SET amount = ${cancellationChargeAmount},
+                      total_amount = ${cancellationChargeAmount},
+                      amount_due = ${cancellationChargeAmount},
+                      description = ${updatedInvoice.cancellation_charge_notes || null},
+                      notes = ${updatedInvoice.cancellation_charge_notes || 'Cancellation charge applied'},
+                      updated_at = NOW()
+                  WHERE id = ${existingCancellationCharge[0].id}
+                `;
+                
+                console.log(`✅ Updated existing cancellation charge line item: ${cancellationChargeAmount} ${updatedInvoice.currency || 'USD'}`);
+                
+                // Update expense header totals (adjust by difference)
+                if (amountDifference !== 0) {
+                  const currentExpense = await sql`
+                    SELECT amount, amount_due FROM expenses WHERE id = ${primaryExpenseId}
+                  `;
+                  
+                  if (currentExpense[0]) {
+                    const currentAmount = parseFloat(currentExpense[0].amount?.toString() || "0");
+                    const currentAmountDue = parseFloat(currentExpense[0].amount_due?.toString() || "0");
+                    
+                    const newAmount = currentAmount + amountDifference;
+                    const newAmountDue = currentAmountDue + amountDifference;
+                    
+                    await sql`
+                      UPDATE expenses
+                      SET amount = ${newAmount},
+                          amount_due = ${newAmountDue},
+                          updated_at = NOW()
+                      WHERE id = ${primaryExpenseId}
+                    `;
+                    
+                    console.log(`✅ Updated expense ${primaryExpenseId} totals: amount=${newAmount}, amount_due=${newAmountDue}`);
+                  }
+                }
+              } else {
+                // Create new expense_line_item for cancellation charge
+                const maxOrderResult = await sql`
+                  SELECT COALESCE(MAX(display_order), -1) as max_order
+                  FROM expense_line_items
+                  WHERE expense_id = ${primaryExpenseId}
+                `;
+                const maxDisplayOrder = maxOrderResult[0]?.max_order || -1;
+                const nextDisplayOrder = maxDisplayOrder + 1;
+                
+                await sql`
+                  INSERT INTO expense_line_items (
+                    expense_id, category, title, description, quantity, amount, tax_rate_id, tax_amount, tax_rate,
+                    total_amount, vendor_id, lead_type_id, payment_method, payment_status, amount_paid, amount_due,
+                    receipt_url, notes, display_order
+                  ) VALUES (
+                    ${primaryExpenseId},
+                    'Cancellation',
+                    'Cancellation Charge',
+                    ${updatedInvoice.cancellation_charge_notes || null},
+                    1,
+                    ${cancellationChargeAmount},
+                    NULL,
+                    0,
+                    0,
+                    ${cancellationChargeAmount},
+                    NULL,
+                    NULL,
+                    'bank_transfer',
+                    'due',
+                    0,
+                    ${cancellationChargeAmount},
+                    NULL,
+                    ${updatedInvoice.cancellation_charge_notes || 'Cancellation charge applied'},
+                    ${nextDisplayOrder}
+                  )
+                `;
+                
+                console.log(`✅ Created cancellation charge expense line item: ${cancellationChargeAmount} ${updatedInvoice.currency || 'USD'}`);
+                
+                // Update expense header totals (add cancellation charge to amount and amount_due)
+                const currentExpense = await sql`
+                  SELECT amount, amount_due FROM expenses WHERE id = ${primaryExpenseId}
+                `;
+                
+                if (currentExpense[0]) {
+                  const currentAmount = parseFloat(currentExpense[0].amount?.toString() || "0");
+                  const currentAmountDue = parseFloat(currentExpense[0].amount_due?.toString() || "0");
+                  
+                  const newAmount = currentAmount + cancellationChargeAmount;
+                  const newAmountDue = currentAmountDue + cancellationChargeAmount;
+                  
+                  await sql`
+                    UPDATE expenses
+                    SET amount = ${newAmount},
+                        amount_due = ${newAmountDue},
+                        updated_at = NOW()
+                    WHERE id = ${primaryExpenseId}
+                  `;
+                  
+                  console.log(`✅ Updated expense ${primaryExpenseId} totals: amount=${newAmount}, amount_due=${newAmountDue}`);
+                }
+              }
+            } else {
+              console.log(`⚠️ No expenses found linked to invoice ${invoiceId} for cancellation charges`);
+            }
+          } catch (cancellationError) {
+            console.error("⚠️ Failed to process cancellation charges:", cancellationError);
+            // Continue even if cancellation charge processing fails
+          }
+        }
+      }
+
+      // Log customer activity for invoice update
       const userId = invoiceData.userId || null;
 
       if (userId && updatedInvoice.customer_id) {
@@ -10861,23 +11803,58 @@ RateHonk CRM Team`,
   async deleteInvoice(invoiceId: number, tenantId: number) {
     try {
       console.log(
-        "🗑️ DELETEINVOICE: Deleting invoice",
+        "🗑️ DELETEINVOICE: Soft deleting invoice",
         invoiceId,
         "for tenant",
         tenantId,
       );
 
-      const [deletedInvoice] = await sql`
-        DELETE FROM invoices 
-        WHERE id = ${invoiceId} AND tenant_id = ${tenantId}
-        RETURNING id
+      // Check if deleted_at column exists
+      const [columnExists] = await sql`
+        SELECT EXISTS (
+          SELECT 1 
+          FROM information_schema.columns 
+          WHERE table_name = 'invoices' 
+          AND column_name = 'deleted_at'
+        ) as exists
       `;
 
-      if (!deletedInvoice) {
-        throw new Error("Invoice not found or unauthorized");
+      if (columnExists?.exists) {
+        // Soft delete: set deleted_at timestamp
+        const [deletedInvoice] = await sql`
+          UPDATE invoices 
+          SET deleted_at = NOW()
+          WHERE id = ${invoiceId} AND tenant_id = ${tenantId} AND deleted_at IS NULL
+          RETURNING id
+        `;
+
+        if (!deletedInvoice) {
+          throw new Error("Invoice not found or already deleted");
+        }
+
+        // Also soft delete related expenses
+        await sql`
+          UPDATE expenses
+          SET deleted_at = NOW()
+          WHERE invoice_id = ${invoiceId} AND tenant_id = ${tenantId} AND deleted_at IS NULL
+        `;
+
+        console.log("✅ DELETEINVOICE: Invoice and related expenses soft deleted successfully");
+      } else {
+        // Hard delete if column doesn't exist (backward compatibility)
+        const [deletedInvoice] = await sql`
+          DELETE FROM invoices 
+          WHERE id = ${invoiceId} AND tenant_id = ${tenantId}
+          RETURNING id
+        `;
+
+        if (!deletedInvoice) {
+          throw new Error("Invoice not found or unauthorized");
+        }
+
+        console.log("✅ DELETEINVOICE: Invoice deleted successfully (hard delete)");
       }
 
-      console.log("✅ DELETEINVOICE: Invoice deleted successfully");
       return { success: true };
     } catch (error) {
       console.error("deleteInvoice error:", error);

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Layout } from "@/components/layout/layout";
 import { Button } from "@/components/ui/button";
@@ -50,6 +50,7 @@ import {
   Upload,
   FileDown,
   MoreVertical,
+  Copy,
 } from "lucide-react";
 import {
   Sheet,
@@ -110,6 +111,9 @@ import { cn } from "@/lib/utils";
 import { DateFilter } from "@/components/ui/date-filter";
 import { buildDateFilters } from "@/lib/date-filter-helpers";
 import InvoiceAnalyticsSheet from "./InvoiceAnalyticsSheet";
+import { AutocompleteInput } from "@/components/ui/autocomplete-input";
+import { directCustomersApi } from "@/lib/direct-customers-api";
+import { useDebounce } from "@/hooks/use-debounce";
 
 const invoiceStatuses = [
   { value: "draft", label: "Draft", color: "bg-gray-100 text-gray-800" },
@@ -207,6 +211,11 @@ export default function Invoices() {
   const [cancellationChargeNotes, setCancellationChargeNotes] = useState("");
   const [showCancellationChargeFields, setShowCancellationChargeFields] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [isDuplicateDialogOpen, setIsDuplicateDialogOpen] = useState(false);
+  const [invoiceToDuplicate, setInvoiceToDuplicate] = useState<any>(null);
+  const [duplicateCustomerId, setDuplicateCustomerId] = useState<string>("");
+  const [duplicateCustomerSearch, setDuplicateCustomerSearch] = useState("");
+  const debouncedDuplicateCustomerSearch = useDebounce(duplicateCustomerSearch, 500);
   const isInitialMount = useRef(true);
 
   // Helper function to update URL parameters
@@ -1564,22 +1573,84 @@ export default function Invoices() {
     },
   });
 
+  // Delete invoice mutation
+  const deleteInvoiceMutation = useMutation({
+    mutationFn: async (invoiceId: number) => {
+      const token = auth.getToken();
+      const response = await fetch(
+        `/api/tenants/${tenant?.id}/invoices/${invoiceId}`,
+        {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `Failed to delete invoice: ${response.status} - ${errorText}`
+        );
+      }
+
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Invoice Deleted",
+        description: "Invoice has been deleted successfully.",
+      });
+
+      queryClient.invalidateQueries({
+        queryKey: [`/api/tenants/${tenant?.id}/invoices`],
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Delete Failed",
+        description:
+          error.message || "Failed to delete invoice. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Handle delete confirmation
+  const handleDeleteInvoice = (invoiceId: number) => {
+    if (window.confirm("Are you sure you want to delete this invoice? This will also delete all related expenses.")) {
+      deleteInvoiceMutation.mutate(invoiceId);
+    }
+  };
+
   // Column definitions for the enhanced table
   const invoiceColumns: TableColumn<Invoice>[] = [
     {
       key: "invoiceNumber",
       label: "Invoice #",
       sortable: true,
-      render: (value, invoice) => (
-        <button
-          onClick={() => {
-            navigate(`/invoice-edit/${invoice.id}${getPaginationParams()}`);
-          }}
-          className="font-medium text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
-        >
-          {value || `INV-${invoice.id}`}
-        </button>
-      ),
+      render: (value, invoice) => {
+        const invoiceData = invoice as any;
+        const isCancelled = invoiceData.status === "cancelled";
+        return (
+          <button
+            onClick={() => {
+              if (!isCancelled) {
+                navigate(`/invoice-edit/${invoice.id}${getPaginationParams()}`);
+              }
+            }}
+            disabled={isCancelled}
+            className={`font-medium ${
+              isCancelled
+                ? "text-gray-400 cursor-not-allowed no-underline"
+                : "text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+            }`}
+          >
+            {value || `INV-${invoice.id}`}
+          </button>
+        );
+      },
     },
     {
       key: "customerName",
@@ -1850,8 +1921,12 @@ export default function Invoices() {
             <DropdownMenuContent align="end">
               <DropdownMenuItem
                 onClick={() => {
-                  navigate(`/invoice-edit/${invoice.id}${getPaginationParams()}`);
+                  const invoiceData = invoice as any;
+                  if (invoiceData.status !== "cancelled") {
+                    navigate(`/invoice-edit/${invoice.id}${getPaginationParams()}`);
+                  }
                 }}
+                disabled={(invoice as any).status === "cancelled"}
               >
                 <Edit className="h-4 w-4 mr-2" />
                 Edit Invoice
@@ -1882,6 +1957,25 @@ export default function Invoices() {
               >
                 <MessageCircle className="h-4 w-4 mr-2" />
                 Send WhatsApp
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => {
+                  setInvoiceToDuplicate(invoice);
+                  setDuplicateCustomerId(invoice.customerId?.toString() || "");
+                  setDuplicateCustomerSearch(""); // Reset search when opening
+                  setIsDuplicateDialogOpen(true);
+                }}
+              >
+                <Copy className="h-4 w-4 mr-2" />
+                Reissue Invoice
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => handleDeleteInvoice(invoice.id)}
+                className="text-red-600"
+                disabled={deleteInvoiceMutation.isPending}
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete Invoice
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -2145,6 +2239,147 @@ export default function Invoices() {
         )}
       </div>
     );
+  };
+
+  // Fetch customers for duplicate dialog with search
+  const { data: duplicateCustomers = [] } = useQuery({
+    queryKey: [`duplicate-customers-${tenant?.id}`, debouncedDuplicateCustomerSearch],
+    enabled: !!tenant?.id && isDuplicateDialogOpen,
+    queryFn: async () => {
+      const result = await directCustomersApi.getCustomers(tenant?.id!, {
+        search: debouncedDuplicateCustomerSearch || undefined,
+        limit: 50,
+      });
+      return Array.isArray(result) ? result : result?.data || [];
+    },
+  });
+
+  // Fetch the selected customer separately if not in search results
+  const { data: selectedDuplicateCustomer } = useQuery({
+    queryKey: [`duplicate-selected-customer-${duplicateCustomerId}`],
+    enabled: 
+      !!duplicateCustomerId && 
+      !!tenant?.id && 
+      isDuplicateDialogOpen &&
+      !duplicateCustomers.find((c: any) => c.id?.toString() === duplicateCustomerId),
+    queryFn: async () => {
+      try {
+        return await directCustomersApi.getCustomer(tenant?.id!, parseInt(duplicateCustomerId));
+      } catch (error) {
+        console.error("Error fetching selected customer:", error);
+        return null;
+      }
+    },
+  });
+
+  // Merge selected customer with duplicate customers list
+  const allDuplicateCustomers = useMemo(() => {
+    const customersList = [...duplicateCustomers];
+    
+    // Add selected customer if it exists and is not already in the list
+    if (selectedDuplicateCustomer) {
+      const exists = customersList.find((c: any) => c.id === selectedDuplicateCustomer.id);
+      if (!exists) {
+        customersList.unshift(selectedDuplicateCustomer);
+      }
+    }
+    
+    return customersList;
+  }, [duplicateCustomers, selectedDuplicateCustomer]);
+
+  // Get customer options for duplicate dialog
+  const allDuplicateCustomerOptions = useMemo(() => {
+    return allDuplicateCustomers.map((customer: any) => {
+      const name = customer.name || `${customer.firstName || ""} ${customer.lastName || ""}`.trim() || "Unknown";
+      // Include email and phone in label for searchability, but keep name clean for display
+      const searchLabel = [name];
+      if (customer.email) searchLabel.push(customer.email);
+      if (customer.phone) searchLabel.push(customer.phone);
+      return {
+        value: customer.id?.toString() || "",
+        label: searchLabel.join(" | "), // Include all for search
+        email: customer.email,
+        phone: customer.phone,
+      };
+    });
+  }, [allDuplicateCustomers]);
+
+  // Note: We no longer need to fetch invoice data for duplication
+  // The backend API handles fetching and duplicating all data directly from the database
+
+  // Duplicate invoice mutation - uses new backend API
+  const duplicateInvoiceMutation = useMutation({
+    mutationFn: async ({ invoiceId, customerId }: { invoiceId: number; customerId: string }) => {
+      const token = auth.getToken();
+
+      const response = await fetch(
+        `/api/tenants/${tenant?.id}/invoices/${invoiceId}/duplicate`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            customerId: parseInt(customerId),
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        let errorMessage = `Failed to reissue invoice: ${response.status}`;
+        try {
+          const errorJson = JSON.parse(errorText);
+          errorMessage = errorJson.message || errorMessage;
+        } catch {
+          errorMessage = `${errorMessage} - ${errorText}`;
+        }
+        throw new Error(errorMessage);
+      }
+
+      return response.json();
+    },
+    onSuccess: (result) => {
+      toast({
+        title: "Invoice Reissued Successfully",
+        description: `New invoice ${result.invoice?.invoiceNumber || "created"} has been created with all related data.`,
+      });
+
+      queryClient.invalidateQueries({
+        queryKey: [`/api/tenants/${tenant?.id}/invoices`],
+      });
+      
+      setIsDuplicateDialogOpen(false);
+      setInvoiceToDuplicate(null);
+      setDuplicateCustomerId("");
+      setDuplicateCustomerSearch("");
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Invoice Reissue Failed",
+        description:
+          error.message || "Failed to reissue invoice. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Handle duplicate confirmation
+  const handleDuplicateConfirm = () => {
+    if (!invoiceToDuplicate || !duplicateCustomerId) {
+      toast({
+        title: "Error",
+        description: "Please select a customer for the reissue invoice.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    duplicateInvoiceMutation.mutate({
+      invoiceId: invoiceToDuplicate.id,
+      customerId: duplicateCustomerId,
+    });
   };
 
   // Create invoice mutation
@@ -4153,6 +4388,61 @@ export default function Invoices() {
             >
               {isImporting ? "Importing..." : "Import"}
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reissue Invoice Dialog */}
+      <Dialog open={isDuplicateDialogOpen} onOpenChange={setIsDuplicateDialogOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Reissue Invoice</DialogTitle>
+            <DialogDescription>
+              Create a copy of invoice{" "}
+              {invoiceToDuplicate?.invoiceNumber || invoiceToDuplicate?.id
+                ? `#${invoiceToDuplicate.invoiceNumber || invoiceToDuplicate.id}`
+                : ""}
+              . You can change the customer if needed.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="duplicate-customer">Customer *</Label>
+              <AutocompleteInput
+                suggestions={allDuplicateCustomerOptions}
+                value={duplicateCustomerId}
+                onValueChange={(value) => {
+                  setDuplicateCustomerId(value);
+                }}
+                onSearch={setDuplicateCustomerSearch}
+                placeholder="Search customer by name, phone or email"
+                emptyText="No customers found"
+                className="w-full"
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-4">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setIsDuplicateDialogOpen(false);
+                  setInvoiceToDuplicate(null);
+                  setDuplicateCustomerId("");
+                  setDuplicateCustomerSearch("");
+                }}
+                disabled={duplicateInvoiceMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleDuplicateConfirm}
+                disabled={
+                  !duplicateCustomerId ||
+                  duplicateInvoiceMutation.isPending
+                }
+              >
+                {duplicateInvoiceMutation.isPending ? "Reissuing..." : "Yes, Reissue"}
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
