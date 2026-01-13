@@ -619,6 +619,7 @@ export class SimpleStorage {
         crmStatus,
         preferences,
         notes,
+        skipWelcomeEmail, // Flag to skip welcome email (e.g., when converting from lead)
       } = customerData;
 
       console.log("🔍 Backend - Extracted tenantId:", tenantId);
@@ -678,10 +679,95 @@ export class SimpleStorage {
         console.error("❌ Failed to create customer activity (non-blocking):", error);
       });
 
+      // Send welcome email to customer if email is provided and not skipped (fire and forget - don't block on error)
+      if (!skipWelcomeEmail && customer.email && customer.email.trim() !== "") {
+        this.sendCustomerWelcomeEmail({
+          tenantId: tenantId,
+          customerId: customer.id,
+          email: customer.email,
+          firstName: transformedCustomer.firstName || "",
+          lastName: transformedCustomer.lastName || "",
+        }).catch((error) => {
+          console.error("❌ Failed to send customer welcome email (non-blocking):", error);
+        });
+      }
+
       return transformedCustomer;
     } catch (error: any) {
       console.error("🔍 Backend - createCustomer error:", error);
       throw error;
+    }
+  }
+
+  /**
+   * Send welcome email to customer (helper method)
+   */
+  private async sendCustomerWelcomeEmail(data: {
+    tenantId: number;
+    customerId: number;
+    email: string;
+    firstName: string;
+    lastName: string;
+  }) {
+    try {
+      // Get tenant information
+      const tenant = await this.getTenant(data.tenantId);
+      if (!tenant) {
+        console.warn(`⚠️ Tenant ${data.tenantId} not found, skipping customer welcome email`);
+        return;
+      }
+
+      // Import tenant email service dynamically to avoid circular dependencies
+      const { tenantEmailService } = await import("./tenant-email-service.js");
+
+      await tenantEmailService.sendCustomerWelcomeEmail({
+        to: data.email,
+        firstName: data.firstName,
+        lastName: data.lastName,
+        companyName: tenant.companyName || "RateHonk CRM",
+        tenantId: data.tenantId,
+        customerId: data.customerId,
+      });
+    } catch (error) {
+      console.error("❌ Error in sendCustomerWelcomeEmail helper:", error);
+      // Don't throw - this is a non-critical operation
+    }
+  }
+
+  /**
+   * Send conversion email when lead becomes customer (helper method)
+   */
+  private async sendLeadConversionEmail(data: {
+    tenantId: number;
+    leadId: number;
+    customerId: number;
+    email: string;
+    firstName: string;
+    lastName: string;
+  }) {
+    try {
+      // Get tenant information
+      const tenant = await this.getTenant(data.tenantId);
+      if (!tenant) {
+        console.warn(`⚠️ Tenant ${data.tenantId} not found, skipping lead conversion email`);
+        return;
+      }
+
+      // Import tenant email service dynamically to avoid circular dependencies
+      const { tenantEmailService } = await import("./tenant-email-service.js");
+
+      await tenantEmailService.sendLeadConversionEmail({
+        to: data.email,
+        firstName: data.firstName,
+        lastName: data.lastName,
+        companyName: tenant.companyName || "RateHonk CRM",
+        tenantId: data.tenantId,
+        leadId: data.leadId,
+        customerId: data.customerId,
+      });
+    } catch (error) {
+      console.error("❌ Error in sendLeadConversionEmail helper:", error);
+      // Don't throw - this is a non-critical operation
     }
   }
 
@@ -2142,6 +2228,19 @@ async getAllLeadsByTenant(
       const score = LeadScoringEngine.calculateScore(lead);
       const calculatedPriority = LeadScoringEngine.calculatePriority(score);
 
+      // Send welcome email to lead if email is provided (fire and forget - don't block on error)
+      if (lead.email && lead.email.trim() !== "") {
+        this.sendLeadWelcomeEmail({
+          tenantId: lead.tenantId,
+          leadId: lead.id,
+          email: lead.email,
+          firstName: lead.firstName || "",
+          lastName: lead.lastName || "",
+        }).catch((error) => {
+          console.error("❌ Failed to send lead welcome email (non-blocking):", error);
+        });
+      }
+
       return {
         ...lead,
         score,
@@ -2151,6 +2250,41 @@ async getAllLeadsByTenant(
     } catch (error) {
       console.error("❌ Error in createLead:", error);
       throw error;
+    }
+  }
+
+  /**
+   * Send welcome email to lead (helper method)
+   */
+  private async sendLeadWelcomeEmail(data: {
+    tenantId: number;
+    leadId: number;
+    email: string;
+    firstName: string;
+    lastName: string;
+  }) {
+    try {
+      // Get tenant information
+      const tenant = await this.getTenant(data.tenantId);
+      if (!tenant) {
+        console.warn(`⚠️ Tenant ${data.tenantId} not found, skipping lead welcome email`);
+        return;
+      }
+
+      // Import tenant email service dynamically to avoid circular dependencies
+      const { tenantEmailService } = await import("./tenant-email-service.js");
+
+      await tenantEmailService.sendLeadWelcomeEmail({
+        to: data.email,
+        firstName: data.firstName,
+        lastName: data.lastName,
+        companyName: tenant.companyName || "RateHonk CRM",
+        tenantId: data.tenantId,
+        leadId: data.leadId,
+      });
+    } catch (error) {
+      console.error("❌ Error in sendLeadWelcomeEmail helper:", error);
+      // Don't throw - this is a non-critical operation
     }
   }
 
@@ -2429,6 +2563,7 @@ async getAllLeadsByTenant(
           totalValue: 0,
           tags: [],
           company: null,
+          skipWelcomeEmail: true, // Skip regular welcome email, we'll send conversion email instead
         };
 
         const newCustomer = await this.createCustomer(customerData);
@@ -2444,6 +2579,22 @@ async getAllLeadsByTenant(
 
         // Update the returned lead object to include the customer reference
         lead.convertedToCustomerId = newCustomer.id;
+
+        // Send conversion email to customer if email is provided (fire and forget - don't block on error)
+        // Use updates.email if available, otherwise fall back to existingLead.email
+        const customerEmail = updates.email || existingLead.email;
+        if (customerEmail && customerEmail.trim() !== "") {
+          this.sendLeadConversionEmail({
+            tenantId: existingLead.tenant_id,
+            leadId: leadId,
+            customerId: newCustomer.id,
+            email: customerEmail,
+            firstName: updates.firstName || existingLead.first_name || "",
+            lastName: updates.lastName || existingLead.last_name || "",
+          }).catch((error) => {
+            console.error("❌ Failed to send lead conversion email (non-blocking):", error);
+          });
+        }
       } catch (error) {
         console.error("🎯 ❌ Error creating customer from lead:", error);
         // Don't throw error - lead update should still succeed even if customer creation fails
