@@ -1062,7 +1062,7 @@ export default function ExpenseCreate() {
       }
       return item;
     });
-    setExpenseItems(recalculatedItems);
+    // setExpenseItems(recalculatedItems);
   }, [isTaxInclusive, gstRates]);
 
   // Get vendor options
@@ -1472,6 +1472,7 @@ export default function ExpenseCreate() {
                   </div>
 
                   {/* Table Body */}
+                  {console.log(expenseItems,'shashi log')}
                   {expenseItems.map((item, index) => (
                     <div
                       key={index}
