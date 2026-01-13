@@ -4,6 +4,7 @@ import { OAuth2Client } from 'google-auth-library';
 /**
  * Get Google Calendar access token from environment variables
  * Uses GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REFRESH_TOKEN from .env
+ * Uses GOOGLE_CALENDAR_REDIRECT_URI (or GOOGLE_REDIRECT_URI as fallback) to avoid conflicts with other Google OAuth integrations
  */
 async function getAccessToken(): Promise<string> {
   const clientId = process.env.GOOGLE_CLIENT_ID;
@@ -15,11 +16,16 @@ async function getAccessToken(): Promise<string> {
     throw new Error('Google Calendar credentials not configured. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in your .env file.');
   }
 
+  // Use dedicated redirect URI for Google Calendar to avoid conflicts with other Google OAuth integrations (like FB leads)
+  const redirectUri = process.env.GOOGLE_CALENDAR_REDIRECT_URI 
+    || process.env.GOOGLE_REDIRECT_URI 
+    || 'http://localhost:5000/api/calendar/google/callback';
+
   try {
     const oauth2Client = new OAuth2Client(
       clientId,
       clientSecret,
-      process.env.GOOGLE_REDIRECT_URI || 'http://localhost:5000/api/auth/google/callback'
+      redirectUri
     );
 
     // If we have a refresh token, use it to get a new access token

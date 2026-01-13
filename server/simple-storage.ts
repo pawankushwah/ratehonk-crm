@@ -6126,6 +6126,7 @@ async getAllLeadsByTenant(
 
       // Handle line items - check both lineItems and items for compatibility
       const lineItems = invoiceData.lineItems || invoiceData.items || [];
+      const newInvoiceId = newInvoice.id;
 
       if (lineItems.length > 0) {
         for (const item of lineItems) {
