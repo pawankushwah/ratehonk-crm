@@ -13071,6 +13071,7 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
           notes:
             lead.notes ||
             `Converted from lead on ${new Date().toISOString().split("T")[0]}`,
+          skipWelcomeEmail: true, // Skip regular welcome email, we'll send conversion email instead
         };
 
         console.log("🔍 Creating customer from lead data:", customerData);
@@ -13091,6 +13092,27 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
           updateData,
         );
         console.log("🔍 ✅ Lead updated with conversion data");
+
+        // Send conversion email to customer if email is provided (fire and forget - don't block on error)
+        if (lead.email && lead.email.trim() !== "") {
+          // Get tenant information for email
+          const tenant = await simpleStorage.getTenant(parseInt(tenantId));
+          if (tenant) {
+            // Import tenant email service dynamically
+            const { tenantEmailService } = await import("./tenant-email-service.js");
+            tenantEmailService.sendLeadConversionEmail({
+              to: lead.email,
+              firstName: lead.firstName || "",
+              lastName: lead.lastName || "",
+              companyName: tenant.companyName || "RateHonk CRM",
+              tenantId: parseInt(tenantId),
+              leadId: parseInt(leadId),
+              customerId: customer.id,
+            }).catch((error) => {
+              console.error("❌ Failed to send lead conversion email (non-blocking):", error);
+            });
+          }
+        }
 
         res.json({
           success: true,

@@ -678,6 +678,284 @@ class TenantEmailService {
       throw error;
     }
   }
+
+  /**
+   * Send welcome email to a new lead
+   */
+  async sendLeadWelcomeEmail(data: {
+    to: string;
+    firstName: string;
+    lastName: string;
+    companyName: string;
+    tenantId: number;
+    leadId?: number;
+  }) {
+    try {
+      const fullName = `${data.firstName} ${data.lastName}`.trim();
+      const subject = `Welcome to ${data.companyName} - Thank You for Your Interest!`;
+      
+      const htmlBody = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+            <h2 style="color: #333; margin-top: 0;">Welcome to ${data.companyName}!</h2>
+          </div>
+          
+          <p>Hello ${data.firstName},</p>
+          
+          <p>Thank you for your interest in ${data.companyName}. We're excited to have you as a potential customer!</p>
+          
+          <p>Our team has received your inquiry and will be in touch with you shortly to discuss how we can help meet your needs.</p>
+          
+          <p>In the meantime, if you have any questions or would like to speak with us directly, please don't hesitate to reach out.</p>
+          
+          <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
+            <p style="margin: 0;"><strong>What's Next?</strong></p>
+            <ul style="margin: 10px 0; padding-left: 20px;">
+              <li>Our team will review your inquiry</li>
+              <li>We'll contact you within 24-48 hours</li>
+              <li>We'll work together to find the best solution for you</li>
+            </ul>
+          </div>
+          
+          <p>We look forward to serving you!</p>
+          
+          <p>Best regards,<br>
+          <strong>The ${data.companyName} Team</strong></p>
+          
+          <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+          <p style="color: #999; font-size: 12px;">
+            This is an automated message from ${data.companyName}. 
+            If you have any questions, please contact us directly.
+          </p>
+        </div>
+      `;
+
+      const textBody = `
+Welcome to ${data.companyName}!
+
+Hello ${data.firstName},
+
+Thank you for your interest in ${data.companyName}. We're excited to have you as a potential customer!
+
+Our team has received your inquiry and will be in touch with you shortly to discuss how we can help meet your needs.
+
+In the meantime, if you have any questions or would like to speak with us directly, please don't hesitate to reach out.
+
+What's Next?
+- Our team will review your inquiry
+- We'll contact you within 24-48 hours
+- We'll work together to find the best solution for you
+
+We look forward to serving you!
+
+Best regards,
+The ${data.companyName} Team
+
+---
+This is an automated message from ${data.companyName}. If you have any questions, please contact us directly.
+      `;
+
+      await this.sendCustomerEmail({
+        to: data.to,
+        subject: subject,
+        body: textBody,
+        htmlBody: htmlBody,
+        tenantId: data.tenantId,
+      });
+
+      console.log(`✅ Lead welcome email sent to ${data.to}`);
+    } catch (error: any) {
+      console.error(`❌ Error sending lead welcome email to ${data.to}:`, error);
+      // Don't throw - email failure shouldn't break lead creation
+    }
+  }
+
+  /**
+   * Send welcome email to a new customer
+   */
+  async sendCustomerWelcomeEmail(data: {
+    to: string;
+    firstName: string;
+    lastName: string;
+    companyName: string;
+    tenantId: number;
+    customerId?: number;
+  }) {
+    try {
+      const fullName = `${data.firstName} ${data.lastName}`.trim();
+      const subject = `Welcome to ${data.companyName} - You're Now a Valued Customer!`;
+      
+      const htmlBody = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <div style="background-color: #4CAF50; color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+            <h2 style="color: white; margin-top: 0;">Welcome to ${data.companyName}!</h2>
+          </div>
+          
+          <p>Hello ${data.firstName},</p>
+          
+          <p>We're thrilled to welcome you as a valued customer of ${data.companyName}!</p>
+          
+          <p>Your account has been set up and you're now part of our customer family. We're committed to providing you with exceptional service and support.</p>
+          
+          <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
+            <p style="margin: 0;"><strong>What You Can Expect:</strong></p>
+            <ul style="margin: 10px 0; padding-left: 20px;">
+              <li>Dedicated support from our team</li>
+              <li>Regular updates on your account</li>
+              <li>Access to exclusive customer benefits</li>
+              <li>Priority assistance when you need it</li>
+            </ul>
+          </div>
+          
+          <p>If you have any questions or need assistance, please don't hesitate to reach out to us. We're here to help!</p>
+          
+          <p>Thank you for choosing ${data.companyName}. We look forward to a long and successful partnership!</p>
+          
+          <p>Best regards,<br>
+          <strong>The ${data.companyName} Team</strong></p>
+          
+          <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+          <p style="color: #999; font-size: 12px;">
+            This is an automated message from ${data.companyName}. 
+            If you have any questions, please contact us directly.
+          </p>
+        </div>
+      `;
+
+      const textBody = `
+Welcome to ${data.companyName}!
+
+Hello ${data.firstName},
+
+We're thrilled to welcome you as a valued customer of ${data.companyName}!
+
+Your account has been set up and you're now part of our customer family. We're committed to providing you with exceptional service and support.
+
+What You Can Expect:
+- Dedicated support from our team
+- Regular updates on your account
+- Access to exclusive customer benefits
+- Priority assistance when you need it
+
+If you have any questions or need assistance, please don't hesitate to reach out to us. We're here to help!
+
+Thank you for choosing ${data.companyName}. We look forward to a long and successful partnership!
+
+Best regards,
+The ${data.companyName} Team
+
+---
+This is an automated message from ${data.companyName}. If you have any questions, please contact us directly.
+      `;
+
+      await this.sendCustomerEmail({
+        to: data.to,
+        subject: subject,
+        body: textBody,
+        htmlBody: htmlBody,
+        tenantId: data.tenantId,
+      });
+
+      console.log(`✅ Customer welcome email sent to ${data.to}`);
+    } catch (error: any) {
+      console.error(`❌ Error sending customer welcome email to ${data.to}:`, error);
+      // Don't throw - email failure shouldn't break customer creation
+    }
+  }
+
+  /**
+   * Send conversion email when lead becomes a customer
+   */
+  async sendLeadConversionEmail(data: {
+    to: string;
+    firstName: string;
+    lastName: string;
+    companyName: string;
+    tenantId: number;
+    leadId?: number;
+    customerId?: number;
+  }) {
+    try {
+      const fullName = `${data.firstName} ${data.lastName}`.trim();
+      const subject = `Congratulations! You're Now a Customer of ${data.companyName}`;
+      
+      const htmlBody = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <div style="background-color: #2196F3; color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+            <h2 style="color: white; margin-top: 0;">Congratulations, ${data.firstName}!</h2>
+          </div>
+          
+          <p>Hello ${data.firstName},</p>
+          
+          <p>We're excited to inform you that your inquiry has been successfully converted, and you're now officially a customer of ${data.companyName}!</p>
+          
+          <p>This is an important milestone, and we're honored that you've chosen to work with us. Our team is committed to ensuring you receive the best possible service and support.</p>
+          
+          <div style="background-color: #e3f2fd; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #2196F3;">
+            <p style="margin: 0;"><strong>What This Means for You:</strong></p>
+            <ul style="margin: 10px 0; padding-left: 20px;">
+              <li>You now have full customer status with ${data.companyName}</li>
+              <li>Access to dedicated customer support</li>
+              <li>Priority handling of your requests</li>
+              <li>Exclusive customer benefits and updates</li>
+            </ul>
+          </div>
+          
+          <p>Our team will be in touch with you soon to discuss next steps and ensure everything is set up perfectly for you.</p>
+          
+          <p>Thank you for your trust in ${data.companyName}. We're looking forward to a successful partnership!</p>
+          
+          <p>Best regards,<br>
+          <strong>The ${data.companyName} Team</strong></p>
+          
+          <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+          <p style="color: #999; font-size: 12px;">
+            This is an automated message from ${data.companyName}. 
+            If you have any questions, please contact us directly.
+          </p>
+        </div>
+      `;
+
+      const textBody = `
+Congratulations, ${data.firstName}!
+
+Hello ${data.firstName},
+
+We're excited to inform you that your inquiry has been successfully converted, and you're now officially a customer of ${data.companyName}!
+
+This is an important milestone, and we're honored that you've chosen to work with us. Our team is committed to ensuring you receive the best possible service and support.
+
+What This Means for You:
+- You now have full customer status with ${data.companyName}
+- Access to dedicated customer support
+- Priority handling of your requests
+- Exclusive customer benefits and updates
+
+Our team will be in touch with you soon to discuss next steps and ensure everything is set up perfectly for you.
+
+Thank you for your trust in ${data.companyName}. We're looking forward to a successful partnership!
+
+Best regards,
+The ${data.companyName} Team
+
+---
+This is an automated message from ${data.companyName}. If you have any questions, please contact us directly.
+      `;
+
+      await this.sendCustomerEmail({
+        to: data.to,
+        subject: subject,
+        body: textBody,
+        htmlBody: htmlBody,
+        tenantId: data.tenantId,
+      });
+
+      console.log(`✅ Lead conversion email sent to ${data.to}`);
+    } catch (error: any) {
+      console.error(`❌ Error sending lead conversion email to ${data.to}:`, error);
+      // Don't throw - email failure shouldn't break conversion
+    }
+  }
 }
 
 export const tenantEmailService = new TenantEmailService();
