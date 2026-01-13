@@ -1024,7 +1024,18 @@ export default function ExpenseCreate() {
 
   // Recalculate all items when tax inclusive setting changes
   useEffect(() => {
+    // Guard: Don't run if expense items are empty or if we're in edit mode and data is still loading
+    if (expenseItems.length === 0) {
+      return;
+    }
+    
+    // Guard: Don't run if we're in edit mode and expense data hasn't been loaded yet
+    if (isEditMode && !expenseDataLoadedRef.current) {
+      return;
+    }
+    
     const recalculatedItems = expenseItems.map((item) => {
+      // Only recalculate if item has amount and tax rate
       if (item.amount && item.taxRateId) {
         const quantity = parseFloat(item.quantity || "1");
         const unitAmount = parseFloat(item.amount || "0");
@@ -1032,26 +1043,33 @@ export default function ExpenseCreate() {
         let taxAmount = 0;
         let totalAmount = amount;
         
-        const selectedRate = gstRates.find(
-          (rate: any) => rate.id?.toString() === item.taxRateId
-        );
-        if (selectedRate) {
-          // Use ratePercentage (or rate_percentage) field from the API response
-          const ratePercentage = parseFloat(
-            selectedRate.ratePercentage?.toString() || 
-            selectedRate.rate_percentage?.toString() || 
-            selectedRate.rate?.toString() || 
-            "0"
+        // Only calculate tax if gstRates are available
+        if (gstRates && gstRates.length > 0) {
+          const selectedRate = gstRates.find(
+            (rate: any) => rate.id?.toString() === item.taxRateId
           );
-          
-          if (isTaxInclusive) {
-            const subtotal = amount / (1 + ratePercentage / 100);
-            taxAmount = amount - subtotal;
-            totalAmount = amount;
-          } else {
-            taxAmount = (amount * ratePercentage) / 100;
-            totalAmount = amount + taxAmount;
+          if (selectedRate) {
+            // Use ratePercentage (or rate_percentage) field from the API response
+            const ratePercentage = parseFloat(
+              selectedRate.ratePercentage?.toString() || 
+              selectedRate.rate_percentage?.toString() || 
+              selectedRate.rate?.toString() || 
+              "0"
+            );
+            
+            if (isTaxInclusive) {
+              const subtotal = amount / (1 + ratePercentage / 100);
+              taxAmount = amount - subtotal;
+              totalAmount = amount;
+            } else {
+              taxAmount = (amount * ratePercentage) / 100;
+              totalAmount = amount + taxAmount;
+            }
           }
+        } else {
+          // If no tax rates available, just calculate total without tax
+          totalAmount = amount;
+          taxAmount = 0;
         }
         
         return {
@@ -1060,10 +1078,20 @@ export default function ExpenseCreate() {
           totalAmount: totalAmount,
         };
       }
+      // If item doesn't have amount or tax rate, return as-is
       return item;
     });
-    // setExpenseItems(recalculatedItems);
-  }, [isTaxInclusive, gstRates]);
+    
+    // Only update if there are actual changes to prevent infinite loops
+    const hasChanges = recalculatedItems.some((item, index) => {
+      const original = expenseItems[index];
+      return item.taxAmount !== original.taxAmount || item.totalAmount !== original.totalAmount;
+    });
+    
+    if (hasChanges) {
+      setExpenseItems(recalculatedItems);
+    }
+  }, [isTaxInclusive, gstRates, isEditMode]);
 
   // Get vendor options
   const getVendorOptions = (): AutocompleteOption[] => {
@@ -1472,7 +1500,6 @@ export default function ExpenseCreate() {
                   </div>
 
                   {/* Table Body */}
-                  {console.log(expenseItems,'shashi log')}
                   {expenseItems.map((item, index) => (
                     <div
                       key={index}
