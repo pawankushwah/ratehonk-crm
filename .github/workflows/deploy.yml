@@ -23,9 +23,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          # Cache npm dependencies - will automatically find package-lock.json if it exists
-          # If package-lock.json doesn't exist, caching will be skipped gracefully
-          cache: 'npm'
+          # Cache disabled - package-lock.json not in repository
+          # To enable caching, run: npm install (generates package-lock.json) then commit it
 
       - name: Install dependencies
         run: |
