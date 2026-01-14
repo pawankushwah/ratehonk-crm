@@ -79,6 +79,7 @@ import { useAuth } from "@/components/auth/auth-provider";
 import { auth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { EnhancedTable, TableColumn } from "@/components/ui/enhanced-table";
+import { Table, TableFooter, TableRow, TableCell } from "@/components/ui/table";
 import type { Invoice } from "@shared/schema";
 import { Link, useLocation } from "wouter";
 import { CreateFollowUpDialog } from "@/components/follow-ups/CreateFollowUpDialog";
@@ -1464,6 +1465,21 @@ export default function Invoices() {
     totalPages: 0,
   };
 
+  // Calculate totals for footer
+  const totals = useMemo(() => {
+    const totalAmountSum = invoices.reduce((sum: number, invoice: any) => {
+      const amount = parseFloat(invoice.totalAmount?.toString() || "0") || 0;
+      return sum + amount;
+    }, 0);
+
+    const paidAmountSum = invoices.reduce((sum: number, invoice: any) => {
+      const amount = parseFloat(invoice.paidAmount?.toString() || "0") || 0;
+      return sum + amount;
+    }, 0);
+
+    return { totalAmountSum, paidAmountSum };
+  }, [invoices]);
+
   // Helper function to get currency symbol
   const getCurrencySymbol = (currencyCode: string): string => {
     const symbols: { [key: string]: string } = {
@@ -2772,6 +2788,58 @@ export default function Invoices() {
                 sortDirection: sortOrder,
                 onSort: handleSort,
               }}
+              footer={
+                invoices.length > 0 ? (
+                  <TableRow className="bg-gray-50 hover:bg-gray-50 border-t-2 border-gray-300">
+                    {/* Invoice # */}
+                    <TableCell></TableCell>
+                    {/* Customer */}
+                    <TableCell></TableCell>
+                    {/* Invoice/Voucher # */}
+                    <TableCell></TableCell>
+                    {/* Issue Date */}
+                    <TableCell></TableCell>
+                    {/* Due Date */}
+                    <TableCell className="font-semibold text-gray-900 text-right pr-4">
+                      <span className="text-lg">Total:</span>
+                    </TableCell>
+                    {/* Total Amount - aligned with column */}
+                    <TableCell className="font-semibold text-gray-900">
+                      {(() => {
+                        // Get currency from first invoice or default to USD
+                        const firstInvoice = invoices[0] as any;
+                        const currency = firstInvoice?.currency || "USD";
+                        const currencySymbol = getCurrencySymbol(currency);
+                        return (
+                          <div className="flex items-center font-semibold text-lg">
+                            <span className="mr-1">{currencySymbol}</span>
+                            <span>{totals.totalAmountSum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          </div>
+                        );
+                      })()}
+                    </TableCell>
+                    {/* Amount Paid - aligned with column */}
+                    <TableCell className="font-semibold text-gray-900">
+                      {(() => {
+                        // Get currency from first invoice or default to USD
+                        const firstInvoice = invoices[0] as any;
+                        const currency = firstInvoice?.currency || "USD";
+                        const currencySymbol = getCurrencySymbol(currency);
+                        return (
+                          <div className="flex items-center font-semibold text-lg">
+                            <span className="mr-1">{currencySymbol}</span>
+                            <span>{totals.paidAmountSum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          </div>
+                        );
+                      })()}
+                    </TableCell>
+                    {/* Status */}
+                    <TableCell></TableCell>
+                    {/* Actions */}
+                    <TableCell></TableCell>
+                  </TableRow>
+                ) : null
+              }
             />
             {/* Backend Pagination Controls */}
             <div className="flex items-center justify-between mt-4 pt-4 border-t">

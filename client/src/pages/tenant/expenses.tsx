@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from "@/components/ui/table";
 import { EnhancedTable, TableColumn } from "@/components/ui/enhanced-table";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
@@ -686,6 +686,32 @@ export default function Expenses() {
   
   // No client-side slicing needed - server returns current page data
 
+  // Calculate totals for footer
+  const totals = useMemo(() => {
+    const amountSum = expenses.reduce((sum: number, expense: any) => {
+      const amount = parseFloat(expense.amount?.toString() || "0") || 0;
+      return sum + amount;
+    }, 0);
+    
+    // Sum of line items' paid amounts where status is "paid"
+    const paidLineItemsSum = expenses.reduce((sum: number, expense: any) => {
+      if (expense.lineItems && Array.isArray(expense.lineItems)) {
+        const paidLineItems = expense.lineItems.filter((item: any) => {
+          const status = (item.paymentStatus || item.payment_status || '').toLowerCase();
+          return status === 'paid';
+        });
+        const paidAmount = paidLineItems.reduce((lineSum: number, item: any) => {
+          const paidAmount = parseFloat(item.amountPaid?.toString() || item.amount_paid?.toString() || "0") || 0;
+          return lineSum + paidAmount;
+        }, 0);
+        return sum + paidAmount;
+      }
+      return sum;
+    }, 0);
+    
+    return { amountSum, paidLineItemsSum };
+  }, [expenses]);
+
   // Calculate stats
   const totalAmount = expenses.reduce((sum, exp) => sum + parseFloat(exp.amount), 0);
   const reimbursableAmount = expenses
@@ -872,6 +898,48 @@ export default function Expenses() {
     },
   });
 
+  // Update line item category mutation
+  const updateLineItemCategoryMutation = useMutation({
+    mutationFn: async ({ lineItemId, category }: { lineItemId: number; category: string }) => {
+      const token = auth.getToken();
+      const response = await fetch(`/api/expenses/line-items/${lineItemId}/category`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ category }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `Failed to update line item category: ${response.status} - ${errorText}`,
+        );
+      }
+
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Category Updated",
+        description: "Line item category has been updated successfully.",
+      });
+
+      queryClient.invalidateQueries({
+        queryKey: ["/api/expenses"],
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Category Update Failed",
+        description:
+          error.message || "Failed to update line item category. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
   // Helper functions
   const resetForm = () => {
     setFormData({
@@ -1003,6 +1071,29 @@ export default function Expenses() {
       ),
     },
     {
+      key: "paidAmount",
+      label: "Paid Amount",
+      sortable: false,
+      render: (_, expense) => {
+        if (!expense.lineItems || !Array.isArray(expense.lineItems)) {
+          return <span className="text-sm text-muted-foreground">-</span>;
+        }
+        const paidLineItems = expense.lineItems.filter((item: any) => {
+          const status = (item.paymentStatus || item.payment_status || '').toLowerCase();
+          return status === 'paid';
+        });
+        const paidSum = paidLineItems.reduce((sum: number, item: any) => {
+          const paidAmount = parseFloat(item.amountPaid?.toString() || item.amount_paid?.toString() || "0") || 0;
+          return sum + paidAmount;
+        }, 0);
+        return (
+          <div className="font-medium text-green-600">
+            {formatCurrency(paidSum.toString(), expense.currency)}
+          </div>
+        );
+      },
+    },
+    {
       key: "status",
       label: "Status",
       sortable: true,
@@ -1057,19 +1148,47 @@ export default function Expenses() {
         return (
           <div className="space-y-1 max-w-md">
             <div className="text-sm font-medium">{lineItems.length} item{lineItems.length !== 1 ? 's' : ''}</div>
-            <div className="text-xs text-muted-foreground space-y-1">
+            <div className="text-xs text-muted-foreground space-y-1.5">
               {lineItems.map((item: any, idx: number) => (
-                <div key={item.id || idx} className="flex items-center gap-2">
-                  <span className="font-medium">{item.title || 'Untitled'}</span>
-                  <span className="text-muted-foreground">-</span>
-                  <span>{formatCurrency(item.totalAmount || item.amount || 0, expense.currency)}</span>
-                  {item.category && (
-                    <>
-                      <span className="text-muted-foreground">•</span>
-                      <Badge variant="outline" className="text-xs">
-                        {getCategoryConfig(item.category).icon} {getCategoryConfig(item.category).label}
-                      </Badge>
-                    </>
+                <div key={item.id || idx} className="flex items-center gap-2 w-full">
+                  <span className="font-medium flex-shrink-0">{item.title || 'Untitled'}</span>
+                  <span className="text-muted-foreground flex-shrink-0">-</span>
+                  <span className="flex-shrink-0">{formatCurrency(item.totalAmount || item.amount || 0, expense.currency)}</span>
+                  <span className="text-muted-foreground flex-shrink-0">•</span>
+                  {item.id ? (
+                    <Select
+                      value={item.category || "other"}
+                      onValueChange={(value) => {
+                        updateLineItemCategoryMutation.mutate({
+                          lineItemId: item.id,
+                          category: value,
+                        });
+                      }}
+                      disabled={updateLineItemCategoryMutation.isPending}
+                    >
+                      <SelectTrigger className="h-6 px-2 py-0 text-xs border border-gray-300 rounded-md hover:bg-gray-50 focus:ring-1 focus:ring-blue-500 flex-shrink-0 w-auto max-w-[100px]">
+                        <SelectValue>
+                          <span className="flex items-center gap-1">
+                            <span>{getCategoryConfig(item.category || "other").icon}</span>
+                            <span className="text-xs truncate">{getCategoryConfig(item.category || "other").label}</span>
+                          </span>
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {EXPENSE_CATEGORIES.map((category) => (
+                          <SelectItem key={category.value} value={category.value}>
+                            <span className="flex items-center gap-2">
+                              <span>{category.icon}</span>
+                              {category.label}
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Badge variant="outline" className="text-xs flex-shrink-0">
+                      {getCategoryConfig(item.category || "other").icon} {getCategoryConfig(item.category || "other").label}
+                    </Badge>
                   )}
                 </div>
               ))}
@@ -1400,6 +1519,50 @@ export default function Expenses() {
                 sortDirection: sortDirection,
                 onSort: handleSort,
               }}
+              footer={
+                expenses.length > 0 ? (
+                  <TableRow className="bg-gray-50 hover:bg-gray-50 border-t-2 border-gray-300">
+                    {/* Expense Details - Total label */}
+                    <TableCell className="font-semibold text-gray-900 text-right pr-4">
+                      <span className="text-lg">Total:</span>
+                    </TableCell>
+                    {/* Amount - Total amount aligned with Amount column */}
+                    <TableCell className="font-semibold text-gray-900">
+                      {(() => {
+                        // Get currency from first expense or default to USD
+                        const firstExpense = expenses[0] as any;
+                        const currency = firstExpense?.currency || "USD";
+                        return (
+                          <div className="flex items-center font-semibold text-lg">
+                            {formatCurrency(totals.amountSum.toString(), currency)}
+                          </div>
+                        );
+                      })()}
+                    </TableCell>
+                    {/* Paid Amount - Sum of paid line items aligned with Paid Amount column */}
+                    <TableCell className="font-semibold text-gray-900">
+                      {(() => {
+                        // Get currency from first expense or default to USD
+                        const firstExpense = expenses[0] as any;
+                        const currency = firstExpense?.currency || "USD";
+                        return (
+                          <div className="flex items-center font-semibold text-lg text-green-600">
+                            {formatCurrency(totals.paidLineItemsSum.toString(), currency)}
+                          </div>
+                        );
+                      })()}
+                    </TableCell>
+                    {/* Status */}
+                    <TableCell></TableCell>
+                    {/* Date */}
+                    <TableCell></TableCell>
+                    {/* Line Items */}
+                    <TableCell></TableCell>
+                    {/* Actions */}
+                    <TableCell></TableCell>
+                  </TableRow>
+                ) : null
+              }
             />
             {/* Backend Pagination Controls */}
             <div className="flex items-center justify-between mt-4 pt-4 border-t">

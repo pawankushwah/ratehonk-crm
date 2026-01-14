@@ -6,9 +6,9 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { DateFilter } from "@/components/ui/date-filter";
 
 import { safeParseNumber } from "@/lib/utils";
-import { useExpenses } from "@/hooks/useDashboardData";
 import { useAuth } from "../auth/auth-provider";
 import { useQuery } from "@tanstack/react-query";
+import { buildFilterParamsFromDateFilter } from "@/hooks/useDashboardData";
 
 // Helper function to get currency symbol
 const getCurrencySymbol = (currencyCode: string): string => {
@@ -36,13 +36,41 @@ export function ExpensePieChart() {
   const [customDateFrom, setCustomDateFrom] = useState<Date | null>(null);
   const [customDateTo, setCustomDateTo] = useState<Date | null>(null);
 
-  const { data: expensesData = [], isLoading } = useExpenses(
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
+
+  // Build date filter params
+  const dateParams = buildFilterParamsFromDateFilter(
     dateFilter,
     customDateFrom,
     customDateTo
   );
 
-  const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  // Fetch expenses by category from backend API
+  const { data: categoryData = [], isLoading } = useQuery({
+    queryKey: ["/api/dashboard/expenses-by-category", tenant?.id, dateParams],
+    queryFn: async () => {
+      if (!tenant?.id) return [];
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const searchParams = new URLSearchParams();
+      if (dateParams.startDate) {
+        searchParams.append("startDate", dateParams.startDate);
+      }
+      if (dateParams.endDate) {
+        searchParams.append("endDate", dateParams.endDate);
+      }
+      
+      const url = `/api/dashboard/expenses-by-category${searchParams.toString() ? `?${searchParams.toString()}` : ""}`;
+      const response = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      });
+      if (!response.ok) return [];
+      return await response.json();
+    },
+    enabled: !!tenant?.id,
+  });
 
   // Fetch invoice settings to get currency
   const { data: invoiceSettings } = useQuery({
@@ -68,30 +96,9 @@ export function ExpensePieChart() {
   const currentCurrency = invoiceSettings?.defaultCurrency || "USD";
   const currencySymbol = getCurrencySymbol(currentCurrency);
 
-  const approvedExpenses = expensesData.filter(
-    (exp: any) => exp.status?.toLowerCase() === "approved"
-  );
-
-  const expenseAmountByCategory = approvedExpenses.reduce(
-    (acc: any, exp: any) => {
-      const cat = exp.category || "Other";
-      const amt = safeParseNumber(exp?.amount);
-
-      if (!acc[cat]) acc[cat] = 0;
-      acc[cat] += amt;
-      return acc;
-    },
-    {}
-  );
-
-  const categoryArray = Object.entries(expenseAmountByCategory).map(
-    ([category, amount]: any) => ({
-      category,
-      amount,
-    })
-  );
-
-  const totalAmount = categoryArray.reduce((sum, x) => sum + x.amount, 0);
+  // categoryData is already in the format: [{ category: string, amount: number }]
+  const categoryArray = categoryData || [];
+  const totalAmount = categoryArray.reduce((sum: number, x: any) => sum + (x.amount || 0), 0);
 
   const pieData = categoryArray.map((item, i) => ({
     name: item.category,

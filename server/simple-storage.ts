@@ -7358,11 +7358,16 @@ async getAllLeadsByTenant(
 
       // Get old invoice data before update for activity logging
       const oldInvoiceData = await sql`
-        SELECT status, total_amount, currency, invoice_prefix, invoice_number, customer_id, tenant_id
+        SELECT status, total_amount, paid_amount, currency, invoice_prefix, invoice_number, customer_id, tenant_id
         FROM invoices 
         WHERE id = ${invoiceId}
       `;
       const oldInvoice = oldInvoiceData[0];
+      const oldStatus = oldInvoice?.status;
+      const newStatus = invoiceData.status;
+      
+      // Check if status is being changed to "paid" - if so, we'll auto-set paidAmount = totalAmount
+      const isStatusChangingToPaid = newStatus === "paid" && oldStatus !== "paid";
 
       // Store full line items as JSON for complete data preservation
       const lineItemsJson = invoiceData.lineItems || invoiceData.items ? JSON.stringify(invoiceData.lineItems || invoiceData.items || []) : null;
@@ -7408,7 +7413,23 @@ async getAllLeadsByTenant(
         taxAmount: invoiceData.taxAmount !== undefined ? parseFloat(invoiceData.taxAmount?.toString() || "0") : null,
         discountAmount: invoiceData.discountAmount !== undefined ? parseFloat(invoiceData.discountAmount?.toString() || "0") : null,
         totalAmount: invoiceData.totalAmount !== undefined ? parseFloat(invoiceData.totalAmount?.toString() || "0") : null,
-        paidAmount: invoiceData.paidAmount !== undefined ? parseFloat(invoiceData.paidAmount?.toString() || "0") : null,
+        paidAmount: (() => {
+          // If status is being changed to "paid", automatically set paidAmount = totalAmount
+          if (isStatusChangingToPaid) {
+            // Get current totalAmount (from update data or existing invoice)
+            const currentTotalAmount = invoiceData.totalAmount !== undefined 
+              ? parseFloat(invoiceData.totalAmount?.toString() || "0")
+              : (oldInvoice?.total_amount ? parseFloat(oldInvoice.total_amount.toString()) : 0);
+            console.log(`💰 Invoice ${invoiceId} status changed to "paid" - auto-setting paidAmount to ${currentTotalAmount}`);
+            return currentTotalAmount;
+          }
+          // If paidAmount is explicitly provided in update, use it
+          if (invoiceData.paidAmount !== undefined) {
+            return parseFloat(invoiceData.paidAmount?.toString() || "0");
+          }
+          // Otherwise, keep existing paidAmount (don't change it)
+          return null;
+        })(),
         currency: invoiceData.currency || null,
         paymentMethod: invoiceData.paymentMethod ? (Array.isArray(invoiceData.paymentMethod) ? JSON.stringify(invoiceData.paymentMethod) : invoiceData.paymentMethod) : null,
         paymentTerms: invoiceData.paymentTerms || null,
@@ -7940,11 +7961,11 @@ async getAllLeadsByTenant(
       }
 
       // Handle cancellation charges - create expense line item when invoice is cancelled with charges
-      const oldStatus = oldInvoice?.status;
-      const newStatus = updatedInvoice.status;
+      // Use the updated invoice status (oldStatus and newStatus were already declared earlier)
+      const finalNewStatus = updatedInvoice.status;
       
       // Check if status changed to cancelled and cancellation charges were applied
-      const statusChangedToCancelled = oldStatus !== "cancelled" && newStatus === "cancelled";
+      const statusChangedToCancelled = oldStatus !== "cancelled" && finalNewStatus === "cancelled";
       const hasCancellationCharges = updatedInvoice.has_cancellation_charge && updatedInvoice.cancellation_charge_amount;
       
       if (statusChangedToCancelled && hasCancellationCharges) {
@@ -14801,14 +14822,15 @@ async getDashboardMetrics(
           `,
             sql`
             SELECT 
-              TO_CHAR(DATE_TRUNC('day', invoices.created_at), 'YYYY-MM-DD') as month,
-              COALESCE(SUM(invoices.total_amount::numeric), 0) as revenue
+              TO_CHAR(DATE_TRUNC('day', invoices.issue_date), 'YYYY-MM-DD') as month,
+              COALESCE(SUM(invoices.paid_amount::numeric), 0) as revenue
             FROM invoices 
             WHERE invoices.tenant_id = ${tenantId} 
-              AND invoices.created_at >= ${startDate}
-              AND invoices.created_at <= ${endDate}
-            GROUP BY DATE_TRUNC('day', invoices.created_at)
-            ORDER BY DATE_TRUNC('day', invoices.created_at)
+              AND invoices.status IN ('paid', 'partial')
+              AND invoices.issue_date >= ${startDate}::date
+              AND invoices.issue_date <= ${endDate}::date
+            GROUP BY DATE_TRUNC('day', invoices.issue_date)
+            ORDER BY DATE_TRUNC('day', invoices.issue_date)
           `,
             sql`
             SELECT 
@@ -14823,14 +14845,17 @@ async getDashboardMetrics(
           `,
             sql`
             SELECT 
-              TO_CHAR(DATE_TRUNC('day', expenses.created_at), 'YYYY-MM-DD') as month,
-              COALESCE(SUM(expenses.amount::numeric), 0) as expense
-            FROM expenses 
-            WHERE expenses.tenant_id = ${tenantId}
-              AND expenses.created_at >= ${startDate}
-              AND expenses.created_at <= ${endDate}
-            GROUP BY DATE_TRUNC('day', expenses.created_at)
-            ORDER BY DATE_TRUNC('day', expenses.created_at)
+              TO_CHAR(DATE_TRUNC('day', e.expense_date), 'YYYY-MM-DD') as month,
+              COALESCE(SUM(eli.amount_paid::numeric), 0) as expense
+            FROM expenses e
+            INNER JOIN expense_line_items eli ON e.id = eli.expense_id
+            WHERE e.tenant_id = ${tenantId}
+              AND e.status IN ('approved', 'paid')
+              AND eli.payment_status = 'paid'
+              AND e.expense_date >= ${startDate}::date
+              AND e.expense_date <= ${endDate}::date
+            GROUP BY DATE_TRUNC('day', e.expense_date)
+            ORDER BY DATE_TRUNC('day', e.expense_date)
           `,
           ]);
 
@@ -14925,14 +14950,15 @@ async getDashboardMetrics(
           `,
             sql`
             SELECT 
-              TO_CHAR(DATE_TRUNC('month', invoices.created_at), 'YYYY-MM') as month,
-              COALESCE(SUM(invoices.total_amount::numeric), 0) as revenue
+              TO_CHAR(DATE_TRUNC('month', invoices.issue_date), 'YYYY-MM') as month,
+              COALESCE(SUM(invoices.paid_amount::numeric), 0) as revenue
             FROM invoices 
             WHERE invoices.tenant_id = ${tenantId}
-              AND invoices.created_at >= ${startDate}
-              AND invoices.created_at <= ${endDate}
-            GROUP BY DATE_TRUNC('month', invoices.created_at)
-            ORDER BY DATE_TRUNC('month', invoices.created_at)
+              AND invoices.status IN ('paid', 'partial')
+              AND invoices.issue_date >= ${startDate}::date
+              AND invoices.issue_date <= ${endDate}::date
+            GROUP BY DATE_TRUNC('month', invoices.issue_date)
+            ORDER BY DATE_TRUNC('month', invoices.issue_date)
           `,
             sql`
             SELECT 
@@ -14947,14 +14973,17 @@ async getDashboardMetrics(
           `,
             sql`
             SELECT 
-              TO_CHAR(DATE_TRUNC('month', expenses.created_at), 'YYYY-MM') as month,
-              COALESCE(SUM(expenses.amount::numeric), 0) as expense
-            FROM expenses 
-            WHERE expenses.tenant_id = ${tenantId}
-              AND expenses.created_at >= ${startDate}
-              AND expenses.created_at <= ${endDate}
-            GROUP BY DATE_TRUNC('month', expenses.created_at)
-            ORDER BY DATE_TRUNC('month', expenses.created_at)
+              TO_CHAR(DATE_TRUNC('month', e.expense_date), 'YYYY-MM') as month,
+              COALESCE(SUM(eli.amount_paid::numeric), 0) as expense
+            FROM expenses e
+            INNER JOIN expense_line_items eli ON e.id = eli.expense_id
+            WHERE e.tenant_id = ${tenantId}
+              AND e.status IN ('approved', 'paid')
+              AND eli.payment_status = 'paid'
+              AND e.expense_date >= ${startDate}::date
+              AND e.expense_date <= ${endDate}::date
+            GROUP BY DATE_TRUNC('month', e.expense_date)
+            ORDER BY DATE_TRUNC('month', e.expense_date)
           `,
           ]);
 
@@ -15294,18 +15323,21 @@ async getDashboardMetrics(
         `📊 STORAGE: Executing simplified query for tenant ${tenantId}`,
       );
 
+      // Use invoices instead of bookings for revenue calculation
+      // Only count invoices with status "paid" or "partial" and sum paidAmount
       const revenueByLeadType = await sql`
         SELECT 
           lt.name as name,
-          COALESCE(SUM(b.total_amount), 0) as revenue,
-          COUNT(b.id) as bookings,
-          COALESCE(ROUND(AVG(b.total_amount), 2), 0) as avg_booking_value
+          COALESCE(SUM(i.paid_amount), 0) as revenue,
+          COUNT(i.id) as bookings,
+          COALESCE(ROUND(AVG(i.paid_amount), 2), 0) as avg_booking_value
         FROM lead_types lt
         LEFT JOIN leads l ON lt.id = l.lead_type_id AND l.tenant_id = ${tenantId}
-        LEFT JOIN bookings b ON l.id = b.lead_id AND b.tenant_id = ${tenantId}
+        LEFT JOIN invoices i ON l.id = i.lead_id AND i.tenant_id = ${tenantId}
+          AND i.status IN ('paid', 'partial')
         WHERE lt.tenant_id = ${tenantId}
         GROUP BY lt.id, lt.name
-        ORDER BY SUM(b.total_amount) DESC NULLS LAST
+        ORDER BY SUM(i.paid_amount) DESC NULLS LAST
       `;
 
       console.log(
@@ -15352,6 +15384,10 @@ async getDashboardMetrics(
         `📊 STORAGE: Executing simplified vendor query for tenant ${tenantId}`,
       );
 
+      // Note: Bookings represent service bookings, not invoices
+      // For revenue calculation consistency, we should ideally use invoices with paidAmount
+      // However, bookings don't have payment status, so we keep the original structure
+      // The frontend charts (ServiceProviderChart, ConsolidatedVendorBookingChart) use invoices directly
       const bookingsByVendor = await sql`
         SELECT 
           v.name as vendor_name,

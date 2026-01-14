@@ -143,7 +143,7 @@ export default function TenantDashboard() {
   const [isCustomizationOpen, setIsCustomizationOpen] = useState(false);
   const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(false);
   const [isSupportPanelOpen, setIsSupportPanelOpen] = useState(false);
-  const getQueryParams = () => {
+  const queryParams = useMemo(() => {
     const params: any = {};
     if (dateFilter.period && dateFilter.period !== "custom") {
       params.period = dateFilter.period;
@@ -152,15 +152,14 @@ export default function TenantDashboard() {
       params.endDate = format(dateFilter.endDate, "yyyy-MM-dd");
     }
     return params;
-  };
-  const queryParams = getQueryParams();
+  }, [dateFilter.period, dateFilter.startDate, dateFilter.endDate]);
+  
   const { data: dashboardData, isLoading } = useQuery<DashboardData>({
     queryKey: [`/api/reports/dashboard`, queryParams],
     enabled: !!tenant?.id,
     refetchInterval: 30000,
   });
-  console.log("🚀 ~ TenantDashboard ~ dashboardData:", dashboardData)
-  const getGraphQueryParams = () => {
+  const graphQueryParams = useMemo(() => {
     const params: any = {};
     if (graphFilter.period && graphFilter.period !== "custom") {
       params.period = graphFilter.period;
@@ -169,7 +168,7 @@ export default function TenantDashboard() {
       params.endDate = format(graphFilter.endDate, "yyyy-MM-dd");
     }
     return params;
-  };
+  }, [graphFilter.period, graphFilter.startDate, graphFilter.endDate]);
 
   const buildFilterParamsFromDateFilter = (
     dateFilter: string,
@@ -186,27 +185,41 @@ export default function TenantDashboard() {
     }
     return {};
   };
-  const businessMetricsQueryParams = buildFilterParamsFromDateFilter(
-    businessMetricsDateFilter,
-    businessMetricsCustomFrom,
-    businessMetricsCustomTo
+
+  const businessMetricsQueryParams = useMemo(() => 
+    buildFilterParamsFromDateFilter(
+      businessMetricsDateFilter,
+      businessMetricsCustomFrom,
+      businessMetricsCustomTo
+    ),
+    [businessMetricsDateFilter, businessMetricsCustomFrom, businessMetricsCustomTo]
   );
 
-  const revenueByLeadTypeQueryParams = buildFilterParamsFromDateFilter(
-    revenueLeadTypeDateFilter,
-    revenueLeadTypeCustomFrom,
-    revenueLeadTypeCustomTo
+  const revenueByLeadTypeQueryParams = useMemo(() =>
+    buildFilterParamsFromDateFilter(
+      revenueLeadTypeDateFilter,
+      revenueLeadTypeCustomFrom,
+      revenueLeadTypeCustomTo
+    ),
+    [revenueLeadTypeDateFilter, revenueLeadTypeCustomFrom, revenueLeadTypeCustomTo]
   );
-  const bookingsByVendorQueryParams = buildFilterParamsFromDateFilter(
-    bookingsVendorDateFilter,
-    bookingsVendorCustomFrom,
-    bookingsVendorCustomTo
+  
+  const bookingsByVendorQueryParams = useMemo(() =>
+    buildFilterParamsFromDateFilter(
+      bookingsVendorDateFilter,
+      bookingsVendorCustomFrom,
+      bookingsVendorCustomTo
+    ),
+    [bookingsVendorDateFilter, bookingsVendorCustomFrom, bookingsVendorCustomTo]
   );
 
-  const emailCampaignsQueryParams = buildFilterParamsFromDateFilter(
-    emailCampaignsDateFilter,
-    emailCampaignsCustomFrom,
-    emailCampaignsCustomTo
+  const emailCampaignsQueryParams = useMemo(() =>
+    buildFilterParamsFromDateFilter(
+      emailCampaignsDateFilter,
+      emailCampaignsCustomFrom,
+      emailCampaignsCustomTo
+    ),
+    [emailCampaignsDateFilter, emailCampaignsCustomFrom, emailCampaignsCustomTo]
   );
 
 
@@ -381,7 +394,6 @@ export default function TenantDashboard() {
     customers: 0,
     leads: 0,
   };
-  console.log("🚀 ~ TenantDashboard ~ metrics:", metrics)
   const { data: chartDataResponse, isLoading: chartLoading } = useQuery({
     queryKey: [`/api/dashboard/chart-data`, businessMetricsQueryParams],
     queryFn: async () => {
@@ -502,7 +514,6 @@ export default function TenantDashboard() {
   const bookingsByVendorArray = Array.isArray(bookingsByVendorData)
     ? bookingsByVendorData
     : [];
-  console.log("bookingsByVendorArray :",bookingsByVendorArray)
 
   const followUpsArray = topLeadsArray ?? [];
   const customersArray = topCustomersArray ?? [];

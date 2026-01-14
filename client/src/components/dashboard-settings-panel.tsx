@@ -202,9 +202,10 @@ export function DashboardSettingsPanel({ open, onOpenChange }: DashboardSettings
 
   // Initialize components when preferences are loaded
   useEffect(() => {
-    if (user && tenant) {
+    // Only initialize when we have user, tenant, and preferences are loaded (or failed to load)
+    if (user?.id && tenant?.id && !isLoading) {
       const preferencesMap = new Map(
-        preferences?.map((p: any) => [p.component_key, p]) || []
+        (Array.isArray(preferences) ? preferences : []).map((p: any) => [p.component_key, p])
       );
       
       const initializedComponents = DASHBOARD_COMPONENTS.map((comp) => {
@@ -219,9 +220,21 @@ export function DashboardSettingsPanel({ open, onOpenChange }: DashboardSettings
         };
       });
 
-      setComponents(initializedComponents);
+      // Only update if components actually changed to prevent infinite loops
+      setComponents(prevComponents => {
+        // Check if the new components are different from previous
+        const hasChanged = prevComponents.length !== initializedComponents.length ||
+          prevComponents.some((prev, index) => {
+            const next = initializedComponents[index];
+            return !next || 
+              prev.isVisible !== next.isVisible || 
+              prev.hasPermission !== next.hasPermission;
+          });
+        
+        return hasChanged ? initializedComponents : prevComponents;
+      });
     }
-  }, [preferences, user, tenant, canView]);
+  }, [preferences, user?.id, tenant?.id, isLoading]); // Use user?.id and tenant?.id for stable comparison, removed canView
 
   // Mutation to update user preferences
   const updatePreferenceMutation = useMutation({

@@ -76,7 +76,19 @@ export function ServiceBookingScatter() {
   const bubbleData = useMemo(() => {
     const serviceAmountMap: Record<string, number> = {};
 
-    invoices.forEach((invoice: any) => {
+    // Filter invoices to only include paid or partial paid invoices (same as profit-loss API)
+    const paidInvoices = invoices.filter((inv: any) => {
+      const status = (inv.status || '').toLowerCase();
+      return status === 'paid' || status === 'partial' || status === 'partially_paid';
+    });
+
+    paidInvoices.forEach((invoice: any) => {
+      const totalAmount = parseFloat(invoice.totalAmount || invoice.total_amount || 0);
+      const paidAmount = parseFloat(invoice.paidAmount || invoice.paid_amount || 0);
+      
+      // Calculate the proportion of paid amount to total amount
+      const paidProportion = totalAmount > 0 ? paidAmount / totalAmount : 0;
+
       invoice?.lineItems?.forEach((li: any) => {
         const service =
           li.travelCategory ||
@@ -84,9 +96,11 @@ export function ServiceBookingScatter() {
           li.description ||
           "Other Service";
 
-        // Sum amounts instead of counting
-        const amount = parseFloat(li.totalAmount || li.amount || li.total_amount || 0);
-        serviceAmountMap[service] = (serviceAmountMap[service] || 0) + amount;
+        // Calculate the paid portion of this line item
+        const lineItemAmount = parseFloat(li.totalAmount || li.amount || li.total_amount || 0);
+        const paidLineItemAmount = lineItemAmount * paidProportion;
+        
+        serviceAmountMap[service] = (serviceAmountMap[service] || 0) + paidLineItemAmount;
       });
     });
 

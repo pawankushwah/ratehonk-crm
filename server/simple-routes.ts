@@ -1283,6 +1283,24 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
         invoiceId,
         invoiceDataWithUserId,
       );
+
+      // Get invoice with full details including attachments
+      const fullInvoice = await simpleStorage.getInvoiceById(invoiceData.tenantId, invoiceId);
+      
+      // Automatically send invoice via email/WhatsApp if enabled in settings
+      try {
+        const invoiceAttachments = invoiceData.attachments || fullInvoice?.attachments || [];
+        await sendInvoiceAutomatically(
+          invoiceData.tenantId,
+          invoiceId,
+          invoiceDataWithUserId,
+          invoiceAttachments
+        );
+      } catch (sendError: any) {
+        console.error("⚠️ Failed to automatically send invoice after update (non-fatal):", sendError);
+        // Continue even if sending fails - invoice update was successful
+      }
+
       return res.json({ success: true, invoice: updatedInvoice });
     } catch (error) {
       console.error("Update invoice error:", error);
@@ -5714,6 +5732,23 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
       };
       
       const updatedInvoice = await simpleStorage.updateInvoice(invoiceId, invoiceData);
+
+      // Get invoice with full details including attachments
+      const fullInvoice = await simpleStorage.getInvoiceById(tenantId, invoiceId);
+      
+      // Automatically send invoice via email/WhatsApp if enabled in settings
+      try {
+        const invoiceAttachments = invoiceData.attachments || fullInvoice?.attachments || [];
+        await sendInvoiceAutomatically(
+          tenantId,
+          invoiceId,
+          invoiceData,
+          invoiceAttachments
+        );
+      } catch (sendError: any) {
+        console.error("⚠️ Failed to automatically send invoice after update (non-fatal):", sendError);
+        // Continue even if sending fails - invoice update was successful
+      }
 
       return res.json({
         success: true,
@@ -20720,7 +20755,16 @@ Happy travels! 🌍✈️`,
             <tbody>
               ${data.items.map((item: any) => `
                 <tr>
-                  <td>${item.description}</td>
+                  <td>
+                    <div>${item.description}</div>
+                    ${(item.invoiceNumber || item.voucherNumber) ? `
+                      <div style="font-size: 11px; color: #6b7280; margin-top: 4px;">
+                        ${item.invoiceNumber ? `<span>Invoice: ${item.invoiceNumber}</span>` : ''}
+                        ${item.invoiceNumber && item.voucherNumber ? '<span style="margin: 0 4px;">|</span>' : ''}
+                        ${item.voucherNumber ? `<span>Voucher: ${item.voucherNumber}</span>` : ''}
+                      </div>
+                    ` : ''}
+                  </td>
                   <td class="text-right">${item.quantity}</td>
                   <td class="text-right amount">${data.currency}${item.unitPrice.toFixed(2)}</td>
                   <td class="text-right amount">${data.currency}${item.totalPrice.toFixed(2)}</td>
@@ -20734,12 +20778,6 @@ Happy travels! 🌍✈️`,
               <span>Subtotal:</span>
               <span class="amount">${data.currency}${data.subtotal.toFixed(2)}</span>
             </div>
-            ${data.taxAmount > 0 ? `
-              <div class="total-row">
-                <span>Tax:</span>
-                <span class="amount">${data.currency}${data.taxAmount.toFixed(2)}</span>
-              </div>
-            ` : ''}
             ${data.discountAmount > 0 ? `
               <div class="total-row">
                 <span>Discount:</span>
@@ -20747,10 +20785,38 @@ Happy travels! 🌍✈️`,
               </div>
             ` : ''}
             <div class="total-row">
+              <span>Tax:</span>
+              <span class="amount">${data.currency}${data.taxAmount.toFixed(2)}</span>
+            </div>
+            <div class="total-row">
               <span>Total:</span>
               <span class="amount">${data.currency}${data.totalAmount.toFixed(2)}</span>
             </div>
           </div>
+          
+          ${(data.paymentStatus && data.paymentStatus.toLowerCase() !== 'paid') || (data.paidAmount && data.paidAmount > 0) ? `
+            <div class="payment-info" style="margin-top: 40px; border-top: 1px solid #e5e7eb; padding-top: 30px;">
+              <h3 style="font-size: 16px; font-weight: 600; color: #1f2937; margin-bottom: 15px; text-transform: uppercase; letter-spacing: 0.5px;">Payment Information</h3>
+              <div style="background-color: #f8fafc; padding: 20px; border-radius: 8px;">
+                ${data.paymentStatus ? `
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <span style="color: #374151;">Payment Status:</span>
+                    <span style="font-weight: 600; color: #1f2937; text-transform: capitalize;">${data.paymentStatus}</span>
+                  </div>
+                ` : ''}
+                ${(data.paidAmount && data.paidAmount > 0) ? `
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <span style="color: #374151;">Amount Paid:</span>
+                    <span style="font-weight: 600; color: #1f2937;">${data.currency}${data.paidAmount.toFixed(2)}</span>
+                  </div>
+                ` : ''}
+                <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #e5e7eb; padding-top: 12px; margin-top: 12px;">
+                  <span style="color: #374151; font-weight: 600;">Balance Due:</span>
+                  <span style="font-weight: 700; font-size: 18px; color: #1f2937;">${data.currency}${(data.totalAmount - (data.paidAmount || 0)).toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
+          ` : ''}
           
           ${data.notes ? `
             <div class="footer">
@@ -20826,10 +20892,12 @@ Happy travels! 🌍✈️`,
         companyPhone: tenant?.contact_phone || '',
         companyAddress: tenant?.address || '',
         items: (invoice.lineItems || []).map((item: any) => ({
-          description: item.itemTitle || item.description || 'N/A',
+          description: item.itemTitle || item.description || item.travelCategory || 'N/A',
           quantity: item.quantity || 1,
           unitPrice: parseFloat(item.sellingPrice || item.unitPrice || 0),
           totalPrice: parseFloat(item.totalAmount || 0),
+          invoiceNumber: item.invoiceNumber || undefined,
+          voucherNumber: item.voucherNumber || undefined,
         })),
         subtotal: parseFloat(invoice.subtotal?.toString() || invoice.totalAmount?.toString() || "0"),
         taxAmount: parseFloat(invoice.taxAmount?.toString() || "0"),
@@ -27149,65 +27217,40 @@ ${tenant?.company_name || tenant?.name || 'Company'}`;
         RETURNING *
       `;
 
-      // If status was updated, also update all expense line items' payment_status and amount_paid
+      // Check status change BEFORE processing line items
       const newStatus = expenseHeader.status !== undefined ? expenseHeader.status : existingExpense.status;
       const oldStatus = existingExpense.status;
+      const statusChanged = newStatus !== oldStatus;
+      const isPendingToPaid = oldStatus === "pending" && newStatus === "paid";
       
-      console.log(`🔍 Status change check for expense ${expenseId}: oldStatus=${oldStatus}, newStatus=${newStatus}, statusChanged=${newStatus !== oldStatus}`);
-      
-      if (newStatus !== oldStatus) {
-        // Map expense status to payment_status for line items
-        let paymentStatus = "pending";
-        if (newStatus === "paid") {
-          paymentStatus = "paid";
-        } else if (newStatus === "approved") {
-          paymentStatus = "paid"; // When expense is approved, mark line items as paid
-        } else if (newStatus === "rejected") {
-          paymentStatus = "credit";
-        } else {
-          paymentStatus = "pending";
-        }
-        
-        // If status changed to "paid" or "approved", update amount_paid = amount_due for expense and line items
-        if (newStatus === "paid" || newStatus === "approved") {
-          // Update expense amount_paid to amount_due (using SQL to set amount_paid = amount_due directly)
-          await sql`
-            UPDATE expenses
-            SET amount_paid = amount_due, updated_at = NOW()
-            WHERE id = ${expenseId}
-          `;
-          
-          // Update all expense line items: payment_status = "paid" and amount_paid = amount_due
-          await sql`
-            UPDATE expense_line_items
-            SET 
-              payment_status = ${paymentStatus},
-              amount_paid = amount_due,
-              updated_at = NOW()
-            WHERE expense_id = ${expenseId}
-          `;
-          
-          console.log(`✅ Updated expense ${expenseId} to ${newStatus}: amount_paid = amount_due, and all line items payment_status = paid, amount_paid = amount_due`);
-        } else {
-          // For other status changes, update payment_status for line items
-          await sql`
-            UPDATE expense_line_items
-            SET payment_status = ${paymentStatus}, updated_at = NOW()
-            WHERE expense_id = ${expenseId}
-          `;
-          
-          console.log(`✅ Updated payment_status for all line items of expense ${expenseId} to ${paymentStatus} (expense status: ${newStatus})`);
-        }
-      }
+      console.log(`🔍 Status change check for expense ${expenseId}: oldStatus=${oldStatus}, newStatus=${newStatus}, statusChanged=${statusChanged}, isPendingToPaid=${isPendingToPaid}`);
 
       // Update line items if provided
       if (lineItems.length > 0) {
+        // If status is changing from "pending" to "paid", update line items data before inserting
+        if (isPendingToPaid) {
+          // Update each line item to have payment_status = "paid" and amount_paid = amount_due
+          lineItems = lineItems.map((item: any) => {
+            const amountDue = parseFloat(item.amountDue?.toString() || item.totalAmount?.toString() || item.amount?.toString() || "0");
+            return {
+              ...item,
+              paymentStatus: "paid",
+              amountPaid: amountDue,
+            };
+          });
+          console.log(`📝 Updated ${lineItems.length} line items data for pending->paid transition before insert`);
+        }
+
         // Delete existing line items
         await sql`DELETE FROM expense_line_items WHERE expense_id = ${expenseId}`;
 
         // Insert new line items
         for (let i = 0; i < lineItems.length; i++) {
           const item = lineItems[i];
+          const amountDue = parseFloat(item.amountDue?.toString() || item.totalAmount?.toString() || item.amount?.toString() || "0");
+          const amountPaid = isPendingToPaid ? amountDue : parseFloat(item.amountPaid?.toString() || "0");
+          const paymentStatus = isPendingToPaid ? "paid" : (item.paymentStatus || "pending");
+          
           await sql`
             INSERT INTO expense_line_items (
               expense_id, category, title, description, quantity, amount, tax_rate_id, tax_amount, tax_rate,
@@ -27218,12 +27261,39 @@ ${tenant?.company_name || tenant?.name || 'Company'}`;
               ${item.quantity || 1}, ${parseFloat(item.amount?.toString() || "0")}, ${item.taxRateId || null},
               ${parseFloat(item.taxAmount?.toString() || "0")}, ${parseFloat(item.taxRate?.toString() || "0")},
               ${parseFloat(item.totalAmount?.toString() || item.amount?.toString() || "0")}, ${item.vendorId || null},
-              ${item.leadTypeId || null}, ${item.paymentMethod || "credit_card"}, ${item.paymentStatus || "paid"},
-              ${parseFloat(item.amountPaid?.toString() || "0")}, ${parseFloat(item.amountDue?.toString() || "0")},
+              ${item.leadTypeId || null}, ${item.paymentMethod || "credit_card"}, ${paymentStatus},
+              ${amountPaid}, ${amountDue},
               ${item.receiptUrl || null}, ${item.notes || null}, ${i}
             )
           `;
         }
+      }
+      
+      // Handle status change logic AFTER line items are processed
+      // This ensures we update existing line items even if no line items were provided in the request
+      if (statusChanged && isPendingToPaid) {
+        // Update expense amount_paid to amount_due
+        await sql`
+          UPDATE expenses
+          SET amount_paid = amount, updated_at = NOW()
+          WHERE id = ${expenseId}
+        `;
+        
+        // Update all existing expense line items: payment_status = "paid" and amount_paid = amount_due
+        const updateResult = await sql`
+          UPDATE expense_line_items
+          SET 
+            payment_status = 'paid',
+            amount_paid = total_amount,
+            updated_at = NOW()
+          WHERE expense_id = ${expenseId}
+          RETURNING id
+        `;
+        
+        console.log(`✅ Updated expense ${expenseId} from "pending" to "paid": amount_paid = amount_due, and ${updateResult.length} line items updated (payment_status = paid, amount_paid = amount_due)`);
+      } else if (statusChanged) {
+        // For all other status transitions, line items remain unchanged
+        console.log(`ℹ️ Expense ${expenseId} status changed from "${oldStatus}" to "${newStatus}" - line items remain unchanged`);
       }
 
       // Fetch updated expense with line items
@@ -27248,6 +27318,47 @@ ${tenant?.company_name || tenant?.name || 'Company'}`;
     } catch (error: unknown) {
       console.error("💰 Error updating expense:", error);
       res.status(500).json({ message: "Failed to update expense" });
+    }
+  });
+
+  // Update expense line item category
+  app.put("/api/expenses/line-items/:lineItemId/category", authenticateVendor, async (req: any, res) => {
+    try {
+      const lineItemId = parseInt(req.params.lineItemId);
+      const { category } = req.body;
+
+      if (!category) {
+        return res.status(400).json({ message: "Category is required" });
+      }
+
+      // Verify the line item exists and belongs to the tenant
+      const [lineItem] = await sql`
+        SELECT eli.id, eli.expense_id, e.tenant_id
+        FROM expense_line_items eli
+        INNER JOIN expenses e ON eli.expense_id = e.id
+        WHERE eli.id = ${lineItemId} AND e.tenant_id = ${req.user.tenantId}
+      `;
+
+      if (!lineItem) {
+        return res.status(404).json({ message: "Line item not found" });
+      }
+
+      // Update the category
+      await sql`
+        UPDATE expense_line_items
+        SET category = ${category}, updated_at = NOW()
+        WHERE id = ${lineItemId}
+      `;
+
+      res.json({ 
+        success: true, 
+        message: "Line item category updated successfully",
+        lineItemId,
+        category
+      });
+    } catch (error: any) {
+      console.error("Error updating line item category:", error);
+      res.status(500).json({ message: "Failed to update line item category", error: error.message });
     }
   });
 
@@ -30247,6 +30358,7 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
       `;
     }
 
+    // Only fetch invoices with status "paid" or "partial" and sum paidAmount
     const invoices = await sql`
       SELECT 
         id,
@@ -30257,7 +30369,7 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
         TO_CHAR(issue_date, 'YYYY-MM') AS "month"
       FROM invoices
       WHERE tenant_id = ${tenantId}
-        AND status NOT IN ('void', 'cancelled')
+        AND status IN ('paid', 'partial')
         AND ${invoiceDateFilter}
       ORDER BY issue_date ASC
     `;
@@ -30266,11 +30378,11 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
 
     invoices.forEach((inv) => {
       const month = inv.month;
-      const totalAmount = Number(inv.totalAmount || 0);
+      // Sum paidAmount instead of totalAmount
+      const paidAmount = Number(inv.paidAmount || 0);
       
-      // Count all invoices (except void/cancelled which are already filtered) as revenue
-      // This represents total invoice amount issued, not just paid amount
-      const revenue = totalAmount;
+      // Revenue is the sum of paid amounts from paid/partial invoices
+      const revenue = paidAmount;
 
       if (!invoiceMonthData[month]) {
         invoiceMonthData[month] = { revenue: 0 };
@@ -30283,18 +30395,23 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
     let expenseDateFilter = sql`1=1`;
     if (startDate && endDate) {
       expenseDateFilter = sql`
-        expense_date >= ${startDate}::date
-        AND expense_date < (${endDate}::date + INTERVAL '1 day')
+        e.expense_date >= ${startDate}::date
+        AND e.expense_date < (${endDate}::date + INTERVAL '1 day')
       `;
     }
 
+    // Sum paid amounts from expense line items where:
+    // - Expense status is "approved" or "paid"
+    // - Line item payment_status is "paid"
     const expensesByMonth = await sql`
       SELECT 
-        TO_CHAR(expense_date, 'YYYY-MM') AS month,
-        SUM(amount)::numeric AS total
-      FROM expenses
-      WHERE tenant_id = ${tenantId}
-        AND status NOT IN ('cancelled', 'void')
+        TO_CHAR(e.expense_date, 'YYYY-MM') AS month,
+        COALESCE(SUM(eli.amount_paid), 0)::numeric AS total
+      FROM expenses e
+      INNER JOIN expense_line_items eli ON e.id = eli.expense_id
+      WHERE e.tenant_id = ${tenantId}
+        AND e.status IN ('approved', 'paid')
+        AND eli.payment_status = 'paid'
         AND ${expenseDateFilter}
       GROUP BY 1
       ORDER BY 1 ASC
@@ -30374,8 +30491,62 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
     console.error("❌ Profit & Loss Error:", error);
     res.status(500).json({ error: error.message });
   }
-});
+  });
 
+  // Get expenses by category for dashboard chart
+  app.get("/api/dashboard/expenses-by-category", authenticateToken, async (req, res) => {
+    try {
+      const tenantId = req.user.tenantId;
+      if (!tenantId) {
+        return res.status(400).json({ error: "Tenant ID not found" });
+      }
+
+      let { startDate = "", endDate = "" } = req.query;
+
+      const normalize = (v: any) =>
+        typeof v === "string" ? v.slice(0, 10) : v;
+
+      startDate = normalize(startDate);
+      endDate = normalize(endDate);
+
+      let expenseDateFilter = sql`1=1`;
+      if (startDate && endDate) {
+        expenseDateFilter = sql`
+          e.expense_date >= ${startDate}::date
+          AND e.expense_date < (${endDate}::date + INTERVAL '1 day')
+        `;
+      }
+
+      // Get category-wise totals from expense line items where:
+      // - Expense status is "approved" or "paid"
+      // - Line item payment_status is "paid"
+      // - Group by category from line items
+      // - Sum amount_paid from line items
+      const expensesByCategory = await sql`
+        SELECT 
+          COALESCE(eli.category, 'Other') AS category,
+          COALESCE(SUM(eli.amount_paid), 0)::numeric AS total_amount
+        FROM expenses e
+        INNER JOIN expense_line_items eli ON e.id = eli.expense_id
+        WHERE e.tenant_id = ${tenantId}
+          AND e.status IN ('approved', 'paid')
+          AND eli.payment_status = 'paid'
+          AND ${expenseDateFilter}
+        GROUP BY eli.category
+        ORDER BY total_amount DESC
+      `;
+
+      const result = expensesByCategory.map((row: any) => ({
+        category: row.category || "Other",
+        amount: Number(row.total_amount) || 0,
+      }));
+
+      res.json(result);
+    } catch (error: any) {
+      console.error("❌ Expenses by Category Error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
 
   app.get("/api/gst-settings", authenticateVendor, async (req, res) => {
     try {

@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ArrowUpDown, ChevronUp, ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
@@ -28,6 +28,7 @@ export interface EnhancedTableProps<T> {
     sortDirection: 'asc' | 'desc';
     onSort: (columnKey: string) => void;
   };
+  footer?: React.ReactNode;
 }
 
 export function EnhancedTable<T extends Record<string, any>>({
@@ -40,6 +41,7 @@ export function EnhancedTable<T extends Record<string, any>>({
   emptyMessage = "No data available",
   isLoading = false,
   externalSort,
+  footer,
 }: EnhancedTableProps<T>) {
   const [internalSortColumn, setInternalSortColumn] = useState<string | null>(null);
   const [internalSortDirection, setInternalSortDirection] = useState<'asc' | 'desc'>('asc');
@@ -213,6 +215,11 @@ export function EnhancedTable<T extends Record<string, any>>({
               ))
             )}
           </TableBody>
+          {footer && (
+            <TableFooter>
+              {footer}
+            </TableFooter>
+          )}
         </Table>
       </div>
 
