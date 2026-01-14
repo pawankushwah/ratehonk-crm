@@ -18,6 +18,7 @@ import { EstimateSettingsPanel } from "@/components/estimate-settings-panel";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { auth } from "@/lib/auth";
+import { formatLocalDate, parseLocalDate } from "@/lib/utils";
 import { ModernEstimateTemplate, EstimateData } from "@/components/estimates/estimate-templates";
 
 // Estimate interfaces
@@ -518,7 +519,7 @@ export default function EstimateCreate() {
         customerPhone: estimate.customerPhone || "",
         invoiceNumber: estimate.invoiceNumber || estimate.estimateNumber || "",
         currency: estimate.currency || "USD",
-        validUntil: estimate.validUntil ? new Date(estimate.validUntil).toISOString().split('T')[0] : "",
+        validUntil: estimate.validUntil ? formatLocalDate(parseLocalDate(estimate.validUntil)) : "",
         lineItems: estimate.lineItems?.map((item: any) => {
           const taxValue = (item.tax !== null && item.tax !== undefined && item.tax !== "") 
             ? parseFloat(item.tax) 

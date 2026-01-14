@@ -236,6 +236,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             planId: defaultPlan.id,
             status: "trial",
             billingCycle: "monthly",
+            paymentGateway: "stripe",
             trialEndsAt: trialEndDate,
             currentPeriodStart: new Date(),
             currentPeriodEnd: trialEndDate,

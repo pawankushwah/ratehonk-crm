@@ -55,6 +55,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useLocation, useRoute } from "wouter";
 import { useDebounce } from "@/hooks/use-debounce";
 import { directCustomersApi } from "@/lib/direct-customers-api";
+import { formatLocalDate, parseLocalDate } from "@/lib/utils";
 import { CustomerCreateForm } from "@/components/forms/customer-create-form";
 import { VendorCreateForm } from "@/components/forms/vendor-create-form";
 import { LeadTypeCreateForm } from "@/components/forms/lead-type-create-form";
@@ -796,8 +797,8 @@ export default function InvoiceEdit() {
       // Set basic fields
       setSelectedCustomerId(invoice.customerId?.toString() || "");
       setSelectedBookingId(invoice.bookingId?.toString() || "none");
-      setInvoiceDate(invoice.issueDate || invoice.invoiceDate || new Date().toISOString().split("T")[0]);
-      setDueDate(invoice.dueDate || new Date().toISOString().split("T")[0]);
+      setInvoiceDate(invoice.issueDate || invoice.invoiceDate || formatLocalDate(new Date()));
+      setDueDate(invoice.dueDate || formatLocalDate(new Date()));
       setDiscountAmount(invoice.discountAmount?.toString() || "0");
       // In edit mode, store existing paid amount separately and set amount paid field to 0
       const existingPaid = parseFloat(invoice.paidAmount?.toString() || "0");
@@ -1587,13 +1588,13 @@ export default function InvoiceEdit() {
     const amountPerInstallment = pendingAmount / numInstallments;
     const installments = [];
 
-    let currentDate = new Date(dueDate);
+    let currentDate = parseLocalDate(dueDate);
 
     for (let i = 0; i < numInstallments; i++) {
       installments.push({
         installmentNumber: i + 1,
         amount: amountPerInstallment.toFixed(2),
-        dueDate: currentDate.toISOString().split("T")[0],
+        dueDate: formatLocalDate(currentDate),
       });
 
       // Calculate next date based on frequency

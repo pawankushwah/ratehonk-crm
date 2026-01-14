@@ -724,7 +724,7 @@ export class SimpleStorage {
         to: data.email,
         firstName: data.firstName,
         lastName: data.lastName,
-        companyName: tenant.companyName || "RateHonk CRM",
+        companyName: tenant.company_name || tenant.companyName || "RateHonk CRM",
         tenantId: data.tenantId,
         customerId: data.customerId,
       });
@@ -760,7 +760,7 @@ export class SimpleStorage {
         to: data.email,
         firstName: data.firstName,
         lastName: data.lastName,
-        companyName: tenant.companyName || "RateHonk CRM",
+        companyName: tenant.company_name || tenant.companyName || "RateHonk CRM",
         tenantId: data.tenantId,
         leadId: data.leadId,
         customerId: data.customerId,
@@ -2271,6 +2271,17 @@ async getAllLeadsByTenant(
         return;
       }
 
+      // Get lead data to include in email
+      const lead = await this.getLeadById(data.leadId, data.tenantId);
+      
+      // Get company name - handle both snake_case and camelCase
+      const companyName = tenant.company_name || tenant.companyName || "RateHonk CRM";
+      console.log(`📧 Sending lead welcome email for tenant: ${companyName} (ID: ${data.tenantId})`);
+      console.log(`📧 Tenant object keys:`, Object.keys(tenant));
+      console.log(`📧 Tenant company_name:`, tenant.company_name);
+      console.log(`📧 Tenant companyName:`, tenant.companyName);
+      console.log(`📧 Final companyName used:`, companyName);
+      
       // Import tenant email service dynamically to avoid circular dependencies
       const { tenantEmailService } = await import("./tenant-email-service.js");
 
@@ -2278,9 +2289,10 @@ async getAllLeadsByTenant(
         to: data.email,
         firstName: data.firstName,
         lastName: data.lastName,
-        companyName: tenant.companyName || "RateHonk CRM",
+        companyName: companyName,
         tenantId: data.tenantId,
         leadId: data.leadId,
+        leadData: lead, // Pass full lead data including source, phone, status, etc.
       });
     } catch (error) {
       console.error("❌ Error in sendLeadWelcomeEmail helper:", error);
@@ -8282,6 +8294,11 @@ async getAllLeadsByTenant(
 
   async createTenantSubscription(subscriptionData: any) {
     try {
+      // Ensure paymentGateway has a default value if not provided
+      if (!subscriptionData.paymentGateway) {
+        subscriptionData.paymentGateway = "stripe";
+      }
+      
       // Convert Date objects to ISO strings for postgres
       const trialEndsAt = subscriptionData.trialEndsAt 
         ? (subscriptionData.trialEndsAt instanceof Date 

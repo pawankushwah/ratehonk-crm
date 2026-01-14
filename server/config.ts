@@ -27,12 +27,23 @@ export const config = {
   // Email Configuration - Primary SMTP
   email: {
     smtp: {
-      host: process.env.SMTP_HOST || 'smtp.gmail.com',
-      port: parseInt(process.env.SMTP_PORT || '587'),
-      secure: process.env.SMTP_SECURE === 'true',
-      user: process.env.SMTP_USER || '',
-      pass: process.env.SMTP_PASS || '',
-      fromEmail: process.env.SMTP_FROM_EMAIL || 'noreply@ratehonk.com',
+      host: process.env.SMTP_HOST || process.env.EMAIL_HOST || process.env.MAIL_HOST || 'smtp.gmail.com',
+      port: parseInt(process.env.SMTP_PORT || process.env.EMAIL_PORT || process.env.MAIL_PORT || '587'),
+      // Port 587 uses STARTTLS (secure: false), port 465 uses TLS/SSL (secure: true)
+      secure: (() => {
+        const port = parseInt(process.env.SMTP_PORT || process.env.EMAIL_PORT || process.env.MAIL_PORT || '587');
+        if (process.env.SMTP_SECURE === 'true' || process.env.SMTP_SECURE === 'ssl') {
+          return true;
+        } else if (process.env.SMTP_SECURE === 'false' || process.env.SMTP_SECURE === 'tls' || port === 587) {
+          return false; // Port 587 uses STARTTLS
+        } else if (port === 465) {
+          return true; // Port 465 uses direct TLS/SSL
+        }
+        return false; // Default to STARTTLS
+      })(),
+      user: process.env.SMTP_USER || process.env.EMAIL_USER || '',
+      pass: process.env.SMTP_PASS || process.env.EMAIL_PASS || '',
+      fromEmail: process.env.SMTP_FROM_EMAIL || process.env.EMAIL_FROM || 'noreply@ratehonk.com',
       fromName: process.env.SMTP_FROM_NAME || 'RateHonk CRM Support'
     },
     sendgrid: {
