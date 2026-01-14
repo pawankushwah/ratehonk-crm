@@ -35,6 +35,7 @@ import { requireActiveSubscription, requirePageAccess } from "./subscription-mid
 import jwt from "jsonwebtoken";
 import multer from "multer";
 import path from "path";
+import fs from "fs";
 
 function getBaseUrl(): string {
   let baseUrl = process.env.APP_URL || process.env.FRONTEND_URL || "http://localhost:5000";
@@ -1282,6 +1283,24 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
         invoiceId,
         invoiceDataWithUserId,
       );
+
+      // Get invoice with full details including attachments
+      const fullInvoice = await simpleStorage.getInvoiceById(invoiceData.tenantId, invoiceId);
+      
+      // Automatically send invoice via email/WhatsApp if enabled in settings
+      try {
+        const invoiceAttachments = invoiceData.attachments || fullInvoice?.attachments || [];
+        await sendInvoiceAutomatically(
+          invoiceData.tenantId,
+          invoiceId,
+          invoiceDataWithUserId,
+          invoiceAttachments
+        );
+      } catch (sendError: any) {
+        console.error("⚠️ Failed to automatically send invoice after update (non-fatal):", sendError);
+        // Continue even if sending fails - invoice update was successful
+      }
+
       return res.json({ success: true, invoice: updatedInvoice });
     } catch (error) {
       console.error("Update invoice error:", error);
@@ -5714,6 +5733,23 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
       
       const updatedInvoice = await simpleStorage.updateInvoice(invoiceId, invoiceData);
 
+      // Get invoice with full details including attachments
+      const fullInvoice = await simpleStorage.getInvoiceById(tenantId, invoiceId);
+      
+      // Automatically send invoice via email/WhatsApp if enabled in settings
+      try {
+        const invoiceAttachments = invoiceData.attachments || fullInvoice?.attachments || [];
+        await sendInvoiceAutomatically(
+          tenantId,
+          invoiceId,
+          invoiceData,
+          invoiceAttachments
+        );
+      } catch (sendError: any) {
+        console.error("⚠️ Failed to automatically send invoice after update (non-fatal):", sendError);
+        // Continue even if sending fails - invoice update was successful
+      }
+
       return res.json({
         success: true,
         invoice: updatedInvoice,
@@ -5955,8 +5991,9 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
     }
   });
 
-  // Helper function to render modern invoice template for PDF
-  const renderModernTemplateForPDF = (data: any): string => {
+  // Helper function to render modern invoice template for PDF (duplicate removed - moved earlier)
+  // This is kept here for backward compatibility with other code that might reference it
+  const renderModernTemplateForPDFDuplicate = (data: any): string => {
     return `
       <!DOCTYPE html>
       <html>
@@ -6124,6 +6161,11 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
             <div class="billing-info">
               <h3>Payment Terms</h3>
               <p>${data.paymentTerms || 'Net 30'}</p>
+              ${data.departureDate || data.arrivalDate ? `
+                <h3 style="margin-top: 20px;">Travel Dates</h3>
+                ${data.departureDate ? `<p><strong>Departure:</strong> ${data.departureDate}</p>` : ''}
+                ${data.arrivalDate ? `<p><strong>Arrival:</strong> ${data.arrivalDate}</p>` : ''}
+              ` : ''}
             </div>
           </div>
           
@@ -12133,6 +12175,7 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
             planId: defaultPlan.id,
             status: "trial",
             billingCycle: "monthly",
+            paymentGateway: "stripe",
             trialEndsAt: trialEndDate,
             currentPeriodStart: new Date(),
             currentPeriodEnd: trialEndDate,
@@ -13098,13 +13141,17 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
           // Get tenant information for email
           const tenant = await simpleStorage.getTenant(parseInt(tenantId));
           if (tenant) {
+            // Get company name - handle both snake_case and camelCase
+            const companyName = tenant.company_name || tenant.companyName || "RateHonk CRM";
+            console.log(`📧 Sending lead conversion email for tenant: ${companyName} (ID: ${parseInt(tenantId)})`);
+            
             // Import tenant email service dynamically
             const { tenantEmailService } = await import("./tenant-email-service.js");
             tenantEmailService.sendLeadConversionEmail({
               to: lead.email,
               firstName: lead.firstName || "",
               lastName: lead.lastName || "",
-              companyName: tenant.companyName || "RateHonk CRM",
+              companyName: companyName,
               tenantId: parseInt(tenantId),
               leadId: parseInt(leadId),
               customerId: customer.id,
@@ -20519,6 +20566,652 @@ Happy travels! 🌍✈️`,
     },
   );
 
+  // Helper function to render modern invoice template for PDF (moved earlier for accessibility)
+  const renderModernTemplateForPDF = (data: any): string => {
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>Invoice ${data.invoiceNumber}</title>
+        <style>
+          @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+          
+          * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+          }
+          
+          body {
+            font-family: 'Inter', sans-serif;
+            font-size: 14px;
+            line-height: 1.6;
+            color: #374151;
+            background: #ffffff;
+          }
+          
+          .invoice-container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px;
+            background: white;
+          }
+          
+          .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 40px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #e5e7eb;
+          }
+          
+          .company-info h1 {
+            font-size: 28px;
+            font-weight: 700;
+            color: #1f2937;
+            margin-bottom: 8px;
+          }
+          
+          .company-info p {
+            color: #6b7280;
+            margin-bottom: 4px;
+          }
+          
+          .invoice-info {
+            text-align: right;
+          }
+          
+          .invoice-info h2 {
+            font-size: 24px;
+            font-weight: 600;
+            color: #3b82f6;
+            margin-bottom: 8px;
+          }
+          
+          .billing-section {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 40px;
+          }
+          
+          .billing-info h3 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #1f2937;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+          }
+          
+          .items-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 30px;
+          }
+          
+          .items-table th {
+            background-color: #f8fafc;
+            padding: 16px;
+            text-align: left;
+            font-weight: 600;
+            color: #374151;
+            border-bottom: 1px solid #e5e7eb;
+          }
+          
+          .items-table td {
+            padding: 16px;
+            border-bottom: 1px solid #f1f5f9;
+            color: #4b5563;
+          }
+          
+          .text-right {
+            text-align: right;
+          }
+          
+          .amount {
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
+            font-weight: 600;
+          }
+          
+          .totals {
+            margin-left: auto;
+            width: 300px;
+            margin-top: 20px;
+          }
+          
+          .total-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #f1f5f9;
+          }
+          
+          .total-row:last-child {
+            font-size: 18px;
+            font-weight: 700;
+            color: #1f2937;
+            border-bottom: 2px solid #3b82f6;
+            border-top: 2px solid #3b82f6;
+            padding: 16px 0;
+            margin-top: 12px;
+          }
+          
+          .footer {
+            margin-top: 40px;
+            text-align: center;
+            color: #9ca3af;
+            font-size: 12px;
+            border-top: 1px solid #e5e7eb;
+            padding-top: 20px;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="invoice-container">
+          <div class="header">
+            <div class="company-info">
+              <h1>${data.companyName}</h1>
+              <p>${data.companyEmail}</p>
+              <p>${data.companyPhone || ''}</p>
+              <p>${data.companyAddress || ''}</p>
+            </div>
+            <div class="invoice-info">
+              <h2>INVOICE</h2>
+              <p><strong>Invoice #:</strong> ${data.invoiceNumber}</p>
+              <p><strong>Date:</strong> ${data.issueDate}</p>
+              <p><strong>Due Date:</strong> ${data.dueDate}</p>
+            </div>
+          </div>
+          
+          <div class="billing-section">
+            <div class="billing-info">
+              <h3>Bill To</h3>
+              <p><strong>${data.customerName}</strong></p>
+              <p>${data.customerEmail}</p>
+              <p>${data.customerAddress || ''}</p>
+            </div>
+            <div class="billing-info">
+              <h3>Payment Terms</h3>
+              <p>${data.paymentTerms || 'Net 30'}</p>
+              ${data.departureDate || data.arrivalDate ? `
+                <h3 style="margin-top: 20px;">Travel Dates</h3>
+                ${data.departureDate ? `<p><strong>Departure:</strong> ${data.departureDate}</p>` : ''}
+                ${data.arrivalDate ? `<p><strong>Arrival:</strong> ${data.arrivalDate}</p>` : ''}
+              ` : ''}
+            </div>
+          </div>
+          
+          <table class="items-table">
+            <thead>
+              <tr>
+                <th>Description</th>
+                <th class="text-right">Quantity</th>
+                <th class="text-right">Rate</th>
+                <th class="text-right">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${data.items.map((item: any) => `
+                <tr>
+                  <td>
+                    <div>${item.description}</div>
+                    ${(item.invoiceNumber || item.voucherNumber) ? `
+                      <div style="font-size: 11px; color: #6b7280; margin-top: 4px;">
+                        ${item.invoiceNumber ? `<span>Invoice: ${item.invoiceNumber}</span>` : ''}
+                        ${item.invoiceNumber && item.voucherNumber ? '<span style="margin: 0 4px;">|</span>' : ''}
+                        ${item.voucherNumber ? `<span>Voucher: ${item.voucherNumber}</span>` : ''}
+                      </div>
+                    ` : ''}
+                  </td>
+                  <td class="text-right">${item.quantity}</td>
+                  <td class="text-right amount">${data.currency}${item.unitPrice.toFixed(2)}</td>
+                  <td class="text-right amount">${data.currency}${item.totalPrice.toFixed(2)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          
+          <div class="totals">
+            <div class="total-row">
+              <span>Subtotal:</span>
+              <span class="amount">${data.currency}${data.subtotal.toFixed(2)}</span>
+            </div>
+            ${data.discountAmount > 0 ? `
+              <div class="total-row">
+                <span>Discount:</span>
+                <span class="amount">-${data.currency}${data.discountAmount.toFixed(2)}</span>
+              </div>
+            ` : ''}
+            <div class="total-row">
+              <span>Tax:</span>
+              <span class="amount">${data.currency}${data.taxAmount.toFixed(2)}</span>
+            </div>
+            <div class="total-row">
+              <span>Total:</span>
+              <span class="amount">${data.currency}${data.totalAmount.toFixed(2)}</span>
+            </div>
+          </div>
+          
+          ${(data.paymentStatus && data.paymentStatus.toLowerCase() !== 'paid') || (data.paidAmount && data.paidAmount > 0) ? `
+            <div class="payment-info" style="margin-top: 40px; border-top: 1px solid #e5e7eb; padding-top: 30px;">
+              <h3 style="font-size: 16px; font-weight: 600; color: #1f2937; margin-bottom: 15px; text-transform: uppercase; letter-spacing: 0.5px;">Payment Information</h3>
+              <div style="background-color: #f8fafc; padding: 20px; border-radius: 8px;">
+                ${data.paymentStatus ? `
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <span style="color: #374151;">Payment Status:</span>
+                    <span style="font-weight: 600; color: #1f2937; text-transform: capitalize;">${data.paymentStatus}</span>
+                  </div>
+                ` : ''}
+                ${(data.paidAmount && data.paidAmount > 0) ? `
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <span style="color: #374151;">Amount Paid:</span>
+                    <span style="font-weight: 600; color: #1f2937;">${data.currency}${data.paidAmount.toFixed(2)}</span>
+                  </div>
+                ` : ''}
+                <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #e5e7eb; padding-top: 12px; margin-top: 12px;">
+                  <span style="color: #374151; font-weight: 600;">Balance Due:</span>
+                  <span style="font-weight: 700; font-size: 18px; color: #1f2937;">${data.currency}${(data.totalAmount - (data.paidAmount || 0)).toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
+          ` : ''}
+          
+          ${data.notes ? `
+            <div class="footer">
+              <p><strong>Notes:</strong></p>
+              <div>${data.notes}</div>
+            </div>
+          ` : ''}
+        </div>
+      </body>
+      </html>
+    `;
+  };
+
+  // Helper function to send invoice via email and/or WhatsApp based on settings
+  const sendInvoiceAutomatically = async (
+    tenantId: number,
+    invoiceId: number,
+    invoiceData: any,
+    attachments?: Array<{ name: string; url: string; type?: string }>
+  ): Promise<void> => {
+    try {
+      // Get invoice settings
+      const invoiceSettings = await simpleStorage.getInvoiceSettings(tenantId);
+      const shouldSendEmail = invoiceSettings?.sendInvoiceViaEmail ?? true;
+      const shouldSendWhatsApp = invoiceSettings?.sendInvoiceViaWhatsapp ?? false;
+
+      if (!shouldSendEmail && !shouldSendWhatsApp) {
+        console.log("📧 Invoice sending disabled in settings, skipping automatic send");
+        return;
+      }
+
+      // Get invoice details
+      const invoice = await simpleStorage.getInvoiceById(tenantId, invoiceId);
+      if (!invoice) {
+        console.error("❌ Invoice not found for automatic sending");
+        return;
+      }
+
+      // Get customer details
+      let customer = null;
+      if (invoice.customerId) {
+        const customers = await sql`
+          SELECT * FROM customers WHERE id = ${invoice.customerId} AND tenant_id = ${tenantId}
+        `;
+        customer = customers[0] || null;
+      }
+
+      if (!customer) {
+        console.error("❌ Customer not found for invoice sending");
+        return;
+      }
+
+      // Get tenant details
+      const tenants = await sql`
+        SELECT * FROM tenants WHERE id = ${tenantId}
+      `;
+      const tenant = tenants[0] || null;
+
+      const currencySymbol = invoice.currency === 'USD' ? '$' : invoice.currency === 'EUR' ? '€' : '₹';
+      const invoiceNumber = invoice.invoiceNumber || `INV-${invoice.id}`;
+
+      // Prepare invoice data for email/PDF
+      const invoiceDataForEmail = {
+        invoiceNumber,
+        issueDate: invoice.issueDate ? new Date(invoice.issueDate).toLocaleDateString() : new Date().toLocaleDateString(),
+        dueDate: invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString() : 'N/A',
+        customerName: customer.name || 'N/A',
+        customerEmail: customer.email || '',
+        customerPhone: customer.phone || '',
+        customerAddress: customer.address || '',
+        companyName: tenant?.company_name || tenant?.name || 'Company',
+        companyEmail: tenant?.contact_email || '',
+        companyPhone: tenant?.contact_phone || '',
+        companyAddress: tenant?.address || '',
+        items: (invoice.lineItems || []).map((item: any) => ({
+          description: item.itemTitle || item.description || item.travelCategory || 'N/A',
+          quantity: item.quantity || 1,
+          unitPrice: parseFloat(item.sellingPrice || item.unitPrice || 0),
+          totalPrice: parseFloat(item.totalAmount || 0),
+          invoiceNumber: item.invoiceNumber || undefined,
+          voucherNumber: item.voucherNumber || undefined,
+        })),
+        subtotal: parseFloat(invoice.subtotal?.toString() || invoice.totalAmount?.toString() || "0"),
+        taxAmount: parseFloat(invoice.taxAmount?.toString() || "0"),
+        discountAmount: parseFloat(invoice.discountAmount?.toString() || "0"),
+        totalAmount: parseFloat(invoice.totalAmount?.toString() || "0"),
+        paidAmount: parseFloat(invoice.paidAmount?.toString() || "0"),
+        currency: currencySymbol,
+        notes: invoice.notes || undefined,
+        paymentTerms: invoice.paymentTerms || 'Net 30',
+        paymentStatus: invoice.status || 'pending',
+        travelDate: invoice.travelDate ? new Date(invoice.travelDate).toLocaleDateString() : null,
+        departureDate: invoice.departureDate ? new Date(invoice.departureDate).toLocaleDateString() : null,
+        arrivalDate: invoice.arrivalDate ? new Date(invoice.arrivalDate).toLocaleDateString() : null,
+      };
+
+      // Send email if enabled
+      if (shouldSendEmail && customer.email) {
+        try {
+          const { tenantEmailService } = await import("./tenant-email-service.js");
+          
+          // Format payment status with proper capitalization
+          const paymentStatusFormatted = invoiceDataForEmail.paymentStatus 
+            ? invoiceDataForEmail.paymentStatus.charAt(0).toUpperCase() + invoiceDataForEmail.paymentStatus.slice(1)
+            : 'Pending';
+          
+          // Build travel dates section
+          let travelDatesSection = '';
+          if (invoiceDataForEmail.departureDate || invoiceDataForEmail.arrivalDate) {
+            travelDatesSection = '<tr><td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;"><strong>Travel Dates:</strong></td><td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;">';
+            if (invoiceDataForEmail.departureDate && invoiceDataForEmail.arrivalDate) {
+              travelDatesSection += `${invoiceDataForEmail.departureDate} - ${invoiceDataForEmail.arrivalDate}`;
+            } else if (invoiceDataForEmail.departureDate) {
+              travelDatesSection += `Departure: ${invoiceDataForEmail.departureDate}`;
+            } else if (invoiceDataForEmail.arrivalDate) {
+              travelDatesSection += `Arrival: ${invoiceDataForEmail.arrivalDate}`;
+            }
+            travelDatesSection += '</td></tr>';
+          }
+          
+          // Professional email template with all invoice details
+          const emailBody = `Dear ${invoiceDataForEmail.customerName},
+
+Please find attached invoice ${invoiceNumber} for your records.
+
+Invoice Details:
+- Invoice Number: ${invoiceNumber}
+- Total Amount: ${currencySymbol}${invoiceDataForEmail.totalAmount.toFixed(2)}
+- Payment Status: ${paymentStatusFormatted}
+- Due Date: ${invoiceDataForEmail.dueDate}
+${invoiceDataForEmail.departureDate ? `- Departure Date: ${invoiceDataForEmail.departureDate}` : ''}
+${invoiceDataForEmail.arrivalDate ? `- Arrival Date: ${invoiceDataForEmail.arrivalDate}` : ''}
+
+Please make payment by the due date. Thank you for your business!
+
+Best regards,
+${tenant?.company_name || tenant?.name || 'Company'}`;
+          
+          const emailHtmlBody = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            </head>
+            <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f5f5f5;">
+              <div style="background-color: #ffffff; border-radius: 8px; padding: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                <div style="border-bottom: 3px solid #3b82f6; padding-bottom: 20px; margin-bottom: 30px;">
+                  <h1 style="color: #1f2937; margin: 0; font-size: 24px;">Invoice Notification</h1>
+                </div>
+                
+                <p style="font-size: 16px; margin-bottom: 20px;">Dear <strong>${invoiceDataForEmail.customerName}</strong>,</p>
+                
+                <p style="font-size: 16px; margin-bottom: 25px;">Please find attached invoice <strong style="color: #3b82f6;">${invoiceNumber}</strong> for your records.</p>
+                
+                <div style="background-color: #f8fafc; border-left: 4px solid #3b82f6; padding: 20px; margin: 25px 0; border-radius: 4px;">
+                  <h2 style="color: #1f2937; margin-top: 0; margin-bottom: 15px; font-size: 18px;">Invoice Details</h2>
+                  <table style="width: 100%; border-collapse: collapse;">
+                    <tr>
+                      <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;"><strong>Invoice Number:</strong></td>
+                      <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb; color: #3b82f6; font-weight: 600;">${invoiceNumber}</td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;"><strong>Total Amount:</strong></td>
+                      <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb; font-size: 18px; font-weight: 700; color: #1f2937;">${currencySymbol}${invoiceDataForEmail.totalAmount.toFixed(2)}</td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;"><strong>Payment Status:</strong></td>
+                      <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
+                        <span style="display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; 
+                          ${invoiceDataForEmail.paymentStatus === 'paid' ? 'background-color: #d1fae5; color: #065f46;' : 
+                            invoiceDataForEmail.paymentStatus === 'pending' ? 'background-color: #fef3c7; color: #92400e;' : 
+                            'background-color: #fee2e2; color: #991b1b;'}">
+                          ${paymentStatusFormatted}
+                        </span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;"><strong>Due Date:</strong></td>
+                      <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;">${invoiceDataForEmail.dueDate}</td>
+                    </tr>
+                    ${travelDatesSection}
+                  </table>
+                </div>
+                
+                <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 25px 0; border-radius: 4px;">
+                  <p style="margin: 0; color: #92400e; font-size: 14px;">
+                    <strong>📎 Attachments:</strong> This email includes the invoice PDF and any related travel documents (tickets, itineraries, etc.).
+                  </p>
+                </div>
+                
+                <p style="font-size: 16px; margin-top: 30px; margin-bottom: 10px;">Please make payment by the due date. Thank you for your business!</p>
+                
+                <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+                  <p style="margin: 0; color: #6b7280; font-size: 14px;">Best regards,<br>
+                  <strong style="color: #1f2937;">${tenant?.company_name || tenant?.name || 'Company'}</strong></p>
+                  ${tenant?.contact_email ? `<p style="margin: 5px 0 0 0; color: #6b7280; font-size: 14px;">${tenant.contact_email}</p>` : ''}
+                  ${tenant?.contact_phone ? `<p style="margin: 5px 0 0 0; color: #6b7280; font-size: 14px;">${tenant.contact_phone}</p>` : ''}
+                </div>
+              </div>
+            </body>
+            </html>
+          `;
+
+          const emailOptions: any = {
+            to: customer.email,
+            subject: `Invoice ${invoiceNumber} from ${tenant?.company_name || tenant?.name || 'Company'}`,
+            body: emailBody,
+            htmlBody: emailHtmlBody,
+            tenantId: tenantId,
+            fromName: tenant?.company_name || tenant?.name,
+          };
+
+          // Process attachments from invoice
+          const emailAttachments: any[] = [];
+          
+          // Generate PDF using the modern template (same as preview)
+          console.log(`📄 Starting PDF generation for invoice ${invoiceNumber}...`);
+          try {
+            console.log(`📄 Importing Playwright for PDF generation...`);
+            const { chromium } = await import('playwright');
+            
+            console.log(`📄 Launching browser...`);
+            const browser = await chromium.launch({ 
+              headless: true,
+              args: ['--no-sandbox', '--disable-setuid-sandbox'] // Add args for better compatibility
+            });
+            const page = await browser.newPage();
+            
+            console.log(`📄 Generating PDF HTML using renderModernTemplateForPDF...`);
+            // Use renderModernTemplateForPDF function (defined later in this file)
+            // This matches the preview popup format
+            let pdfHtml: string;
+            if (typeof renderModernTemplateForPDF === 'function') {
+              pdfHtml = renderModernTemplateForPDF(invoiceDataForEmail);
+              console.log(`📄 PDF HTML generated using renderModernTemplateForPDF, length: ${pdfHtml.length} characters`);
+            } else {
+              console.error(`❌ renderModernTemplateForPDF is not accessible! Type: ${typeof renderModernTemplateForPDF}`);
+              throw new Error('renderModernTemplateForPDF function is not accessible');
+            }
+            
+            console.log(`📄 Setting page content...`);
+            await page.setContent(pdfHtml, { waitUntil: 'networkidle' });
+            
+            console.log(`📄 Generating PDF buffer...`);
+            const pdfBuffer = await page.pdf({
+              format: 'A4',
+              printBackground: true,
+              margin: { top: '20px', right: '20px', bottom: '20px', left: '20px' },
+            });
+            
+            console.log(`📄 PDF generated successfully, size: ${pdfBuffer.length} bytes`);
+            await browser.close();
+            
+            const pdfBase64 = pdfBuffer.toString('base64');
+            emailAttachments.push({
+              filename: `invoice-${invoiceNumber}.pdf`,
+              content: pdfBase64,
+              contentType: 'application/pdf',
+              mimetype: 'application/pdf',
+            });
+            console.log(`✅ Generated PDF attachment for invoice ${invoiceNumber} using modern template (${pdfBuffer.length} bytes)`);
+          } catch (pdfError: any) {
+            const errorMessage = pdfError.message || String(pdfError);
+            console.error("❌ Failed to generate PDF:", errorMessage);
+            
+            // Check if it's a Playwright browser missing error
+            if (errorMessage.includes('Executable doesn\'t exist') || errorMessage.includes('browserType.launch')) {
+              console.error("");
+              console.error("═══════════════════════════════════════════════════════════════════════════");
+              console.error("❌ CRITICAL: Playwright browsers are not installed!");
+              console.error("❌ This is required for invoice PDF generation.");
+              console.error("❌");
+              console.error("❌ To fix this, please run the following command:");
+              console.error("❌   npx playwright install chromium");
+              console.error("❌");
+              console.error("❌ After installation, restart the server and try again.");
+              console.error("═══════════════════════════════════════════════════════════════════════════");
+              console.error("");
+            } else {
+              console.error("❌ PDF Error details:", errorMessage);
+              if (pdfError.stack) {
+                console.error("❌ PDF Error stack:", pdfError.stack);
+              }
+            }
+            
+            // Continue without PDF - email will still be sent
+            console.warn("⚠️ Continuing email send without invoice PDF attachment");
+            console.warn("⚠️ Only invoice attachments (tickets, itineraries) will be included");
+          }
+
+          // Add invoice attachments (travel tickets, itineraries, etc.)
+          if (attachments && attachments.length > 0) {
+            console.log(`📎 Processing ${attachments.length} invoice attachment(s) for email`);
+            for (const attachment of attachments) {
+              try {
+                // Handle both object format {name, url, type} and string format
+                const attachmentName = attachment.name || (typeof attachment === 'string' ? path.basename(attachment) : 'attachment');
+                const attachmentUrl = attachment.url || attachment;
+                const attachmentType = attachment.type || 'application/octet-stream';
+                
+                // Determine file path - attachments can be URLs or local paths
+                let filePath: string | null = null;
+                
+                if (typeof attachmentUrl === 'string') {
+                  if (attachmentUrl.startsWith('/')) {
+                    // Local file path (relative to project root)
+                    filePath = path.join(process.cwd(), attachmentUrl);
+                  } else if (attachmentUrl.startsWith('http')) {
+                    // Remote URL - skip for now (would need to download)
+                    console.log(`⚠️ Skipping remote attachment URL: ${attachmentUrl}`);
+                    continue;
+                  } else {
+                    // Assume relative path
+                    filePath = path.join(process.cwd(), attachmentUrl);
+                  }
+                }
+
+                if (filePath && fs.existsSync(filePath)) {
+                  const fileBuffer = fs.readFileSync(filePath);
+                  emailAttachments.push({
+                    filename: attachmentName,
+                    content: fileBuffer.toString('base64'),
+                    contentType: attachmentType,
+                    mimetype: attachmentType,
+                  });
+                  console.log(`✅ Added attachment to email: ${attachmentName}`);
+                } else {
+                  console.warn(`⚠️ Attachment file not found: ${filePath || attachmentUrl}`);
+                }
+              } catch (attachError: any) {
+                console.error(`❌ Error processing attachment ${attachment.name || attachment}:`, attachError);
+              }
+            }
+          } else {
+            console.log(`ℹ️ No invoice attachments to include in email`);
+          }
+
+          // Always add attachments (PDF + invoice attachments)
+          console.log(`📎 Total attachments prepared: ${emailAttachments.length}`);
+          if (emailAttachments.length > 0) {
+            emailOptions.attachments = emailAttachments;
+            const attachmentList = emailAttachments.map((a: any) => `${a.filename} (${a.contentType || a.mimetype})`).join(', ');
+            console.log(`📎 Attaching ${emailAttachments.length} file(s) to email: ${attachmentList}`);
+            
+            // Verify PDF is in attachments
+            const hasPdf = emailAttachments.some((a: any) => a.filename.endsWith('.pdf') && a.filename.startsWith('invoice-'));
+            if (!hasPdf) {
+              console.error(`❌ WARNING: Invoice PDF is missing from attachments! Only found: ${attachmentList}`);
+            } else {
+              console.log(`✅ Invoice PDF confirmed in attachments`);
+            }
+          } else {
+            console.error(`❌ ERROR: No attachments to include in email for invoice ${invoiceNumber} - PDF generation may have failed!`);
+          }
+
+          await tenantEmailService.sendCustomerEmail(emailOptions);
+          console.log(`✅ Invoice ${invoiceNumber} sent via email to ${customer.email} with ${emailAttachments.length} attachment(s)`);
+        } catch (emailError: any) {
+          console.error("❌ Failed to send invoice email:", emailError);
+          // Don't throw - email failure shouldn't break invoice creation
+        }
+      }
+
+      // Send WhatsApp if enabled
+      if (shouldSendWhatsApp && customer.phone) {
+        try {
+          const message = `*Invoice ${invoiceNumber}*\n\n` +
+            `Total Amount: ${currencySymbol}${invoiceDataForEmail.totalAmount.toFixed(2)}\n` +
+            `Due Date: ${invoiceDataForEmail.dueDate}\n` +
+            `Status: ${invoiceDataForEmail.paymentStatus}\n\n` +
+            `Please make the payment by the due date. Thank you!`;
+
+          // Use WhatsApp service to send message
+          await sendWhatsAppCustomMessage({
+            tenantId: tenantId,
+            phoneNumber: customer.phone,
+            message: message,
+            userId: invoiceData.userId,
+            customerId: customer.id,
+            activityTitle: `Invoice ${invoiceNumber} sent via WhatsApp`,
+          });
+
+          console.log(`✅ Invoice ${invoiceNumber} sent via WhatsApp to ${customer.phone}`);
+        } catch (whatsappError: any) {
+          console.error("❌ Failed to send invoice via WhatsApp:", whatsappError);
+          // Don't throw - WhatsApp failure shouldn't break invoice creation
+        }
+      }
+    } catch (error: any) {
+      console.error("❌ Error in automatic invoice sending:", error);
+      // Don't throw - sending failure shouldn't break invoice creation
+    }
+  }
+
   app.post(
     "/api/tenants/:tenantId/invoices",
     authenticateToken,
@@ -20539,6 +21232,24 @@ Happy travels! 🌍✈️`,
         
         // Note: Expenses are already handled inside createInvoice() function
         // No need to create them separately here to avoid duplicates
+        
+        // Get invoice with full details including attachments
+        const fullInvoice = await simpleStorage.getInvoiceById(parseInt(tenantId), newInvoice.id);
+        
+        // Automatically send invoice via email/WhatsApp if enabled in settings
+        try {
+          // Pass attachments from invoice creation or from retrieved invoice
+          const invoiceAttachments = invoiceData.attachments || fullInvoice?.attachments || [];
+          await sendInvoiceAutomatically(
+            parseInt(tenantId),
+            newInvoice.id,
+            invoiceData,
+            invoiceAttachments // Pass attachments from invoice creation
+          );
+        } catch (sendError: any) {
+          console.error("⚠️ Failed to automatically send invoice (non-fatal):", sendError);
+          // Continue even if sending fails - invoice creation was successful
+        }
         
         res.status(201).json(newInvoice);
       } catch (error) {
@@ -26506,65 +27217,40 @@ Happy travels! 🌍✈️`,
         RETURNING *
       `;
 
-      // If status was updated, also update all expense line items' payment_status and amount_paid
+      // Check status change BEFORE processing line items
       const newStatus = expenseHeader.status !== undefined ? expenseHeader.status : existingExpense.status;
       const oldStatus = existingExpense.status;
+      const statusChanged = newStatus !== oldStatus;
+      const isPendingToPaid = oldStatus === "pending" && newStatus === "paid";
       
-      console.log(`🔍 Status change check for expense ${expenseId}: oldStatus=${oldStatus}, newStatus=${newStatus}, statusChanged=${newStatus !== oldStatus}`);
-      
-      if (newStatus !== oldStatus) {
-        // Map expense status to payment_status for line items
-        let paymentStatus = "pending";
-        if (newStatus === "paid") {
-          paymentStatus = "paid";
-        } else if (newStatus === "approved") {
-          paymentStatus = "paid"; // When expense is approved, mark line items as paid
-        } else if (newStatus === "rejected") {
-          paymentStatus = "credit";
-        } else {
-          paymentStatus = "pending";
-        }
-        
-        // If status changed to "paid" or "approved", update amount_paid = amount_due for expense and line items
-        if (newStatus === "paid" || newStatus === "approved") {
-          // Update expense amount_paid to amount_due (using SQL to set amount_paid = amount_due directly)
-          await sql`
-            UPDATE expenses
-            SET amount_paid = amount_due, updated_at = NOW()
-            WHERE id = ${expenseId}
-          `;
-          
-          // Update all expense line items: payment_status = "paid" and amount_paid = amount_due
-          await sql`
-            UPDATE expense_line_items
-            SET 
-              payment_status = ${paymentStatus},
-              amount_paid = amount_due,
-              updated_at = NOW()
-            WHERE expense_id = ${expenseId}
-          `;
-          
-          console.log(`✅ Updated expense ${expenseId} to ${newStatus}: amount_paid = amount_due, and all line items payment_status = paid, amount_paid = amount_due`);
-        } else {
-          // For other status changes, update payment_status for line items
-          await sql`
-            UPDATE expense_line_items
-            SET payment_status = ${paymentStatus}, updated_at = NOW()
-            WHERE expense_id = ${expenseId}
-          `;
-          
-          console.log(`✅ Updated payment_status for all line items of expense ${expenseId} to ${paymentStatus} (expense status: ${newStatus})`);
-        }
-      }
+      console.log(`🔍 Status change check for expense ${expenseId}: oldStatus=${oldStatus}, newStatus=${newStatus}, statusChanged=${statusChanged}, isPendingToPaid=${isPendingToPaid}`);
 
       // Update line items if provided
       if (lineItems.length > 0) {
+        // If status is changing from "pending" to "paid", update line items data before inserting
+        if (isPendingToPaid) {
+          // Update each line item to have payment_status = "paid" and amount_paid = amount_due
+          lineItems = lineItems.map((item: any) => {
+            const amountDue = parseFloat(item.amountDue?.toString() || item.totalAmount?.toString() || item.amount?.toString() || "0");
+            return {
+              ...item,
+              paymentStatus: "paid",
+              amountPaid: amountDue,
+            };
+          });
+          console.log(`📝 Updated ${lineItems.length} line items data for pending->paid transition before insert`);
+        }
+
         // Delete existing line items
         await sql`DELETE FROM expense_line_items WHERE expense_id = ${expenseId}`;
 
         // Insert new line items
         for (let i = 0; i < lineItems.length; i++) {
           const item = lineItems[i];
+          const amountDue = parseFloat(item.amountDue?.toString() || item.totalAmount?.toString() || item.amount?.toString() || "0");
+          const amountPaid = isPendingToPaid ? amountDue : parseFloat(item.amountPaid?.toString() || "0");
+          const paymentStatus = isPendingToPaid ? "paid" : (item.paymentStatus || "pending");
+          
           await sql`
             INSERT INTO expense_line_items (
               expense_id, category, title, description, quantity, amount, tax_rate_id, tax_amount, tax_rate,
@@ -26575,12 +27261,39 @@ Happy travels! 🌍✈️`,
               ${item.quantity || 1}, ${parseFloat(item.amount?.toString() || "0")}, ${item.taxRateId || null},
               ${parseFloat(item.taxAmount?.toString() || "0")}, ${parseFloat(item.taxRate?.toString() || "0")},
               ${parseFloat(item.totalAmount?.toString() || item.amount?.toString() || "0")}, ${item.vendorId || null},
-              ${item.leadTypeId || null}, ${item.paymentMethod || "credit_card"}, ${item.paymentStatus || "paid"},
-              ${parseFloat(item.amountPaid?.toString() || "0")}, ${parseFloat(item.amountDue?.toString() || "0")},
+              ${item.leadTypeId || null}, ${item.paymentMethod || "credit_card"}, ${paymentStatus},
+              ${amountPaid}, ${amountDue},
               ${item.receiptUrl || null}, ${item.notes || null}, ${i}
             )
           `;
         }
+      }
+      
+      // Handle status change logic AFTER line items are processed
+      // This ensures we update existing line items even if no line items were provided in the request
+      if (statusChanged && isPendingToPaid) {
+        // Update expense amount_paid to amount_due
+        await sql`
+          UPDATE expenses
+          SET amount_paid = amount, updated_at = NOW()
+          WHERE id = ${expenseId}
+        `;
+        
+        // Update all existing expense line items: payment_status = "paid" and amount_paid = amount_due
+        const updateResult = await sql`
+          UPDATE expense_line_items
+          SET 
+            payment_status = 'paid',
+            amount_paid = total_amount,
+            updated_at = NOW()
+          WHERE expense_id = ${expenseId}
+          RETURNING id
+        `;
+        
+        console.log(`✅ Updated expense ${expenseId} from "pending" to "paid": amount_paid = amount_due, and ${updateResult.length} line items updated (payment_status = paid, amount_paid = amount_due)`);
+      } else if (statusChanged) {
+        // For all other status transitions, line items remain unchanged
+        console.log(`ℹ️ Expense ${expenseId} status changed from "${oldStatus}" to "${newStatus}" - line items remain unchanged`);
       }
 
       // Fetch updated expense with line items
@@ -26605,6 +27318,47 @@ Happy travels! 🌍✈️`,
     } catch (error: unknown) {
       console.error("💰 Error updating expense:", error);
       res.status(500).json({ message: "Failed to update expense" });
+    }
+  });
+
+  // Update expense line item category
+  app.put("/api/expenses/line-items/:lineItemId/category", authenticateVendor, async (req: any, res) => {
+    try {
+      const lineItemId = parseInt(req.params.lineItemId);
+      const { category } = req.body;
+
+      if (!category) {
+        return res.status(400).json({ message: "Category is required" });
+      }
+
+      // Verify the line item exists and belongs to the tenant
+      const [lineItem] = await sql`
+        SELECT eli.id, eli.expense_id, e.tenant_id
+        FROM expense_line_items eli
+        INNER JOIN expenses e ON eli.expense_id = e.id
+        WHERE eli.id = ${lineItemId} AND e.tenant_id = ${req.user.tenantId}
+      `;
+
+      if (!lineItem) {
+        return res.status(404).json({ message: "Line item not found" });
+      }
+
+      // Update the category
+      await sql`
+        UPDATE expense_line_items
+        SET category = ${category}, updated_at = NOW()
+        WHERE id = ${lineItemId}
+      `;
+
+      res.json({ 
+        success: true, 
+        message: "Line item category updated successfully",
+        lineItemId,
+        category
+      });
+    } catch (error: any) {
+      console.error("Error updating line item category:", error);
+      res.status(500).json({ message: "Failed to update line item category", error: error.message });
     }
   });
 
@@ -29604,6 +30358,7 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
       `;
     }
 
+    // Only fetch invoices with status "paid" or "partial" and sum paidAmount
     const invoices = await sql`
       SELECT 
         id,
@@ -29614,7 +30369,7 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
         TO_CHAR(issue_date, 'YYYY-MM') AS "month"
       FROM invoices
       WHERE tenant_id = ${tenantId}
-        AND status NOT IN ('void', 'cancelled')
+        AND status IN ('paid', 'partial')
         AND ${invoiceDateFilter}
       ORDER BY issue_date ASC
     `;
@@ -29623,11 +30378,11 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
 
     invoices.forEach((inv) => {
       const month = inv.month;
-      const totalAmount = Number(inv.totalAmount || 0);
+      // Sum paidAmount instead of totalAmount
+      const paidAmount = Number(inv.paidAmount || 0);
       
-      // Count all invoices (except void/cancelled which are already filtered) as revenue
-      // This represents total invoice amount issued, not just paid amount
-      const revenue = totalAmount;
+      // Revenue is the sum of paid amounts from paid/partial invoices
+      const revenue = paidAmount;
 
       if (!invoiceMonthData[month]) {
         invoiceMonthData[month] = { revenue: 0 };
@@ -29640,18 +30395,23 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
     let expenseDateFilter = sql`1=1`;
     if (startDate && endDate) {
       expenseDateFilter = sql`
-        expense_date >= ${startDate}::date
-        AND expense_date < (${endDate}::date + INTERVAL '1 day')
+        e.expense_date >= ${startDate}::date
+        AND e.expense_date < (${endDate}::date + INTERVAL '1 day')
       `;
     }
 
+    // Sum paid amounts from expense line items where:
+    // - Expense status is "approved" or "paid"
+    // - Line item payment_status is "paid"
     const expensesByMonth = await sql`
       SELECT 
-        TO_CHAR(expense_date, 'YYYY-MM') AS month,
-        SUM(amount)::numeric AS total
-      FROM expenses
-      WHERE tenant_id = ${tenantId}
-        AND status NOT IN ('cancelled', 'void')
+        TO_CHAR(e.expense_date, 'YYYY-MM') AS month,
+        COALESCE(SUM(eli.amount_paid), 0)::numeric AS total
+      FROM expenses e
+      INNER JOIN expense_line_items eli ON e.id = eli.expense_id
+      WHERE e.tenant_id = ${tenantId}
+        AND e.status IN ('approved', 'paid')
+        AND eli.payment_status = 'paid'
         AND ${expenseDateFilter}
       GROUP BY 1
       ORDER BY 1 ASC
@@ -29731,8 +30491,62 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
     console.error("❌ Profit & Loss Error:", error);
     res.status(500).json({ error: error.message });
   }
-});
+  });
 
+  // Get expenses by category for dashboard chart
+  app.get("/api/dashboard/expenses-by-category", authenticateToken, async (req, res) => {
+    try {
+      const tenantId = req.user.tenantId;
+      if (!tenantId) {
+        return res.status(400).json({ error: "Tenant ID not found" });
+      }
+
+      let { startDate = "", endDate = "" } = req.query;
+
+      const normalize = (v: any) =>
+        typeof v === "string" ? v.slice(0, 10) : v;
+
+      startDate = normalize(startDate);
+      endDate = normalize(endDate);
+
+      let expenseDateFilter = sql`1=1`;
+      if (startDate && endDate) {
+        expenseDateFilter = sql`
+          e.expense_date >= ${startDate}::date
+          AND e.expense_date < (${endDate}::date + INTERVAL '1 day')
+        `;
+      }
+
+      // Get category-wise totals from expense line items where:
+      // - Expense status is "approved" or "paid"
+      // - Line item payment_status is "paid"
+      // - Group by category from line items
+      // - Sum amount_paid from line items
+      const expensesByCategory = await sql`
+        SELECT 
+          COALESCE(eli.category, 'Other') AS category,
+          COALESCE(SUM(eli.amount_paid), 0)::numeric AS total_amount
+        FROM expenses e
+        INNER JOIN expense_line_items eli ON e.id = eli.expense_id
+        WHERE e.tenant_id = ${tenantId}
+          AND e.status IN ('approved', 'paid')
+          AND eli.payment_status = 'paid'
+          AND ${expenseDateFilter}
+        GROUP BY eli.category
+        ORDER BY total_amount DESC
+      `;
+
+      const result = expensesByCategory.map((row: any) => ({
+        category: row.category || "Other",
+        amount: Number(row.total_amount) || 0,
+      }));
+
+      res.json(result);
+    } catch (error: any) {
+      console.error("❌ Expenses by Category Error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
 
   app.get("/api/gst-settings", authenticateVendor, async (req, res) => {
     try {

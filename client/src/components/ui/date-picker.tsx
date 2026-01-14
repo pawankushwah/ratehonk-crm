@@ -2,7 +2,7 @@ import * as React from "react"
 import { format } from "date-fns"
 import { Calendar as CalendarIcon } from "lucide-react"
 
-import { cn } from "@/lib/utils"
+import { cn, parseLocalDate, formatLocalDate } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
 import {
@@ -25,16 +25,16 @@ export function DatePicker({
   className 
 }: DatePickerProps) {
   const [date, setDate] = React.useState<Date | undefined>(
-    value ? new Date(value) : undefined
+    value ? parseLocalDate(value) : undefined
   )
   const [open, setOpen] = React.useState(false)
   const [month, setMonth] = React.useState<Date | undefined>(
-    value ? new Date(value) : new Date()
+    value ? parseLocalDate(value) : new Date()
   )
 
   React.useEffect(() => {
     if (value) {
-      const newDate = new Date(value)
+      const newDate = parseLocalDate(value)
       setDate(newDate)
       setMonth(newDate) // Set the calendar month to the selected date's month
     } else {
@@ -56,7 +56,9 @@ export function DatePicker({
     if (selectedDate) {
       setMonth(selectedDate) // Update month to the selected date
       if (onChange) {
-        onChange(format(selectedDate, "yyyy-MM-dd"))
+        // Use formatLocalDate to ensure we get the correct local date string
+        // This prevents timezone conversion issues
+        onChange(formatLocalDate(selectedDate))
       }
     }
     // Auto-close the popover after date selection

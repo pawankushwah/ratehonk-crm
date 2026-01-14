@@ -55,6 +55,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useLocation, useRoute } from "wouter";
 import { useDebounce } from "@/hooks/use-debounce";
 import { directCustomersApi } from "@/lib/direct-customers-api";
+import { formatLocalDate, parseLocalDate } from "@/lib/utils";
 import { CustomerCreateForm } from "@/components/forms/customer-create-form";
 import { VendorCreateForm } from "@/components/forms/vendor-create-form";
 import { LeadTypeCreateForm } from "@/components/forms/lead-type-create-form";
@@ -120,9 +121,9 @@ export default function InvoiceCreate() {
   const [paymentMethod, setPaymentMethod] = useState<string[]>([]);
   const [paymentTerms, setPaymentTerms] = useState("30");
   const [customDays, setCustomDays] = useState("");
-  const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split("T")[0]);
+  const [invoiceDate, setInvoiceDate] = useState(formatLocalDate(new Date()));
   const [dueDate, setDueDate] = useState(
-    new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
+    formatLocalDate(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000))
   );
   const [travelDate, setTravelDate] = useState("");
   const [departureDate, setDepartureDate] = useState("");
@@ -272,72 +273,76 @@ export default function InvoiceCreate() {
     }
   }, [invoiceSettings?.defaultGstSettingId]);
 
+  // Track the last starting number used for auto-generation
+  const lastStartingNumber = useRef<number | null>(null);
+  const hasInitialized = useRef(false);
+
   // Function to generate next invoice number
+  // Use stable dependencies to prevent infinite loops
+  const invoicesLength = invoices?.length ?? 0;
+  const invoiceNumberStart = invoiceSettings?.invoiceNumberStart ?? 1;
+  const invoiceNumberPrefix = invoiceSettings?.invoiceNumberPrefix ?? "INV";
+  
+  // Create a stable reference to invoices array by serializing invoice numbers
+  // This prevents the useMemo from recalculating when the invoices array reference changes
+  // but the actual invoice numbers haven't changed
+  const invoiceNumbersString = useMemo(() => {
+    if (!invoices || invoices.length === 0) return "";
+    return invoices.map((inv: any) => inv.invoiceNumber || "").join(",");
+  }, [invoicesLength, invoices]);
+
   const generateNextInvoiceNumber = useMemo(() => {
-    const startNumber = invoiceSettings?.invoiceNumberStart || 1;
-    const prefix = invoiceSettings?.invoiceNumberPrefix || "INV";
+    const startNumber = invoiceNumberStart;
+    const prefix = invoiceNumberPrefix;
     
-    console.log("🔢 Generating invoice number - invoices count:", invoices?.length, "startNumber:", startNumber, "prefix:", prefix);
-    console.log("🔢 Invoice settings:", invoiceSettings);
-    console.log("🔢 Invoices data:", invoices);
+    // Only log in development mode and limit logging to first run
+    if (process.env.NODE_ENV === 'development' && !hasInitialized.current) {
+      console.log("🔢 Generating invoice number - invoices count:", invoicesLength, "startNumber:", startNumber, "prefix:", prefix);
+    }
     
     if (!invoices || invoices.length === 0) {
       // No existing invoices, use starting number from settings
       const generated = `${prefix}${String(startNumber).padStart(3, '0')}`;
-      console.log("🔢 No existing invoices, using start number from settings:", generated);
+      if (process.env.NODE_ENV === 'development' && !hasInitialized.current) {
+        console.log("🔢 No existing invoices, using start number from settings:", generated);
+      }
       return generated;
     }
 
     // Extract numbers from existing invoice numbers
     // Handle formats like: INV-001, INV001, INV-1, INV1, BILL-123, BILL123, etc.
     const invoiceNumbers = invoices
-      .map((inv: any, index: number) => {
+      .map((inv: any) => {
         const invNum = inv.invoiceNumber || "";
-        if (!invNum) {
-          console.log(`🔢 Invoice ${index} has no invoice number`);
-          return 0;
-        }
-        
-        console.log(`🔢 Processing invoice ${index}: "${invNum}"`);
+        if (!invNum) return 0;
         
         // Try to extract number - handle multiple formats
         // Pattern 1: PREFIX-NUMBER (e.g., INV-001, BILL-123)
         const matchWithDash = invNum.match(/^[A-Za-z0-9]+[\s-]+(\d+)/);
         if (matchWithDash) {
-          const num = parseInt(matchWithDash[1], 10);
-          console.log(`🔢 Matched with dash pattern: ${num}`);
-          return num;
+          return parseInt(matchWithDash[1], 10);
         }
         
         // Pattern 2: PREFIXNUMBER (e.g., INV001, BILL123)
         const matchNoDash = invNum.match(/^[A-Za-z]+(\d+)/);
         if (matchNoDash) {
-          const num = parseInt(matchNoDash[1], 10);
-          console.log(`🔢 Matched no dash pattern: ${num}`);
-          return num;
+          return parseInt(matchNoDash[1], 10);
         }
         
         // Pattern 3: Just numbers (extract first number sequence)
         const matchNumbers = invNum.match(/(\d+)/);
         if (matchNumbers) {
-          const num = parseInt(matchNumbers[1], 10);
-          console.log(`🔢 Matched numbers pattern: ${num}`);
-          return num;
+          return parseInt(matchNumbers[1], 10);
         }
         
-        console.log(`🔢 No pattern matched for: "${invNum}"`);
         return 0;
       })
       .filter((num: number) => num > 0);
-
-    console.log("🔢 Extracted invoice numbers:", invoiceNumbers);
 
     // Find the highest number from existing invoices
     const maxNumber = invoiceNumbers.length > 0 
       ? Math.max(...invoiceNumbers) 
       : 0;
-
-    console.log("🔢 Max number from existing invoices:", maxNumber, "Start number from settings:", startNumber);
 
     // If we have existing invoices, increment from the highest
     // If no valid numbers found, use start number
@@ -346,23 +351,19 @@ export default function InvoiceCreate() {
     if (invoiceNumbers.length === 0) {
       // No valid invoice numbers found, use start number
       nextNumber = startNumber;
-      console.log("🔢 No valid invoice numbers found, using start number:", nextNumber);
     } else {
       // We have valid invoice numbers, increment from the highest
       // But ensure we don't go below the start number
       nextNumber = Math.max(maxNumber + 1, startNumber);
-      console.log("🔢 Incrementing from max number:", maxNumber, "-> next:", nextNumber);
     }
     
     // Return without dash: INV001 instead of INV-001
     const generated = `${prefix}${String(nextNumber).padStart(3, '0')}`;
-    console.log("🔢 Final generated invoice number:", generated);
+    if (process.env.NODE_ENV === 'development' && !hasInitialized.current) {
+      console.log("🔢 Final generated invoice number:", generated);
+    }
     return generated;
-  }, [invoices, invoiceSettings?.invoiceNumberStart, invoiceSettings?.invoiceNumberPrefix]);
-
-  // Track the last starting number used for auto-generation
-  const lastStartingNumber = useRef<number | null>(null);
-  const hasInitialized = useRef(false);
+  }, [invoicesLength, invoiceNumberStart, invoiceNumberPrefix, invoiceNumbersString]);
 
   // Helper function to extract number part from full invoice number
   const extractNumberPart = (fullNumber: string, prefix: string): string => {
@@ -375,15 +376,24 @@ export default function InvoiceCreate() {
     return match ? match[1] : cleaned;
   };
 
+  // Track the last generated invoice number to prevent unnecessary updates
+  const lastGeneratedNumber = useRef<string | null>(null);
+
   // Auto-generate invoice number when invoices/settings are loaded
   useEffect(() => {
     if (isEditMode) return; // Don't auto-generate in edit mode
     
-    const currentStartNumber = invoiceSettings?.invoiceNumberStart || 1;
-    const prefix = invoiceSettings?.invoiceNumberPrefix || "INV";
+    const currentStartNumber = invoiceNumberStart;
+    const prefix = invoiceNumberPrefix;
     
     // Wait for both invoices and settings to be loaded
     if (generateNextInvoiceNumber && invoiceSettings && (invoices !== undefined)) {
+      // Check if the generated number has actually changed
+      if (lastGeneratedNumber.current === generateNextInvoiceNumber && hasInitialized.current) {
+        // Number hasn't changed, don't update
+        return;
+      }
+      
       // Check if starting number changed
       const startingNumberChanged = lastStartingNumber.current !== null && 
                                     lastStartingNumber.current !== currentStartNumber;
@@ -396,19 +406,23 @@ export default function InvoiceCreate() {
       
       if (shouldUpdate) {
         lastStartingNumber.current = currentStartNumber;
+        lastGeneratedNumber.current = generateNextInvoiceNumber;
         hasInitialized.current = true;
         const fullNumber = generateNextInvoiceNumber;
         setInvoiceNumber(fullNumber);
         // Extract and set just the number part
         const numberPart = extractNumberPart(fullNumber, prefix);
         setInvoiceNumberOnly(numberPart);
-        console.log("🔢 Set invoice number:", fullNumber, "Number part:", numberPart);
+        if (process.env.NODE_ENV === 'development') {
+          console.log("🔢 Set invoice number:", fullNumber, "Number part:", numberPart);
+        }
       }
-    } else if (invoiceSettings?.invoiceNumberStart && !hasInitialized.current) {
+    } else if (invoiceNumberStart && !hasInitialized.current) {
       // Initialize lastStartingNumber even if generateNextInvoiceNumber isn't ready yet
-      lastStartingNumber.current = invoiceSettings.invoiceNumberStart;
+      lastStartingNumber.current = invoiceNumberStart;
     }
-  }, [generateNextInvoiceNumber, invoiceSettings, invoices, isEditMode]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [generateNextInvoiceNumber, invoiceNumberStart, invoiceNumberPrefix, isEditMode]);
 
   // Sync invoiceNumberOnly when invoiceNumber changes (for edit mode)
   useEffect(() => {
@@ -724,8 +738,8 @@ export default function InvoiceCreate() {
       // Set basic fields
       setSelectedCustomerId(invoice.customerId?.toString() || "");
       setSelectedBookingId(invoice.bookingId?.toString() || "none");
-      setInvoiceDate(invoice.issueDate || invoice.invoiceDate || new Date().toISOString().split("T")[0]);
-      setDueDate(invoice.dueDate || new Date().toISOString().split("T")[0]);
+      setInvoiceDate(invoice.issueDate || invoice.invoiceDate || formatLocalDate(new Date()));
+      setDueDate(invoice.dueDate || formatLocalDate(new Date()));
       setDiscountAmount(invoice.discountAmount?.toString() || "0");
       // In edit mode, store existing paid amount separately and set amount paid field to 0
       const existingPaid = parseFloat(invoice.paidAmount?.toString() || "0");
@@ -824,8 +838,8 @@ export default function InvoiceCreate() {
         setNumberOfInstallments(invoice.installments.length.toString());
         // Calculate installment frequency based on dates if available
         if (invoice.installments.length > 1) {
-          const firstDate = new Date(invoice.installments[0].dueDate);
-          const secondDate = new Date(invoice.installments[1].dueDate);
+          const firstDate = parseLocalDate(invoice.installments[0].dueDate);
+          const secondDate = parseLocalDate(invoice.installments[1].dueDate);
           const daysDiff = Math.round((secondDate.getTime() - firstDate.getTime()) / (1000 * 60 * 60 * 24));
           if (daysDiff >= 28 && daysDiff <= 31) {
             setInstallmentFrequency("monthly");
@@ -1224,11 +1238,11 @@ export default function InvoiceCreate() {
         customer.name ||
         `${customer.firstName || ""} ${customer.lastName || ""}`.trim() ||
         "Unnamed Customer";
-      const email = customer.email ? ` | ${customer.email}` : "";
-      const phone = customer.phone ? ` | ${customer.phone}` : "";
       return {
         value: customer.id.toString(),
-        label: `${name}${email}${phone}`,
+        label: name,
+        email: customer.email || undefined,
+        phone: customer.phone || undefined,
       };
     });
 
@@ -1562,7 +1576,7 @@ export default function InvoiceCreate() {
       installments.push({
         installmentNumber: i + 1,
         amount: amountPerInstallment.toFixed(2),
-        dueDate: currentDate.toISOString().split("T")[0],
+        dueDate: formatLocalDate(currentDate),
       });
 
       // Calculate next date based on frequency
@@ -1896,9 +1910,11 @@ export default function InvoiceCreate() {
     }
   };
 
+
   // Calculate due date based on invoice date and payment terms
   const calculateDueDate = (date: string, terms: string, custom: string = "") => {
-    const baseDate = new Date(date);
+    // Parse the date as local date to prevent timezone issues
+    const baseDate = parseLocalDate(date);
     let daysToAdd = 0;
 
     if (terms === "custom") {
@@ -1907,8 +1923,10 @@ export default function InvoiceCreate() {
       daysToAdd = parseInt(terms) || 0;
     }
 
-    const newDueDate = new Date(baseDate.getTime() + daysToAdd * 24 * 60 * 60 * 1000);
-    return newDueDate.toISOString().split("T")[0];
+    // Add days using local date to prevent timezone shifts
+    const newDueDate = new Date(baseDate);
+    newDueDate.setDate(newDueDate.getDate() + daysToAdd);
+    return formatLocalDate(newDueDate);
   };
 
   // Handle invoice date change

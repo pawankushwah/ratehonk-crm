@@ -93,32 +93,42 @@ export function usePermissions() {
   
   const checkPermission = (page: string, action: PermissionAction): boolean => {
     if (!user) {
-      console.log("❌ No user found");
+      if (process.env.NODE_ENV === 'development') {
+        console.log("❌ No user found");
+      }
       return false;
     }
     
     // While loading, allow access (to prevent blocking users while permissions load)
     if (isLoading) {
-      console.log("⏳ Permissions loading - allowing access temporarily");
+      // Don't log during loading to reduce console spam
       return true;
     }
     
     // If error or allowByDefault flag, allow access
     if (error || (userPermissions as any)?.allowByDefault) {
-      console.log("⚠️ Permission check error or default allow - granting access");
+      if (process.env.NODE_ENV === 'development') {
+        console.log("⚠️ Permission check error or default allow - granting access");
+      }
       return true;
     }
     
     // Check if user has all permissions (owner role)
     if ((userPermissions as any)?.hasAllPermissions) {
-      console.log("✅ User has all permissions");
+      // Only log once, not on every check
+      if (process.env.NODE_ENV === 'development' && !(window as any).__permissionsLogged) {
+        console.log("✅ User has all permissions");
+        (window as any).__permissionsLogged = true;
+      }
       return true;
     }
     
     // Check role-based permissions
     const permissions = (userPermissions as any)?.permissions || userPermissions;
     const hasPerm = hasPermission(permissions, page, action);
-    console.log(`🔍 Permission check for ${page}.${action}:`, hasPerm, "permissions:", permissions);
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`🔍 Permission check for ${page}.${action}:`, hasPerm);
+    }
     return hasPerm;
   };
   

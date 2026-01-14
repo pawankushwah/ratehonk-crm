@@ -65,20 +65,36 @@ class TenantEmailService {
   }
 
   private createTenantTransporter(config: any): nodemailer.Transporter {
+    const port = config.smtp_port || 587;
+    const security = config.smtp_security || "tls";
+    
+    // Determine secure setting:
+    // - Port 465 uses direct TLS/SSL (secure: true)
+    // - Port 587 uses STARTTLS (secure: false)
+    // - "ssl" security type uses secure: true
+    // - "tls" security type uses secure: false with requireTLS
+    let secure = false;
+    if (security === "ssl" || port === 465) {
+      secure = true;
+    } else {
+      secure = false; // Port 587 uses STARTTLS
+    }
+
     const transportConfig: any = {
       host: config.smtp_host,
-      port: config.smtp_port || 587,
-      secure: config.smtp_security === "ssl",
+      port: port,
+      secure: secure,
       auth: {
         user: config.smtp_username,
         pass: config.smtp_password,
       },
+      // Add requireTLS option for port 587 to ensure STARTTLS is used
+      requireTLS: !secure && port === 587,
+      tls: {
+        // Do not fail on invalid certificates (useful for self-signed certs)
+        rejectUnauthorized: process.env.SMTP_REJECT_UNAUTHORIZED !== 'false',
+      },
     };
-
-    if (config.smtp_security === "tls") {
-      transportConfig.secure = false;
-      transportConfig.requireTLS = true;
-    }
 
     return nodemailer.createTransport(transportConfig);
   }
@@ -128,28 +144,51 @@ class TenantEmailService {
                 user: smtpConfig.user,
                 pass: smtpConfig.pass,
               },
+              requireTLS: !smtpConfig.secure && smtpConfig.port === 587,
+              tls: {
+                rejectUnauthorized: process.env.SMTP_REJECT_UNAUTHORIZED !== 'false',
+              },
             });
-            fromEmail = smtpConfig.fromEmail;
+            fromEmail = smtpConfig.fromEmail || smtpConfig.user;
             emailSource = "environment variables (config)";
             console.log(
               `📧 Using environment SMTP from config for ${data.companyName} (no configured SMTP found)`,
             );
-            console.log(`📧 SMTP Config: host=${smtpConfig.host}, port=${smtpConfig.port}, user=${smtpConfig.user}`);
+            console.log(`📧 SMTP Config: host=${smtpConfig.host}, port=${smtpConfig.port}, user=${smtpConfig.user.substring(0, 3)}***`);
           } else {
-            // Final fallback: Try legacy environment variables
-            if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+            // Final fallback: Try environment variables (support both SMTP_* and EMAIL_* for compatibility)
+            const smtpHost = process.env.SMTP_HOST || process.env.EMAIL_HOST || process.env.MAIL_HOST;
+            const smtpPort = parseInt(process.env.SMTP_PORT || process.env.EMAIL_PORT || process.env.MAIL_PORT || "587");
+            const smtpUser = process.env.EMAIL_USER || process.env.SMTP_USER || "";
+            const smtpPass = process.env.EMAIL_PASS || process.env.SMTP_PASS || "";
+            
+            if (smtpUser && smtpPass && smtpHost) {
+              // Determine secure setting for port 587 (STARTTLS) vs 465 (TLS/SSL)
+              let secure = false;
+              if (process.env.SMTP_SECURE === 'true' || process.env.SMTP_SECURE === 'ssl') {
+                secure = true;
+              } else if (process.env.SMTP_SECURE === 'false' || process.env.SMTP_SECURE === 'tls' || smtpPort === 587) {
+                secure = false; // Port 587 uses STARTTLS
+              } else if (smtpPort === 465) {
+                secure = true; // Port 465 uses direct TLS/SSL
+              }
+
               transporter = nodemailer.createTransport({
-                host: process.env.EMAIL_HOST || "mail.vanitechnologies.in",
-                port: parseInt(process.env.EMAIL_PORT || "587"),
-                secure: process.env.EMAIL_SECURE === "true",
+                host: smtpHost,
+                port: smtpPort,
+                secure: secure,
                 auth: {
-                  user: process.env.EMAIL_USER,
-                  pass: process.env.EMAIL_PASS,
+                  user: smtpUser,
+                  pass: smtpPass,
+                },
+                requireTLS: !secure && smtpPort === 587,
+                tls: {
+                  rejectUnauthorized: process.env.SMTP_REJECT_UNAUTHORIZED !== 'false',
                 },
               });
-              fromEmail = process.env.EMAIL_FROM || "noreply@ratehonk.com";
+              fromEmail = process.env.EMAIL_FROM || smtpUser || "noreply@ratehonk.com";
               emailSource = "environment variables (legacy)";
-              console.log(`📧 Using legacy environment SMTP for ${data.companyName}`);
+              console.log(`📧 Using environment SMTP for ${data.companyName}: host=${smtpHost}, port=${smtpPort}, user=${smtpUser.substring(0, 3)}***`);
             } else {
               throw new Error("No email configuration available. Please configure SMTP settings in .env file or tenant settings.");
             }
@@ -291,12 +330,24 @@ class TenantEmailService {
     }
   }
 
+  /**
+   * Helper function to check if email domain matches SMTP server domain
+   * This helps detect potential SPF/DKIM issues
+   */
+  private checkDomainMatch(email: string, smtpHost: string): boolean {
+    if (!email || !smtpHost) return false;
+    const emailDomain = email.split("@")[1]?.toLowerCase();
+    const smtpDomain = smtpHost.replace(/^mail\./, "").toLowerCase(); // Remove "mail." prefix if present
+    return emailDomain === smtpDomain || smtpHost.includes(emailDomain);
+  }
+
   async sendCustomerEmail(data: {
     to: string;
     subject: string;
     body: string;
     htmlBody?: string;
     tenantId: number;
+    fromName?: string; // Optional: Override the "from" name with tenant company name
     attachments?: Array<{
       filename: string;
       path?: string;
@@ -321,9 +372,10 @@ class TenantEmailService {
             tenantConfig.sender_email.trim() !== "" && 
             tenantConfig.sender_email !== data.to &&
             tenantConfig.sender_email.includes("@")) {
-          // Format: "Sender Name <email@example.com>" if sender_name exists, otherwise just email
-          if (tenantConfig.sender_name && tenantConfig.sender_name.trim() !== "") {
-            fromEmail = `"${tenantConfig.sender_name}" <${tenantConfig.sender_email}>`;
+          // Format: "Sender Name <email@example.com>" - prioritize fromName parameter, then sender_name, then just email
+          const displayName = data.fromName || tenantConfig.sender_name || "";
+          if (displayName && displayName.trim() !== "") {
+            fromEmail = `"${displayName}" <${tenantConfig.sender_email}>`;
           } else {
             fromEmail = tenantConfig.sender_email;
           }
@@ -334,31 +386,58 @@ class TenantEmailService {
             console.warn(`⚠️ WARNING: Sender email (${tenantConfig.sender_email}) doesn't match SMTP username (${tenantConfig.smtp_username}). This may cause delivery issues.`);
           }
         } else {
-          // Fall back to .env default sender email
-          const smtpConfig = config.email.smtp;
-          if (smtpConfig.fromEmail) {
-            if (smtpConfig.fromName) {
-              fromEmail = `"${smtpConfig.fromName}" <${smtpConfig.fromEmail}>`;
+          // IMPORTANT: Always use SMTP username as "from" email to avoid SPF/DKIM issues
+          // The "from" email must match the authenticated SMTP user for proper delivery
+          const smtpUsername = tenantConfig.smtp_username;
+          if (smtpUsername && smtpUsername.includes("@")) {
+            // Use SMTP username as from email (required for SPF/DKIM to pass)
+            const displayName = data.fromName || tenantConfig.sender_name || "";
+            if (displayName && displayName.trim() !== "") {
+              fromEmail = `"${displayName}" <${smtpUsername}>`;
             } else {
-              fromEmail = smtpConfig.fromEmail;
+              fromEmail = smtpUsername;
             }
-            console.log(`📧 No valid sender_email in database, using .env default: ${fromEmail}`);
-            
-            // Warn if .env fromEmail doesn't match SMTP username
-            if (tenantConfig.smtp_username && !smtpConfig.fromEmail.toLowerCase().includes(tenantConfig.smtp_username.toLowerCase())) {
-              console.warn(`⚠️ WARNING: .env SMTP_FROM_EMAIL (${smtpConfig.fromEmail}) doesn't match SMTP username (${tenantConfig.smtp_username}). Using SMTP username as from email instead.`);
-              // Use SMTP username as from email to ensure delivery
-              fromEmail = tenantConfig.smtp_username;
-              console.log(`📧 Using SMTP username as from email: ${fromEmail}`);
-            }
+            console.log(`📧 Using SMTP username as from email (required for SPF/DKIM): ${fromEmail}`);
           } else {
-            // Last resort: use smtp_username
-            fromEmail = tenantConfig.smtp_username;
-            console.log(`⚠️ No sender_email in database and no .env SMTP_FROM_EMAIL, using smtp_username: ${fromEmail}`);
+            // Fall back to .env default sender email only if SMTP username is not available
+            const smtpConfig = config.email.smtp;
+            if (smtpConfig.fromEmail) {
+              const displayName = data.fromName || smtpConfig.fromName || "";
+              if (displayName && displayName.trim() !== "") {
+                fromEmail = `"${displayName}" <${smtpConfig.fromEmail}>`;
+              } else {
+                fromEmail = smtpConfig.fromEmail;
+              }
+              console.log(`📧 No SMTP username available, using .env default: ${fromEmail}`);
+            } else {
+              // Last resort: use SMTP user from config
+              const smtpUser = smtpConfig.user || "";
+              if (smtpUser && smtpUser.includes("@")) {
+                const displayName = data.fromName || "";
+                if (displayName && displayName.trim() !== "") {
+                  fromEmail = `"${displayName}" <${smtpUser}>`;
+                } else {
+                  fromEmail = smtpUser;
+                }
+                console.log(`⚠️ Using SMTP user from config as from email: ${fromEmail}`);
+              } else {
+                throw new Error("No valid email address available for 'from' field. Please configure SMTP username or EMAIL_FROM.");
+              }
+            }
           }
         }
         emailSource = "tenant SMTP";
         console.log(`📧 Using tenant-specific SMTP for customer email`);
+        
+        // Check for potential SPF/DKIM issues
+        if (tenantConfig.smtp_host && fromEmail.includes("@")) {
+          const emailDomain = fromEmail.split("@")[1]?.toLowerCase();
+          const smtpDomain = tenantConfig.smtp_host.replace(/^mail\./, "").toLowerCase();
+          if (emailDomain && smtpDomain && emailDomain !== smtpDomain && !tenantConfig.smtp_host.includes(emailDomain)) {
+            console.warn(`⚠️ SPF WARNING: From email domain (${emailDomain}) doesn't match SMTP server domain (${smtpDomain}).`);
+            console.warn(`   This may cause SPF/DKIM failures. Consider using an email from ${smtpDomain} domain.`);
+          }
+        }
       } else {
         // Priority 2: Try SaaS owner SMTP configuration
         const saasOwnerConfig = await this.getSaasOwnerEmailConfig();
@@ -370,27 +449,50 @@ class TenantEmailService {
               saasOwnerConfig.sender_email.trim() !== "" && 
               saasOwnerConfig.sender_email !== data.to &&
               saasOwnerConfig.sender_email.includes("@")) {
-            // Format: "Sender Name <email@example.com>" if sender_name exists, otherwise just email
-            if (saasOwnerConfig.sender_name && saasOwnerConfig.sender_name.trim() !== "") {
-              fromEmail = `"${saasOwnerConfig.sender_name}" <${saasOwnerConfig.sender_email}>`;
+            // Format: "Sender Name <email@example.com>" - prioritize fromName parameter, then sender_name
+            const displayName = data.fromName || saasOwnerConfig.sender_name || "";
+            if (displayName && displayName.trim() !== "") {
+              fromEmail = `"${displayName}" <${saasOwnerConfig.sender_email}>`;
             } else {
               fromEmail = saasOwnerConfig.sender_email;
             }
             console.log(`📧 Using SaaS owner sender info from database: ${fromEmail}`);
           } else {
-            // Fall back to .env default sender email
-            const smtpConfig = config.email.smtp;
-            if (smtpConfig.fromEmail) {
-              if (smtpConfig.fromName) {
-                fromEmail = `"${smtpConfig.fromName}" <${smtpConfig.fromEmail}>`;
+            // IMPORTANT: Always use SMTP username as "from" email to avoid SPF/DKIM issues
+            const smtpUsername = saasOwnerConfig.smtp_username;
+            if (smtpUsername && smtpUsername.includes("@")) {
+              const displayName = data.fromName || saasOwnerConfig.sender_name || "";
+              if (displayName && displayName.trim() !== "") {
+                fromEmail = `"${displayName}" <${smtpUsername}>`;
               } else {
-                fromEmail = smtpConfig.fromEmail;
+                fromEmail = smtpUsername;
               }
-              console.log(`📧 No valid SaaS owner sender_email in database, using .env default: ${fromEmail}`);
+              console.log(`📧 Using SaaS owner SMTP username as from email (required for SPF/DKIM): ${fromEmail}`);
             } else {
-              // Last resort: use smtp_username
-              fromEmail = saasOwnerConfig.smtp_username;
-              console.log(`⚠️ No sender_email in database and no .env SMTP_FROM_EMAIL, using smtp_username: ${fromEmail}`);
+              // Fall back to .env default only if SMTP username is not available
+              const smtpConfig = config.email.smtp;
+              if (smtpConfig.fromEmail) {
+                const displayName = data.fromName || smtpConfig.fromName || "";
+                if (displayName && displayName.trim() !== "") {
+                  fromEmail = `"${displayName}" <${smtpConfig.fromEmail}>`;
+                } else {
+                  fromEmail = smtpConfig.fromEmail;
+                }
+                console.log(`📧 No SMTP username available, using .env default: ${fromEmail}`);
+              } else {
+                const smtpUser = smtpConfig.user || "";
+                if (smtpUser && smtpUser.includes("@")) {
+                  const displayName = data.fromName || "";
+                  if (displayName && displayName.trim() !== "") {
+                    fromEmail = `"${displayName}" <${smtpUser}>`;
+                  } else {
+                    fromEmail = smtpUser;
+                  }
+                  console.log(`⚠️ Using SMTP user from config as from email: ${fromEmail}`);
+                } else {
+                  throw new Error("No valid email address available for 'from' field. Please configure SMTP username or EMAIL_FROM.");
+                }
+              }
             }
           }
           emailSource = "SaaS owner SMTP";
@@ -407,36 +509,105 @@ class TenantEmailService {
                 user: smtpConfig.user,
                 pass: smtpConfig.pass,
               },
+              requireTLS: !smtpConfig.secure && smtpConfig.port === 587,
+              tls: {
+                rejectUnauthorized: process.env.SMTP_REJECT_UNAUTHORIZED !== 'false',
+              },
             });
-            // Use .env default sender info
-            if (smtpConfig.fromEmail) {
-              if (smtpConfig.fromName) {
-                fromEmail = `"${smtpConfig.fromName}" <${smtpConfig.fromEmail}>`;
+            // IMPORTANT: Always use SMTP username as "from" email to avoid SPF/DKIM issues
+            // The "from" email must match the authenticated SMTP user for proper delivery
+            const smtpUser = smtpConfig.user || "";
+            if (smtpUser && smtpUser.includes("@")) {
+              // Use SMTP user as from email (required for SPF/DKIM to pass)
+              const displayName = data.fromName || smtpConfig.fromName || "";
+              if (displayName && displayName.trim() !== "") {
+                fromEmail = `"${displayName}" <${smtpUser}>`;
+              } else {
+                fromEmail = smtpUser;
+              }
+              console.log(`📧 Using SMTP user as from email (required for SPF/DKIM): ${fromEmail}`);
+            } else if (smtpConfig.fromEmail) {
+              // Fallback to fromEmail only if SMTP user is not available
+              const displayName = data.fromName || smtpConfig.fromName || "";
+              if (displayName && displayName.trim() !== "") {
+                fromEmail = `"${displayName}" <${smtpConfig.fromEmail}>`;
               } else {
                 fromEmail = smtpConfig.fromEmail;
               }
+              console.log(`📧 No SMTP user available, using .env fromEmail: ${fromEmail}`);
             } else {
-              fromEmail = smtpConfig.user; // Fallback to SMTP user
+              throw new Error("No valid email address available for 'from' field. Please configure SMTP_USER or EMAIL_FROM.");
             }
             emailSource = "environment variables (config)";
             console.log(`📧 Using environment SMTP from config for customer email (no configured SMTP found)`);
             console.log(`📧 SMTP Config: host=${smtpConfig.host}, port=${smtpConfig.port}, user=${smtpConfig.user}`);
             console.log(`📧 Sender email: ${fromEmail} (from .env SMTP_FROM_EMAIL and SMTP_FROM_NAME)`);
           } else {
-            // Final fallback: Try legacy environment variables
-            if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+            // Final fallback: Try environment variables (support both SMTP_* and EMAIL_* for compatibility)
+            const smtpHost = process.env.SMTP_HOST || process.env.EMAIL_HOST || process.env.MAIL_HOST;
+            const smtpPort = parseInt(process.env.SMTP_PORT || process.env.EMAIL_PORT || process.env.MAIL_PORT || "587");
+            const smtpUser = process.env.EMAIL_USER || process.env.SMTP_USER || "";
+            const smtpPass = process.env.EMAIL_PASS || process.env.SMTP_PASS || "";
+            
+            if (smtpUser && smtpPass && smtpHost) {
+              // Determine secure setting for port 587 (STARTTLS) vs 465 (TLS/SSL)
+              let secure = false;
+              if (process.env.SMTP_SECURE === 'true' || process.env.SMTP_SECURE === 'ssl') {
+                secure = true;
+              } else if (process.env.SMTP_SECURE === 'false' || process.env.SMTP_SECURE === 'tls' || smtpPort === 587) {
+                secure = false; // Port 587 uses STARTTLS
+              } else if (smtpPort === 465) {
+                secure = true; // Port 465 uses direct TLS/SSL
+              }
+
               transporter = nodemailer.createTransport({
-                host: process.env.EMAIL_HOST || "mail.vanitechnologies.in",
-                port: parseInt(process.env.EMAIL_PORT || "587"),
-                secure: process.env.EMAIL_SECURE === "true",
+                host: smtpHost,
+                port: smtpPort,
+                secure: secure,
                 auth: {
-                  user: process.env.EMAIL_USER,
-                  pass: process.env.EMAIL_PASS,
+                  user: smtpUser,
+                  pass: smtpPass,
+                },
+                requireTLS: !secure && smtpPort === 587,
+                tls: {
+                  rejectUnauthorized: process.env.SMTP_REJECT_UNAUTHORIZED !== 'false',
                 },
               });
-              fromEmail = process.env.EMAIL_FROM || "noreply@ratehonk.com";
+              // IMPORTANT: Always use SMTP username as "from" email to avoid SPF/DKIM issues
+              // The "from" email must match the authenticated SMTP user for proper delivery
+              if (smtpUser && smtpUser.includes("@")) {
+                // Use SMTP user as from email (required for SPF/DKIM to pass)
+                const displayName = data.fromName || process.env.SMTP_FROM_NAME || "";
+                if (displayName && displayName.trim() !== "") {
+                  fromEmail = `"${displayName}" <${smtpUser}>`;
+                } else {
+                  fromEmail = smtpUser;
+                }
+                console.log(`📧 Using SMTP user as from email (required for SPF/DKIM): ${fromEmail}`);
+              } else {
+                // Fallback to EMAIL_FROM only if SMTP user is not available
+                const smtpFromEmail = process.env.EMAIL_FROM || "noreply@ratehonk.com";
+                const displayName = data.fromName || process.env.SMTP_FROM_NAME || "";
+                if (displayName && displayName.trim() !== "") {
+                  fromEmail = `"${displayName}" <${smtpFromEmail}>`;
+                } else {
+                  fromEmail = smtpFromEmail;
+                }
+                console.warn(`⚠️ WARNING: Using EMAIL_FROM (${smtpFromEmail}) instead of SMTP user. This may cause SPF/DKIM issues.`);
+              }
               emailSource = "environment variables (legacy)";
-              console.log(`📧 Using legacy environment SMTP for customer email`);
+              console.log(`📧 Using environment SMTP for customer email: host=${smtpHost}, port=${smtpPort}, user=${smtpUser.substring(0, 3)}***`);
+              
+              // Check for potential SPF/DKIM issues
+              if (smtpHost && fromEmail.includes("@")) {
+                const emailDomain = fromEmail.split("@")[1]?.toLowerCase();
+                const smtpDomain = smtpHost.replace(/^mail\./, "").toLowerCase();
+                if (emailDomain && smtpDomain && emailDomain !== smtpDomain && !smtpHost.includes(emailDomain)) {
+                  console.warn(`⚠️ SPF WARNING: From email domain (${emailDomain}) doesn't match SMTP server domain (${smtpDomain}).`);
+                  console.warn(`   This may cause SPF/DKIM failures. Consider using an email from ${smtpDomain} domain.`);
+                  console.warn(`   Current EMAIL_USER: ${smtpUser}, SMTP_HOST: ${smtpHost}`);
+                }
+              }
             } else {
               throw new Error("No email configuration available. Please configure SMTP settings in .env file or tenant settings.");
             }
@@ -689,44 +860,94 @@ class TenantEmailService {
     companyName: string;
     tenantId: number;
     leadId?: number;
+    leadData?: any; // Optional: Lead data including source, phone, status, etc.
   }) {
     try {
       const fullName = `${data.firstName} ${data.lastName}`.trim();
       const subject = `Welcome to ${data.companyName} - Thank You for Your Interest!`;
       
+      // Get lead-specific information if available
+      const leadSource = data.leadData?.source || "our website";
+      const leadPhone = data.leadData?.phone || "";
+      const leadStatus = data.leadData?.status || "new";
+      const leadNotes = data.leadData?.notes || "";
+      const leadType = data.leadData?.leadTypeName || "";
+      const leadBudget = data.leadData?.budgetRange || "";
+      const leadCity = data.leadData?.city || "";
+      const leadCountry = data.leadData?.country || "";
+      
+      // Build inquiry details section if lead data is available
+      let inquiryDetailsHtml = "";
+      if (data.leadData) {
+        const details = [];
+        if (leadType) details.push(`<strong>Inquiry Type:</strong> ${leadType}`);
+        if (leadSource && leadSource !== "our website") details.push(`<strong>Source:</strong> ${leadSource}`);
+        if (leadPhone) details.push(`<strong>Phone:</strong> ${leadPhone}`);
+        if (leadCity || leadCountry) {
+          const location = [leadCity, leadCountry].filter(Boolean).join(", ");
+          if (location) details.push(`<strong>Location:</strong> ${location}`);
+        }
+        if (leadBudget) details.push(`<strong>Budget Range:</strong> ${leadBudget}`);
+        
+        if (details.length > 0) {
+          inquiryDetailsHtml = `
+            <div style="background-color: #e8f4f8; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #007bff;">
+              <p style="margin: 0 0 10px 0; font-weight: bold; color: #007bff;">Your Inquiry Details:</p>
+              <div style="color: #333;">
+                ${details.map(detail => `<p style="margin: 5px 0;">${detail}</p>`).join("")}
+              </div>
+            </div>
+          `;
+        }
+      }
+      
       const htmlBody = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-          <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
-            <h2 style="color: #333; margin-top: 0;">Welcome to ${data.companyName}!</h2>
+          <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+            <h1 style="color: white; margin: 0; font-size: 28px;">Welcome to ${data.companyName}!</h1>
           </div>
           
-          <p>Hello ${data.firstName},</p>
-          
-          <p>Thank you for your interest in ${data.companyName}. We're excited to have you as a potential customer!</p>
-          
-          <p>Our team has received your inquiry and will be in touch with you shortly to discuss how we can help meet your needs.</p>
-          
-          <p>In the meantime, if you have any questions or would like to speak with us directly, please don't hesitate to reach out.</p>
-          
-          <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <p style="margin: 0;"><strong>What's Next?</strong></p>
-            <ul style="margin: 10px 0; padding-left: 20px;">
-              <li>Our team will review your inquiry</li>
-              <li>We'll contact you within 24-48 hours</li>
-              <li>We'll work together to find the best solution for you</li>
-            </ul>
+          <div style="background-color: #ffffff; padding: 40px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
+            <p style="color: #333; font-size: 16px; margin-bottom: 20px;">Hello ${data.firstName},</p>
+            
+            <p style="color: #666; font-size: 14px; line-height: 1.6; margin-bottom: 20px;">
+              Thank you for your interest in <strong>${data.companyName}</strong>! We're excited to have you as a potential customer and look forward to helping you with your needs.
+            </p>
+            
+            ${inquiryDetailsHtml}
+            
+            <p style="color: #666; font-size: 14px; line-height: 1.6; margin-bottom: 20px;">
+              Our team has received your inquiry${leadSource && leadSource !== "our website" ? ` from ${leadSource}` : ""} and will be in touch with you shortly to discuss how we can help meet your needs.
+            </p>
+            
+            <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin: 25px 0;">
+              <p style="margin: 0 0 15px 0; font-weight: bold; color: #333; font-size: 16px;">What's Next?</p>
+              <ul style="margin: 0; padding-left: 20px; color: #666; line-height: 1.8;">
+                <li>Our team will review your inquiry carefully</li>
+                <li>We'll contact you within 24-48 hours${leadPhone ? ` at ${leadPhone}` : ""}</li>
+                <li>We'll work together to find the best solution for you</li>
+              </ul>
+            </div>
+            
+            <p style="color: #666; font-size: 14px; line-height: 1.6; margin-bottom: 20px;">
+              In the meantime, if you have any questions or would like to speak with us directly, please don't hesitate to reach out.
+            </p>
+            
+            <p style="color: #333; font-size: 14px; margin-top: 30px;">
+              We look forward to serving you!
+            </p>
+            
+            <p style="color: #333; font-size: 14px; margin-top: 20px;">
+              Best regards,<br>
+              <strong>The ${data.companyName} Team</strong>
+            </p>
+            
+            <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+            <p style="color: #999; font-size: 12px; text-align: center;">
+              This is an automated message from ${data.companyName}. 
+              If you have any questions, please contact us directly.
+            </p>
           </div>
-          
-          <p>We look forward to serving you!</p>
-          
-          <p>Best regards,<br>
-          <strong>The ${data.companyName} Team</strong></p>
-          
-          <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
-          <p style="color: #999; font-size: 12px;">
-            This is an automated message from ${data.companyName}. 
-            If you have any questions, please contact us directly.
-          </p>
         </div>
       `;
 
@@ -735,16 +956,25 @@ Welcome to ${data.companyName}!
 
 Hello ${data.firstName},
 
-Thank you for your interest in ${data.companyName}. We're excited to have you as a potential customer!
+Thank you for your interest in ${data.companyName}! We're excited to have you as a potential customer and look forward to helping you with your needs.
 
-Our team has received your inquiry and will be in touch with you shortly to discuss how we can help meet your needs.
+${data.leadData ? `
+Your Inquiry Details:
+${leadType ? `Inquiry Type: ${leadType}` : ""}
+${leadSource && leadSource !== "our website" ? `Source: ${leadSource}` : ""}
+${leadPhone ? `Phone: ${leadPhone}` : ""}
+${leadCity || leadCountry ? `Location: ${[leadCity, leadCountry].filter(Boolean).join(", ")}` : ""}
+${leadBudget ? `Budget Range: ${leadBudget}` : ""}
+` : ""}
 
-In the meantime, if you have any questions or would like to speak with us directly, please don't hesitate to reach out.
+Our team has received your inquiry${leadSource && leadSource !== "our website" ? ` from ${leadSource}` : ""} and will be in touch with you shortly to discuss how we can help meet your needs.
 
 What's Next?
-- Our team will review your inquiry
-- We'll contact you within 24-48 hours
+- Our team will review your inquiry carefully
+- We'll contact you within 24-48 hours${leadPhone ? ` at ${leadPhone}` : ""}
 - We'll work together to find the best solution for you
+
+In the meantime, if you have any questions or would like to speak with us directly, please don't hesitate to reach out.
 
 We look forward to serving you!
 
@@ -755,15 +985,22 @@ The ${data.companyName} Team
 This is an automated message from ${data.companyName}. If you have any questions, please contact us directly.
       `;
 
+      console.log(`📧 Preparing to send lead welcome email:`);
+      console.log(`   - To: ${data.to}`);
+      console.log(`   - Company Name: ${data.companyName}`);
+      console.log(`   - From Name: ${data.companyName}`);
+      console.log(`   - Tenant ID: ${data.tenantId}`);
+      
       await this.sendCustomerEmail({
         to: data.to,
         subject: subject,
         body: textBody,
         htmlBody: htmlBody,
         tenantId: data.tenantId,
+        fromName: data.companyName, // Use tenant company name as "from" name
       });
 
-      console.log(`✅ Lead welcome email sent to ${data.to}`);
+      console.log(`✅ Lead welcome email sent to ${data.to} from ${data.companyName}`);
     } catch (error: any) {
       console.error(`❌ Error sending lead welcome email to ${data.to}:`, error);
       // Don't throw - email failure shouldn't break lead creation
@@ -783,63 +1020,76 @@ This is an automated message from ${data.companyName}. If you have any questions
   }) {
     try {
       const fullName = `${data.firstName} ${data.lastName}`.trim();
-      const subject = `Welcome to ${data.companyName} - You're Now a Valued Customer!`;
+      const subject = `Congratulations! You're Now a Customer of ${data.companyName}`;
       
+      // Use the same professional template as lead conversion email
       const htmlBody = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-          <div style="background-color: #4CAF50; color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
-            <h2 style="color: white; margin-top: 0;">Welcome to ${data.companyName}!</h2>
+          <div style="background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+            <h1 style="color: white; margin: 0; font-size: 28px;">Congratulations, ${data.firstName}!</h1>
           </div>
           
-          <p>Hello ${data.firstName},</p>
-          
-          <p>We're thrilled to welcome you as a valued customer of ${data.companyName}!</p>
-          
-          <p>Your account has been set up and you're now part of our customer family. We're committed to providing you with exceptional service and support.</p>
-          
-          <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
-            <p style="margin: 0;"><strong>What You Can Expect:</strong></p>
-            <ul style="margin: 10px 0; padding-left: 20px;">
-              <li>Dedicated support from our team</li>
-              <li>Regular updates on your account</li>
-              <li>Access to exclusive customer benefits</li>
-              <li>Priority assistance when you need it</li>
-            </ul>
+          <div style="background-color: #ffffff; padding: 40px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
+            <p style="color: #333; font-size: 16px; margin-bottom: 20px;">Hello ${data.firstName},</p>
+            
+            <p style="color: #666; font-size: 14px; line-height: 1.6; margin-bottom: 20px;">
+              We're excited to inform you that you're now officially a customer of <strong>${data.companyName}</strong>!
+            </p>
+            
+            <p style="color: #666; font-size: 14px; line-height: 1.6; margin-bottom: 20px;">
+              This is an important milestone, and we're honored that you've chosen to work with us. Our team is committed to ensuring you receive the best possible service and support.
+            </p>
+            
+            <div style="background-color: #e3f2fd; padding: 20px; border-radius: 8px; margin: 25px 0; border-left: 4px solid #2196F3;">
+              <p style="margin: 0 0 15px 0; font-weight: bold; color: #2196F3; font-size: 16px;">What This Means for You:</p>
+              <ul style="margin: 0; padding-left: 20px; color: #666; line-height: 1.8;">
+                <li>You now have full customer status with ${data.companyName}</li>
+                <li>Access to dedicated customer support</li>
+                <li>Priority handling of your requests</li>
+                <li>Exclusive customer benefits and updates</li>
+              </ul>
+            </div>
+            
+            <p style="color: #666; font-size: 14px; line-height: 1.6; margin-bottom: 20px;">
+              Our team will be in touch with you soon to discuss next steps and ensure everything is set up perfectly for you.
+            </p>
+            
+            <p style="color: #333; font-size: 14px; margin-top: 30px;">
+              Thank you for your trust in ${data.companyName}. We look forward to serving you!
+            </p>
+            
+            <p style="color: #333; font-size: 14px; margin-top: 20px;">
+              Best regards,<br>
+              <strong>The ${data.companyName} Team</strong>
+            </p>
+            
+            <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+            <p style="color: #999; font-size: 12px; text-align: center;">
+              This is an automated message from ${data.companyName}. 
+              If you have any questions, please contact us directly.
+            </p>
           </div>
-          
-          <p>If you have any questions or need assistance, please don't hesitate to reach out to us. We're here to help!</p>
-          
-          <p>Thank you for choosing ${data.companyName}. We look forward to a long and successful partnership!</p>
-          
-          <p>Best regards,<br>
-          <strong>The ${data.companyName} Team</strong></p>
-          
-          <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
-          <p style="color: #999; font-size: 12px;">
-            This is an automated message from ${data.companyName}. 
-            If you have any questions, please contact us directly.
-          </p>
         </div>
       `;
 
       const textBody = `
-Welcome to ${data.companyName}!
+Congratulations, ${data.firstName}!
 
 Hello ${data.firstName},
 
-We're thrilled to welcome you as a valued customer of ${data.companyName}!
+We're excited to inform you that you're now officially a customer of ${data.companyName}!
 
-Your account has been set up and you're now part of our customer family. We're committed to providing you with exceptional service and support.
+This is an important milestone, and we're honored that you've chosen to work with us. Our team is committed to ensuring you receive the best possible service and support.
 
-What You Can Expect:
-- Dedicated support from our team
-- Regular updates on your account
-- Access to exclusive customer benefits
-- Priority assistance when you need it
+What This Means for You:
+- You now have full customer status with ${data.companyName}
+- Access to dedicated customer support
+- Priority handling of your requests
+- Exclusive customer benefits and updates
 
-If you have any questions or need assistance, please don't hesitate to reach out to us. We're here to help!
+Our team will be in touch with you soon to discuss next steps and ensure everything is set up perfectly for you.
 
-Thank you for choosing ${data.companyName}. We look forward to a long and successful partnership!
+Thank you for your trust in ${data.companyName}. We look forward to serving you!
 
 Best regards,
 The ${data.companyName} Team
@@ -848,15 +1098,22 @@ The ${data.companyName} Team
 This is an automated message from ${data.companyName}. If you have any questions, please contact us directly.
       `;
 
+      console.log(`📧 Preparing to send customer welcome email:`);
+      console.log(`   - To: ${data.to}`);
+      console.log(`   - Company Name: ${data.companyName}`);
+      console.log(`   - From Name: ${data.companyName}`);
+      console.log(`   - Tenant ID: ${data.tenantId}`);
+      
       await this.sendCustomerEmail({
         to: data.to,
         subject: subject,
         body: textBody,
         htmlBody: htmlBody,
         tenantId: data.tenantId,
+        fromName: data.companyName, // Use tenant company name as "from" name
       });
 
-      console.log(`✅ Customer welcome email sent to ${data.to}`);
+      console.log(`✅ Customer welcome email sent to ${data.to} from ${data.companyName}`);
     } catch (error: any) {
       console.error(`❌ Error sending customer welcome email to ${data.to}:`, error);
       // Don't throw - email failure shouldn't break customer creation
@@ -942,15 +1199,22 @@ The ${data.companyName} Team
 This is an automated message from ${data.companyName}. If you have any questions, please contact us directly.
       `;
 
+      console.log(`📧 Preparing to send lead conversion email:`);
+      console.log(`   - To: ${data.to}`);
+      console.log(`   - Company Name: ${data.companyName}`);
+      console.log(`   - From Name: ${data.companyName}`);
+      console.log(`   - Tenant ID: ${data.tenantId}`);
+      
       await this.sendCustomerEmail({
         to: data.to,
         subject: subject,
         body: textBody,
         htmlBody: htmlBody,
         tenantId: data.tenantId,
+        fromName: data.companyName, // Use tenant company name as "from" name
       });
 
-      console.log(`✅ Lead conversion email sent to ${data.to}`);
+      console.log(`✅ Lead conversion email sent to ${data.to} from ${data.companyName}`);
     } catch (error: any) {
       console.error(`❌ Error sending lead conversion email to ${data.to}:`, error);
       // Don't throw - email failure shouldn't break conversion

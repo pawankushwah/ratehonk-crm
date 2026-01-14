@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/select";
 import { useAuth } from "@/components/auth/auth-provider";
 import { auth } from "@/lib/auth";
+import { formatLocalDate, parseLocalDate } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation, useRoute } from "wouter";
 import { VendorCreateForm } from "@/components/forms/vendor-create-form";
@@ -117,7 +118,7 @@ export default function ExpenseCreate() {
 
   const [selectedTaxSettingId, setSelectedTaxSettingId] = useState<string>("");
 
-  const [expenseDate, setExpenseDate] = useState(new Date().toISOString().split("T")[0]);
+  const [expenseDate, setExpenseDate] = useState(formatLocalDate(new Date()));
   const [currency, setCurrency] = useState("USD");
   const [notesContent, setNotesContent] = useState("");
   const [isTaxInclusive, setIsTaxInclusive] = useState(false);
@@ -557,7 +558,7 @@ export default function ExpenseCreate() {
       console.log("Expense amount_due:", expense.amount_due);
       
       // Set basic expense fields
-      setExpenseDate(expense.expense_date || expense.expenseDate || new Date().toISOString().split("T")[0]);
+      setExpenseDate(expense.expense_date || expense.expenseDate || formatLocalDate(new Date()));
       setCurrency(expense.currency || "USD");
       setExpenseTitle(expense.title || "");
       // Load invoice_id if available

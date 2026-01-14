@@ -58,23 +58,54 @@ class EmailService {
   private transporter: nodemailer.Transporter;
 
   constructor() {
-    // Create transporter with a common email service (you can configure this with real SMTP)
-    console.log("SMTP Credential", {
-      host: "mail.vanitechnologies.in", // Replace with your SMTP host
-      port: 587,
-      secure: false,
-      auth: {
-        user: process.env.EMAIL_USER || "support@vanitechnologies.in",
-        pass: process.env.EMAIL_PASS || "Support@2025",
-      },
+    // Get SMTP configuration from environment variables
+    const smtpHost = process.env.SMTP_HOST || process.env.MAIL_HOST || 'smtp.gmail.com';
+    const smtpPort = parseInt(process.env.SMTP_PORT || process.env.MAIL_PORT || '587');
+    
+    // Support both EMAIL_USER/EMAIL_PASS and SMTP_USER/SMTP_PASS for compatibility
+    const smtpUser = process.env.EMAIL_USER || process.env.SMTP_USER || '';
+    const smtpPass = process.env.EMAIL_PASS || process.env.SMTP_PASS || '';
+    
+    // Determine secure setting: 
+    // - Port 465 uses direct TLS/SSL (secure: true)
+    // - Port 587 uses STARTTLS (secure: false)
+    // - Port 25 is typically plain (secure: false)
+    // - If SMTP_SECURE env is set, use it, otherwise derive from port
+    let secure = false;
+    if (process.env.SMTP_SECURE === 'true' || process.env.SMTP_SECURE === 'ssl') {
+      secure = true;
+    } else if (process.env.SMTP_SECURE === 'false' || process.env.SMTP_SECURE === 'tls' || smtpPort === 587) {
+      secure = false; // Port 587 uses STARTTLS
+    } else if (smtpPort === 465) {
+      secure = true; // Port 465 uses direct TLS/SSL
+    }
+
+    console.log("📧 SMTP Configuration:", {
+      host: smtpHost,
+      port: smtpPort,
+      secure: secure,
+      user: smtpUser ? `${smtpUser.substring(0, 3)}***` : 'Not set',
+      pass: smtpPass ? '***' : 'Not set',
+      authMethod: secure ? 'TLS/SSL' : 'STARTTLS'
     });
+
+    if (!smtpUser || !smtpPass) {
+      console.warn("⚠️ Warning: SMTP credentials not fully configured. EMAIL_USER/EMAIL_PASS or SMTP_USER/SMTP_PASS must be set.");
+    }
+
     this.transporter = nodemailer.createTransport({
-      host: "mail.vanitechnologies.in", // Replace with your SMTP host
-      port: 587,
-      secure: false,
+      host: smtpHost,
+      port: smtpPort,
+      secure: secure, // true for 465, false for other ports (587 uses STARTTLS)
       auth: {
-        user: process.env.EMAIL_USER || "support@vanitechnologies.in",
-        pass: process.env.EMAIL_PASS || "Support@2025",
+        user: smtpUser,
+        pass: smtpPass,
+      },
+      // Add requireTLS option for port 587 to ensure STARTTLS is used
+      requireTLS: !secure && smtpPort === 587,
+      tls: {
+        // Do not fail on invalid certificates (useful for self-signed certs)
+        rejectUnauthorized: process.env.SMTP_REJECT_UNAUTHORIZED !== 'false',
       },
     });
   }
@@ -168,8 +199,20 @@ class EmailService {
     otp: string;
     companyName: string;
   }) {
+    // Use EMAIL_FROM if set, otherwise use EMAIL_USER (required by some mail servers like iRedMail)
+    const smtpUser = process.env.EMAIL_USER || process.env.SMTP_USER || '';
+    const fromEmail = process.env.EMAIL_FROM || smtpUser || "noreply@ratehonk.com";
+    
+    console.log("📧 Sending OTP email:", {
+      from: fromEmail,
+      to: data.to,
+      smtpHost: process.env.SMTP_HOST || process.env.MAIL_HOST,
+      smtpPort: process.env.SMTP_PORT || process.env.MAIL_PORT || '587',
+      smtpUser: smtpUser ? `${smtpUser.substring(0, 3)}***` : 'Not set',
+    });
+    
     const mailOptions = {
-      from: process.env.EMAIL_FROM || "noreply@ratehonk.com",
+      from: fromEmail,
       to: data.to,
       subject: "Email Verification - RateHonk CRM",
       html: `
@@ -203,10 +246,33 @@ class EmailService {
 
     try {
       await this.transporter.sendMail(mailOptions);
-      console.log(`OTP email sent successfully to ${data.to}`);
+      console.log(`✅ OTP email sent successfully to ${data.to}`);
       return true;
-    } catch (error) {
-      console.error("Error sending OTP email:", error);
+    } catch (error: any) {
+      console.error("❌ Error sending OTP email:");
+      console.error("   Error Code:", error.code);
+      console.error("   Error Message:", error.message);
+      console.error("   Response:", error.response);
+      console.error("   Command:", error.command);
+      
+      // Provide helpful error messages for common issues
+      if (error.code === 'EAUTH') {
+        console.error("   🔍 Authentication failed. Please check:");
+        console.error("      - EMAIL_USER/EMAIL_PASS or SMTP_USER/SMTP_PASS are correct");
+        console.error("      - Email and password match your mail server credentials");
+        console.error("      - Account is not locked or disabled");
+        console.error("      - For iRedMail: Ensure SMTP authentication is enabled for this account");
+      } else if (error.code === 'ECONNECTION') {
+        console.error("   🔍 Connection failed. Please check:");
+        console.error("      - SMTP_HOST is correct");
+        console.error("      - SMTP_PORT is correct (587 for STARTTLS, 465 for TLS/SSL)");
+        console.error("      - Firewall allows outbound connections on SMTP port");
+      } else if (error.code === 'ETIMEDOUT') {
+        console.error("   🔍 Connection timeout. Please check:");
+        console.error("      - SMTP server is reachable");
+        console.error("      - Network connectivity");
+      }
+      
       return false;
     }
   }

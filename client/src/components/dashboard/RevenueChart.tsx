@@ -23,7 +23,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Download } from "lucide-react";
 import { useAuth } from "@/components/auth/auth-provider";
-import { useInvoicesForGraph } from "@/hooks/useDashboardData";
+import { useInvoicesForGraph, useExpenses } from "@/hooks/useDashboardData";
 import { DateFilter } from "../ui/date-filter";
 import { useQuery } from "@tanstack/react-query";
 
@@ -98,6 +98,35 @@ function groupInvoicesByDate(invoices: any[]) {
     // Don't count pending, overdue, or draft invoices as revenue
     
     map[key] = (map[key] || 0) + revenue;
+  });
+  return map;
+}
+
+function groupExpensesByDate(expenses: any[]) {
+  const map: Record<string, number> = {};
+  expenses.forEach((exp) => {
+    const rawDate = exp.expenseDate ?? exp.expense_date ?? exp.createdAt;
+    const d = parseInvoiceDate(rawDate);
+    if (!d) return;
+
+    const key = formatYMDLocal(d);
+    const status = (exp.status || '').toLowerCase();
+    
+    // Only count expenses that are approved or paid
+    // Sum amount_paid from expense_line_items where payment_status = 'paid'
+    if (status === 'approved' || status === 'paid') {
+      // If expense has line items, sum their amount_paid where payment_status = 'paid'
+      if (exp.lineItems && Array.isArray(exp.lineItems)) {
+        const paidAmount = exp.lineItems
+          .filter((li: any) => (li.paymentStatus || li.payment_status || '').toLowerCase() === 'paid')
+          .reduce((sum: number, li: any) => sum + Number(li.amountPaid || li.amount_paid || 0), 0);
+        map[key] = (map[key] || 0) + paidAmount;
+      } else {
+        // Fallback: use expense amount_paid if line items not available
+        const amountPaid = Number(exp.amountPaid || exp.amount_paid || 0);
+        map[key] = (map[key] || 0) + amountPaid;
+      }
+    }
   });
   return map;
 }
@@ -280,12 +309,20 @@ export function RevenueChart() {
   const pdfRef = useRef<HTMLDivElement>(null);
   const { tenant } = useAuth();
 
-  const { data: invoices = [], isLoading } = useInvoicesForGraph(
+  const { data: invoices = [], isLoading: invoicesLoading } = useInvoicesForGraph(
     tenant?.id,
     dateFilter,
     customDateFrom,
     customDateTo
   );
+
+  const { data: expenses = [], isLoading: expensesLoading } = useExpenses(
+    dateFilter,
+    customDateFrom,
+    customDateTo
+  );
+
+  const isLoading = invoicesLoading || expensesLoading;
 
   // Fetch invoice settings to get currency
   const { data: invoiceSettings } = useQuery({
@@ -342,17 +379,32 @@ export function RevenueChart() {
     );
   };
 
-  const invoiceMap = useMemo(() => groupInvoicesByDate(invoices), [invoices]);
+  const revenueMap = useMemo(() => groupInvoicesByDate(invoices), [invoices]);
+  const expenseMap = useMemo(() => groupExpensesByDate(expenses), [expenses]);
+
+  // Calculate profit map: revenue - expenses for each date
+  const profitMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    // Add all revenue dates
+    Object.keys(revenueMap).forEach(key => {
+      map[key] = revenueMap[key];
+    });
+    // Subtract expenses
+    Object.keys(expenseMap).forEach(key => {
+      map[key] = (map[key] || 0) - expenseMap[key];
+    });
+    return map;
+  }, [revenueMap, expenseMap]);
 
   const chartData = useMemo(
     () =>
       buildChartDataFromInvoiceMap(
-        invoiceMap,
+        profitMap,
         dateFilter,
         customDateFrom,
         customDateTo
       ),
-    [invoiceMap, dateFilter, customDateFrom, customDateTo]
+    [profitMap, dateFilter, customDateFrom, customDateTo]
   );
 
   const totalCurrent = chartData.reduce(
