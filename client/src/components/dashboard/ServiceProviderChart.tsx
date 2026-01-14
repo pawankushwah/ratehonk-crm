@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
 import { DateFilter } from "@/components/ui/date-filter";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useInvoicesForGraph } from "@/hooks/useDashboardData";
 import { useAuth } from "../auth/auth-provider";
 import { useQuery } from "@tanstack/react-query";
@@ -31,7 +32,7 @@ export function ServiceProviderChart() {
   const [customDateFrom, setCustomDateFrom] = useState<Date | null>(null);
   const [customDateTo, setCustomDateTo] = useState<Date | null>(null);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
-  const [selectedCategory, setSelectedCategory] = useState<string>("");
+  const [selectedLeadTypeId, setSelectedLeadTypeId] = useState<string>("");
 
   const { data: invoices = [], isLoading } = useInvoicesForGraph(
     tenant?.id,
@@ -39,6 +40,25 @@ export function ServiceProviderChart() {
     customDateFrom,
     customDateTo
   );
+
+  // Fetch lead types
+  const { data: leadTypes = [] } = useQuery<any[]>({
+    queryKey: [`/api/lead-types`, tenant?.id],
+    queryFn: async () => {
+      if (!tenant?.id) return [];
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(`/api/lead-types`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      });
+      if (!response.ok) return [];
+      const result = await response.json();
+      return Array.isArray(result) ? result : result.leadTypes || [];
+    },
+    enabled: !!tenant?.id,
+  });
 
   // Fetch invoice settings to get currency
   const { data: invoiceSettings } = useQuery({
@@ -64,16 +84,6 @@ export function ServiceProviderChart() {
   const currentCurrency = invoiceSettings?.defaultCurrency || "USD";
   const currencySymbol = getCurrencySymbol(currentCurrency);
 
-  const categories = useMemo(() => {
-    const set = new Set<string>();
-    invoices.forEach((inv) => {
-      (inv.lineItems || []).forEach((li) => {
-        if (li.travelCategory) set.add(li.travelCategory);
-      });
-    });
-    return Array.from(set);
-  }, [invoices]);
-
   const prepareProviderData = (list: any[]) => {
     if (!list || list.length === 0) return [];
 
@@ -95,10 +105,10 @@ export function ServiceProviderChart() {
     ];
   };
 
-  const providerData = useMemo(() => {
-    if (!selectedCategory) return [];
+  const vendorData = useMemo(() => {
+    if (!selectedLeadTypeId) return [];
 
-    const amountMap: Record<string, number> = {};
+    const vendorMap: Record<string, number> = {};
 
     // Filter invoices to only include paid or partial paid invoices (same as profit-loss API)
     const paidInvoices = invoices.filter((inv: any) => {
@@ -114,18 +124,24 @@ export function ServiceProviderChart() {
       const paidProportion = totalAmount > 0 ? paidAmount / totalAmount : 0;
 
       (inv.lineItems || []).forEach((li) => {
-        if (li.travelCategory === selectedCategory && li.serviceProviderName) {
-          // Calculate the paid portion of this line item
-          const lineItemAmount = parseFloat(li.totalAmount || li.amount || li.total_amount || 0);
+        // Check for lead type ID in multiple possible field names (now includes booking lead_type_id from backend)
+        const lineItemLeadTypeId = li.leadTypeId || li.lead_type_id || li.packageId || li.package_id;
+        // Check for vendor name (already resolved by backend) or vendor ID
+        const vendorName = li.vendorName || li.vendor_name || (li.vendor ? `Vendor ${li.vendor}` : null);
+        
+        // Check if line item matches selected lead type and has a vendor
+        if (lineItemLeadTypeId && vendorName && lineItemLeadTypeId.toString() === selectedLeadTypeId) {
+          // Calculate the paid portion of this line item (invoice amount created by this vendor)
+          const lineItemAmount = parseFloat(li.totalAmount || li.amount || li.total_amount || li.totalPrice || 0);
           const paidLineItemAmount = lineItemAmount * paidProportion;
           
-          amountMap[li.serviceProviderName] =
-            (amountMap[li.serviceProviderName] || 0) + paidLineItemAmount;
+          // Sum the invoice amounts per vendor (how much service invoice created by this vendor)
+          vendorMap[vendorName] = (vendorMap[vendorName] || 0) + paidLineItemAmount;
         }
       });
     });
 
-    const total = Object.values(amountMap).reduce((a, b) => a + b, 0);
+    const total = Object.values(vendorMap).reduce((sum, amount) => sum + amount, 0);
     if (total === 0) return [];
 
     const colors = [
@@ -143,7 +159,7 @@ export function ServiceProviderChart() {
       "#B9B2FF",
     ];
 
-    const sorted = Object.entries(amountMap)
+    const sorted = Object.entries(vendorMap)
       .map(([name, amount]) => ({ name, amount }))
       .sort((a, b) => b.amount - a.amount);
 
@@ -155,18 +171,18 @@ export function ServiceProviderChart() {
     }));
 
     return prepareProviderData(mapped);
-  }, [invoices, selectedCategory]);
+  }, [invoices, selectedLeadTypeId]);
 
   const dummyGray = ["#C4C4C4", "#D3D3D3", "#E1E1E1"];
   const dummyHover = ["#6C63FF", "#A393FF", "#9A8CFF"];
 
   const dummyData = [
-    { name: "Category 0", value: 40, count: 0 },
-    { name: "Category 1", value: 30, count: 0 },
-    { name: "Category 2", value: 30, count: 0 },
+    { name: "Category 0", value: 40, amount: 0 },
+    { name: "Category 1", value: 30, amount: 0 },
+    { name: "Category 2", value: 30, amount: 0 },
   ];
 
-  const usingDummy = providerData.length === 0;
+  const usingDummy = vendorData.length === 0;
 
   const displayData = usingDummy
     ? dummyData.map((d, i) => ({
@@ -176,7 +192,7 @@ export function ServiceProviderChart() {
             ? dummyHover[i % dummyHover.length]
             : dummyGray[i % dummyGray.length],
       }))
-    : providerData;
+    : vendorData;
 
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
@@ -184,7 +200,7 @@ export function ServiceProviderChart() {
       return (
         <div className="bg-white shadow-lg rounded-md px-3 py-2 text-xs border border-gray-200">
           <p className="font-semibold">{item.name}</p>
-          <p>{usingDummy ? `${currencySymbol}0.00` : `${currencySymbol}${(item.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</p>
+          <p className="text-gray-600">{usingDummy ? `${currencySymbol}0.00` : `${currencySymbol}${(item.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</p>
         </div>
       );
     }
@@ -192,10 +208,10 @@ export function ServiceProviderChart() {
   };
 
   useEffect(() => {
-    if (categories.length > 0) {
-      setSelectedCategory(categories[0]);
+    if (leadTypes.length > 0 && !selectedLeadTypeId) {
+      setSelectedLeadTypeId(leadTypes[0].id.toString());
     }
-  }, [categories]);
+  }, [leadTypes, selectedLeadTypeId]);
 
   return (
     <Card className="col-span-12 lg:col-span-6 bg-white shadow-md rounded-xl p-4">
@@ -218,19 +234,33 @@ export function ServiceProviderChart() {
         </div>
 
         <div className="mb-5">
-          {!usingDummy && categories.length > 0 && (
+          {leadTypes.length > 0 && (
             <div className="mb-5">
-              <select
-                className="border px-3 py-2 rounded-md text-sm w-full sm:w-60"
-                value={selectedCategory}
-                onChange={(e) => setSelectedCategory(e.target.value)}
+              <Select
+                value={selectedLeadTypeId}
+                onValueChange={setSelectedLeadTypeId}
               >
-                {categories.map((cat, i) => (
-                  <option key={i} value={cat}>
-                    {cat}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger className="w-full sm:w-60">
+                  <SelectValue placeholder="Select Lead Type">
+                    {selectedLeadTypeId && leadTypes.find(lt => lt.id.toString() === selectedLeadTypeId)?.name}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {leadTypes.map((leadType) => (
+                    <SelectItem key={leadType.id} value={leadType.id.toString()}>
+                      <div className="flex items-center gap-2">
+                        {leadType.color && (
+                          <div
+                            className="w-3 h-3 rounded-full"
+                            style={{ backgroundColor: leadType.color }}
+                          />
+                        )}
+                        {leadType.name}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           )}
         </div>
@@ -296,7 +326,7 @@ export function ServiceProviderChart() {
                   ></div>
                   <div>
                     <p className="font-medium">{item.name}</p>
-                   <p className="text-gray-500">{usingDummy ? `${currencySymbol}0.00` : `${currencySymbol}${(item.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</p>
+                    <p className="text-gray-500">{usingDummy ? `${currencySymbol}0.00` : `${currencySymbol}${(item.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</p>
                   </div>
                 </div>
               ))}

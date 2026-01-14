@@ -5963,14 +5963,38 @@ async getAllLeadsByTenant(
       vendors.map(v => [v.id, v])
     );
 
+    // Fetch bookings to get lead type information
+    const bookingIds = invoices
+      .map(inv => inv.booking_id)
+      .filter(id => id != null);
+    
+    const bookings = bookingIds.length > 0
+      ? await sql`
+          SELECT id, lead_type_id
+          FROM bookings
+          WHERE id = ANY(${bookingIds})
+        `
+      : [];
+    
+    const bookingMap = Object.fromEntries(
+      bookings.map(b => [b.id, b])
+    );
+
     // Final response
     return invoices.map(inv => {
       const rawLineItems = parseJsonSafe(inv.line_items);
+      
+      // Get lead type from booking if invoice has booking_id
+      const booking = inv.booking_id ? bookingMap[inv.booking_id] : null;
+      const invoiceLeadTypeId = booking?.lead_type_id || null;
 
       const lineItems = rawLineItems.map(li => ({
         ...li,
         serviceProviderName: providerMap[Number(li.serviceProviderId)]?.name || null,
         vendorName: vendorMap[Number(li.vendor)]?.name || null,
+        // Add lead type ID from booking if not present in line item
+        leadTypeId: li.leadTypeId || li.lead_type_id || li.packageId || li.package_id || invoiceLeadTypeId,
+        lead_type_id: li.lead_type_id || li.leadTypeId || li.package_id || li.packageId || invoiceLeadTypeId,
       }));
 
       // Combine prefix and number for backward compatibility (without dash: INV001)
