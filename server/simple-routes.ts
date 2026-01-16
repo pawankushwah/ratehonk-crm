@@ -31331,9 +31331,21 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
   app.delete("/api/saas/tenants/:tenantId", authenticateSaasToken, async (req: any, res) => {
     try {
       const tenantId = parseInt(req.params.tenantId);
-      await sql`DELETE FROM tenants WHERE id = ${tenantId}`;
       
-      res.json({ message: "Tenant deleted successfully" });
+      if (!tenantId || isNaN(tenantId)) {
+        return res.status(400).json({ message: "Invalid tenant ID" });
+      }
+      
+      // Check if tenant exists before deleting
+      const [tenant] = await sql`SELECT * FROM tenants WHERE id = ${tenantId}`;
+      if (!tenant) {
+        return res.status(404).json({ message: "Tenant not found" });
+      }
+      
+      // Delete tenant and all related records
+      await simpleStorage.deleteTenant(tenantId);
+      
+      res.json({ message: "Tenant and all related records deleted successfully" });
     } catch (error: any) {
       console.error("Delete tenant error:", error);
       res.status(500).json({ message: "Internal server error", error: error.message });

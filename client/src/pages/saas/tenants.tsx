@@ -6,10 +6,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Plus, Edit, Trash2, Loader2 } from "lucide-react";
+import { Plus, Edit, Trash2, Loader2, AlertTriangle } from "lucide-react";
 import { useSaasAuth } from "@/components/auth/saas-auth-provider";
 import { useToast } from "@/hooks/use-toast";
 import { saasApiRequest } from "@/lib/saas-queryClient";
@@ -21,6 +22,7 @@ export default function SaasTenants() {
   const queryClient = useQueryClient();
   const [tenantDialogOpen, setTenantDialogOpen] = useState(false);
   const [editingTenant, setEditingTenant] = useState<any>(null);
+  const [deletingTenant, setDeletingTenant] = useState<any>(null);
 
   // Fetch tenants
   const { data: tenants, isLoading, refetch } = useQuery({
@@ -68,8 +70,9 @@ export default function SaasTenants() {
     onSuccess: () => {
       toast({
         title: "Success",
-        description: "Tenant deleted successfully",
+        description: "Tenant and all related records deleted successfully",
       });
+      setDeletingTenant(null);
       refetch();
     },
     onError: (error: any) => {
@@ -78,6 +81,7 @@ export default function SaasTenants() {
         description: error.message || "Failed to delete tenant",
         variant: "destructive",
       });
+      setDeletingTenant(null);
     },
   });
 
@@ -165,11 +169,7 @@ export default function SaasTenants() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              onClick={() => {
-                                if (confirm("Are you sure you want to delete this tenant?")) {
-                                  deleteTenantMutation.mutate(tenant.id);
-                                }
-                              }}
+                              onClick={() => setDeletingTenant(tenant)}
                             >
                               <Trash2 className="h-4 w-4 text-red-500" />
                             </Button>
@@ -197,6 +197,57 @@ export default function SaasTenants() {
           onSave={(data) => tenantMutation.mutate(data)}
           isLoading={tenantMutation.isPending}
         />
+
+        <AlertDialog open={!!deletingTenant} onOpenChange={(open) => !open && setDeletingTenant(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5 text-red-500" />
+                Delete Tenant
+              </AlertDialogTitle>
+              <AlertDialogDescription className="space-y-3">
+                <p>
+                  Are you sure you want to delete <strong>{deletingTenant?.companyName || deletingTenant?.company_name}</strong>?
+                </p>
+                <div className="p-3 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-lg">
+                  <p className="text-sm text-red-800 dark:text-red-200 font-semibold mb-2">
+                    ⚠️ This action cannot be undone!
+                  </p>
+                  <p className="text-sm text-red-700 dark:text-red-300">
+                    This will permanently delete the tenant and <strong>all related data</strong> including:
+                  </p>
+                  <ul className="text-sm text-red-700 dark:text-red-300 mt-2 ml-4 list-disc space-y-1">
+                    <li>All users, roles, and permissions</li>
+                    <li>All customers, leads, and bookings</li>
+                    <li>All invoices, estimates, and expenses</li>
+                    <li>All settings, preferences, and configurations</li>
+                    <li>All integrations, emails, and communications</li>
+                    <li>All other tenant-related records</li>
+                  </ul>
+                </div>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deleteTenantMutation.isPending}>
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => deletingTenant && deleteTenantMutation.mutate(deletingTenant.id)}
+                disabled={deleteTenantMutation.isPending}
+                className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
+              >
+                {deleteTenantMutation.isPending ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  "Delete Tenant"
+                )}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </SaasLayout>
   );

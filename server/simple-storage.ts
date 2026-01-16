@@ -5176,6 +5176,144 @@ async getAllLeadsByTenant(
     }
   }
 
+  async deleteTenant(tenantId: number): Promise<void> {
+    try {
+      console.log(`🗑️ Starting deletion of tenant ${tenantId} and all related records...`);
+
+      // Helper function to safely delete from a table
+      const safeDelete = async (tableName: string, conditionFn: () => Promise<any>) => {
+        try {
+          await conditionFn();
+          console.log(`  ✓ Deleted from ${tableName}`);
+        } catch (error: any) {
+          // Skip if table doesn't exist or column doesn't exist
+          if (error?.code === '42P01' || error?.code === '42703') {
+            console.log(`  ⚠ Skipped ${tableName} (table or column doesn't exist)`);
+          } else {
+            console.error(`  ✗ Error deleting from ${tableName}:`, error.message);
+            // Continue with other deletions even if one fails
+          }
+        }
+      };
+
+      // Delete order matters - delete child records before parent records
+      // to avoid foreign key constraint errors
+
+      // 1. Delete child records that reference other records with tenant_id
+      await safeDelete('consulation_form_submissions', () => sql`DELETE FROM consulation_form_submissions WHERE tenant_id = ${tenantId}`);
+      await safeDelete('estimate_email_logs', () => sql`DELETE FROM estimate_email_logs WHERE tenant_id = ${tenantId}`);
+      await safeDelete('estimate_line_items', () => sql`DELETE FROM estimate_line_items WHERE estimate_id IN (SELECT id FROM estimates WHERE tenant_id = ${tenantId})`);
+      await safeDelete('estimates', () => sql`DELETE FROM estimates WHERE tenant_id = ${tenantId}`);
+      await safeDelete('invoice_items', () => sql`DELETE FROM invoice_items WHERE invoice_id IN (SELECT id FROM invoices WHERE tenant_id = ${tenantId})`);
+      await safeDelete('payment_installments', () => sql`DELETE FROM payment_installments WHERE tenant_id = ${tenantId}`);
+      await safeDelete('invoices', () => sql`DELETE FROM invoices WHERE tenant_id = ${tenantId}`);
+      await safeDelete('passengers', () => sql`DELETE FROM passengers WHERE tenant_id = ${tenantId}`);
+      await safeDelete('payment_history', () => sql`DELETE FROM payment_history WHERE tenant_id = ${tenantId}`);
+      await safeDelete('bookings', () => sql`DELETE FROM bookings WHERE tenant_id = ${tenantId}`);
+      await safeDelete('expense_line_items', () => sql`DELETE FROM expense_line_items WHERE tenant_id = ${tenantId}`);
+      await safeDelete('expenses', () => sql`DELETE FROM expenses WHERE tenant_id = ${tenantId}`);
+      await safeDelete('dynamic_field_values', () => sql`DELETE FROM dynamic_field_values WHERE lead_id IN (SELECT id FROM leads WHERE tenant_id = ${tenantId})`);
+      await safeDelete('lead_activities', () => sql`DELETE FROM lead_activities WHERE tenant_id = ${tenantId}`);
+      await safeDelete('lead_notes', () => sql`DELETE FROM lead_notes WHERE tenant_id = ${tenantId}`);
+      await safeDelete('leads', () => sql`DELETE FROM leads WHERE tenant_id = ${tenantId}`);
+      await safeDelete('customer_files', () => sql`DELETE FROM customer_files WHERE tenant_id = ${tenantId}`);
+      await safeDelete('customer_activities', () => sql`DELETE FROM customer_activities WHERE tenant_id = ${tenantId}`);
+      await safeDelete('customer_notes', () => sql`DELETE FROM customer_notes WHERE tenant_id = ${tenantId}`);
+      await safeDelete('customer_emails', () => sql`DELETE FROM customer_emails WHERE tenant_id = ${tenantId}`);
+      await safeDelete('customers', () => sql`DELETE FROM customers WHERE tenant_id = ${tenantId}`);
+      await safeDelete('tasks', () => sql`DELETE FROM tasks WHERE tenant_id = ${tenantId}`);
+      await safeDelete('assignment_history', () => sql`DELETE FROM assignment_history WHERE tenant_id = ${tenantId}`);
+      await safeDelete('user_metrics', () => sql`DELETE FROM user_metrics WHERE tenant_id = ${tenantId}`);
+      await safeDelete('user_notifications', () => sql`DELETE FROM user_notifications WHERE tenant_id = ${tenantId}`);
+      await safeDelete('business_targets', () => sql`DELETE FROM business_targets WHERE tenant_id = ${tenantId}`);
+      await safeDelete('performance_reports', () => sql`DELETE FROM performance_reports WHERE tenant_id = ${tenantId}`);
+      await safeDelete('call_logs', () => sql`DELETE FROM call_logs WHERE tenant_id = ${tenantId}`);
+      await safeDelete('travel_packages', () => sql`DELETE FROM travel_packages WHERE tenant_id = ${tenantId}`);
+      await safeDelete('package_types', () => sql`DELETE FROM package_types WHERE tenant_id = ${tenantId}`);
+      await safeDelete('service_providers', () => sql`DELETE FROM service_providers WHERE tenant_id = ${tenantId}`);
+      await safeDelete('lead_types', () => sql`DELETE FROM lead_types WHERE tenant_id = ${tenantId}`);
+      await safeDelete('vendors', () => sql`DELETE FROM vendors WHERE tenant_id = ${tenantId}`);
+      await safeDelete('payment_methods', () => sql`DELETE FROM payment_methods WHERE tenant_id = ${tenantId}`);
+      await safeDelete('calendar_events', () => sql`DELETE FROM calendar_events WHERE tenant_id = ${tenantId}`);
+      await safeDelete('dynamic_fields', () => sql`DELETE FROM dynamic_fields WHERE tenant_id = ${tenantId}`);
+      await safeDelete('gst_rates', () => sql`DELETE FROM gst_rates WHERE tenant_id = ${tenantId}`);
+      await safeDelete('gst_settings', () => sql`DELETE FROM gst_settings WHERE tenant_id = ${tenantId}`);
+      
+      // Email-related tables
+      await safeDelete('email_logs', () => sql`DELETE FROM email_logs WHERE tenant_id = ${tenantId}`);
+      await safeDelete('email_deliverability_metrics', () => sql`DELETE FROM email_deliverability_metrics WHERE tenant_id = ${tenantId}`);
+      await safeDelete('email_ab_tests', () => sql`DELETE FROM email_ab_tests WHERE tenant_id = ${tenantId}`);
+      await safeDelete('email_personalization_rules', () => sql`DELETE FROM email_personalization_rules WHERE tenant_id = ${tenantId}`);
+      await safeDelete('email_segments', () => sql`DELETE FROM email_segments WHERE tenant_id = ${tenantId}`);
+      await safeDelete('email_automations', () => sql`DELETE FROM email_automations WHERE tenant_id = ${tenantId}`);
+      await safeDelete('email_subscribers', () => sql`DELETE FROM email_subscribers WHERE tenant_id = ${tenantId}`);
+      await safeDelete('email_templates', () => sql`DELETE FROM email_templates WHERE tenant_id = ${tenantId}`);
+      await safeDelete('email_campaigns', () => sql`DELETE FROM email_campaigns WHERE tenant_id = ${tenantId}`);
+      await safeDelete('email_configurations', () => sql`DELETE FROM email_configurations WHERE tenant_id = ${tenantId}`);
+      await safeDelete('gmail_emails', () => sql`DELETE FROM gmail_emails WHERE tenant_id = ${tenantId}`);
+      await safeDelete('gmail_integrations', () => sql`DELETE FROM gmail_integrations WHERE tenant_id = ${tenantId}`);
+      
+      // Social media integrations
+      await safeDelete('facebook_posts', () => sql`DELETE FROM facebook_posts WHERE tenant_id = ${tenantId}`);
+      await safeDelete('facebook_lead_forms', () => sql`DELETE FROM facebook_lead_forms WHERE tenant_id = ${tenantId}`);
+      await safeDelete('facebook_pages', () => sql`DELETE FROM facebook_pages WHERE tenant_id = ${tenantId}`);
+      await safeDelete('facebook_integrations', () => sql`DELETE FROM facebook_integrations WHERE tenant_id = ${tenantId}`);
+      await safeDelete('social_integrations', () => sql`DELETE FROM social_integrations WHERE tenant_id = ${tenantId}`);
+      
+      // Zoom and WhatsApp
+      await safeDelete('whatsapp_messages', () => sql`DELETE FROM whatsapp_messages WHERE tenant_id = ${tenantId}`);
+      await safeDelete('whatsapp_devices', () => sql`DELETE FROM whatsapp_devices WHERE tenant_id = ${tenantId}`);
+      await safeDelete('whatsapp_config', () => sql`DELETE FROM whatsapp_config WHERE tenant_id = ${tenantId}`);
+      await safeDelete('zoom_tokens', () => sql`DELETE FROM zoom_tokens WHERE tenant_id = ${tenantId}`);
+      
+      // Roles must be deleted before users (users reference roles)
+      await safeDelete('roles', () => sql`DELETE FROM roles WHERE tenant_id = ${tenantId}`);
+      
+      // Delete users with this tenant_id (excluding saas_owner role)
+      try {
+        await sql`DELETE FROM users WHERE tenant_id = ${tenantId} AND role != 'saas_owner'`;
+        console.log(`  ✓ Deleted users`);
+      } catch (error: any) {
+        console.error(`  ✗ Error deleting users:`, error.message);
+      }
+      
+      // Tenant preferences and settings
+      await safeDelete('dashboard_preferences', () => sql`DELETE FROM dashboard_preferences WHERE tenant_id = ${tenantId}`);
+      await safeDelete('tenant_group_preferences', () => sql`DELETE FROM tenant_group_preferences WHERE tenant_id = ${tenantId}`);
+      await safeDelete('tenant_menu_preferences', () => sql`DELETE FROM tenant_menu_preferences WHERE tenant_id = ${tenantId}`);
+      await safeDelete('tenant_settings', () => sql`DELETE FROM tenant_settings WHERE tenant_id = ${tenantId}`);
+      
+      // Subscriptions and plans
+      await safeDelete('tenant_free_trial_usage', () => sql`DELETE FROM tenant_free_trial_usage WHERE tenant_id = ${tenantId}`);
+      await safeDelete('tenant_subscriptions', () => sql`DELETE FROM tenant_subscriptions WHERE tenant_id = ${tenantId}`);
+      
+      // Delete password reset tokens for users that were deleted
+      try {
+        await sql`DELETE FROM password_reset_tokens WHERE user_id IN (SELECT id FROM users WHERE tenant_id = ${tenantId})`;
+        console.log(`  ✓ Deleted password reset tokens`);
+      } catch (error: any) {
+        if (error?.code !== '42P01') console.log(`  ⚠ Skipped password_reset_tokens`);
+      }
+      
+      // Delete email verification OTPs for users that were deleted
+      try {
+        await sql`DELETE FROM email_verification_otps WHERE user_id IN (SELECT id FROM users WHERE tenant_id = ${tenantId})`;
+        console.log(`  ✓ Deleted email verification OTPs`);
+      } catch (error: any) {
+        if (error?.code !== '42P01') console.log(`  ⚠ Skipped email_verification_otps`);
+      }
+      
+      // Finally, delete the tenant itself
+      await sql`DELETE FROM tenants WHERE id = ${tenantId}`;
+      console.log(`  ✓ Deleted tenant`);
+      
+      console.log(`✅ Successfully deleted tenant ${tenantId} and all related records`);
+    } catch (error) {
+      console.error(`❌ Error deleting tenant ${tenantId}:`, error);
+      throw error;
+    }
+  }
+
   // Invoice management methods
   async getInvoiceById(tenantId: number, invoiceId: number) {
     try {
