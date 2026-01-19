@@ -76,6 +76,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { useAuth } from "@/components/auth/auth-provider";
+import { useDefaultCurrency } from "@/hooks/use-default-currency";
 import { auth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { EnhancedTable, TableColumn } from "@/components/ui/enhanced-table";
@@ -107,7 +108,7 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import { Check, X } from "lucide-react";
+import { Check, X, Settings, GripVertical } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DateFilter } from "@/components/ui/date-filter";
 import { buildDateFilters } from "@/lib/date-filter-helpers";
@@ -146,6 +147,7 @@ export default function Invoices() {
   const { tenant } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const defaultCurrency = useDefaultCurrency();
   const [location, navigate] = useLocation();
   // Local filter states (not applied until "Apply Filters" is clicked)
   const [localSearchTerm, setLocalSearchTerm] = useState("");
@@ -202,6 +204,9 @@ export default function Invoices() {
   const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
   const [editingInvoice, setEditingInvoice] = useState<any>(null);
   const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false);
+  const [isColumnSettingsOpen, setIsColumnSettingsOpen] = useState(false);
+  const [invoiceColumnVisibility, setInvoiceColumnVisibility] = useState<Record<string, boolean>>({});
+  const [invoiceColumnOrder, setInvoiceColumnOrder] = useState<string[]>([]);
   const [followUpDialogOpen, setFollowUpDialogOpen] = useState(false);
   const [selectedInvoiceForFollowUp, setSelectedInvoiceForFollowUp] = useState<any>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
@@ -218,6 +223,59 @@ export default function Invoices() {
   const [duplicateCustomerSearch, setDuplicateCustomerSearch] = useState("");
   const debouncedDuplicateCustomerSearch = useDebounce(duplicateCustomerSearch, 500);
   const isInitialMount = useRef(true);
+
+  // Persist invoice table column visibility per-tenant
+  useEffect(() => {
+    if (!tenant?.id) return;
+    const storageKey = `invoice-table-columns:${tenant.id}`;
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+          setInvoiceColumnVisibility(parsed);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, [tenant?.id]);
+
+  useEffect(() => {
+    if (!tenant?.id) return;
+    const storageKey = `invoice-table-columns:${tenant.id}`;
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(invoiceColumnVisibility));
+    } catch {
+      // ignore
+    }
+  }, [tenant?.id, invoiceColumnVisibility]);
+
+  useEffect(() => {
+    if (!tenant?.id) return;
+    const storageKey = `invoice-table-column-order:${tenant.id}`;
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          setInvoiceColumnOrder(parsed.map(String));
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, [tenant?.id]);
+
+  useEffect(() => {
+    if (!tenant?.id) return;
+    const storageKey = `invoice-table-column-order:${tenant.id}`;
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(invoiceColumnOrder));
+    } catch {
+      // ignore
+    }
+  }, [tenant?.id, invoiceColumnOrder]);
 
   // Helper function to update URL parameters
   const updateURLParams = (page: number, size: number) => {
@@ -1639,6 +1697,45 @@ export default function Invoices() {
     }
   };
 
+  const DEFAULT_VISIBLE_KEYS = useMemo(
+    () =>
+      new Set<string>([
+        "invoiceNumber",
+        "customerName",
+        "invoiceVoucherNumbers",
+        "issueDate",
+        "dueDate",
+        "totalAmount",
+        "paidAmount",
+        "status",
+        "actions",
+      ]),
+    [],
+  );
+
+  const isColumnVisible = (key: string) => {
+    const stored = invoiceColumnVisibility[key];
+    if (stored === true) return true;
+    if (stored === false) return false;
+    return DEFAULT_VISIBLE_KEYS.has(key);
+  };
+
+  const getLineItemsSafe = (invoice: any): any[] => {
+    const invoiceData = invoice as any;
+    const raw = invoiceData.lineItems ?? invoiceData.line_items ?? null;
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw;
+    if (typeof raw === "string") {
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  };
+
   // Column definitions for the enhanced table
   const invoiceColumns: TableColumn<Invoice>[] = [
     {
@@ -1797,6 +1894,224 @@ export default function Invoices() {
             <span className={isOverdue ? "text-red-600 font-medium" : ""}>
               {formatDate(dueDate)}
             </span>
+          </div>
+        );
+      },
+    },
+    // --- Extra fields from Invoice Create (hidden by default) ---
+    {
+      key: "paymentTerms",
+      label: "Terms",
+      sortable: false,
+      render: (_, invoice) => {
+        const invoiceData = invoice as any;
+        return (
+          <div className="text-sm text-gray-700">
+            {invoiceData.paymentTerms ||
+              invoiceData.payment_terms ||
+              invoiceData.paymentTerm ||
+              "-"}
+          </div>
+        );
+      },
+    },
+    {
+      key: "paymentMethod",
+      label: "Payment Method",
+      sortable: false,
+      render: (_, invoice) => {
+        const invoiceData = invoice as any;
+        const raw = invoiceData.paymentMethod ?? invoiceData.payment_method;
+        if (!raw) return <div className="text-gray-400">-</div>;
+        if (Array.isArray(raw)) return <div className="text-sm">{raw.join(", ")}</div>;
+        return <div className="text-sm">{String(raw)}</div>;
+      },
+    },
+    {
+      key: "departureDate",
+      label: "Departure Date",
+      sortable: false,
+      render: (_, invoice) => {
+        const invoiceData = invoice as any;
+        const d = invoiceData.departureDate ?? invoiceData.departure_date;
+        return <div className="text-sm">{d ? formatDate(d) : "-"}</div>;
+      },
+    },
+    {
+      key: "arrivalDate",
+      label: "Arrival Date",
+      sortable: false,
+      render: (_, invoice) => {
+        const invoiceData = invoice as any;
+        const d = invoiceData.arrivalDate ?? invoiceData.arrival_date;
+        return <div className="text-sm">{d ? formatDate(d) : "-"}</div>;
+      },
+    },
+    {
+      key: "currency",
+      label: "Currency",
+      sortable: false,
+      render: (_, invoice) => {
+        const invoiceData = invoice as any;
+        return <div className="text-sm">{invoiceData.currency || "USD"}</div>;
+      },
+    },
+    {
+      key: "subtotal",
+      label: "Subtotal",
+      sortable: false,
+      render: (_, invoice) => {
+        const invoiceData = invoice as any;
+        const currency = invoiceData.currency || "USD";
+        const currencySymbol = getCurrencySymbol(currency);
+        const v = parseFloat(invoiceData.subtotal?.toString() || "0");
+        return (
+          <div className="flex items-center">
+            <span className="mr-1">{currencySymbol}</span>
+            <span>{v ? v.toLocaleString() : "0"}</span>
+          </div>
+        );
+      },
+    },
+    {
+      key: "taxAmount",
+      label: "Tax",
+      sortable: false,
+      render: (_, invoice) => {
+        const invoiceData = invoice as any;
+        const currency = invoiceData.currency || "USD";
+        const currencySymbol = getCurrencySymbol(currency);
+        const v = parseFloat((invoiceData.taxAmount ?? invoiceData.tax_amount ?? "0").toString());
+        return (
+          <div className="flex items-center">
+            <span className="mr-1">{currencySymbol}</span>
+            <span>{v ? v.toLocaleString() : "0"}</span>
+          </div>
+        );
+      },
+    },
+    {
+      key: "discountAmount",
+      label: "Discount",
+      sortable: false,
+      render: (_, invoice) => {
+        const invoiceData = invoice as any;
+        const currency = invoiceData.currency || "USD";
+        const currencySymbol = getCurrencySymbol(currency);
+        const v = parseFloat((invoiceData.discountAmount ?? invoiceData.discount_amount ?? "0").toString());
+        return (
+          <div className="flex items-center">
+            <span className="mr-1">{currencySymbol}</span>
+            <span>{v ? v.toLocaleString() : "0"}</span>
+          </div>
+        );
+      },
+    },
+    // Line Item fields (aggregated) from Invoice Create table
+    {
+      key: "lineItemCategory",
+      label: "Category",
+      sortable: false,
+      render: (_, invoice) => {
+        const items = getLineItemsSafe(invoice);
+        const names = items
+          .map((li: any) => li.travelCategory || li.leadTypeName || li.leadType || li.category)
+          .filter(Boolean);
+        return <div className="text-sm">{names.length ? names.slice(0, 2).join(", ") : "-"}</div>;
+      },
+    },
+    {
+      key: "lineItemVendor",
+      label: "Vendor",
+      sortable: false,
+      render: (_, invoice) => {
+        const items = getLineItemsSafe(invoice);
+        const names = items
+          .map((li: any) => li.vendorName || li.vendor_name || li.vendor)
+          .filter(Boolean);
+        return <div className="text-sm">{names.length ? names.slice(0, 2).join(", ") : "-"}</div>;
+      },
+    },
+    {
+      key: "lineItemProvider",
+      label: "Provider",
+      sortable: false,
+      render: (_, invoice) => {
+        const items = getLineItemsSafe(invoice);
+        const names = items
+          .map((li: any) => li.serviceProviderName || li.providerName || li.serviceProviderId || li.serviceProvider)
+          .filter(Boolean);
+        return <div className="text-sm">{names.length ? names.slice(0, 2).join(", ") : "-"}</div>;
+      },
+    },
+    {
+      key: "pax",
+      label: "Pax",
+      sortable: false,
+      render: (_, invoice) => {
+        const items = getLineItemsSafe(invoice);
+        const totalPax = items.reduce((sum: number, li: any) => sum + Number(li.quantity || li.pax || 0), 0);
+        return <div className="text-sm">{totalPax || "-"}</div>;
+      },
+    },
+    {
+      key: "unitPrice",
+      label: "Unit Price",
+      sortable: false,
+      render: (_, invoice) => {
+        const items = getLineItemsSafe(invoice);
+        const currency = (invoice as any).currency || "USD";
+        const currencySymbol = getCurrencySymbol(currency);
+        const v = items[0]?.unitPrice ?? items[0]?.unit_price;
+        return <div className="text-sm">{v != null ? `${currencySymbol}${Number(v).toLocaleString()}` : "-"}</div>;
+      },
+    },
+    {
+      key: "sellingPrice",
+      label: "Selling Price",
+      sortable: false,
+      render: (_, invoice) => {
+        const items = getLineItemsSafe(invoice);
+        const currency = (invoice as any).currency || "USD";
+        const currencySymbol = getCurrencySymbol(currency);
+        const v = items[0]?.sellingPrice ?? items[0]?.selling_price;
+        return <div className="text-sm">{v != null ? `${currencySymbol}${Number(v).toLocaleString()}` : "-"}</div>;
+      },
+    },
+    {
+      key: "purchasePrice",
+      label: "Purchase Price",
+      sortable: false,
+      render: (_, invoice) => {
+        const items = getLineItemsSafe(invoice);
+        const currency = (invoice as any).currency || "USD";
+        const currencySymbol = getCurrencySymbol(currency);
+        const v = items[0]?.purchasePrice ?? items[0]?.purchase_price;
+        return <div className="text-sm">{v != null ? `${currencySymbol}${Number(v).toLocaleString()}` : "-"}</div>;
+      },
+    },
+    {
+      key: "lineTax",
+      label: "Line Tax",
+      sortable: false,
+      render: (_, invoice) => {
+        const items = getLineItemsSafe(invoice);
+        const currency = (invoice as any).currency || "USD";
+        const currencySymbol = getCurrencySymbol(currency);
+        const v = items.reduce((sum: number, li: any) => sum + Number(li.tax || li.tax_amount || 0), 0);
+        return <div className="text-sm">{v ? `${currencySymbol}${v.toLocaleString()}` : "-"}</div>;
+      },
+    },
+    {
+      key: "notes",
+      label: "Notes",
+      sortable: false,
+      render: (_, invoice) => {
+        const invoiceData = invoice as any;
+        const n = invoiceData.notes || invoiceData.additionalNotes || "";
+        return (
+          <div className="text-sm text-gray-700 max-w-[220px] truncate" title={n}>
+            {n || "-"}
           </div>
         );
       },
@@ -1998,6 +2313,46 @@ export default function Invoices() {
       ),
     },
   ];
+
+  const orderedInvoiceColumns = useMemo(() => {
+    const byKey = new Map(invoiceColumns.map((c) => [c.key, c]));
+    const seen = new Set<string>();
+    const ordered: TableColumn<Invoice>[] = [];
+
+    // Apply saved order first
+    invoiceColumnOrder.forEach((key) => {
+      const col = byKey.get(key);
+      if (col) {
+        ordered.push(col);
+        seen.add(key);
+      }
+    });
+
+    // Append any new/missing columns
+    invoiceColumns.forEach((c) => {
+      if (!seen.has(c.key)) ordered.push(c);
+    });
+
+    return ordered;
+  }, [invoiceColumns, invoiceColumnOrder]);
+
+  // Initialize order once (default = current columns order)
+  useEffect(() => {
+    if (invoiceColumnOrder.length > 0) return;
+    setInvoiceColumnOrder(invoiceColumns.map((c) => c.key));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invoiceColumns.length]);
+
+  const visibleInvoiceColumns = orderedInvoiceColumns.filter((c) =>
+    isColumnVisible(c.key),
+  );
+
+  const toggleInvoiceColumn = (key: string) => {
+    setInvoiceColumnVisibility((prev) => {
+      const currentlyVisible = isColumnVisible(key);
+      return { ...prev, [key]: !currentlyVisible };
+    });
+  };
 
   // Reset to page 1 when applied filters change (but not on initial mount if URL params exist)
   useEffect(() => {
@@ -2488,7 +2843,7 @@ export default function Invoices() {
       taxAmount: lineItems.reduce((total, item) => total + item.tax, 0),
       discountAmount: discountAmount,
       status: paymentStatus,
-      currency: (formData.get("currency") as string) || "INR",
+      currency: (formData.get("currency") as string) || defaultCurrency,
       notes: (formData.get("notes") as string) || "",
       paymentTerms: (formData.get("paymentTerms") as string) || "30 days",
       lineItems: lineItems,
@@ -2544,6 +2899,114 @@ export default function Invoices() {
             </p>
           </div>
           <div className="flex gap-2">
+            <Sheet
+              open={isColumnSettingsOpen}
+              onOpenChange={setIsColumnSettingsOpen}
+            >
+              <SheetTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  title="Invoice table settings"
+                  aria-label="Invoice table settings"
+                >
+                  <Settings className="h-4 w-4" />
+                </Button>
+              </SheetTrigger>
+              <SheetContent
+                side="right"
+                className="w-[420px] sm:max-w-[520px] overflow-y-auto"
+              >
+                <SheetHeader>
+                  <SheetTitle>Invoice Table Settings</SheetTitle>
+                  <SheetDescription>
+                    Show or hide invoice list columns.
+                  </SheetDescription>
+                </SheetHeader>
+
+                <div className="mt-5 flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const next: Record<string, boolean> = {};
+                      invoiceColumns.forEach((c) => {
+                        next[c.key] = true;
+                      });
+                      setInvoiceColumnVisibility(next);
+                    }}
+                  >
+                    Show all
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setInvoiceColumnVisibility({});
+                      setInvoiceColumnOrder(invoiceColumns.map((c) => c.key));
+                    }}
+                    title="Reset to default (all visible)"
+                  >
+                    Reset
+                  </Button>
+                </div>
+
+                <div className="mt-4 space-y-2">
+                  {orderedInvoiceColumns.map((col) => {
+                    const visible = isColumnVisible(col.key);
+                    return (
+                      <div
+                        key={col.key}
+                        className="flex items-center justify-between rounded-lg border p-3"
+                        draggable
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData("text/plain", col.key);
+                          e.dataTransfer.effectAllowed = "move";
+                        }}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          e.dataTransfer.dropEffect = "move";
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          const fromKey = e.dataTransfer.getData("text/plain");
+                          const toKey = col.key;
+                          if (!fromKey || fromKey === toKey) return;
+                          setInvoiceColumnOrder((prev) => {
+                            const current = prev.length
+                              ? [...prev]
+                              : invoiceColumns.map((c) => c.key);
+                            const fromIdx = current.indexOf(fromKey);
+                            const toIdx = current.indexOf(toKey);
+                            if (fromIdx === -1 || toIdx === -1) return current;
+                            current.splice(fromIdx, 1);
+                            current.splice(toIdx, 0, fromKey);
+                            return current;
+                          });
+                        }}
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 font-medium text-sm text-gray-900">
+                            <GripVertical className="h-4 w-4 text-gray-400" />
+                            <span>{col.label}</span>
+                          </div>
+                          <div className="text-xs text-gray-500 truncate">
+                            {col.key}
+                          </div>
+                        </div>
+                        <Button
+                          variant={visible ? "outline" : "default"}
+                          size="sm"
+                          onClick={() => toggleInvoiceColumn(col.key)}
+                        >
+                          {visible ? "Hide" : "Show"}
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </SheetContent>
+            </Sheet>
             <Button
               variant="outline"
               onClick={() => setImportDialogOpen(true)}
@@ -2779,7 +3242,7 @@ export default function Invoices() {
           <CardContent>
             <EnhancedTable
               data={invoices}
-              columns={invoiceColumns}
+              columns={visibleInvoiceColumns}
               isLoading={isLoading}
               showPagination={false}
               emptyMessage="No invoices found. Create your first invoice to get started."
@@ -2791,52 +3254,67 @@ export default function Invoices() {
               footer={
                 invoices.length > 0 ? (
                   <TableRow className="bg-gray-50 hover:bg-gray-50 border-t-2 border-gray-300">
-                    {/* Invoice # */}
-                    <TableCell></TableCell>
-                    {/* Customer */}
-                    <TableCell></TableCell>
-                    {/* Invoice/Voucher # */}
-                    <TableCell></TableCell>
-                    {/* Issue Date */}
-                    <TableCell></TableCell>
-                    {/* Due Date */}
-                    <TableCell className="font-semibold text-gray-900 text-right pr-4">
-                      <span className="text-lg">Total:</span>
-                    </TableCell>
-                    {/* Total Amount - aligned with column */}
-                    <TableCell className="font-semibold text-gray-900">
-                      {(() => {
-                        // Get currency from first invoice or default to USD
+                    {visibleInvoiceColumns.map((col, idx) => {
+                      const nextKey = visibleInvoiceColumns[idx + 1]?.key;
+
+                      // Put "Total:" label in the cell right before totalAmount (if totalAmount is visible)
+                      if (nextKey === "totalAmount") {
+                        return (
+                          <TableCell
+                            key={col.key}
+                            className="font-semibold text-gray-900 text-right pr-4"
+                          >
+                            <span className="text-lg">Total:</span>
+                          </TableCell>
+                        );
+                      }
+
+                      if (col.key === "totalAmount") {
                         const firstInvoice = invoices[0] as any;
                         const currency = firstInvoice?.currency || "USD";
                         const currencySymbol = getCurrencySymbol(currency);
                         return (
-                          <div className="flex items-center font-semibold text-lg">
-                            <span className="mr-1">{currencySymbol}</span>
-                            <span>{totals.totalAmountSum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                          </div>
+                          <TableCell
+                            key={col.key}
+                            className="font-semibold text-gray-900"
+                          >
+                            <div className="flex items-center font-semibold text-lg">
+                              <span className="mr-1">{currencySymbol}</span>
+                              <span>
+                                {totals.totalAmountSum.toLocaleString(undefined, {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2,
+                                })}
+                              </span>
+                            </div>
+                          </TableCell>
                         );
-                      })()}
-                    </TableCell>
-                    {/* Amount Paid - aligned with column */}
-                    <TableCell className="font-semibold text-gray-900">
-                      {(() => {
-                        // Get currency from first invoice or default to USD
+                      }
+
+                      if (col.key === "paidAmount") {
                         const firstInvoice = invoices[0] as any;
                         const currency = firstInvoice?.currency || "USD";
                         const currencySymbol = getCurrencySymbol(currency);
                         return (
-                          <div className="flex items-center font-semibold text-lg">
-                            <span className="mr-1">{currencySymbol}</span>
-                            <span>{totals.paidAmountSum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                          </div>
+                          <TableCell
+                            key={col.key}
+                            className="font-semibold text-gray-900"
+                          >
+                            <div className="flex items-center font-semibold text-lg">
+                              <span className="mr-1">{currencySymbol}</span>
+                              <span>
+                                {totals.paidAmountSum.toLocaleString(undefined, {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2,
+                                })}
+                              </span>
+                            </div>
+                          </TableCell>
                         );
-                      })()}
-                    </TableCell>
-                    {/* Status */}
-                    <TableCell></TableCell>
-                    {/* Actions */}
-                    <TableCell></TableCell>
+                      }
+
+                      return <TableCell key={col.key} />;
+                    })}
                   </TableRow>
                 ) : null
               }
@@ -3361,7 +3839,7 @@ export default function Invoices() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="currency">Currency</Label>
-                <Select name="currency" defaultValue="INR">
+                <Select name="currency" defaultValue={defaultCurrency}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -3700,7 +4178,7 @@ export default function Invoices() {
                   ),
                   discountAmount: editDiscountAmount,
                   status: editPaymentStatus,
-                  currency: (formData.get("currency") as string) || "INR",
+                  currency: (formData.get("currency") as string) || defaultCurrency,
                   notes: (formData.get("notes") as string) || "",
                   paymentTerms:
                     (formData.get("paymentTerms") as string) || "30 days",
@@ -4237,7 +4715,7 @@ export default function Invoices() {
                   <Label htmlFor="currency">Currency</Label>
                   <Select
                     name="currency"
-                    defaultValue={editingInvoice.currency || "INR"}
+                    defaultValue={editingInvoice.currency || defaultCurrency}
                   >
                     <SelectTrigger>
                       <SelectValue />

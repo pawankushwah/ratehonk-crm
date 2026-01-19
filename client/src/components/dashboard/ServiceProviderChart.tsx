@@ -25,6 +25,13 @@ const getCurrencySymbol = (currencyCode: string): string => {
   return symbols[currencyCode] || currencyCode;
 };
 
+// Palette to match the provided reference (purple shades)
+const SERVICE_PROVIDER_COLORS = [
+  "#6D5EF7", // primary (dark)
+  "#B8B3FF", // medium
+  "#E4E1FF", // light
+];
+
 export function ServiceProviderChart() {
   const { tenant } = useAuth();
 
@@ -84,6 +91,32 @@ export function ServiceProviderChart() {
   const currentCurrency = invoiceSettings?.defaultCurrency || "USD";
   const currencySymbol = getCurrencySymbol(currentCurrency);
 
+  const getLeadTypeBaseColor = (leadTypeId: string) => {
+    const lt = leadTypes.find((x) => String(x.id) === String(leadTypeId));
+    const name = String(lt?.name || "").toLowerCase();
+
+    // Explicit mapping for the 3 lead types shown in your screenshot
+    if (name.includes("default")) return SERVICE_PROVIDER_COLORS[0]; // dark
+    if (name.includes("flight")) return SERVICE_PROVIDER_COLORS[1]; // medium
+    if (name.includes("hotel")) return SERVICE_PROVIDER_COLORS[2]; // light
+
+    // Fallback: stable by index
+    const idx = Math.max(
+      0,
+      leadTypes.findIndex((x) => String(x.id) === String(leadTypeId)),
+    );
+    return SERVICE_PROVIDER_COLORS[idx % SERVICE_PROVIDER_COLORS.length];
+  };
+
+  const getPaletteForLeadType = (leadTypeId: string) => {
+    const base = getLeadTypeBaseColor(leadTypeId);
+    // Rotate palette so the first (largest) slice matches the lead type base color
+    if (base === SERVICE_PROVIDER_COLORS[0]) return SERVICE_PROVIDER_COLORS; // dark, medium, light
+    if (base === SERVICE_PROVIDER_COLORS[1])
+      return [SERVICE_PROVIDER_COLORS[1], SERVICE_PROVIDER_COLORS[2], SERVICE_PROVIDER_COLORS[0]]; // medium, light, dark
+    return [SERVICE_PROVIDER_COLORS[2], SERVICE_PROVIDER_COLORS[0], SERVICE_PROVIDER_COLORS[1]]; // light, dark, medium
+  };
+
   const prepareProviderData = (list: any[]) => {
     if (!list || list.length === 0) return [];
 
@@ -100,7 +133,7 @@ export function ServiceProviderChart() {
         name: "Other",
         amount: otherAmount,
         value: Number(otherValue.toFixed(2)),
-        color: "#D1D5DB",
+        color: "#EDEBFF",
       },
     ];
   };
@@ -144,20 +177,7 @@ export function ServiceProviderChart() {
     const total = Object.values(vendorMap).reduce((sum, amount) => sum + amount, 0);
     if (total === 0) return [];
 
-    const colors = [
-      "#6C63FF",
-      "#A393FF",
-      "#D7D2FF",
-      "#9A8CFF",
-      "#C8C2FF",
-      "#8A84FF",
-      "#A29CFF",
-      "#C5C2FF",
-      "#E4E1FF",
-      "#7D74FF",
-      "#998FFF",
-      "#B9B2FF",
-    ];
+    const colors = getPaletteForLeadType(selectedLeadTypeId);
 
     const sorted = Object.entries(vendorMap)
       .map(([name, amount]) => ({ name, amount }))
@@ -173,8 +193,10 @@ export function ServiceProviderChart() {
     return prepareProviderData(mapped);
   }, [invoices, selectedLeadTypeId]);
 
-  const dummyGray = ["#C4C4C4", "#D3D3D3", "#E1E1E1"];
-  const dummyHover = ["#6C63FF", "#A393FF", "#9A8CFF"];
+  const dummyGray = ["#EDEBFF", "#F3F2FF", "#E4E1FF"];
+  const dummyHover = selectedLeadTypeId
+    ? getPaletteForLeadType(selectedLeadTypeId)
+    : SERVICE_PROVIDER_COLORS;
 
   const dummyData = [
     { name: "Category 0", value: 40, amount: 0 },
@@ -249,12 +271,10 @@ export function ServiceProviderChart() {
                   {leadTypes.map((leadType) => (
                     <SelectItem key={leadType.id} value={leadType.id.toString()}>
                       <div className="flex items-center gap-2">
-                        {leadType.color && (
-                          <div
-                            className="w-3 h-3 rounded-full"
-                            style={{ backgroundColor: leadType.color }}
-                          />
-                        )}
+                        <div
+                          className="w-3 h-3 rounded-full"
+                          style={{ backgroundColor: getLeadTypeBaseColor(String(leadType.id)) }}
+                        />
                         {leadType.name}
                       </div>
                     </SelectItem>

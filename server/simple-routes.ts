@@ -6261,9 +6261,37 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
       `;
       const tenant = tenants[0] || null;
 
-      // Generate invoice HTML for email (using same template as preview)
       const currencySymbol = invoice.currency === 'USD' ? '$' : invoice.currency === 'EUR' ? '€' : '₹';
-      
+
+      const lineItems = (() => {
+        const raw: any = (invoice as any).lineItems ?? (invoice as any).line_items ?? [];
+        if (Array.isArray(raw)) return raw;
+        if (typeof raw === "string") {
+          try {
+            const parsed = JSON.parse(raw);
+            return Array.isArray(parsed) ? parsed : [];
+          } catch {
+            return [];
+          }
+        }
+        return [];
+      })();
+
+      const invoiceAttachments = (() => {
+        const raw: any = (invoice as any).attachments ?? [];
+        if (!raw) return [];
+        if (Array.isArray(raw)) return raw;
+        if (typeof raw === "string") {
+          try {
+            const parsed = JSON.parse(raw);
+            return Array.isArray(parsed) ? parsed : [];
+          } catch {
+            return [];
+          }
+        }
+        return [];
+      })();
+
       // Prepare invoice data for PDF generation
       const invoiceDataForPDF = {
         invoiceNumber: invoice.invoiceNumber || `INV-${invoice.id}`,
@@ -6277,7 +6305,7 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
         companyEmail: tenant?.contact_email || '',
         companyPhone: tenant?.contact_phone || '',
         companyAddress: tenant?.address || '',
-        items: (invoice.lineItems || []).map((item: any) => ({
+        items: (lineItems || []).map((item: any) => ({
           description: item.itemTitle || item.description || 'N/A',
           quantity: item.quantity || 1,
           unitPrice: parseFloat(item.sellingPrice || item.unitPrice || 0),
@@ -6291,79 +6319,23 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
         notes: invoice.notes || undefined,
         paymentTerms: invoice.paymentTerms || 'Net 30',
         paymentStatus: invoice.status || 'pending',
+        departureDate: (invoice as any).departureDate ? new Date((invoice as any).departureDate).toLocaleDateString() : null,
+        arrivalDate: (invoice as any).arrivalDate ? new Date((invoice as any).arrivalDate).toLocaleDateString() : null,
       };
 
-      // Generate invoice HTML for email
-      const invoiceHtml = `
-        <html>
-        <head>
-          <style>
-            body { font-family: Arial, sans-serif; padding: 20px; color: #333; }
-            .header { margin-bottom: 30px; border-bottom: 2px solid #333; padding-bottom: 20px; }
-            .invoice-info { display: flex; justify-content: space-between; margin-bottom: 30px; }
-            .info-section { flex: 1; }
-            .line-items { width: 100%; border-collapse: collapse; margin: 30px 0; }
-            .line-items th { background: #f5f5f5; padding: 12px; text-align: left; border-bottom: 2px solid #333; }
-            .line-items td { padding: 10px 12px; border-bottom: 1px solid #ddd; }
-            .text-right { text-align: right; }
-            .totals { margin-top: 30px; margin-left: auto; width: 300px; }
-            .totals-row { display: flex; justify-content: space-between; padding: 8px 0; }
-            .totals-row.total { font-size: 18px; font-weight: bold; border-top: 2px solid #333; padding-top: 10px; margin-top: 10px; }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <h1>INVOICE</h1>
-            <p>Invoice #: ${invoiceDataForPDF.invoiceNumber}</p>
-          </div>
-          <div class="invoice-info">
-            <div class="info-section">
-              <h3>Bill To:</h3>
-              <p><strong>${invoiceDataForPDF.customerName}</strong></p>
-              ${invoiceDataForPDF.customerEmail ? `<p>${invoiceDataForPDF.customerEmail}</p>` : ''}
-              ${invoiceDataForPDF.customerPhone ? `<p>${invoiceDataForPDF.customerPhone}</p>` : ''}
-            </div>
-            <div class="info-section">
-              <h3>Invoice Details:</h3>
-              <p><strong>Issue Date:</strong> ${invoiceDataForPDF.issueDate}</p>
-              <p><strong>Due Date:</strong> ${invoiceDataForPDF.dueDate}</p>
-              <p><strong>Status:</strong> ${invoiceDataForPDF.paymentStatus}</p>
-            </div>
-          </div>
-          ${invoiceDataForPDF.items.length > 0 ? `
-            <table class="line-items">
-              <thead>
-                <tr>
-                  <th>Item</th>
-                  <th>Description</th>
-                  <th class="text-right">Quantity</th>
-                  <th class="text-right">Unit Price</th>
-                  <th class="text-right">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${invoiceDataForPDF.items.map((item: any, index: number) => `
-                  <tr>
-                    <td>${index + 1}</td>
-                    <td>${item.description}</td>
-                    <td class="text-right">${item.quantity}</td>
-                    <td class="text-right">${currencySymbol}${item.unitPrice.toFixed(2)}</td>
-                    <td class="text-right">${currencySymbol}${item.totalPrice.toFixed(2)}</td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          ` : ''}
-          <div class="totals">
-            <div class="totals-row total">
-              <span>Total Amount:</span>
-              <span>${currencySymbol}${invoiceDataForPDF.totalAmount.toFixed(2)}</span>
-            </div>
-          </div>
-          ${invoiceDataForPDF.notes ? `<p><strong>Notes:</strong> ${invoiceDataForPDF.notes}</p>` : ''}
-        </body>
-        </html>
-      `;
+      const { emailBody, emailHtmlBody } = buildInvoiceNotificationEmail({
+        invoiceNumber: invoiceDataForPDF.invoiceNumber,
+        currencySymbol,
+        totalAmount: invoiceDataForPDF.totalAmount,
+        dueDate: invoiceDataForPDF.dueDate,
+        paymentStatus: invoiceDataForPDF.paymentStatus,
+        customerName: invoiceDataForPDF.customerName,
+        departureDate: (invoiceDataForPDF as any).departureDate || null,
+        arrivalDate: (invoiceDataForPDF as any).arrivalDate || null,
+        tenantName: tenant?.company_name || tenant?.name || "Company",
+        tenantEmail: tenant?.contact_email || null,
+        tenantPhone: tenant?.contact_phone || null,
+      });
 
       // Generate PDF from HTML using Playwright
       let pdfBuffer: Buffer | null = null;
@@ -6395,19 +6367,63 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
         const emailOptions: any = {
           to: customer.email,
           subject: `Invoice ${invoiceDataForPDF.invoiceNumber} from ${tenant?.company_name || tenant?.name || 'Company'}`,
-          body: `Please find attached invoice ${invoiceDataForPDF.invoiceNumber}. Total amount: ${currencySymbol}${invoiceDataForPDF.totalAmount.toFixed(2)}`,
-          htmlBody: invoiceHtml,
+          body: emailBody,
+          htmlBody: emailHtmlBody,
           tenantId: tenantId,
+          fromName: tenant?.company_name || tenant?.name,
         };
+
+        const emailAttachments: any[] = [];
 
         // Add PDF attachment if generated successfully
         if (pdfBuffer) {
-          emailOptions.attachments = [{
+          emailAttachments.push({
             filename: `invoice-${invoiceDataForPDF.invoiceNumber}.pdf`,
-            content: pdfBuffer.toString('base64'),
-            contentType: 'application/pdf',
-            mimetype: 'application/pdf',
-          }];
+            content: pdfBuffer.toString("base64"),
+            contentType: "application/pdf",
+            mimetype: "application/pdf",
+          });
+        }
+
+        // Add invoice attachments (travel tickets, itineraries, etc.)
+        if (invoiceAttachments && invoiceAttachments.length > 0) {
+          for (const attachment of invoiceAttachments as any[]) {
+            try {
+              const attachmentName =
+                (attachment && (attachment.name || attachment.filename)) ||
+                (typeof attachment === "string" ? path.basename(attachment) : "attachment");
+              const attachmentUrl = (attachment && (attachment.url || attachment.path)) || attachment;
+              const attachmentType = (attachment && attachment.type) || "application/octet-stream";
+
+              let filePath: string | null = null;
+              if (typeof attachmentUrl === "string") {
+                if (attachmentUrl.startsWith("/")) {
+                  filePath = path.join(process.cwd(), attachmentUrl);
+                } else if (attachmentUrl.startsWith("http")) {
+                  // remote URL - skip (would require download)
+                  continue;
+                } else {
+                  filePath = path.join(process.cwd(), attachmentUrl);
+                }
+              }
+
+              if (filePath && fs.existsSync(filePath)) {
+                const fileBuffer = fs.readFileSync(filePath);
+                emailAttachments.push({
+                  filename: attachmentName,
+                  content: fileBuffer.toString("base64"),
+                  contentType: attachmentType,
+                  mimetype: attachmentType,
+                });
+              }
+            } catch {
+              // ignore attachment errors
+            }
+          }
+        }
+
+        if (emailAttachments.length > 0) {
+          emailOptions.attachments = emailAttachments;
         }
 
         await tenantEmailService.sendCustomerEmail(emailOptions);
@@ -20830,6 +20846,123 @@ Happy travels! 🌍✈️`,
     `;
   };
 
+  // Helper function to build invoice notification email (used in both automatic sending and manual sending)
+  const buildInvoiceNotificationEmail = (args: {
+    invoiceNumber: string;
+    currencySymbol: string;
+    totalAmount: number;
+    dueDate: string;
+    paymentStatus?: string | null;
+    customerName: string;
+    departureDate?: string | null;
+    arrivalDate?: string | null;
+    tenantName: string;
+    tenantEmail?: string | null;
+    tenantPhone?: string | null;
+  }) => {
+    const paymentStatusRaw = (args.paymentStatus || "pending").toString().toLowerCase();
+    const paymentStatusFormatted =
+      paymentStatusRaw.charAt(0).toUpperCase() + paymentStatusRaw.slice(1);
+
+    let travelDatesSection = "";
+    if (args.departureDate || args.arrivalDate) {
+      travelDatesSection =
+        '<tr><td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;"><strong>Travel Dates:</strong></td><td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;">';
+      if (args.departureDate && args.arrivalDate) {
+        travelDatesSection += `${args.departureDate} - ${args.arrivalDate}`;
+      } else if (args.departureDate) {
+        travelDatesSection += `Departure: ${args.departureDate}`;
+      } else if (args.arrivalDate) {
+        travelDatesSection += `Arrival: ${args.arrivalDate}`;
+      }
+      travelDatesSection += "</td></tr>";
+    }
+
+    const emailBody = `Dear ${args.customerName},
+
+Please find attached invoice ${args.invoiceNumber} for your records.
+
+Invoice Details:
+- Invoice Number: ${args.invoiceNumber}
+- Total Amount: ${args.currencySymbol}${args.totalAmount.toFixed(2)}
+- Payment Status: ${paymentStatusFormatted}
+- Due Date: ${args.dueDate}
+${args.departureDate ? `- Departure Date: ${args.departureDate}` : ""}${args.departureDate ? "\n" : ""}${args.arrivalDate ? `- Arrival Date: ${args.arrivalDate}` : ""}
+
+Please make payment by the due date. Thank you for your business!
+
+Best regards,
+${args.tenantName}`;
+
+    const emailHtmlBody = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      </head>
+      <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f5f5f5;">
+        <div style="background-color: #ffffff; border-radius: 8px; padding: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+          <div style="border-bottom: 3px solid #3b82f6; padding-bottom: 20px; margin-bottom: 30px;">
+            <h1 style="color: #1f2937; margin: 0; font-size: 24px;">Invoice Notification</h1>
+          </div>
+          
+          <p style="font-size: 16px; margin-bottom: 20px;">Dear <strong>${args.customerName}</strong>,</p>
+          
+          <p style="font-size: 16px; margin-bottom: 25px;">Please find attached invoice <strong style="color: #3b82f6;">${args.invoiceNumber}</strong> for your records.</p>
+          
+          <div style="background-color: #f8fafc; border-left: 4px solid #3b82f6; padding: 20px; margin: 25px 0; border-radius: 4px;">
+            <h2 style="color: #1f2937; margin-top: 0; margin-bottom: 15px; font-size: 18px;">Invoice Details</h2>
+            <table style="width: 100%; border-collapse: collapse;">
+              <tr>
+                <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;"><strong>Invoice Number:</strong></td>
+                <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb; color: #3b82f6; font-weight: 600;">${args.invoiceNumber}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;"><strong>Total Amount:</strong></td>
+                <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb; font-size: 18px; font-weight: 700; color: #1f2937;">${args.currencySymbol}${args.totalAmount.toFixed(2)}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;"><strong>Payment Status:</strong></td>
+                <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
+                  <span style="display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; 
+                    ${paymentStatusRaw === "paid" ? "background-color: #d1fae5; color: #065f46;" :
+                      paymentStatusRaw === "pending" ? "background-color: #fef3c7; color: #92400e;" :
+                      "background-color: #fee2e2; color: #991b1b;"}">
+                    ${paymentStatusFormatted}
+                  </span>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;"><strong>Due Date:</strong></td>
+                <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;">${args.dueDate}</td>
+              </tr>
+              ${travelDatesSection}
+            </table>
+          </div>
+          
+          <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 25px 0; border-radius: 4px;">
+            <p style="margin: 0; color: #92400e; font-size: 14px;">
+              <strong>📎 Attachments:</strong> This email includes the invoice PDF and any related travel documents (tickets, itineraries, etc.).
+            </p>
+          </div>
+          
+          <p style="font-size: 16px; margin-top: 30px; margin-bottom: 10px;">Please make payment by the due date. Thank you for your business!</p>
+          
+          <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+            <p style="margin: 0; color: #6b7280; font-size: 14px;">Best regards,<br>
+            <strong style="color: #1f2937;">${args.tenantName}</strong></p>
+            ${args.tenantEmail ? `<p style="margin: 5px 0 0 0; color: #6b7280; font-size: 14px;">${args.tenantEmail}</p>` : ""}
+            ${args.tenantPhone ? `<p style="margin: 5px 0 0 0; color: #6b7280; font-size: 14px;">${args.tenantPhone}</p>` : ""}
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    return { emailBody, emailHtmlBody, paymentStatusFormatted };
+  };
+
   // Helper function to send invoice via email and/or WhatsApp based on settings
   const sendInvoiceAutomatically = async (
     tenantId: number,
@@ -20918,108 +21051,20 @@ Happy travels! 🌍✈️`,
         try {
           const { tenantEmailService } = await import("./tenant-email-service.js");
           
-          // Format payment status with proper capitalization
-          const paymentStatusFormatted = invoiceDataForEmail.paymentStatus 
-            ? invoiceDataForEmail.paymentStatus.charAt(0).toUpperCase() + invoiceDataForEmail.paymentStatus.slice(1)
-            : 'Pending';
-          
-          // Build travel dates section
-          let travelDatesSection = '';
-          if (invoiceDataForEmail.departureDate || invoiceDataForEmail.arrivalDate) {
-            travelDatesSection = '<tr><td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;"><strong>Travel Dates:</strong></td><td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;">';
-            if (invoiceDataForEmail.departureDate && invoiceDataForEmail.arrivalDate) {
-              travelDatesSection += `${invoiceDataForEmail.departureDate} - ${invoiceDataForEmail.arrivalDate}`;
-            } else if (invoiceDataForEmail.departureDate) {
-              travelDatesSection += `Departure: ${invoiceDataForEmail.departureDate}`;
-            } else if (invoiceDataForEmail.arrivalDate) {
-              travelDatesSection += `Arrival: ${invoiceDataForEmail.arrivalDate}`;
-            }
-            travelDatesSection += '</td></tr>';
-          }
-          
-          // Professional email template with all invoice details
-          const emailBody = `Dear ${invoiceDataForEmail.customerName},
-
-Please find attached invoice ${invoiceNumber} for your records.
-
-Invoice Details:
-- Invoice Number: ${invoiceNumber}
-- Total Amount: ${currencySymbol}${invoiceDataForEmail.totalAmount.toFixed(2)}
-- Payment Status: ${paymentStatusFormatted}
-- Due Date: ${invoiceDataForEmail.dueDate}
-${invoiceDataForEmail.departureDate ? `- Departure Date: ${invoiceDataForEmail.departureDate}` : ''}
-${invoiceDataForEmail.arrivalDate ? `- Arrival Date: ${invoiceDataForEmail.arrivalDate}` : ''}
-
-Please make payment by the due date. Thank you for your business!
-
-Best regards,
-${tenant?.company_name || tenant?.name || 'Company'}`;
-          
-          const emailHtmlBody = `
-            <!DOCTYPE html>
-            <html>
-            <head>
-              <meta charset="UTF-8">
-              <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            </head>
-            <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f5f5f5;">
-              <div style="background-color: #ffffff; border-radius: 8px; padding: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                <div style="border-bottom: 3px solid #3b82f6; padding-bottom: 20px; margin-bottom: 30px;">
-                  <h1 style="color: #1f2937; margin: 0; font-size: 24px;">Invoice Notification</h1>
-                </div>
-                
-                <p style="font-size: 16px; margin-bottom: 20px;">Dear <strong>${invoiceDataForEmail.customerName}</strong>,</p>
-                
-                <p style="font-size: 16px; margin-bottom: 25px;">Please find attached invoice <strong style="color: #3b82f6;">${invoiceNumber}</strong> for your records.</p>
-                
-                <div style="background-color: #f8fafc; border-left: 4px solid #3b82f6; padding: 20px; margin: 25px 0; border-radius: 4px;">
-                  <h2 style="color: #1f2937; margin-top: 0; margin-bottom: 15px; font-size: 18px;">Invoice Details</h2>
-                  <table style="width: 100%; border-collapse: collapse;">
-                    <tr>
-                      <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;"><strong>Invoice Number:</strong></td>
-                      <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb; color: #3b82f6; font-weight: 600;">${invoiceNumber}</td>
-                    </tr>
-                    <tr>
-                      <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;"><strong>Total Amount:</strong></td>
-                      <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb; font-size: 18px; font-weight: 700; color: #1f2937;">${currencySymbol}${invoiceDataForEmail.totalAmount.toFixed(2)}</td>
-                    </tr>
-                    <tr>
-                      <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;"><strong>Payment Status:</strong></td>
-                      <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
-                        <span style="display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; 
-                          ${invoiceDataForEmail.paymentStatus === 'paid' ? 'background-color: #d1fae5; color: #065f46;' : 
-                            invoiceDataForEmail.paymentStatus === 'pending' ? 'background-color: #fef3c7; color: #92400e;' : 
-                            'background-color: #fee2e2; color: #991b1b;'}">
-                          ${paymentStatusFormatted}
-                        </span>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;"><strong>Due Date:</strong></td>
-                      <td style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;">${invoiceDataForEmail.dueDate}</td>
-                    </tr>
-                    ${travelDatesSection}
-                  </table>
-                </div>
-                
-                <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 25px 0; border-radius: 4px;">
-                  <p style="margin: 0; color: #92400e; font-size: 14px;">
-                    <strong>📎 Attachments:</strong> This email includes the invoice PDF and any related travel documents (tickets, itineraries, etc.).
-                  </p>
-                </div>
-                
-                <p style="font-size: 16px; margin-top: 30px; margin-bottom: 10px;">Please make payment by the due date. Thank you for your business!</p>
-                
-                <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
-                  <p style="margin: 0; color: #6b7280; font-size: 14px;">Best regards,<br>
-                  <strong style="color: #1f2937;">${tenant?.company_name || tenant?.name || 'Company'}</strong></p>
-                  ${tenant?.contact_email ? `<p style="margin: 5px 0 0 0; color: #6b7280; font-size: 14px;">${tenant.contact_email}</p>` : ''}
-                  ${tenant?.contact_phone ? `<p style="margin: 5px 0 0 0; color: #6b7280; font-size: 14px;">${tenant.contact_phone}</p>` : ''}
-                </div>
-              </div>
-            </body>
-            </html>
-          `;
+          // Use the shared email template function to ensure consistency
+          const { emailBody, emailHtmlBody } = buildInvoiceNotificationEmail({
+            invoiceNumber,
+            currencySymbol,
+            totalAmount: invoiceDataForEmail.totalAmount,
+            dueDate: invoiceDataForEmail.dueDate,
+            paymentStatus: invoiceDataForEmail.paymentStatus,
+            customerName: invoiceDataForEmail.customerName,
+            departureDate: invoiceDataForEmail.departureDate || null,
+            arrivalDate: invoiceDataForEmail.arrivalDate || null,
+            tenantName: tenant?.company_name || tenant?.name || 'Company',
+            tenantEmail: tenant?.contact_email || null,
+            tenantPhone: tenant?.contact_phone || null,
+          });
 
           const emailOptions: any = {
             to: customer.email,

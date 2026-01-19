@@ -6039,6 +6039,7 @@ async getAllLeadsByTenant(
       SELECT * FROM invoices
       WHERE tenant_id = ${tenantId}
         AND status NOT IN ('void', 'cancelled')
+        AND deleted_at IS NULL
         AND ${dateFilter}
       ORDER BY issue_date DESC
     `;
@@ -14775,6 +14776,7 @@ async getDashboardMetrics(
       WHERE 
         i.tenant_id = ${tenantId}
         AND i.status NOT IN ('void', 'cancelled')
+        AND i.deleted_at IS NULL
         AND ${dateFilter}
     `;
 
@@ -14794,7 +14796,7 @@ async getDashboardMetrics(
     const [invoicesResult] = await sql`
       SELECT COUNT(*) as total_invoices
       FROM invoices 
-      WHERE ${invoicesFilter} AND ${dateFilter} AND status NOT IN ('void', 'cancelled')
+      WHERE ${invoicesFilter} AND ${dateFilter} AND status NOT IN ('void', 'cancelled') AND deleted_at IS NULL
     `;
 
     // Customers - filter by team if provided

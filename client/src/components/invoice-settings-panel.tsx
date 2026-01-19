@@ -106,12 +106,13 @@ export function InvoiceSettingsPanel({ tenantId }: InvoiceSettingsPanelProps) {
       return await response.json();
     },
     onSuccess: () => {
+      // Invalidate all invoice-settings queries to refresh default currency everywhere
       queryClient.invalidateQueries({
-        queryKey: ["/api/invoice-settings", tenantId],
+        queryKey: ["/api/invoice-settings"],
       });
       toast({
         title: "Settings saved",
-        description: "Invoice settings have been updated successfully.",
+        description: "Default currency and invoice settings have been updated successfully. The default currency will now be used throughout the entire CRM.",
       });
       setOpen(false);
     },

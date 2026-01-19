@@ -20,6 +20,7 @@ import { Layout } from "@/components/layout/layout";
 import { DateFilter } from "@/components/ui/date-filter";
 import { buildDateFilters } from "@/lib/date-filter-helpers";
 import { useAuth } from "@/components/auth/auth-provider";
+import { useDefaultCurrency } from "@/hooks/use-default-currency";
 import { auth } from "@/lib/auth";
 import { 
   Plus, DollarSign, Receipt, Building2, Calendar, CreditCard, 
@@ -159,6 +160,7 @@ export default function Expenses() {
   const { tenant } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const defaultCurrency = useDefaultCurrency();
   const [, navigate] = useLocation();
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
@@ -453,7 +455,7 @@ export default function Expenses() {
     title: "",
     description: "",
     amount: "",
-    currency: "USD",
+    currency: defaultCurrency,
     category: "",
     subcategory: "",
     expenseDate: new Date().toISOString().split('T')[0],
@@ -946,7 +948,7 @@ export default function Expenses() {
       title: "",
       description: "",
       amount: "",
-      currency: "USD",
+      currency: defaultCurrency,
       category: "",
       subcategory: "",
       expenseDate: new Date().toISOString().split('T')[0],
@@ -998,7 +1000,7 @@ export default function Expenses() {
     }
   };
 
-  const formatCurrency = (amount: string, currency: string = "USD") => {
+  const formatCurrency = (amount: string, currency: string = defaultCurrency) => {
     const num = parseFloat(amount);
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
@@ -1531,7 +1533,7 @@ export default function Expenses() {
                       {(() => {
                         // Get currency from first expense or default to USD
                         const firstExpense = expenses[0] as any;
-                        const currency = firstExpense?.currency || "USD";
+                        const currency = firstExpense?.currency || defaultCurrency;
                         return (
                           <div className="flex items-center font-semibold text-lg">
                             {formatCurrency(totals.amountSum.toString(), currency)}
@@ -1544,7 +1546,7 @@ export default function Expenses() {
                       {(() => {
                         // Get currency from first expense or default to USD
                         const firstExpense = expenses[0] as any;
-                        const currency = firstExpense?.currency || "USD";
+                        const currency = firstExpense?.currency || defaultCurrency;
                         return (
                           <div className="flex items-center font-semibold text-lg text-green-600">
                             {formatCurrency(totals.paidLineItemsSum.toString(), currency)}
@@ -1799,7 +1801,7 @@ export default function Expenses() {
                     <Label htmlFor="amount">Amount *</Label>
                     <div className="flex gap-2">
                       <Select 
-                        value={formData.currency} 
+                        value={formData.currency || defaultCurrency} 
                         onValueChange={(value) => setFormData({ ...formData, currency: value })}
                       >
                         <SelectTrigger className="w-24">
