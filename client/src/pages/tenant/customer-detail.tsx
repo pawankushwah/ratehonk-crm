@@ -242,6 +242,7 @@ export default function CustomerDetail() {
     : null;
   const [selectedConsulationSubmissionId, setSelectedConsulationSubmissionId] = useState<number | null>(null);
   const [selectedPaymentSubmissionId, setSelectedPaymentSubmissionId] = useState<number | null>(null);
+  const [selectedInvoiceActivityId, setSelectedInvoiceActivityId] = useState<number | null>(null);
   const [viewingSubmissionImage, setViewingSubmissionImage] = useState<{ images: Array<{ url: string; name: string }>; currentIndex: number } | null>(null);
   const [isNavigatingToConsulationForm, setIsNavigatingToConsulationForm] = useState(false);
   const [isViewInvoiceOpen, setIsViewInvoiceOpen] = useState(false);
@@ -1545,7 +1546,7 @@ export default function CustomerDetail() {
       }
 
       return (
-        <div className="space-y-4 max-h-96 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
+        <div className="space-y-4 pr-2 pb-24">
           {notes.map((note: any, index: number) => (
             <div key={note.id} className="flex gap-4">
               <div className="flex flex-col items-center">
@@ -1654,7 +1655,7 @@ export default function CustomerDetail() {
       }
 
       return (
-        <div className="space-y-4 max-h-96 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
+        <div className="space-y-4 pr-2 pb-24">
           {activities.map((activity: any, index: number) => {
             const ActivityIcon = getActivityIcon(activity.activityType);
             const isCompleted = activity.activityStatus === 1;
@@ -1710,11 +1711,30 @@ export default function CustomerDetail() {
                           : activity.activityTableId)
                       : null;
                     
-                    // Check if this is a form submission activity (consulation or payment)
-                    const isFormSubmissionActivity = 
-                      activity.activityType === 12 ||
-                      (activity.activityTableName === "consulation_form_submissions" && activityTableId);
-                    
+                    const activityTableName = activity.activityTableName as string | undefined;
+
+                    // Helper: switch tabs and clear other "selected item" filters
+                    const switchToTab = (tab: string) => {
+                      setActiveTab(tab);
+                      if (tab !== "consulation-form") setSelectedConsulationSubmissionId(null);
+                      if (tab !== "payment-form") setSelectedPaymentSubmissionId(null);
+                      if (tab !== "invoice") setSelectedInvoiceActivityId(null);
+                    };
+
+                    // 1) Invoice activity → switch to Invoice tab (no modal)
+                    if (activityTableId && activityTableName === "invoices") {
+                      setSelectedInvoiceActivityId(activityTableId);
+                      switchToTab("invoice");
+                      return;
+                    }
+
+                    // 2) Form submission activities (consultation/payment)
+                    // Only treat activityType === 12 as a submission when it has no table name,
+                    // or when it points to the submissions table.
+                    const isFormSubmissionActivity =
+                      activityTableName === "consulation_form_submissions" ||
+                      (activity.activityType === 12 && !activityTableName);
+
                     if (isFormSubmissionActivity) {
                       setIsNavigatingToConsulationForm(true);
                       
@@ -1767,12 +1787,12 @@ export default function CustomerDetail() {
                           // Set the selected payment submission ID FIRST
                           setSelectedPaymentSubmissionId(submissionId);
                           // Then switch to payment-form tab
-                          setActiveTab("payment-form");
+                          switchToTab("payment-form");
                         } else {
                           // Set the selected consulation submission ID FIRST
                           setSelectedConsulationSubmissionId(submissionId);
                           // Then switch to consulation-form tab
-                          setActiveTab("consulation-form");
+                          switchToTab("consulation-form");
                         }
                       });
                       
@@ -1780,25 +1800,25 @@ export default function CustomerDetail() {
                       setTimeout(() => {
                         setIsNavigatingToConsulationForm(false);
                       }, 300);
-                    } else if (activityTableId && activity.activityTableName) {
-                      // For invoice activities, open invoice popup
-                      if (activity.activityTableName === "invoices" || activity.activityType === 12) {
-                        setSelectedActivityTable({
-                          tableName: activity.activityTableName,
-                          tableId: activityTableId,
-                        });
-                        setActivityPopupOpen(true);
-                      } else {
-                        // For other activities, open the popup as before
-                        setSelectedActivityTable({
-                          tableName: activity.activityTableName,
-                          tableId: activityTableId,
-                        });
-                        setActivityPopupOpen(true);
+                    } else {
+                      // 3) Other activity types: switch to the relevant tab
+                      // Prefer table name if present; otherwise use activityType.
+                      if (activityTableName === "customer_emails" || activity.activityType === 2) {
+                        switchToTab("email");
+                        return;
                       }
-                    } else if (activity.activityType === 12) {
-                      // Invoice activity without table reference - try to find invoice by activity date
-                      setActivityPopupOpen(true);
+                      if (activityTableName === "call_logs" || activity.activityType === 3) {
+                        switchToTab("call");
+                        return;
+                      }
+                      if (activityTableName === "whatsapp_messages" || activity.activityType === 5) {
+                        switchToTab("messages");
+                        return;
+                      }
+                      if (activityTableName === "customer_notes") {
+                        switchToTab("notes");
+                        return;
+                      }
                     }
                   }}
                 >
@@ -1815,11 +1835,13 @@ export default function CustomerDetail() {
                         {getActivityTypeLabel(activity.activityType)}
                       </span>
                       {((activity.activityTableId && activity.activityTableName) ||
-                        activity.activityType === 12) && (
+                        (!activity.activityTableName && activity.activityType === 12)) && (
                         <span className="text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
-                          {activity.activityTableName === "consulation_form_submissions" || activity.activityType === 12
-                            ? "View Submission" 
-                            : "View Details"}
+                          {activity.activityTableName === "consulation_form_submissions"
+                            ? "View Submission"
+                            : activity.activityTableName === "invoices"
+                              ? "View Invoice"
+                              : "View Details"}
                         </span>
                       )}
                     </div>
@@ -1872,7 +1894,7 @@ export default function CustomerDetail() {
       }
 
       return (
-        <div className="space-y-4 max-h-96 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
+        <div className="space-y-4 pr-2 pb-24">
           {calls.map((callLog: any, index: number) => {
             const isOutbound = callLog.callType === "outbound";
             const isCompleted = callLog.status === "completed";
@@ -1987,7 +2009,7 @@ export default function CustomerDetail() {
       }
 
       return (
-        <div className="space-y-4 max-h-96 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
+        <div className="space-y-4 pr-2 pb-24">
           {messages.map((msg: any, index: number) => {
             const isText = msg.messageType === "text";
             const statusColor = msg.status === "sent" ? "green" : msg.status === "failed" ? "red" : "gray";
@@ -2109,6 +2131,30 @@ export default function CustomerDetail() {
         );
       }
 
+      const displayedInvoices = selectedInvoiceActivityId
+        ? invoices.filter((inv: any) => {
+            const invId = typeof inv.id === "string" ? parseInt(inv.id, 10) : inv.id;
+            return invId === selectedInvoiceActivityId;
+          })
+        : invoices;
+
+      if (selectedInvoiceActivityId && displayedInvoices.length === 0) {
+        return (
+          <div className="text-center py-8 text-gray-500">
+            <Receipt className="w-8 h-8 mx-auto mb-2 opacity-50" />
+            <p>Invoice not found</p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-4"
+              onClick={() => setSelectedInvoiceActivityId(null)}
+            >
+              Show all invoices
+            </Button>
+          </div>
+        );
+      }
+
       // Define invoice columns for customer detail view
       const invoiceColumns: TableColumn<any>[] = [
         {
@@ -2208,8 +2254,22 @@ export default function CustomerDetail() {
 
       return (
         <div className="space-y-4">
+          {selectedInvoiceActivityId && (
+            <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg p-3">
+              <div className="text-sm text-blue-900">
+                Showing invoice <span className="font-semibold">#{selectedInvoiceActivityId}</span> from Activity
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setSelectedInvoiceActivityId(null)}
+              >
+                Show all
+              </Button>
+            </div>
+          )}
           <EnhancedTable
-            data={invoices}
+            data={displayedInvoices}
             columns={invoiceColumns}
             isLoading={invoicesLoading}
           />
@@ -2229,7 +2289,7 @@ export default function CustomerDetail() {
       }
 
       return (
-        <div className="space-y-4 max-h-96 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
+        <div className="space-y-4 pr-2 pb-24">
           {emails.map((email: any, index: number) => {
             const isDelivered = email.status === "sent";
 

@@ -74,6 +74,7 @@ import { Layout } from "@/components/layout/layout";
 import { EstimatePreview } from "@/components/estimates/estimate-preview";
 import { EmailEstimateDialog } from "@/components/estimates/email-estimate-dialog";
 import { useAuth } from "@/components/auth/auth-provider";
+import { useDefaultCurrency } from "@/hooks/use-default-currency";
 import { DateFilter } from "@/components/ui/date-filter";
 import { buildDateFilters } from "@/lib/date-filter-helpers";
 import { EnhancedTable, TableColumn } from "@/components/ui/enhanced-table";
@@ -163,6 +164,7 @@ export default function Estimates() {
   const { tenant } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const defaultCurrency = useDefaultCurrency();
 
   // State management
   const [showCreateDialog, setShowCreateDialog] = useState(false);
@@ -463,7 +465,7 @@ export default function Estimates() {
     customerEmail: "",
     customerPhone: "",
     invoiceNumber: "",
-    currency: "USD",
+    currency: defaultCurrency,
     validUntil: "",
     lineItems: [
       {
@@ -913,7 +915,7 @@ export default function Estimates() {
         customerEmail: "",
         customerPhone: "",
         invoiceNumber: "",
-        currency: "USD",
+        currency: defaultCurrency,
         validUntil: "",
         lineItems: [
           {
@@ -1717,7 +1719,7 @@ export default function Estimates() {
                     <div>
                       <Label>Currency</Label>
                       <Select
-                        value={formData.currency}
+                        value={formData.currency || defaultCurrency}
                         onValueChange={(value) =>
                           setFormData((prev) => ({ ...prev, currency: value }))
                         }

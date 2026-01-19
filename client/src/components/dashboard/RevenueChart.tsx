@@ -23,7 +23,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Download } from "lucide-react";
 import { useAuth } from "@/components/auth/auth-provider";
-import { useInvoicesForGraph, useExpenses } from "@/hooks/useDashboardData";
+import { useInvoicesForGraph } from "@/hooks/useDashboardData";
 import { DateFilter } from "../ui/date-filter";
 import { useQuery } from "@tanstack/react-query";
 
@@ -82,51 +82,10 @@ function groupInvoicesByDate(invoices: any[]) {
     if (!d) return;
 
     const key = formatYMDLocal(d);
-    // Use paidAmount instead of totalAmount to only count actual revenue received
-    // For partially paid invoices, use the paid amount; for fully paid, use totalAmount
-    const paidAmount = Number(inv.paidAmount || inv.paid_amount || 0);
-    const totalAmount = Number(inv.totalAmount || 0);
-    const status = (inv.status || '').toLowerCase();
-    
-    // Only count revenue from paid invoices or partially paid invoices (use paid amount)
-    let revenue = 0;
-    if (status === 'paid') {
-      revenue = totalAmount; // Fully paid invoice
-    } else if (status === 'partially_paid' || status === 'partial' || paidAmount > 0) {
-      revenue = paidAmount; // Partially paid invoice - only count what's been paid
-    }
-    // Don't count pending, overdue, or draft invoices as revenue
-    
-    map[key] = (map[key] || 0) + revenue;
-  });
-  return map;
-}
-
-function groupExpensesByDate(expenses: any[]) {
-  const map: Record<string, number> = {};
-  expenses.forEach((exp) => {
-    const rawDate = exp.expenseDate ?? exp.expense_date ?? exp.createdAt;
-    const d = parseInvoiceDate(rawDate);
-    if (!d) return;
-
-    const key = formatYMDLocal(d);
-    const status = (exp.status || '').toLowerCase();
-    
-    // Only count expenses that are approved or paid
-    // Sum amount_paid from expense_line_items where payment_status = 'paid'
-    if (status === 'approved' || status === 'paid') {
-      // If expense has line items, sum their amount_paid where payment_status = 'paid'
-      if (exp.lineItems && Array.isArray(exp.lineItems)) {
-        const paidAmount = exp.lineItems
-          .filter((li: any) => (li.paymentStatus || li.payment_status || '').toLowerCase() === 'paid')
-          .reduce((sum: number, li: any) => sum + Number(li.amountPaid || li.amount_paid || 0), 0);
-        map[key] = (map[key] || 0) + paidAmount;
-      } else {
-        // Fallback: use expense amount_paid if line items not available
-        const amountPaid = Number(exp.amountPaid || exp.amount_paid || 0);
-        map[key] = (map[key] || 0) + amountPaid;
-      }
-    }
+    // Sum invoice totalAmount (total invoiced) for the selected period.
+    // The API already filters out void/cancelled invoices.
+    const totalAmount = Number(inv.totalAmount ?? inv.total_amount ?? 0);
+    map[key] = (map[key] || 0) + totalAmount;
   });
   return map;
 }
@@ -315,14 +274,7 @@ export function RevenueChart() {
     customDateFrom,
     customDateTo
   );
-
-  const { data: expenses = [], isLoading: expensesLoading } = useExpenses(
-    dateFilter,
-    customDateFrom,
-    customDateTo
-  );
-
-  const isLoading = invoicesLoading || expensesLoading;
+  const isLoading = invoicesLoading;
 
   // Fetch invoice settings to get currency
   const { data: invoiceSettings } = useQuery({
@@ -380,31 +332,16 @@ export function RevenueChart() {
   };
 
   const revenueMap = useMemo(() => groupInvoicesByDate(invoices), [invoices]);
-  const expenseMap = useMemo(() => groupExpensesByDate(expenses), [expenses]);
-
-  // Calculate profit map: revenue - expenses for each date
-  const profitMap = useMemo(() => {
-    const map: Record<string, number> = {};
-    // Add all revenue dates
-    Object.keys(revenueMap).forEach(key => {
-      map[key] = revenueMap[key];
-    });
-    // Subtract expenses
-    Object.keys(expenseMap).forEach(key => {
-      map[key] = (map[key] || 0) - expenseMap[key];
-    });
-    return map;
-  }, [revenueMap, expenseMap]);
 
   const chartData = useMemo(
     () =>
       buildChartDataFromInvoiceMap(
-        profitMap,
+        revenueMap,
         dateFilter,
         customDateFrom,
         customDateTo
       ),
-    [profitMap, dateFilter, customDateFrom, customDateTo]
+    [revenueMap, dateFilter, customDateFrom, customDateTo]
   );
 
   const totalCurrent = chartData.reduce(
