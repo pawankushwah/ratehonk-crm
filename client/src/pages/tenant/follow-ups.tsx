@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Layout } from "@/components/layout/layout";
 import { useAuth } from "@/components/auth/auth-provider";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -7,10 +7,26 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Calendar, User, Clock, AlertCircle, CheckCircle, XCircle } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Plus, Calendar, User, Clock, AlertCircle, CheckCircle, XCircle, Loader2, Eye, ExternalLink } from "lucide-react";
+import { Label } from "@/components/ui/label";
 import { CreateFollowUpDialog } from "@/components/follow-ups/CreateFollowUpDialog";
 import { format } from "date-fns";
 import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { useLocation } from "wouter";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface FollowUp {
   id: number;
@@ -31,8 +47,13 @@ interface FollowUp {
 
 export default function FollowUpsPage() {
   const { tenant, user } = useAuth();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [, setLocation] = useLocation();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("table");
+  const [previewDialogOpen, setPreviewDialogOpen] = useState(false);
+  const [selectedFollowUp, setSelectedFollowUp] = useState<FollowUp | null>(null);
 
   // Check if user is a reporting person (has subordinates)
   const { data: subordinates } = useQuery({
@@ -61,10 +82,10 @@ export default function FollowUpsPage() {
 
   const followUps = Array.isArray(followUpsData) ? followUpsData : (followUpsData?.data || []);
 
-  // Fetch assignable users for board view
+  // Fetch assignable users (for both table and board views)
   const { data: assignableUsers } = useQuery({
     queryKey: [`/api/tenants/${tenant?.id}/assignable-users`],
-    enabled: !!tenant?.id && isReportingPerson && activeTab === "board",
+    enabled: !!tenant?.id,
     queryFn: async () => {
       const response = await apiRequest("GET", `/api/tenants/${tenant?.id}/assignable-users`, {});
       return response.json();
@@ -114,6 +135,89 @@ export default function FollowUpsPage() {
     return <Badge className={config.className}>{config.label}</Badge>;
   };
 
+  // Mutation to update follow-up
+  const updateFollowUpMutation = useMutation({
+    mutationFn: async ({ followUpId, updates }: { followUpId: number; updates: { status?: string; assignedUserId?: number | null; priority?: string } }) => {
+      const response = await apiRequest(
+        "PATCH",
+        `/api/tenants/${tenant?.id}/general-follow-ups/${followUpId}`,
+        updates
+      );
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/tenants/${tenant?.id}/follow-ups`] });
+      toast({
+        title: "Success",
+        description: "Follow-up updated successfully",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update follow-up",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleStatusChange = (followUpId: number, newStatus: string) => {
+    updateFollowUpMutation.mutate({
+      followUpId,
+      updates: { status: newStatus },
+    });
+  };
+
+  const handleAssignedUserChange = (followUpId: number, newUserId: string | null) => {
+    updateFollowUpMutation.mutate({
+      followUpId,
+      updates: { assignedUserId: newUserId ? parseInt(newUserId) : null },
+    });
+  };
+
+  const handlePriorityChange = (followUpId: number, newPriority: string) => {
+    updateFollowUpMutation.mutate({
+      followUpId,
+      updates: { priority: newPriority },
+    });
+  };
+
+  const handlePreview = (followUp: FollowUp) => {
+    setSelectedFollowUp(followUp);
+    setPreviewDialogOpen(true);
+  };
+
+  const handleRelatedEntityClick = (followUp: FollowUp) => {
+    if (!followUp.relatedTableName || !followUp.relatedTableId) return;
+    
+    const routeMap: Record<string, string> = {
+      invoices: `/invoices?highlight=${followUp.relatedTableId}`,
+      expenses: `/expenses?highlight=${followUp.relatedTableId}`,
+      estimates: `/estimates?highlight=${followUp.relatedTableId}`,
+      bookings: `/bookings?highlight=${followUp.relatedTableId}`,
+      leads: `/leads?highlight=${followUp.relatedTableId}`,
+      customers: `/customers?highlight=${followUp.relatedTableId}`,
+    };
+
+    const route = routeMap[followUp.relatedTableName];
+    if (route) {
+      setLocation(route);
+    }
+  };
+
+  const getRelatedEntityLabel = (tableName?: string) => {
+    if (!tableName) return null;
+    const labelMap: Record<string, string> = {
+      invoices: "Invoice",
+      expenses: "Expense",
+      estimates: "Estimate",
+      bookings: "Booking",
+      leads: "Lead",
+      customers: "Customer",
+    };
+    return labelMap[tableName] || tableName;
+  };
+
   return (
     <Layout>
       <div className="container mx-auto py-6 space-y-6">
@@ -160,17 +264,44 @@ export default function FollowUpsPage() {
                           <TableHead>Due Date</TableHead>
                           <TableHead>Status</TableHead>
                           <TableHead>Priority</TableHead>
+                          <TableHead>Related To</TableHead>
                           <TableHead>Created By</TableHead>
+                          <TableHead>Actions</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {followUps.map((followUp: FollowUp) => (
                           <TableRow key={followUp.id}>
                             <TableCell className="font-medium">
-                              {followUp.title}
+                              <button
+                                onClick={() => handlePreview(followUp)}
+                                className="text-left hover:underline cursor-pointer"
+                              >
+                                {followUp.title}
+                              </button>
                             </TableCell>
                             <TableCell>
-                              {followUp.assignedUserName || "Unassigned"}
+                              <Select
+                                value={followUp.assignedUserId?.toString() || "unassigned"}
+                                onValueChange={(value) => 
+                                  handleAssignedUserChange(followUp.id, value === "unassigned" ? null : value)
+                                }
+                                disabled={updateFollowUpMutation.isPending}
+                              >
+                                <SelectTrigger className="w-[180px]">
+                                  <SelectValue placeholder="Select user">
+                                    {followUp.assignedUserName || "Unassigned"}
+                                  </SelectValue>
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="unassigned">Unassigned</SelectItem>
+                                  {assignableUsers?.map((u: any) => (
+                                    <SelectItem key={u.id} value={u.id.toString()}>
+                                      {`${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
                             </TableCell>
                             <TableCell>
                               <div className="flex items-center gap-2">
@@ -178,9 +309,64 @@ export default function FollowUpsPage() {
                                 {format(new Date(followUp.dueDate), "MMM dd, yyyy")}
                               </div>
                             </TableCell>
-                            <TableCell>{getStatusBadge(followUp.status)}</TableCell>
-                            <TableCell>{getPriorityBadge(followUp.priority)}</TableCell>
+                            <TableCell>
+                              <Select
+                                value={followUp.status}
+                                onValueChange={(value) => handleStatusChange(followUp.id, value)}
+                                disabled={updateFollowUpMutation.isPending}
+                              >
+                                <SelectTrigger className="w-[140px]">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="pending">Pending</SelectItem>
+                                  <SelectItem value="in_progress">In Progress</SelectItem>
+                                  <SelectItem value="completed">Completed</SelectItem>
+                                  <SelectItem value="cancelled">Cancelled</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </TableCell>
+                            <TableCell>
+                              <Select
+                                value={followUp.priority}
+                                onValueChange={(value) => handlePriorityChange(followUp.id, value)}
+                                disabled={updateFollowUpMutation.isPending}
+                              >
+                                <SelectTrigger className="w-[120px]">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="low">Low</SelectItem>
+                                  <SelectItem value="medium">Medium</SelectItem>
+                                  <SelectItem value="high">High</SelectItem>
+                                  <SelectItem value="urgent">Urgent</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </TableCell>
+                            <TableCell>
+                              {followUp.relatedTableName && followUp.relatedTableId ? (
+                                <button
+                                  onClick={() => handleRelatedEntityClick(followUp)}
+                                  className="flex items-center gap-1 text-blue-600 hover:underline"
+                                >
+                                  <ExternalLink className="h-3 w-3" />
+                                  {getRelatedEntityLabel(followUp.relatedTableName)} #{followUp.relatedTableId}
+                                </button>
+                              ) : (
+                                <span className="text-muted-foreground text-sm">—</span>
+                              )}
+                            </TableCell>
                             <TableCell>{followUp.createdByName || "Unknown"}</TableCell>
+                            <TableCell>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handlePreview(followUp)}
+                                className="h-8 w-8 p-0"
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                            </TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -226,23 +412,113 @@ export default function FollowUpsPage() {
                                     userFollowUps.map((followUp: FollowUp) => (
                                       <div
                                         key={followUp.id}
-                                        className="bg-white rounded-lg p-4 shadow-sm border border-gray-200 hover:shadow-md transition-shadow cursor-pointer"
+                                        className="bg-white rounded-lg p-4 shadow-sm border border-gray-200 hover:shadow-md transition-shadow"
                                       >
                                         <div className="flex items-start justify-between mb-2">
                                           <h4 className="font-medium text-sm">{followUp.title}</h4>
-                                          {getStatusBadge(followUp.status)}
                                         </div>
                                         {followUp.description && (
-                                          <p className="text-xs text-muted-foreground mb-2 line-clamp-2">
+                                          <p className="text-xs text-muted-foreground mb-3 line-clamp-2">
                                             {followUp.description}
                                           </p>
                                         )}
-                                        <div className="flex items-center justify-between mt-3">
+                                        
+                                        {/* Status Select */}
+                                        <div className="mb-3">
+                                          <Label className="text-xs text-muted-foreground mb-1 block">Status</Label>
+                                          <Select
+                                            value={followUp.status}
+                                            onValueChange={(value) => handleStatusChange(followUp.id, value)}
+                                            disabled={updateFollowUpMutation.isPending}
+                                          >
+                                            <SelectTrigger className="h-8 text-xs">
+                                              <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                              <SelectItem value="pending">Pending</SelectItem>
+                                              <SelectItem value="in_progress">In Progress</SelectItem>
+                                              <SelectItem value="completed">Completed</SelectItem>
+                                              <SelectItem value="cancelled">Cancelled</SelectItem>
+                                            </SelectContent>
+                                          </Select>
+                                        </div>
+
+                                        {/* Assigned User Select */}
+                                        {isReportingPerson && (
+                                          <div className="mb-3">
+                                            <Label className="text-xs text-muted-foreground mb-1 block">Assigned To</Label>
+                                            <Select
+                                              value={followUp.assignedUserId?.toString() || "unassigned"}
+                                              onValueChange={(value) => 
+                                                handleAssignedUserChange(followUp.id, value === "unassigned" ? null : value)
+                                              }
+                                              disabled={updateFollowUpMutation.isPending}
+                                            >
+                                              <SelectTrigger className="h-8 text-xs">
+                                                <SelectValue placeholder="Select user">
+                                                  {followUp.assignedUserName || "Unassigned"}
+                                                </SelectValue>
+                                              </SelectTrigger>
+                                              <SelectContent>
+                                                <SelectItem value="unassigned">Unassigned</SelectItem>
+                                                {assignableUsers?.map((u: any) => (
+                                                  <SelectItem key={u.id} value={u.id.toString()}>
+                                                    {`${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email}
+                                                  </SelectItem>
+                                                ))}
+                                              </SelectContent>
+                                            </Select>
+                                          </div>
+                                        )}
+
+                                        {/* Priority Select */}
+                                        <div className="mb-3">
+                                          <Label className="text-xs text-muted-foreground mb-1 block">Priority</Label>
+                                          <Select
+                                            value={followUp.priority}
+                                            onValueChange={(value) => handlePriorityChange(followUp.id, value)}
+                                            disabled={updateFollowUpMutation.isPending}
+                                          >
+                                            <SelectTrigger className="h-8 text-xs">
+                                              <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                              <SelectItem value="low">Low</SelectItem>
+                                              <SelectItem value="medium">Medium</SelectItem>
+                                              <SelectItem value="high">High</SelectItem>
+                                              <SelectItem value="urgent">Urgent</SelectItem>
+                                            </SelectContent>
+                                          </Select>
+                                        </div>
+
+                                        {/* Related Entity Link */}
+                                        {followUp.relatedTableName && followUp.relatedTableId && (
+                                          <div className="mb-3">
+                                            <Label className="text-xs text-muted-foreground mb-1 block">Related To</Label>
+                                            <button
+                                              onClick={() => handleRelatedEntityClick(followUp)}
+                                              className="flex items-center gap-1 text-blue-600 hover:underline text-xs"
+                                            >
+                                              <ExternalLink className="h-3 w-3" />
+                                              {getRelatedEntityLabel(followUp.relatedTableName)} #{followUp.relatedTableId}
+                                            </button>
+                                          </div>
+                                        )}
+
+                                        <div className="flex items-center justify-between mt-3 pt-3 border-t">
                                           <div className="flex items-center gap-2 text-xs text-muted-foreground">
                                             <Calendar className="h-3 w-3" />
                                             {format(new Date(followUp.dueDate), "MMM dd")}
                                           </div>
-                                          {getPriorityBadge(followUp.priority)}
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => handlePreview(followUp)}
+                                            className="h-6 px-2 text-xs"
+                                          >
+                                            <Eye className="h-3 w-3 mr-1" />
+                                            Preview
+                                          </Button>
                                         </div>
                                       </div>
                                     ))
@@ -270,6 +546,89 @@ export default function FollowUpsPage() {
             }
           }}
         />
+
+        {/* Preview Dialog */}
+        <Dialog open={previewDialogOpen} onOpenChange={setPreviewDialogOpen}>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Follow-Up Preview</DialogTitle>
+            </DialogHeader>
+            {selectedFollowUp && (
+              <div className="space-y-4">
+                <div>
+                  <Label className="text-sm font-semibold">Title</Label>
+                  <p className="text-base mt-1">{selectedFollowUp.title}</p>
+                </div>
+                {selectedFollowUp.description && (
+                  <div>
+                    <Label className="text-sm font-semibold">Description</Label>
+                    <p className="text-sm text-muted-foreground mt-1 whitespace-pre-wrap">
+                      {selectedFollowUp.description}
+                    </p>
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-sm font-semibold">Status</Label>
+                    <div className="mt-1">{getStatusBadge(selectedFollowUp.status)}</div>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-semibold">Priority</Label>
+                    <div className="mt-1">{getPriorityBadge(selectedFollowUp.priority)}</div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-sm font-semibold">Due Date</Label>
+                    <p className="text-sm mt-1 flex items-center gap-2">
+                      <Calendar className="h-4 w-4 text-muted-foreground" />
+                      {format(new Date(selectedFollowUp.dueDate), "MMM dd, yyyy h:mm a")}
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-semibold">Assigned To</Label>
+                    <p className="text-sm mt-1">
+                      {selectedFollowUp.assignedUserName || "Unassigned"}
+                    </p>
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-sm font-semibold">Created By</Label>
+                  <p className="text-sm mt-1">
+                    {selectedFollowUp.createdByName || "Unknown"}
+                  </p>
+                </div>
+                {selectedFollowUp.relatedTableName && selectedFollowUp.relatedTableId && (
+                  <div>
+                    <Label className="text-sm font-semibold">Related To</Label>
+                    <button
+                      onClick={() => {
+                        handleRelatedEntityClick(selectedFollowUp);
+                        setPreviewDialogOpen(false);
+                      }}
+                      className="flex items-center gap-2 text-blue-600 hover:underline mt-1"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                      {getRelatedEntityLabel(selectedFollowUp.relatedTableName)} #{selectedFollowUp.relatedTableId}
+                    </button>
+                  </div>
+                )}
+                <div>
+                  <Label className="text-sm font-semibold">Created At</Label>
+                  <p className="text-sm mt-1">
+                    {format(new Date(selectedFollowUp.createdAt), "MMM dd, yyyy h:mm a")}
+                  </p>
+                </div>
+                <div>
+                  <Label className="text-sm font-semibold">Last Updated</Label>
+                  <p className="text-sm mt-1">
+                    {format(new Date(selectedFollowUp.updatedAt), "MMM dd, yyyy h:mm a")}
+                  </p>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
       </div>
     </Layout>
   );

@@ -111,6 +111,7 @@ import Portfolio from "@/pages/portfolio";
 import GstSettings from "@/pages/tenant/gst-settings";
 import ConsulationForm from "@/pages/consulation-form";
 import PaymentForm from "@/pages/payment-form";
+import PublicPackageView from "@/pages/public/package-view";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, loading } = useAuth();
@@ -265,6 +266,11 @@ function Router() {
         </Route>
         <Route path="/payment-form">
           <PaymentForm />
+        </Route>
+
+        {/* Public Package View - No authentication required */}
+        <Route path="/public/package/:packageId">
+          <PublicPackageView />
         </Route>
 
         {/* Protected routes */}

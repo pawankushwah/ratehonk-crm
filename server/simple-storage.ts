@@ -5760,6 +5760,17 @@ async getAllLeadsByTenant(
         finalJoinClause = sql`${customerJoin} ${bookingJoin}`;
       }
 
+      // Check if tags column exists
+      const [tagsColumnCheck] = await sql`
+        SELECT EXISTS (
+          SELECT 1 
+          FROM information_schema.columns 
+          WHERE table_name = 'invoices' 
+          AND column_name = 'tags'
+        ) as exists
+      `;
+      const hasTagsColumn = tagsColumnCheck?.exists || false;
+
       let invoices;
       if (shouldFilterAfterFetch) {
         // Fetch all matching invoices (without pagination limit) to filter by line items
@@ -5767,6 +5778,7 @@ async getAllLeadsByTenant(
         invoices = await sql`
           SELECT 
             invoices.*,
+            ${hasTagsColumn ? sql`invoices.tags` : sql`NULL::jsonb as tags`},
             cust.name as customer_name,
             cust.email as customer_email,
             b.booking_number as booking_number
@@ -5780,6 +5792,7 @@ async getAllLeadsByTenant(
         invoices = await sql`
           SELECT 
             invoices.*,
+            ${hasTagsColumn ? sql`invoices.tags` : sql`NULL::jsonb as tags`},
             cust.name as customer_name,
             cust.email as customer_email,
             b.booking_number as booking_number
@@ -5920,6 +5933,20 @@ async getAllLeadsByTenant(
             ? `${invPrefix}${invNumber}` 
             : invNumber || invoice.invoice_number;
 
+          // Parse tags safely
+          let tags: string[] = [];
+          if (invoice.tags) {
+            try {
+              if (typeof invoice.tags === 'string') {
+                tags = JSON.parse(invoice.tags);
+              } else if (Array.isArray(invoice.tags)) {
+                tags = invoice.tags;
+              }
+            } catch (e) {
+              console.warn("Error parsing tags for invoice", invoice.id, e);
+            }
+          }
+
           return {
             id: invoice.id,
             tenantId: invoice.tenant_id,
@@ -5938,6 +5965,7 @@ async getAllLeadsByTenant(
             currency: invoice.currency || "USD",
             paymentTerms: invoice.payment_terms || null,
             notes: invoice.notes,
+            tags: tags,
             lineItems: lineItems,
             createdAt: invoice.created_at,
             customerName: customerName,
@@ -6035,8 +6063,19 @@ async getAllLeadsByTenant(
     }
 
    
+    // Check if tags column exists
+    const tagsColumnCheck = await sql`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'invoices' AND column_name = 'tags'
+    `;
+    const hasTagsColumn = tagsColumnCheck.length > 0;
+
     const invoices = await sql`
-      SELECT * FROM invoices
+      SELECT 
+        *,
+        ${hasTagsColumn ? sql`tags` : sql`NULL::jsonb as tags`}
+      FROM invoices
       WHERE tenant_id = ${tenantId}
         AND status NOT IN ('void', 'cancelled')
         AND deleted_at IS NULL
@@ -6143,6 +6182,20 @@ async getAllLeadsByTenant(
         ? `${invPrefix}${invNumber}` 
         : invNumber || inv.invoice_number;
 
+      // Parse tags safely
+      let tags: string[] = [];
+      if (inv.tags) {
+        try {
+          if (typeof inv.tags === 'string') {
+            tags = JSON.parse(inv.tags);
+          } else if (Array.isArray(inv.tags)) {
+            tags = inv.tags;
+          }
+        } catch (e) {
+          console.warn("Error parsing tags for invoice", inv.id, e);
+        }
+      }
+
       return {
         id: inv.id,
         tenantId: inv.tenant_id,
@@ -6163,6 +6216,7 @@ async getAllLeadsByTenant(
 
         notes: inv.notes,
         additionalNotes: inv.additional_notes,
+        tags: tags,
         createdAt: inv.created_at,
 
         lineItems,
@@ -6915,6 +6969,26 @@ async getAllLeadsByTenant(
       `;
 
       const newInvoiceId = newInvoiceRow.id;
+
+      // Add "Reissued" tag to the original invoice
+      try {
+        const originalTags = originalInvoice.tags || [];
+        const updatedTags = Array.isArray(originalTags) 
+          ? [...originalTags, "Reissued"]
+          : ["Reissued"];
+        
+        await sql`
+          UPDATE invoices
+          SET tags = ${JSON.stringify(updatedTags)}::jsonb,
+              updated_at = NOW()
+          WHERE id = ${invoiceId}
+        `;
+        
+        console.log(`✅ Added "Reissued" tag to original invoice ${invoiceId}`);
+      } catch (tagError) {
+        console.error("Error adding Reissued tag to original invoice:", tagError);
+        // Don't fail the duplication if tag update fails
+      }
 
       // Fetch and duplicate invoice_items with all fields
       try {

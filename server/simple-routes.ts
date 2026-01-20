@@ -9,6 +9,7 @@ import express from "express";
 import { createServer, type Server } from "http";
 import { simpleStorage } from "./simple-storage";
 import { emailService } from "./email-service";
+import { tenantEmailService } from "./tenant-email-service";
 import { gmailService } from "./gmail-service";
 // Removed unifiedSocialService import - using SocialServiceFactory instead
 import { LinkedInService } from "./linkedin-service";
@@ -15267,6 +15268,180 @@ David,Brown,david.brown@example.com,555-0127,email_campaign,contacted,Prefers lu
     }
   });
 
+  // Send package via email or WhatsApp
+  app.post("/api/tenants/:tenantId/packages/:packageId/send", authenticateToken, async (req, res) => {
+    try {
+      const { tenantId, packageId } = req.params;
+      const { recipients, sendMethod, customMessage } = req.body;
+
+      if (!recipients || !Array.isArray(recipients) || recipients.length === 0) {
+        return res.status(400).json({ message: "At least one recipient is required" });
+      }
+
+      if (!sendMethod || !["email", "whatsapp"].includes(sendMethod)) {
+        return res.status(400).json({ message: "Invalid send method. Must be 'email' or 'whatsapp'" });
+      }
+
+      // Get package details
+      const pkg = await simpleStorage.getPackage(parseInt(packageId));
+      if (!pkg || pkg.tenantId !== parseInt(tenantId)) {
+        return res.status(404).json({ message: "Package not found" });
+      }
+
+      // Get tenant details for email branding
+      const tenant = await simpleStorage.getTenant(parseInt(tenantId));
+      const companyName = tenant?.company_name || tenant?.name || "RateHonk";
+
+      // Generate public URL for package
+      const baseUrl = getBaseUrl();
+      const publicUrl = `${baseUrl}/public/package/${pkg.id}`;
+
+      const results: Array<{ recipient: any; success: boolean; error?: string }> = [];
+
+      // Process each recipient
+      for (const recipient of recipients) {
+        try {
+          // Get recipient details
+          let recipientData: any = null;
+          if (recipient.type === "customer") {
+            recipientData = await simpleStorage.getCustomer(recipient.id, parseInt(tenantId));
+          } else if (recipient.type === "lead") {
+            recipientData = await simpleStorage.getLeadById(recipient.id);
+          }
+
+          if (!recipientData) {
+            results.push({
+              recipient: { id: recipient.id, type: recipient.type },
+              success: false,
+              error: "Recipient not found",
+            });
+            continue;
+          }
+
+          const recipientName = recipientData.name || 
+            `${recipientData.firstName || ""} ${recipientData.lastName || ""}`.trim() || 
+            "Valued Customer";
+
+          if (sendMethod === "email") {
+            // Send via email
+            if (!recipientData.email) {
+              results.push({
+                recipient: { id: recipient.id, type: recipient.type, name: recipientName },
+                success: false,
+                error: "Recipient email not found",
+              });
+              continue;
+            }
+
+            // Import package email service
+            const { sendPackageEmail } = await import("./package-email-service.js");
+            
+            const emailSent = await sendPackageEmail({
+              tenantId: parseInt(tenantId),
+              package: pkg,
+              recipient: {
+                name: recipientName,
+                email: recipientData.email,
+              },
+              companyName,
+              publicUrl,
+              customMessage: customMessage || "",
+            });
+
+            results.push({
+              recipient: { id: recipient.id, type: recipient.type, name: recipientName },
+              success: emailSent,
+              error: emailSent ? undefined : "Failed to send email",
+            });
+          } else if (sendMethod === "whatsapp") {
+            // Send via WhatsApp
+            if (!recipientData.phone && !recipientData.mobile) {
+              results.push({
+                recipient: { id: recipient.id, type: recipient.type, name: recipientName },
+                success: false,
+                error: "Recipient phone number not found",
+              });
+              continue;
+            }
+
+            const phoneNumber = recipientData.phone || recipientData.mobile;
+
+            // Generate WhatsApp message
+            let whatsappMessage = `🎉 *${pkg.name}*\n\n`;
+            if (customMessage) {
+              whatsappMessage += `${customMessage}\n\n`;
+            }
+            whatsappMessage += `📍 *Destination:* ${pkg.destination}\n`;
+            whatsappMessage += `⏱️ *Duration:* ${pkg.duration} days\n`;
+            whatsappMessage += `💰 *Price:* $${pkg.price}\n\n`;
+            whatsappMessage += `View full package details and purchase:\n${publicUrl}`;
+
+            const whatsappSent = await sendWhatsAppCustomMessage({
+              tenantId: parseInt(tenantId),
+              phoneNumber,
+              message: whatsappMessage,
+              customerId: recipient.type === "customer" ? recipient.id : undefined,
+              leadId: recipient.type === "lead" ? recipient.id : undefined,
+            });
+
+            results.push({
+              recipient: { id: recipient.id, type: recipient.type, name: recipientName },
+              success: whatsappSent.success,
+              error: whatsappSent.error,
+            });
+          }
+        } catch (error: any) {
+          console.error(`Error sending package to recipient ${recipient.id}:`, error);
+          results.push({
+            recipient: { id: recipient.id, type: recipient.type },
+            success: false,
+            error: error.message || "Unknown error",
+          });
+        }
+      }
+
+      const successCount = results.filter((r) => r.success).length;
+      const failureCount = results.filter((r) => !r.success).length;
+
+      res.json({
+        message: `Package sent to ${successCount} recipient(s)${failureCount > 0 ? `, ${failureCount} failed` : ""}`,
+        results,
+        successCount,
+        failureCount,
+      });
+    } catch (error: any) {
+      console.error("Send package error:", error);
+      res.status(500).json({ message: error.message || "Internal server error" });
+    }
+  });
+
+  // Public package view endpoint (no authentication required)
+  app.get("/api/public/packages/:packageId", async (req, res) => {
+    try {
+      const { packageId } = req.params;
+      const pkg = await simpleStorage.getPackage(parseInt(packageId));
+
+      if (!pkg || !pkg.isActive) {
+        return res.status(404).json({ message: "Package not found or inactive" });
+      }
+
+      // Get tenant details for contact information
+      const tenant = await simpleStorage.getTenant(pkg.tenantId);
+
+      // Return package with tenant contact info
+      res.json({
+        ...pkg,
+        tenantContactEmail: tenant?.contact_email || tenant?.email,
+        tenantContactPhone: tenant?.contact_phone || tenant?.phone,
+        tenantCompanyName: tenant?.company_name || tenant?.name,
+        paymentLink: pkg.paymentLink || null, // Include payment link if available
+      });
+    } catch (error: any) {
+      console.error("Public package view error:", error);
+      res.status(500).json({ message: error.message || "Internal server error" });
+    }
+  });
+
   // Package Types management routes
   app.get(
     "/api/tenants/:tenantId/package-types",
@@ -21328,6 +21503,7 @@ ${args.tenantName}`;
         res.status(201).json({
           success: true,
           invoice: duplicatedInvoice,
+          newInvoiceId: duplicatedInvoice.id, // Return new invoice ID for redirect
           message: "Invoice duplicated successfully",
         });
       } catch (error: any) {
@@ -24182,14 +24358,145 @@ ${args.tenantName}`;
     authenticateToken,
     async (req, res) => {
       try {
-        const { followUpId } = req.params;
+        const { tenantId, followUpId } = req.params;
+        const userId = (req.user as any).id;
+        const userName = `${(req.user as any).firstName || ''} ${(req.user as any).lastName || ''}`.trim() || (req.user as any).email;
+
+        // Get current follow-up to check if assignedUserId is changing
+        const currentResult = await simpleStorage.getGeneralFollowUpsByTenant(
+          parseInt(tenantId),
+          { limit: 1000, offset: 0 }
+        );
+        const currentFollowUp = currentResult.data.find((f: any) => f.id === parseInt(followUpId));
+        
+        if (!currentFollowUp) {
+          return res.status(404).json({ message: "Follow-up not found" });
+        }
+
+        const previousUserId = currentFollowUp.assignedUserId || null;
+        const previousUserName = currentFollowUp.assignedUserName || null;
+        const previousPriority = currentFollowUp.priority || null;
+        const newAssignedUserId = req.body.assignedUserId !== undefined ? req.body.assignedUserId : previousUserId;
+        const newPriority = req.body.priority !== undefined ? req.body.priority : previousPriority;
+        
+        // Check if assigned user is changing
+        const isAssignmentChanging = previousUserId !== newAssignedUserId;
+        // Check if priority is changing
+        const isPriorityChanging = previousPriority !== newPriority;
+        
         const followUp = await simpleStorage.updateGeneralFollowUp(
           parseInt(followUpId),
           req.body
         );
+        
         if (!followUp) {
           return res.status(404).json({ message: "Follow-up not found" });
         }
+
+        // Send email if assigned user changed to a different user (not null)
+        if (isAssignmentChanging && newAssignedUserId) {
+          try {
+            // Get updated follow-up details
+            const updatedResult = await simpleStorage.getGeneralFollowUpsByTenant(
+              parseInt(tenantId),
+              { limit: 1000, offset: 0 }
+            );
+            const updatedFollowUp = updatedResult.data.find((f: any) => f.id === parseInt(followUpId));
+
+            if (updatedFollowUp && updatedFollowUp.assignedUserEmail) {
+              // Get related entity details if applicable
+              let relatedEntityName = null;
+              if (updatedFollowUp.relatedTableName && updatedFollowUp.relatedTableId) {
+                const entityDetails = await simpleStorage.getRelatedEntityDetails(
+                  updatedFollowUp.relatedTableName,
+                  updatedFollowUp.relatedTableId
+                );
+                relatedEntityName = entityDetails?.name || null;
+              }
+
+              // Get tenant company name
+              const [tenant] = await sql`
+                SELECT company_name FROM tenants WHERE id = ${parseInt(tenantId)}
+              `;
+              const companyName = tenant?.company_name || "Your Company";
+
+              await tenantEmailService.sendFollowUpAssignmentEmail({
+                to: updatedFollowUp.assignedUserEmail,
+                assignedUserName: updatedFollowUp.assignedUserName || updatedFollowUp.assignedUserEmail,
+                createdByName: userName,
+                followUpTitle: updatedFollowUp.title,
+                followUpDescription: updatedFollowUp.description || undefined,
+                dueDate: updatedFollowUp.dueDate,
+                priority: updatedFollowUp.priority,
+                relatedEntityType: updatedFollowUp.relatedTableName || undefined,
+                relatedEntityId: updatedFollowUp.relatedTableId || undefined,
+                relatedEntityName: relatedEntityName || undefined,
+                followUpId: updatedFollowUp.id,
+                tenantId: parseInt(tenantId),
+                previousUserName: previousUserName || undefined,
+                isReassignment: !!previousUserId,
+                companyName: companyName,
+              });
+
+              // Update email sent status
+              await simpleStorage.updateFollowUpEmailSent(parseInt(followUpId));
+            }
+          } catch (emailError) {
+            console.error("Error sending follow-up assignment email:", emailError);
+            // Don't fail the request if email fails
+          }
+        }
+
+        // Send email if priority changed and follow-up is assigned to a user
+        if (isPriorityChanging && newAssignedUserId && newAssignedUserId !== userId) {
+          try {
+            // Get updated follow-up details
+            const updatedResult = await simpleStorage.getGeneralFollowUpsByTenant(
+              parseInt(tenantId),
+              { limit: 1000, offset: 0 }
+            );
+            const updatedFollowUp = updatedResult.data.find((f: any) => f.id === parseInt(followUpId));
+
+            if (updatedFollowUp && updatedFollowUp.assignedUserEmail) {
+              // Get related entity details if applicable
+              let relatedEntityName = null;
+              if (updatedFollowUp.relatedTableName && updatedFollowUp.relatedTableId) {
+                const entityDetails = await simpleStorage.getRelatedEntityDetails(
+                  updatedFollowUp.relatedTableName,
+                  updatedFollowUp.relatedTableId
+                );
+                relatedEntityName = entityDetails?.name || null;
+              }
+
+              // Get tenant company name
+              const [tenant] = await sql`
+                SELECT company_name FROM tenants WHERE id = ${parseInt(tenantId)}
+              `;
+              const companyName = tenant?.company_name || "Your Company";
+
+              await tenantEmailService.sendFollowUpPriorityChangeEmail({
+                to: updatedFollowUp.assignedUserEmail,
+                assignedUserName: updatedFollowUp.assignedUserName || updatedFollowUp.assignedUserEmail,
+                createdByName: userName,
+                followUpTitle: updatedFollowUp.title,
+                followUpDescription: updatedFollowUp.description || undefined,
+                dueDate: updatedFollowUp.dueDate,
+                previousPriority: previousPriority || "medium",
+                newPriority: newPriority || "medium",
+                relatedEntityType: updatedFollowUp.relatedTableName || undefined,
+                relatedEntityId: updatedFollowUp.relatedTableId || undefined,
+                relatedEntityName: relatedEntityName || undefined,
+                followUpId: updatedFollowUp.id,
+                tenantId: parseInt(tenantId),
+                companyName: companyName,
+              });
+            }
+          } catch (emailError) {
+            console.error("Error sending follow-up priority change email:", emailError);
+            // Don't fail the request if email fails
+          }
+        }
+
         res.json(followUp);
       } catch (error: any) {
         console.error("Update general follow-up error:", error);

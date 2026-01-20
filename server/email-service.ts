@@ -161,24 +161,108 @@ class EmailService {
     companyName: string;
   }) {
     const resetUrl = `${process.env.APP_URL || "https://your-app-url.com"}/reset-password?token=${data.resetToken}`;
+    const baseUrl = getBaseUrl();
 
     const mailOptions = {
       from: process.env.EMAIL_FROM || "noreply@ratehonk.com",
       to: data.to,
-      subject: "Password Reset Request",
+      subject: "Reset Your Password - RateHonk",
       html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #333;">Password Reset Request</h2>
-          <p>Hello ${data.displayName},</p>
-          <p>We received a request to reset your password for your ${data.companyName} account.</p>
-          <p>Click the link below to reset your password:</p>
-          <div style="text-align: center; margin: 30px 0;">
-            <a href="${resetUrl}" style="background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">Reset Password</a>
-          </div>
-          <p>This link will expire in 1 hour for security purposes.</p>
-          <p>If you didn't request this password reset, please ignore this email.</p>
-          <p>Best regards,<br>The ${data.companyName} Team</p>
-        </div>
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <meta http-equiv="X-UA-Compatible" content="IE=edge">
+          <title>Password Reset Request</title>
+        </head>
+        <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif; background-color: #f5f7fa; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;">
+          <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 20px;">
+            <tr>
+              <td align="center">
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="600" style="max-width: 600px; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.1);">
+                  
+                  <!-- Header with Gradient Background -->
+                  <tr>
+                    <td style="background: linear-gradient(135deg, #0BBCD6 0%, #00BFFF 100%); padding: 40px 40px 30px; text-align: center;">
+                      <div style="width: 80px; height: 80px; background-color: rgba(255, 255, 255, 0.2); border-radius: 50%; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center;">
+                        <div style="width: 50px; height: 50px; background-color: #ffffff; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 24px;">🔒</div>
+                      </div>
+                      <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 700; letter-spacing: -0.5px;">Reset Your Password</h1>
+                    </td>
+                  </tr>
+
+                  <!-- Main Content -->
+                  <tr>
+                    <td style="padding: 40px;">
+                      <p style="margin: 0 0 20px; color: #1f2937; font-size: 16px; line-height: 1.6;">
+                        Hello <strong style="color: #111827;">${data.displayName}</strong>,
+                      </p>
+                      
+                      <p style="margin: 0 0 24px; color: #4b5563; font-size: 16px; line-height: 1.6;">
+                        We received a request to reset your password for your <strong>${data.companyName}</strong> account. Click the button below to create a new password:
+                      </p>
+
+                      <!-- Reset Button -->
+                      <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                        <tr>
+                          <td align="center" style="padding: 30px 0;">
+                            <a href="${resetUrl}" style="display: inline-block; background: linear-gradient(135deg, #0BBCD6 0%, #00BFFF 100%); color: #ffffff; text-decoration: none; padding: 16px 40px; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: 0.3px; box-shadow: 0 4px 14px 0 rgba(11, 188, 214, 0.39); transition: all 0.3s ease;">
+                              Reset Password
+                            </a>
+                          </td>
+                        </tr>
+                      </table>
+
+                      <!-- Alternative Link -->
+                      <p style="margin: 24px 0 0; color: #6b7280; font-size: 14px; line-height: 1.5; text-align: center;">
+                        Or copy and paste this link into your browser:<br>
+                        <a href="${resetUrl}" style="color: #0BBCD6; word-break: break-all; text-decoration: underline;">${resetUrl}</a>
+                      </p>
+
+                      <!-- Security Notice -->
+                      <div style="margin: 32px 0 0; padding: 20px; background-color: #fef3c7; border-left: 4px solid #f59e0b; border-radius: 6px;">
+                        <p style="margin: 0; color: #92400e; font-size: 14px; line-height: 1.6;">
+                          <strong>⏰ Important:</strong> This password reset link will expire in <strong>1 hour</strong> for security purposes. If you don't reset your password within this time, you'll need to request a new link.
+                        </p>
+                      </div>
+
+                      <p style="margin: 24px 0 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
+                        If you didn't request this password reset, please ignore this email. Your password will remain unchanged.
+                      </p>
+                    </td>
+                  </tr>
+
+                  <!-- Footer -->
+                  <tr>
+                    <td style="padding: 30px 40px; background-color: #f9fafb; border-top: 1px solid #e5e7eb; text-align: center;">
+                      <p style="margin: 0 0 8px; color: #374151; font-size: 14px; font-weight: 600;">
+                        Best regards,<br>
+                        The ${data.companyName} Team
+                      </p>
+                      <p style="margin: 16px 0 0; color: #9ca3af; font-size: 12px; line-height: 1.5;">
+                        This is an automated email. Please do not reply to this message.<br>
+                        If you have any questions, please contact our support team.
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+
+                <!-- Bottom Spacing -->
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="600" style="max-width: 600px;">
+                  <tr>
+                    <td style="padding: 20px 0; text-align: center;">
+                      <p style="margin: 0; color: rgba(255, 255, 255, 0.8); font-size: 12px;">
+                        © ${new Date().getFullYear()} ${data.companyName}. All rights reserved.
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </body>
+        </html>
       `,
     };
 
