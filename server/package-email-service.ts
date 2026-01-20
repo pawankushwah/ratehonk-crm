@@ -1,7 +1,5 @@
 import { simpleStorage } from "./simple-storage";
-import { TenantEmailService } from "./tenant-email-service";
-
-const tenantEmailService = new TenantEmailService();
+import { tenantEmailService } from "./tenant-email-service";
 
 interface PackageRecipient {
   name: string;
