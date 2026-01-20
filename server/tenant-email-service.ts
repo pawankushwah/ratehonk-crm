@@ -290,27 +290,103 @@ class TenantEmailService {
       const mailOptions = {
         from: fromEmail,
         to: data.to,
-        subject: "Password Reset Request",
+        subject: `Reset Your Password - ${data.companyName}`,
         html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #333;">Password Reset Request</h2>
-            
-            <p>Hello ${data.firstName},</p>
-            
-            <p>We received a request to reset your password for your ${data.companyName} account.</p>
-            
-            <p>Click the link below to reset your password:</p>
-            
-            <div style="text-align: center; margin: 30px 0;">
-              <a href="${resetUrl}" style="background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">Reset Password</a>
-            </div>
-            
-            <p>This link will expire in 1 hour for security purposes.</p>
-            
-            <p>If you didn't request this password reset, please ignore this email.</p>
-            
-            <p>Best regards,<br>The ${data.companyName} Team</p>
-          </div>
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <meta http-equiv="X-UA-Compatible" content="IE=edge">
+            <title>Password Reset Request</title>
+          </head>
+          <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif; background-color: #f5f7fa; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;">
+            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 20px;">
+              <tr>
+                <td align="center">
+                  <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="600" style="max-width: 600px; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.1);">
+                    
+                    <!-- Header with Gradient Background -->
+                    <tr>
+                      <td style="background: linear-gradient(135deg, #0BBCD6 0%, #00BFFF 100%); padding: 40px 40px 30px; text-align: center;">
+                        <div style="width: 80px; height: 80px; background-color: rgba(255, 255, 255, 0.2); border-radius: 50%; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center;">
+                          <div style="width: 50px; height: 50px; background-color: #ffffff; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 24px;">🔒</div>
+                        </div>
+                        <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 700; letter-spacing: -0.5px;">Reset Your Password</h1>
+                      </td>
+                    </tr>
+
+                    <!-- Main Content -->
+                    <tr>
+                      <td style="padding: 40px;">
+                        <p style="margin: 0 0 20px; color: #1f2937; font-size: 16px; line-height: 1.6;">
+                          Hello <strong style="color: #111827;">${data.firstName}</strong>,
+                        </p>
+                        
+                        <p style="margin: 0 0 24px; color: #4b5563; font-size: 16px; line-height: 1.6;">
+                          We received a request to reset your password for your <strong>${data.companyName}</strong> account. Click the button below to create a new password:
+                        </p>
+
+                        <!-- Reset Button -->
+                        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                          <tr>
+                            <td align="center" style="padding: 30px 0;">
+                              <a href="${resetUrl}" style="display: inline-block; background: linear-gradient(135deg, #0BBCD6 0%, #00BFFF 100%); color: #ffffff; text-decoration: none; padding: 16px 40px; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: 0.3px; box-shadow: 0 4px 14px 0 rgba(11, 188, 214, 0.39); transition: all 0.3s ease;">
+                                Reset Password
+                              </a>
+                            </td>
+                          </tr>
+                        </table>
+
+                        <!-- Alternative Link -->
+                        <p style="margin: 24px 0 0; color: #6b7280; font-size: 14px; line-height: 1.5; text-align: center;">
+                          Or copy and paste this link into your browser:<br>
+                          <a href="${resetUrl}" style="color: #0BBCD6; word-break: break-all; text-decoration: underline;">${resetUrl}</a>
+                        </p>
+
+                        <!-- Security Notice -->
+                        <div style="margin: 32px 0 0; padding: 20px; background-color: #fef3c7; border-left: 4px solid #f59e0b; border-radius: 6px;">
+                          <p style="margin: 0; color: #92400e; font-size: 14px; line-height: 1.6;">
+                            <strong>⏰ Important:</strong> This password reset link will expire in <strong>1 hour</strong> for security purposes. If you don't reset your password within this time, you'll need to request a new link.
+                          </p>
+                        </div>
+
+                        <p style="margin: 24px 0 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
+                          If you didn't request this password reset, please ignore this email. Your password will remain unchanged.
+                        </p>
+                      </td>
+                    </tr>
+
+                    <!-- Footer -->
+                    <tr>
+                      <td style="padding: 30px 40px; background-color: #f9fafb; border-top: 1px solid #e5e7eb; text-align: center;">
+                        <p style="margin: 0 0 8px; color: #374151; font-size: 14px; font-weight: 600;">
+                          Best regards,<br>
+                          The ${data.companyName} Team
+                        </p>
+                        <p style="margin: 16px 0 0; color: #9ca3af; font-size: 12px; line-height: 1.5;">
+                          This is an automated email. Please do not reply to this message.<br>
+                          If you have any questions, please contact our support team.
+                        </p>
+                      </td>
+                    </tr>
+                  </table>
+
+                  <!-- Bottom Spacing -->
+                  <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="600" style="max-width: 600px;">
+                    <tr>
+                      <td style="padding: 20px 0; text-align: center;">
+                        <p style="margin: 0; color: rgba(255, 255, 255, 0.8); font-size: 12px;">
+                          © ${new Date().getFullYear()} ${data.companyName}. All rights reserved.
+                        </p>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </body>
+          </html>
         `,
       };
 
@@ -1218,6 +1294,470 @@ This is an automated message from ${data.companyName}. If you have any questions
     } catch (error: any) {
       console.error(`❌ Error sending lead conversion email to ${data.to}:`, error);
       // Don't throw - email failure shouldn't break conversion
+    }
+  }
+
+  /**
+   * Send package email with PDF attachment
+   */
+  async sendPackageEmail(data: {
+    tenantId: number;
+    to: string;
+    recipientName: string;
+    package: any;
+    companyName: string;
+    publicUrl: string;
+    customMessage?: string;
+    htmlBody: string;
+    pdfBuffer?: Buffer | null;
+  }): Promise<boolean> {
+    try {
+      // Get tenant email configuration
+      const tenantConfig = await this.getTenantEmailConfig(data.tenantId);
+      let transporter: nodemailer.Transporter | null = null;
+      let fromEmail = process.env.EMAIL_FROM || "noreply@ratehonk.com";
+
+      if (tenantConfig) {
+        transporter = this.createTenantTransporter(tenantConfig);
+        fromEmail = tenantConfig.sender_email || tenantConfig.smtp_username;
+      } else {
+        // Fallback to SaaS owner config
+        const saasConfig = await this.getSaasOwnerEmailConfig();
+        if (saasConfig) {
+          transporter = this.createTenantTransporter(saasConfig);
+          fromEmail = saasConfig.sender_email || saasConfig.smtp_username;
+        } else {
+          throw new Error("No email configuration available");
+        }
+      }
+
+      if (!transporter) {
+        throw new Error("Failed to create email transporter");
+      }
+
+      const subject = `${data.package.name} - Travel Package from ${data.companyName}`;
+
+      const mailOptions: any = {
+        from: fromEmail,
+        to: data.to,
+        subject,
+        html: data.htmlBody,
+      };
+
+      // Add PDF attachment if available
+      if (data.pdfBuffer) {
+        mailOptions.attachments = [
+          {
+            filename: `package-${data.package.name.replace(/[^a-z0-9]/gi, '_')}.pdf`,
+            content: data.pdfBuffer,
+            contentType: "application/pdf",
+          },
+        ];
+      }
+
+      await transporter.sendMail(mailOptions);
+      console.log(`✅ Package email sent to ${data.to} for package ${data.package.name}`);
+      return true;
+    } catch (error: any) {
+      console.error("Error sending package email:", error);
+      return false;
+    }
+  }
+
+  /**
+   * Send follow-up assignment email on behalf of tenant company
+   */
+  async sendFollowUpAssignmentEmail(data: {
+    to: string;
+    assignedUserName: string;
+    createdByName: string;
+    followUpTitle: string;
+    followUpDescription?: string;
+    dueDate: string;
+    priority: string;
+    relatedEntityType?: string;
+    relatedEntityId?: number;
+    relatedEntityName?: string;
+    followUpId: number;
+    tenantId: number;
+    previousUserName?: string;
+    isReassignment?: boolean;
+    companyName?: string;
+  }) {
+    try {
+      // Get tenant company name
+      let companyName = data.companyName;
+      if (!companyName) {
+        const [tenant] = await sql`
+          SELECT company_name FROM tenants WHERE id = ${data.tenantId}
+        `;
+        companyName = tenant?.company_name || "Your Company";
+      }
+
+      const baseUrl = process.env.APP_URL || "http://localhost:5000";
+      const followUpUrl = `${baseUrl}/follow-ups`;
+
+      const priorityColors: Record<string, string> = {
+        low: '#6B7280',
+        medium: '#3B82F6',
+        high: '#F59E0B',
+        urgent: '#EF4444'
+      };
+      const priorityColor = priorityColors[data.priority] || '#3B82F6';
+
+      let relatedEntitySection = '';
+      if (data.relatedEntityType && data.relatedEntityId && data.relatedEntityName) {
+        const entityTypeMap: Record<string, string> = {
+          leads: 'Lead',
+          customers: 'Customer',
+          invoices: 'Invoice',
+          bookings: 'Booking',
+          estimates: 'Estimate',
+          expenses: 'Expense'
+        };
+        const entityTypeLabel = entityTypeMap[data.relatedEntityType] || data.relatedEntityType;
+        relatedEntitySection = `
+          <tr>
+            <td style="padding: 10px 0;">
+              <strong>Related To:</strong> ${entityTypeLabel} - ${data.relatedEntityName}
+            </td>
+          </tr>
+        `;
+      }
+
+      const htmlBody = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 8px 8px 0 0; color: white; text-align: center;">
+            <h2 style="color: white; margin: 0;">${data.isReassignment ? 'Follow-Up Reassigned' : 'New Follow-Up Assigned'}</h2>
+          </div>
+          <div style="background-color: #ffffff; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 8px 8px; padding: 20px;">
+            <p style="color: #333; font-size: 16px;">Hello <strong>${data.assignedUserName}</strong>,</p>
+            <p style="color: #666;">
+              ${data.isReassignment && data.previousUserName 
+                ? `A follow-up has been moved from ${data.previousUserName} to you.` 
+                : 'A new follow-up has been assigned to you.'}
+            </p>
+            ${data.isReassignment && data.previousUserName ? `
+            <div style="background-color: #fff3cd; padding: 12px; border-radius: 4px; border-left: 4px solid #ffc107; margin: 15px 0;">
+              <p style="margin: 0; color: #856404;">
+                <strong>Note:</strong> This follow-up was previously assigned to ${data.previousUserName} and has now been reassigned to you.
+              </p>
+            </div>
+            ` : ''}
+            
+            <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
+              <table style="width: 100%; border-collapse: collapse;">
+                <tr>
+                  <td style="padding: 10px 0;">
+                    <strong>Title:</strong> ${data.followUpTitle}
+                  </td>
+                </tr>
+                ${data.followUpDescription ? `
+                <tr>
+                  <td style="padding: 10px 0;">
+                    <strong>Description:</strong><br>
+                    <div style="margin-top: 5px; color: #666;">${data.followUpDescription}</div>
+                  </td>
+                </tr>
+                ` : ''}
+                <tr>
+                  <td style="padding: 10px 0;">
+                    <strong>Due Date:</strong> ${new Date(data.dueDate).toLocaleString()}
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding: 10px 0;">
+                    <strong>Priority:</strong> 
+                    <span style="background-color: ${priorityColor}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; text-transform: uppercase;">
+                      ${data.priority}
+                    </span>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding: 10px 0;">
+                    <strong>Assigned By:</strong> ${data.createdByName}
+                  </td>
+                </tr>
+                ${relatedEntitySection}
+              </table>
+            </div>
+
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="${followUpUrl}" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">
+                View Follow-Up in Dashboard
+              </a>
+            </div>
+          </div>
+          <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e0e0e0; text-align: center; color: #666; font-size: 12px;">
+            <p style="margin: 0 0 8px;">
+              Best regards,<br>
+              <strong>The ${companyName} Team</strong>
+            </p>
+            <p style="margin: 8px 0 0; color: #999;">
+              This is an automated notification from ${companyName}.
+            </p>
+          </div>
+        </body>
+        </html>
+      `;
+
+      const textBody = `
+${data.isReassignment ? 'Follow-Up Reassigned' : 'New Follow-Up Assigned'}
+
+Hello ${data.assignedUserName},
+
+${data.isReassignment && data.previousUserName 
+  ? `A follow-up has been moved from ${data.previousUserName} to you.` 
+  : 'A new follow-up has been assigned to you.'}
+
+${data.isReassignment && data.previousUserName ? `
+Note: This follow-up was previously assigned to ${data.previousUserName} and has now been reassigned to you.
+` : ''}
+
+Follow-Up Details:
+Title: ${data.followUpTitle}
+${data.followUpDescription ? `Description: ${data.followUpDescription}\n` : ''}
+Due Date: ${new Date(data.dueDate).toLocaleString()}
+Priority: ${data.priority.toUpperCase()}
+Assigned By: ${data.createdByName}
+${data.relatedEntityType && data.relatedEntityId && data.relatedEntityName ? `Related To: ${data.relatedEntityType} - ${data.relatedEntityName}\n` : ''}
+
+View Follow-Up: ${followUpUrl}
+
+Best regards,
+The ${companyName} Team
+
+---
+This is an automated notification from ${companyName}.
+      `;
+
+      const subject = data.isReassignment 
+        ? `Follow-Up Reassigned: ${data.followUpTitle}`
+        : `New Follow-Up Assigned: ${data.followUpTitle}`;
+
+      console.log(`📧 Preparing to send follow-up assignment email on behalf of ${companyName}:`);
+      console.log(`   - To: ${data.to}`);
+      console.log(`   - Follow-Up Title: ${data.followUpTitle}`);
+      console.log(`   - Tenant ID: ${data.tenantId}`);
+
+      await this.sendCustomerEmail({
+        to: data.to,
+        subject: subject,
+        body: textBody,
+        htmlBody: htmlBody,
+        tenantId: data.tenantId,
+        fromName: companyName,
+      });
+
+      console.log(`✅ Follow-up assignment email sent to ${data.to} from ${companyName}`);
+      return true;
+    } catch (error: any) {
+      console.error(`❌ Error sending follow-up assignment email to ${data.to}:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Send follow-up priority change email on behalf of tenant company
+   */
+  async sendFollowUpPriorityChangeEmail(data: {
+    to: string;
+    assignedUserName: string;
+    createdByName: string;
+    followUpTitle: string;
+    followUpDescription?: string;
+    dueDate: string;
+    previousPriority: string;
+    newPriority: string;
+    relatedEntityType?: string;
+    relatedEntityId?: number;
+    relatedEntityName?: string;
+    followUpId: number;
+    tenantId: number;
+    companyName?: string;
+  }) {
+    try {
+      // Get tenant company name
+      let companyName = data.companyName;
+      if (!companyName) {
+        const [tenant] = await sql`
+          SELECT company_name FROM tenants WHERE id = ${data.tenantId}
+        `;
+        companyName = tenant?.company_name || "Your Company";
+      }
+
+      const baseUrl = process.env.APP_URL || "http://localhost:5000";
+      const followUpUrl = `${baseUrl}/follow-ups`;
+
+      const priorityColors: Record<string, string> = {
+        low: '#6B7280',
+        medium: '#3B82F6',
+        high: '#F59E0B',
+        urgent: '#EF4444'
+      };
+      const previousPriorityColor = priorityColors[data.previousPriority] || '#3B82F6';
+      const newPriorityColor = priorityColors[data.newPriority] || '#3B82F6';
+
+      let relatedEntitySection = '';
+      if (data.relatedEntityType && data.relatedEntityId && data.relatedEntityName) {
+        const entityTypeMap: Record<string, string> = {
+          leads: 'Lead',
+          customers: 'Customer',
+          invoices: 'Invoice',
+          bookings: 'Booking',
+          estimates: 'Estimate',
+          expenses: 'Expense'
+        };
+        const entityTypeLabel = entityTypeMap[data.relatedEntityType] || data.relatedEntityType;
+        relatedEntitySection = `
+          <tr>
+            <td style="padding: 10px 0;">
+              <strong>Related To:</strong> ${entityTypeLabel} - ${data.relatedEntityName}
+            </td>
+          </tr>
+        `;
+      }
+
+      const htmlBody = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 8px 8px 0 0; color: white; text-align: center;">
+            <h2 style="color: white; margin: 0;">Follow-Up Priority Changed</h2>
+          </div>
+          <div style="background-color: #ffffff; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 8px 8px; padding: 20px;">
+            <p style="color: #333; font-size: 16px;">Hello <strong>${data.assignedUserName}</strong>,</p>
+            <p style="color: #666;">
+              The priority of a follow-up assigned to you has been updated.
+            </p>
+            
+            <div style="background-color: #fff3cd; padding: 12px; border-radius: 4px; border-left: 4px solid #ffc107; margin: 15px 0;">
+              <p style="margin: 0; color: #856404;">
+                <strong>Priority Change:</strong> 
+                <span style="background-color: ${previousPriorityColor}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; text-transform: uppercase; margin: 0 5px;">
+                  ${data.previousPriority}
+                </span>
+                →
+                <span style="background-color: ${newPriorityColor}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; text-transform: uppercase; margin: 0 5px;">
+                  ${data.newPriority}
+                </span>
+              </p>
+            </div>
+            
+            <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
+              <table style="width: 100%; border-collapse: collapse;">
+                <tr>
+                  <td style="padding: 10px 0;">
+                    <strong>Title:</strong> ${data.followUpTitle}
+                  </td>
+                </tr>
+                ${data.followUpDescription ? `
+                <tr>
+                  <td style="padding: 10px 0;">
+                    <strong>Description:</strong><br>
+                    <div style="margin-top: 5px; color: #666;">${data.followUpDescription}</div>
+                  </td>
+                </tr>
+                ` : ''}
+                <tr>
+                  <td style="padding: 10px 0;">
+                    <strong>Due Date:</strong> ${new Date(data.dueDate).toLocaleString()}
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding: 10px 0;">
+                    <strong>Current Priority:</strong> 
+                    <span style="background-color: ${newPriorityColor}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; text-transform: uppercase;">
+                      ${data.newPriority}
+                    </span>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding: 10px 0;">
+                    <strong>Changed By:</strong> ${data.createdByName}
+                  </td>
+                </tr>
+                ${relatedEntitySection}
+              </table>
+            </div>
+
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="${followUpUrl}" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">
+                View Follow-Up in Dashboard
+              </a>
+            </div>
+          </div>
+          <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e0e0e0; text-align: center; color: #666; font-size: 12px;">
+            <p style="margin: 0 0 8px;">
+              Best regards,<br>
+              <strong>The ${companyName} Team</strong>
+            </p>
+            <p style="margin: 8px 0 0; color: #999;">
+              This is an automated notification from ${companyName}.
+            </p>
+          </div>
+        </body>
+        </html>
+      `;
+
+      const textBody = `
+Follow-Up Priority Changed
+
+Hello ${data.assignedUserName},
+
+The priority of a follow-up assigned to you has been updated.
+
+Priority Change: ${data.previousPriority.toUpperCase()} → ${data.newPriority.toUpperCase()}
+
+Follow-Up Details:
+Title: ${data.followUpTitle}
+${data.followUpDescription ? `Description: ${data.followUpDescription}\n` : ''}
+Due Date: ${new Date(data.dueDate).toLocaleString()}
+Current Priority: ${data.newPriority.toUpperCase()}
+Changed By: ${data.createdByName}
+${data.relatedEntityType && data.relatedEntityId && data.relatedEntityName ? `Related To: ${data.relatedEntityType} - ${data.relatedEntityName}\n` : ''}
+
+View Follow-Up: ${followUpUrl}
+
+Best regards,
+The ${companyName} Team
+
+---
+This is an automated notification from ${companyName}.
+      `;
+
+      const subject = `Follow-Up Priority Changed: ${data.followUpTitle}`;
+
+      console.log(`📧 Preparing to send follow-up priority change email on behalf of ${companyName}:`);
+      console.log(`   - To: ${data.to}`);
+      console.log(`   - Follow-Up Title: ${data.followUpTitle}`);
+      console.log(`   - Priority: ${data.previousPriority} → ${data.newPriority}`);
+      console.log(`   - Tenant ID: ${data.tenantId}`);
+
+      await this.sendCustomerEmail({
+        to: data.to,
+        subject: subject,
+        body: textBody,
+        htmlBody: htmlBody,
+        tenantId: data.tenantId,
+        fromName: companyName,
+      });
+
+      console.log(`✅ Follow-up priority change email sent to ${data.to} from ${companyName}`);
+      return true;
+    } catch (error: any) {
+      console.error(`❌ Error sending follow-up priority change email to ${data.to}:`, error);
+      return false;
     }
   }
 }

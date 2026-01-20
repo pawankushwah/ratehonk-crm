@@ -59,6 +59,8 @@ import {
   ChevronDown,
   Upload,
   FileDown,
+  Send,
+  ExternalLink,
 } from "lucide-react";
 import { useAuth } from "@/components/auth/auth-provider";
 import { auth } from "@/lib/auth";
@@ -66,6 +68,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Link, useLocation } from "wouter";
 import type { TravelPackage, PackageType } from "@/lib/types";
+import { SendPackageDialog } from "@/components/packages/send-package-dialog";
 
 const packageFormSchema = z
   .object({
@@ -166,6 +169,10 @@ export default function TravelPackages() {
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [isImporting, setIsImporting] = useState(false);
+  
+  // Send package dialog state
+  const [sendDialogOpen, setSendDialogOpen] = useState(false);
+  const [selectedPackage, setSelectedPackage] = useState<TravelPackage | null>(null);
 
   // Import handlers
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1079,6 +1086,11 @@ export default function TravelPackages() {
     navigate(`/packages/preview/${pkg.id}`);
   };
 
+  const handleSend = (pkg: TravelPackage) => {
+    setSelectedPackage(pkg);
+    setSendDialogOpen(true);
+  };
+
   const handleDelete = (pkg: TravelPackage) => {
     if (window.confirm(`Are you sure you want to delete "${pkg.name}"?`)) {
       deletePackageMutation.mutate(pkg.id);
@@ -1319,9 +1331,12 @@ export default function TravelPackages() {
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div>
-                            <div className="text-sm font-medium text-gray-900 dark:text-white">
+                            <Link
+                              href={`/packages/edit/${pkg.id}`}
+                              className="text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline dark:text-blue-400"
+                            >
                               {pkg.name}
-                            </div>
+                            </Link>
                             {pkg.description && (
                               <div className="text-sm text-gray-500 dark:text-gray-400 max-w-xs truncate">
                                 {pkg.description}
@@ -1409,7 +1424,16 @@ export default function TravelPackages() {
                             <Button
                               variant="outline"
                               size="sm"
+                              onClick={() => handleSend(pkg)}
+                              title="Send Package"
+                            >
+                              <Send className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
                               onClick={() => handleView(pkg)}
+                              title="View Package"
                             >
                               <Eye className="h-4 w-4" />
                             </Button>
@@ -1417,14 +1441,31 @@ export default function TravelPackages() {
                               variant="outline"
                               size="sm"
                               onClick={() => handleEdit(pkg)}
+                              title="Edit Package"
                             >
                               <Edit className="h-4 w-4" />
                             </Button>
                             <Button
                               variant="outline"
                               size="sm"
+                              asChild
+                              title="Open Public URL"
+                            >
+                              <a
+                                href={`${window.location.origin}/public/package/${pkg.id}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <ExternalLink className="h-4 w-4" />
+                              </a>
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
                               onClick={() => handleDelete(pkg)}
                               disabled={deletePackageMutation.isPending}
+                              title="Delete Package"
                             >
                               <Trash2 className="h-4 w-4" />
                             </Button>
@@ -1472,9 +1513,14 @@ export default function TravelPackages() {
                     {/* Header */}
                     <div className="flex justify-between items-start">
                       <div className="flex-1">
-                        <h3 className="font-semibold text-lg text-gray-900 dark:text-white truncate">
-                          {pkg.name}
-                        </h3>
+                        <div className="flex items-center gap-2">
+                          <Link
+                            href={`/packages/edit/${pkg.id}`}
+                            className="font-semibold text-lg text-blue-600 hover:text-blue-700 hover:underline dark:text-blue-400 truncate"
+                          >
+                            {pkg.name}
+                          </Link>
+                        </div>
                         {pkg.altName && (
                           <p className="text-xs text-gray-500 italic mt-1">
                             {pkg.altName}
@@ -1557,8 +1603,17 @@ export default function TravelPackages() {
                         <Button
                           variant="outline"
                           size="sm"
+                          onClick={() => handleSend(pkg)}
+                          title="Send Package"
+                        >
+                          <Send className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
                           onClick={() => handleView(pkg)}
                           data-testid={`button-view-${pkg.id}`}
+                          title="View Package"
                         >
                           <Eye className="h-4 w-4" />
                         </Button>
@@ -1567,8 +1622,24 @@ export default function TravelPackages() {
                           size="sm"
                           onClick={() => handleEdit(pkg)}
                           data-testid={`button-edit-${pkg.id}`}
+                          title="Edit Package"
                         >
                           <Edit className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          asChild
+                          title="Open Public URL"
+                        >
+                          <a
+                            href={`${window.location.origin}/public/package/${pkg.id}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <ExternalLink className="h-4 w-4" />
+                          </a>
                         </Button>
                         <Button
                           variant="outline"
@@ -1576,6 +1647,7 @@ export default function TravelPackages() {
                           onClick={() => handleDelete(pkg)}
                           disabled={deletePackageMutation.isPending}
                           data-testid={`button-delete-${pkg.id}`}
+                          title="Delete Package"
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -1649,6 +1721,20 @@ export default function TravelPackages() {
           </div>
         </DialogContent>
       </Dialog>
+      
+      {/* Send Package Dialog */}
+      {selectedPackage && (
+        <SendPackageDialog
+          open={sendDialogOpen}
+          onOpenChange={(open) => {
+            setSendDialogOpen(open);
+            if (!open) {
+              setSelectedPackage(null);
+            }
+          }}
+          package={selectedPackage}
+        />
+      )}
     </Layout>
   );
 }

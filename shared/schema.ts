@@ -407,6 +407,7 @@ export const invoices = pgTable("invoices", {
   taxAmount: decimal("tax_amount", { precision: 10, scale: 2 }).default("0"),
   totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
   notes: text("notes"),
+  tags: json("tags").$type<string[]>(), // Array of tags like ["Reissued"]
   enableReminder: boolean("enable_reminder").default(false),
   reminderFrequency: text("reminder_frequency"),
   reminderSpecificDate: timestamp("reminder_specific_date"),

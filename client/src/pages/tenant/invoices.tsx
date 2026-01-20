@@ -109,6 +109,7 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { Check, X, Settings, GripVertical } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { DateFilter } from "@/components/ui/date-filter";
 import { buildDateFilters } from "@/lib/date-filter-helpers";
@@ -1745,22 +1746,40 @@ export default function Invoices() {
       render: (value, invoice) => {
         const invoiceData = invoice as any;
         const isCancelled = invoiceData.status === "cancelled";
+        const tags = invoiceData.tags || [];
+        const hasTags = Array.isArray(tags) && tags.length > 0;
+        
         return (
-          <button
-            onClick={() => {
-              if (!isCancelled) {
-                navigate(`/invoice-edit/${invoice.id}${getPaginationParams()}`);
-              }
-            }}
-            disabled={isCancelled}
-            className={`font-medium ${
-              isCancelled
-                ? "text-gray-400 cursor-not-allowed no-underline"
-                : "text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
-            }`}
-          >
-            {value || `INV-${invoice.id}`}
-          </button>
+          <div className="flex flex-col">
+            <button
+              onClick={() => {
+                if (!isCancelled) {
+                  navigate(`/invoice-edit/${invoice.id}${getPaginationParams()}`);
+                }
+              }}
+              disabled={isCancelled}
+              className={`font-medium text-left ${
+                isCancelled
+                  ? "text-gray-400 cursor-not-allowed no-underline"
+                  : "text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+              }`}
+            >
+              {value || `INV-${invoice.id}`}
+            </button>
+            {hasTags && (
+              <div className="flex flex-wrap gap-1 mt-1">
+                {tags.map((tag: string, idx: number) => (
+                  <Badge
+                    key={idx}
+                    variant="secondary"
+                    className="text-xs px-1.5 py-0 h-5"
+                  >
+                    {tag}
+                  </Badge>
+                ))}
+              </div>
+            )}
+          </div>
         );
       },
     },
@@ -2724,6 +2743,12 @@ export default function Invoices() {
       setInvoiceToDuplicate(null);
       setDuplicateCustomerId("");
       setDuplicateCustomerSearch("");
+
+      // Redirect to the newly created invoice edit page
+      if (result.newInvoiceId || result.invoice?.id) {
+        const newInvoiceId = result.newInvoiceId || result.invoice?.id;
+        navigate(`/invoice-edit/${newInvoiceId}${getPaginationParams()}`);
+      }
     },
     onError: (error: any) => {
       toast({
@@ -2985,7 +3010,7 @@ export default function Invoices() {
                           });
                         }}
                       >
-                        <div className="min-w-0">
+                        <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2 font-medium text-sm text-gray-900">
                             <GripVertical className="h-4 w-4 text-gray-400" />
                             <span>{col.label}</span>
@@ -2994,13 +3019,10 @@ export default function Invoices() {
                             {col.key}
                           </div>
                         </div>
-                        <Button
-                          variant={visible ? "outline" : "default"}
-                          size="sm"
-                          onClick={() => toggleInvoiceColumn(col.key)}
-                        >
-                          {visible ? "Hide" : "Show"}
-                        </Button>
+                        <Switch
+                          checked={visible}
+                          onCheckedChange={() => toggleInvoiceColumn(col.key)}
+                        />
                       </div>
                     );
                   })}
