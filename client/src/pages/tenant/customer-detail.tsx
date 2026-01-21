@@ -466,12 +466,17 @@ export default function CustomerDetail() {
 
     const analytics = customerAnalytics || {};
 
+    // Filter out cancelled invoices from calculations
+    const validInvoices = (invoicesData || []).filter(
+      (invoice) => invoice.status?.toLowerCase() !== "cancelled"
+    );
+
     // Use API data if available, fallback to client-side calculations
     const summary = analytics.summary || {};
-    const totalInvoices = summary.totalInvoices ?? (invoicesData || []).length;
+    const totalInvoices = summary.totalInvoices ?? validInvoices.length;
     const totalRevenue =
       summary.totalRevenue ??
-      (invoicesData || []).reduce(
+      validInvoices.reduce(
         (sum, invoice) => sum + (Number(invoice.totalAmount) || 0),
         0,
       );
@@ -485,7 +490,7 @@ export default function CustomerDetail() {
       analytics.paymentStatusArray ||
       Object.entries(
         analytics.paymentStatus ||
-          (invoicesData || []).reduce((acc, invoice) => {
+          validInvoices.reduce((acc, invoice) => {
             const status = invoice.paymentStatus || "pending";
             acc[status] = (acc[status] || 0) + 1;
             return acc;
@@ -504,14 +509,14 @@ export default function CustomerDetail() {
     // Use API monthly trends if available, fallback to client calculation
     const monthlyData = analytics.monthlyTrends || [];
 
-    // If no API data, calculate from invoices as fallback
-    if (monthlyData.length === 0 && invoicesData && invoicesData.length > 0) {
+    // If no API data, calculate from invoices as fallback (excluding cancelled)
+    if (monthlyData.length === 0 && validInvoices && validInvoices.length > 0) {
       for (let i = 5; i >= 0; i--) {
         const date = new Date();
         date.setMonth(date.getMonth() - i);
         const month = date.toLocaleDateString("en-US", { month: "short" });
 
-        const monthInvoices = invoicesData.filter((invoice) => {
+        const monthInvoices = validInvoices.filter((invoice) => {
           const invoiceDate = new Date(invoice.issueDate || invoice.createdAt);
           return (
             invoiceDate.getMonth() === date.getMonth() &&
@@ -605,7 +610,11 @@ export default function CustomerDetail() {
                 <div>
                   <p className="text-sm text-gray-600">Customer Since</p>
                   <p className="text-lg font-bold text-gray-900">
-                    {new Date(customer?.createdAt).toLocaleDateString()}
+                    {new Date(customer?.createdAt).toLocaleDateString("en-GB", {
+                      day: "2-digit",
+                      month: "2-digit",
+                      year: "numeric",
+                    })}
                   </p>
                 </div>
                 <UserCheck className="h-8 w-8 text-blue-600" />
@@ -3563,7 +3572,11 @@ export default function CustomerDetail() {
                         <div className="flex justify-between">
                           <span className="text-gray-600">Member Since</span>
                           <span className="text-gray-900">
-                            {new Date(customer.createdAt).toLocaleDateString()}
+                            {new Date(customer.createdAt).toLocaleDateString("en-GB", {
+                              day: "2-digit",
+                              month: "2-digit",
+                              year: "numeric",
+                            })}
                           </span>
                         </div>
                       </div>

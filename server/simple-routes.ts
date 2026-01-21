@@ -28314,29 +28314,92 @@ ${args.tenantName}`;
   });
 
   // POST /api/tenants/:tenantId/leads/:leadId/emails - Send email for a lead
-  app.post("/api/tenants/:tenantId/leads/:leadId/emails", async (req, res) => {
+  app.post("/api/tenants/:tenantId/leads/:leadId/emails", authenticateToken, async (req, res) => {
     try {
       const leadId = parseInt(req.params.leadId);
       const tenantId = parseInt(req.params.tenantId);
-      const { email, subject, body, fromEmail } = req.body;
+      const { email, subject, body, fromEmail, htmlBody } = req.body;
+      const user = (req as any).user;
+
+      // Verify user has access to this tenant
+      if (user.tenantId !== tenantId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
 
       console.log("🔍 API: Sending email for leadId:", leadId);
       console.log("🔍 API: Email data:", { email, subject, fromEmail });
 
-      // Insert into email_logs table
+      // Get lead details
+      const leads = await sql`
+        SELECT * FROM leads WHERE id = ${leadId} AND tenant_id = ${tenantId}
+      `;
+      const lead = leads[0] || null;
+
+      if (!lead) {
+        return res.status(404).json({ error: "Lead not found" });
+      }
+
+      // Get tenant details for company info
+      const tenants = await sql`
+        SELECT * FROM tenants WHERE id = ${tenantId}
+      `;
+      const tenant = tenants[0] || null;
+
+      // First, try to send the actual email (same pattern as customer emails)
+      let emailStatus = "failed";
+      let errorMessage = null;
+
+      try {
+        const { tenantEmailService } = await import("./tenant-email-service.js");
+        await tenantEmailService.sendCustomerEmail({
+          to: email,
+          subject: subject,
+          body: body,
+          htmlBody: htmlBody || body,
+          tenantId: tenantId,
+          fromName: tenant?.company_name || tenant?.name,
+          attachments: req.body.attachments,
+        });
+        emailStatus = "sent";
+        console.log(`✅ Email sent successfully to ${email}`);
+      } catch (emailError: any) {
+        console.error(`❌ Failed to send email to ${email}:`, emailError);
+        emailStatus = "failed";
+        errorMessage = emailError.message;
+      }
+
+      // Insert into email_logs table with actual status
       const result = await sql`
         INSERT INTO email_logs (
-          tenant_id, lead_id, email, subject, body, from_email, status, sent_at
-        ) VALUES (${tenantId}, ${leadId}, ${email}, ${subject}, ${body}, ${fromEmail}, 'sent', NOW()) 
-        RETURNING id, lead_id, email, subject, body, from_email, status, sent_at
+          tenant_id, lead_id, email, subject, body, from_email, status, sent_at, error_message
+        ) VALUES (${tenantId}, ${leadId}, ${email}, ${subject}, ${body}, ${fromEmail}, ${emailStatus}, NOW(), ${errorMessage}) 
+        RETURNING id, lead_id, email, subject, body, from_email, status, sent_at, error_message
       `;
 
       const newEmail = result[0];
       console.log("✅ API: Email logged successfully with ID:", newEmail.id);
 
+      // Create lead activity to track email sent (same pattern as customer emails)
+      try {
+        await simpleStorage.createLeadActivity({
+          tenantId: tenantId,
+          leadId: leadId,
+          userId: user.id,
+          activityType: 2, // Email Sent
+          activityTitle: subject,
+          activityDescription: body, // Full body like customer emails
+          activityStatus: emailStatus === "sent" ? 1 : 0, // 1 = Completed, 0 = Pending/Failed
+        });
+        console.log(`✅ Lead activity created for email sent to lead ${leadId}`);
+      } catch (activityError: any) {
+        console.error("⚠️ Failed to create lead activity:", activityError);
+        // Don't fail the request if activity creation fails, but log the error
+        console.error("Activity creation error details:", activityError.message);
+      }
+
       res.json({
         success: true,
-        message: "Email sent successfully",
+        message: emailStatus === "sent" ? "Email sent successfully" : "Email failed to send",
         email: {
           id: newEmail.id,
           leadId: newEmail.lead_id,
@@ -28346,9 +28409,10 @@ ${args.tenantName}`;
           fromEmail: newEmail.from_email,
           status: newEmail.status,
           sentAt: newEmail.sent_at,
+          errorMessage: newEmail.error_message,
         },
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error("❌ API: Error sending lead email:", error);
       res.status(500).json({
         success: false,
@@ -29275,11 +29339,14 @@ ${args.tenantName}`;
           : allCustomersResult?.data || [];
 
         // Filter data for this specific customer (double-check filter)
+        // Exclude cancelled invoices from analytics calculations
         const customerSpecificInvoices = customerInvoices.filter(
-          (invoice) => invoice.customerId === parseInt(customerId),
+          (invoice) => 
+            invoice.customerId === parseInt(customerId) &&
+            invoice.status?.toLowerCase() !== "cancelled"
         );
 
-        // Calculate analytics metrics based on invoices
+        // Calculate analytics metrics based on invoices (excluding cancelled)
         const totalInvoices = customerSpecificInvoices.length;
         const totalInvoiceAmount = customerSpecificInvoices.reduce(
           (sum, invoice) => sum + (Number(invoice.totalAmount) || 0),
@@ -29305,7 +29372,7 @@ ${args.tenantName}`;
           {},
         );
 
-        // Monthly trend analysis (last 6 months) based on invoices
+        // Monthly trend analysis (last 6 months) based on invoices (excluding cancelled)
         const monthlyTrends = [];
         for (let i = 5; i >= 0; i--) {
           const date = new Date();
@@ -29344,7 +29411,7 @@ ${args.tenantName}`;
           (Date.now() - customerSince.getTime()) / (1000 * 60 * 60 * 24),
         );
 
-        // Recent activity (last 30 days) based on invoices
+        // Recent activity (last 30 days) based on invoices (excluding cancelled)
         const thirtyDaysAgo = new Date();
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
