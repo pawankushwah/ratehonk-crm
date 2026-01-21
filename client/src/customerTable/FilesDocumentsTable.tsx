@@ -43,7 +43,14 @@ import {
   FileText,
   Upload,
   Folder,
+  X,
 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useAuth } from "@/components/auth/auth-provider";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -84,6 +91,8 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
   const queryClient = useQueryClient();
   const [searchTerm, setSearchTerm] = useState("");
   const [fileTypeFilter, setFileTypeFilter] = useState("all");
+  const [previewFile, setPreviewFile] = useState<CustomerFile | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   // Query to fetch customer files
   const { data: filesData, isLoading } = useQuery({
@@ -157,33 +166,61 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
       else if (file.type.includes("pdf") || file.type.includes("document") || file.type.includes("text")) fileType = "document";
 
       // Get the object path from the upload response
-      // XHRUpload plugin stores response in uploadedFile.response.body (from getResponseData)
-      // But sometimes it's also in uploadedFile.response directly
-      let responseBody = (uploadedFile as any).response?.body;
+      // ObjectUploader stores response in multiple places:
+      // 1. uploadedFile.response (from getResponseData)
+      // 2. uploadedFile._uploadResponse (from upload-success event)
+      // 3. uploadedFile._uploadResponseBody (from upload-success event)
       const fullResponse = (uploadedFile as any).response;
+      const storedResponse = (uploadedFile as any)._uploadResponse;
+      const storedResponseBody = (uploadedFile as any)._uploadResponseBody;
+      let responseBody: any = null;
       
       console.log("📁 Uploaded file object:", uploadedFile);
       console.log("📁 Uploaded file keys:", Object.keys(uploadedFile));
-      console.log("📁 Response body from upload:", responseBody);
       console.log("📁 Full response:", fullResponse);
+      console.log("📁 Stored response (_uploadResponse):", storedResponse);
+      console.log("📁 Stored response body (_uploadResponseBody):", storedResponseBody);
+      console.log("📁 Response type:", typeof fullResponse);
       console.log("📁 Response keys:", fullResponse ? Object.keys(fullResponse) : []);
-      console.log("📁 Response status:", fullResponse?.status);
       
-      // Also check if response is stored directly (without .body)
-      if (!responseBody && fullResponse && typeof fullResponse === 'object') {
-        // Check if the response data is directly in the response object
-        if (fullResponse.publicUrl || fullResponse.objectPath || fullResponse.success) {
-          responseBody = fullResponse;
-          console.log("✅ Found response data directly in response object");
+      // First, check if response has a body property (most common case from XHRUpload)
+      if (fullResponse && typeof fullResponse === 'object' && fullResponse.body) {
+        if (typeof fullResponse.body === 'object' && fullResponse.body !== null) {
+          // Check if body has the data we need
+          if (fullResponse.body.publicUrl || fullResponse.body.objectPath || fullResponse.body.location || fullResponse.body.url || fullResponse.body.success !== undefined) {
+            responseBody = fullResponse.body;
+            console.log("✅ Found response data in response.body");
+          }
         }
       }
       
-      // Also check if response is stored directly (without .body) - do this FIRST
-      if (!responseBody && fullResponse && typeof fullResponse === 'object') {
-        // Check if the response data is directly in the response object (not in .body)
-        if (fullResponse.publicUrl || fullResponse.objectPath || fullResponse.success) {
+      // Second, check stored response body (from upload-success event)
+      if ((!responseBody || !responseBody.publicUrl) && storedResponseBody && typeof storedResponseBody === 'object') {
+        if (storedResponseBody.publicUrl || storedResponseBody.objectPath || storedResponseBody.location || storedResponseBody.url) {
+          responseBody = storedResponseBody;
+          console.log("✅ Found response data in _uploadResponseBody");
+        }
+      }
+      
+      // Third, check stored response (from upload-success event)
+      if ((!responseBody || !responseBody.publicUrl) && storedResponse) {
+        if (storedResponse.body && typeof storedResponse.body === 'object') {
+          if (storedResponse.body.publicUrl || storedResponse.body.objectPath || storedResponse.body.location || storedResponse.body.url) {
+            responseBody = storedResponse.body;
+            console.log("✅ Found response data in _uploadResponse.body");
+          }
+        } else if (storedResponse.publicUrl || storedResponse.objectPath || storedResponse.location || storedResponse.url) {
+          responseBody = storedResponse;
+          console.log("✅ Found response data in _uploadResponse");
+        }
+      }
+      
+      // Fourth, check if response is stored directly (from getResponseData)
+      if ((!responseBody || !responseBody.publicUrl) && fullResponse && typeof fullResponse === 'object') {
+        // Check if the response data is directly in the response object (from getResponseData)
+        if (fullResponse.publicUrl || fullResponse.objectPath || fullResponse.location || fullResponse.url || fullResponse.success !== undefined) {
           responseBody = fullResponse;
-          console.log("✅ Found response data directly in response object (not in .body)");
+          console.log("✅ Found response data directly in response object (from getResponseData)");
         }
       }
       
@@ -209,7 +246,7 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
         }
         
         // Try response.response (XMLHttpRequest response property)
-        if ((!responseBody || Object.keys(responseBody).length === 0) && fullResponse?.response) {
+        if ((!responseBody || Object.keys(responseBody).length === 0 || !hasValidPath) && fullResponse?.response) {
           if (typeof fullResponse.response === 'object') {
             const hasPath = fullResponse.response.publicUrl || fullResponse.response.objectPath || 
                            fullResponse.response.location || fullResponse.response.url;
@@ -217,11 +254,22 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
               responseBody = fullResponse.response;
               console.log("✅ Found response data in response.response");
             }
+          } else if (typeof fullResponse.response === 'string') {
+            try {
+              const parsed = JSON.parse(fullResponse.response);
+              const hasPath = parsed.publicUrl || parsed.objectPath || parsed.location || parsed.url;
+              if (hasPath) {
+                responseBody = parsed;
+                console.log("✅ Parsed response from response.response (string)");
+              }
+            } catch (e) {
+              console.error("❌ Failed to parse response.response:", e);
+            }
           }
         }
         
         // Try to parse responseText if available
-        if ((!responseBody || Object.keys(responseBody).length === 0) && fullResponse?.responseText) {
+        if ((!responseBody || Object.keys(responseBody).length === 0 || !hasValidPath) && fullResponse?.responseText) {
           try {
             const parsed = JSON.parse(fullResponse.responseText);
             const hasPath = parsed.publicUrl || parsed.objectPath || parsed.location || parsed.url;
@@ -233,16 +281,48 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
             console.error("❌ Failed to parse responseText:", e);
           }
         }
+        
+        // Re-check hasValidPath after trying alternatives
+        if (responseBody) {
+          const hasPath = responseBody.publicUrl || responseBody.objectPath || responseBody.location || responseBody.url;
+          if (hasPath) {
+            hasValidPath = true;
+          }
+        }
       }
       
       const responseData = typeof responseBody === 'object' && responseBody !== null ? responseBody : {};
       
       // Extract objectPath from response - prioritize publicUrl as it's the correct path
-      const objectPath = responseData.publicUrl || 
-                        responseData.objectPath ||
-                        responseData.location ||
-                        responseData.url ||
-                        null;
+      // publicUrl has the format /uploads/filename (with leading slash) - this is what we want to store
+      // objectPath might be uploads/filename (without leading slash)
+      // We always want to use publicUrl for consistency and store it as-is
+      let objectPath = responseData.publicUrl || 
+                      responseData.location ||
+                      responseData.url ||
+                      null;
+      
+      // If we don't have publicUrl/location/url, fall back to objectPath but normalize it
+      if (!objectPath && responseData.objectPath) {
+        const objPath = responseData.objectPath;
+        // If it starts with uploads/ (no leading slash), add the slash
+        if (objPath.startsWith("uploads/")) {
+          objectPath = "/" + objPath;
+        } else if (objPath.startsWith("/uploads/")) {
+          objectPath = objPath;
+        } else {
+          // Extract filename and prepend /uploads/
+          const filename = objPath.split("/").pop() || objPath;
+          objectPath = `/uploads/${filename}`;
+        }
+      }
+      
+      // Final validation - ensure objectPath is in the correct format
+      if (objectPath && !objectPath.startsWith("/uploads/")) {
+        // Extract just the filename (last part after any slashes)
+        const filename = objectPath.split("/").filter(p => p).pop() || objectPath.replace(/^\//, "");
+        objectPath = `/uploads/${filename}`;
+      }
       
       if (!objectPath) {
         console.error("❌ No objectPath found in response after all attempts!");
@@ -371,14 +451,99 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
           }
         }
         
-        // If still no path, show error and refresh
-        toast({
-          title: "Upload Warning",
-          description: "File uploaded successfully but response parsing failed. Please refresh the page to see the file.",
-          variant: "destructive",
-        });
+        // Last attempt: Try to save file with a constructed path or query server for the file
+        console.log("⚠️ All response parsing attempts failed, trying fallback approach...");
         
-        // Refresh the file list
+        // Try to construct a reasonable path based on the filename
+        // The server typically saves files as: uploads/{timestamp}-{random}-{filename}
+        const timestamp = Date.now();
+        const randomSuffix = Math.random().toString(36).substring(2, 8);
+        const sanitizedFilename = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+        const constructedPath = `uploads/${timestamp}-${randomSuffix}-${sanitizedFilename}`;
+        const constructedPublicUrl = `/uploads/${timestamp}-${randomSuffix}-${sanitizedFilename}`;
+        
+        // Try to save with constructed path (server will validate and may correct it)
+        try {
+          console.log("📁 Attempting to save file with constructed path:", constructedPublicUrl);
+          await apiRequest(
+            "POST",
+            "/api/customer-files",
+            {
+              customerId: parseInt(customerId),
+              tenantId: tenant?.id,
+              fileName: file.name,
+              fileType,
+              mimeType: file.type,
+              fileSize: file.size,
+              objectPath: constructedPublicUrl,
+              uploadedBy: user?.id,
+              isPublic: false,
+            }
+          );
+          
+          // Success - invalidate and show success
+          queryClient.invalidateQueries({ queryKey: ["customer-files", customerId, tenant?.id] });
+          toast({
+            title: "Success",
+            description: "File uploaded successfully",
+          });
+          return;
+        } catch (saveError) {
+          console.error("❌ Failed to save with constructed path:", saveError);
+          
+          // If that fails, try to query the server for recently uploaded files
+          // Wait a moment for the file to be fully saved on server
+          setTimeout(async () => {
+            try {
+              // Refetch files to see if the new file appears (server might have auto-saved it)
+              await queryClient.invalidateQueries({ queryKey: ["customer-files", customerId, tenant?.id] });
+              const files = await queryClient.fetchQuery({
+                queryKey: ["customer-files", customerId, tenant?.id],
+                queryFn: async () => {
+                  const response = await apiRequest(
+                    "GET",
+                    `/api/customer-files?customerId=${customerId}&tenantId=${tenant?.id}`
+                  );
+                  const data = await response.json();
+                  return data.success ? data.files : [];
+                },
+              });
+              
+              // Check if a file with matching name and size was found (uploaded in last minute)
+              const now = Date.now();
+              const matchingFile = files.find((f: any) => {
+                const nameMatch = f.fileName === file.name || 
+                                 f.fileName?.includes(file.name) ||
+                                 file.name.includes(f.fileName);
+                const sizeMatch = Math.abs((f.fileSize || 0) - file.size) < 100; // Allow 100 bytes difference
+                const recentMatch = f.createdAt && (now - new Date(f.createdAt).getTime()) < 60000; // Within 1 minute
+                return nameMatch && sizeMatch && recentMatch;
+              });
+              
+              if (matchingFile) {
+                toast({
+                  title: "Success",
+                  description: "File uploaded and found successfully",
+                });
+              } else {
+                toast({
+                  title: "Upload Warning",
+                  description: "File uploaded but metadata save failed. Please refresh the page to see the file.",
+                  variant: "destructive",
+                });
+              }
+            } catch (error) {
+              console.error("Error refetching files:", error);
+              toast({
+                title: "Upload Warning",
+                description: "File uploaded but metadata save failed. Please refresh the page to see the file.",
+                variant: "destructive",
+              });
+            }
+          }, 1500);
+        }
+        
+        // Refresh the file list immediately
         queryClient.invalidateQueries({ queryKey: ["customer-files", customerId, tenant?.id] });
         return;
       }
@@ -469,7 +634,8 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
   // Handle file download
   const handleDownload = async (file: CustomerFile) => {
     try {
-      window.open(file.objectPath, "_blank");
+      const fileUrl = getFileUrl(file);
+      window.open(fileUrl, "_blank");
     } catch (error) {
       toast({
         title: "Error",
@@ -480,16 +646,41 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
   };
 
   // Handle file preview
-  const handlePreview = async (file: CustomerFile) => {
-    try {
-      window.open(file.objectPath, "_blank");
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to preview file",
-        variant: "destructive",
-      });
+  const handlePreview = (file: CustomerFile) => {
+    setPreviewFile(file);
+    setPreviewOpen(true);
+  };
+
+  // Get file URL for preview/download
+  const getFileUrl = (file: CustomerFile) => {
+    if (!file.objectPath) {
+      console.error("❌ File has no objectPath:", file);
+      return "";
     }
+    
+    // Normalize the path - ensure it starts with /uploads/
+    let path = file.objectPath.trim();
+    
+    // Remove any leading/trailing whitespace
+    path = path.trim();
+    
+    // If path doesn't start with /, add it
+    if (!path.startsWith("/")) {
+      path = "/" + path;
+    }
+    
+    // Ensure path starts with /uploads/
+    if (!path.startsWith("/uploads/")) {
+      // Extract just the filename (last part after any slashes)
+      const filename = path.split("/").filter(p => p).pop() || path.replace(/^\//, "");
+      path = `/uploads/${filename}`;
+    }
+    
+    // Remove any double slashes (except after http:// or https://)
+    path = path.replace(/([^:]\/)\/+/g, "$1");
+    
+    console.log("📁 getFileUrl - Original:", file.objectPath, "Normalized:", path);
+    return path;
   };
 
   if (isLoading) {
@@ -684,6 +875,125 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
           </div>
         )}
       </CardContent>
+
+      {/* File Preview Modal */}
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center justify-between">
+              <span>{previewFile?.fileName || "File Preview"}</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setPreviewOpen(false)}
+                className="h-6 w-6 p-0"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </DialogTitle>
+          </DialogHeader>
+          {previewFile && (
+            <div className="mt-4">
+              {previewFile.fileType === "image" ? (
+                <div className="flex justify-center">
+                  <img
+                    src={getFileUrl(previewFile)}
+                    alt={previewFile.fileName}
+                    className="max-w-full max-h-[70vh] object-contain rounded-lg"
+                    onError={(e) => {
+                      console.error("❌ Image load error:", {
+                        file: previewFile,
+                        url: getFileUrl(previewFile),
+                        objectPath: previewFile.objectPath,
+                      });
+                      const target = e.target as HTMLImageElement;
+                      target.style.display = "none";
+                      // Check if error div already exists
+                      if (!target.parentElement?.querySelector(".file-error-message")) {
+                        const errorDiv = document.createElement("div");
+                        errorDiv.className = "file-error-message text-center p-8 text-red-600";
+                        errorDiv.innerHTML = `
+                          <p class="font-semibold mb-2">Failed to load image</p>
+                          <p class="text-sm text-gray-600 mb-2">File path: ${previewFile.objectPath}</p>
+                          <p class="text-sm text-gray-600">Requested URL: ${getFileUrl(previewFile)}</p>
+                        `;
+                        target.parentElement?.appendChild(errorDiv);
+                      }
+                    }}
+                  />
+                </div>
+              ) : previewFile.fileType === "video" ? (
+                <div className="flex justify-center">
+                  <video
+                    src={getFileUrl(previewFile)}
+                    controls
+                    className="max-w-full max-h-[70vh] rounded-lg"
+                    onError={(e) => {
+                      toast({
+                        title: "Error",
+                        description: "Failed to load video. File may not exist.",
+                        variant: "destructive",
+                      });
+                    }}
+                  >
+                    Your browser does not support the video tag.
+                  </video>
+                </div>
+              ) : previewFile.fileType === "document" && previewFile.fileName?.toLowerCase().endsWith(".pdf") ? (
+                <div className="w-full h-[70vh]">
+                  <iframe
+                    src={getFileUrl(previewFile)}
+                    className="w-full h-full rounded-lg border"
+                    title={previewFile.fileName}
+                    onError={() => {
+                      toast({
+                        title: "Error",
+                        description: "Failed to load PDF. File may not exist.",
+                        variant: "destructive",
+                      });
+                    }}
+                  />
+                </div>
+              ) : (
+                <div className="text-center p-8">
+                  <FileText className="h-16 w-16 text-gray-400 mx-auto mb-4" />
+                  <p className="text-gray-600 mb-4">
+                    Preview not available for this file type.
+                  </p>
+                  <Button onClick={() => handleDownload(previewFile)}>
+                    <Download className="h-4 w-4 mr-2" />
+                    Download File
+                  </Button>
+                </div>
+              )}
+              <div className="mt-4 pt-4 border-t">
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <span className="font-semibold">File Name:</span>{" "}
+                    {previewFile.fileName}
+                  </div>
+                  <div>
+                    <span className="font-semibold">File Size:</span>{" "}
+                    {formatFileSize(previewFile.fileSize || 0)}
+                  </div>
+                  <div>
+                    <span className="font-semibold">File Type:</span>{" "}
+                    {previewFile.fileType || "Unknown"}
+                  </div>
+                  <div>
+                    <span className="font-semibold">Uploaded:</span>{" "}
+                    {previewFile.createdAt
+                      ? formatDistanceToNow(new Date(previewFile.createdAt), {
+                          addSuffix: true,
+                        })
+                      : "Unknown"}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

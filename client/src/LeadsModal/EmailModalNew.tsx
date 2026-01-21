@@ -63,10 +63,18 @@ const EmailModalNew = ({ isOpen, onClose, leadId, leadEmail }: EmailModalNewProp
       
       return apiRequest("POST", url, emailData);
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       // Invalidate and refetch emails
-      queryClient.invalidateQueries({
+      await queryClient.invalidateQueries({
         queryKey: [`/api/tenants/${tenant?.id}/leads/${leadId}/emails`],
+      });
+      // Invalidate and refetch activities to show email activity (same as customer emails)
+      await queryClient.invalidateQueries({
+        queryKey: [`/api/tenants/${tenant?.id}/leads/${leadId}/activities`],
+      });
+      // Force a refetch to ensure activities are updated
+      await queryClient.refetchQueries({
+        queryKey: [`/api/tenants/${tenant?.id}/leads/${leadId}/activities`],
       });
       setShowSuccess(true);
       // Clear form
