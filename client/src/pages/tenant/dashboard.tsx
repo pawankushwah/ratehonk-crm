@@ -5,7 +5,7 @@ import { DashboardCustomizationDialog } from "@/components/dashboard-customizati
 import { DashboardSettingsPanel } from "@/components/dashboard-settings-panel";
 import { SupportPanel } from "@/components/support/SupportPanel";
 import { useState, useEffect, useMemo, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import {
   DollarSign,
@@ -64,6 +64,33 @@ export default function TenantDashboard() {
   }, []);
   const { user, tenant } = useAuth();
   const { canView, isLoading: permissionsLoading } = usePermissions();
+  const queryClient = useQueryClient();
+
+  // Refetch all dashboard data when component mounts or route changes
+  useEffect(() => {
+    // Invalidate all dashboard-related queries to force fresh data fetch
+    queryClient.invalidateQueries({ queryKey: ['/api/reports/dashboard'] });
+    queryClient.invalidateQueries({ queryKey: ['/api/leads'] });
+    queryClient.invalidateQueries({ queryKey: ['/api/bookings'] });
+    queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
+    queryClient.invalidateQueries({ queryKey: ['/api/tenants'] });
+    queryClient.invalidateQueries({ queryKey: ['/api/dashboard/chart-data'] });
+    queryClient.invalidateQueries({ queryKey: ['/api/reports/revenue-by-lead-type'] });
+    queryClient.invalidateQueries({ queryKey: ['/api/reports/bookings-by-vendor'] });
+    queryClient.invalidateQueries({ queryKey: ['/api/email-campaigns'] });
+    queryClient.invalidateQueries({ queryKey: ['/api/user/dashboard/preferences'] });
+    
+    // Refetch all queries to ensure fresh data
+    queryClient.refetchQueries({ queryKey: ['/api/reports/dashboard'] });
+    queryClient.refetchQueries({ queryKey: ['/api/leads'] });
+    queryClient.refetchQueries({ queryKey: ['/api/bookings'] });
+    queryClient.refetchQueries({ queryKey: ['/api/customers'] });
+    queryClient.refetchQueries({ queryKey: ['/api/tenants'] });
+    queryClient.refetchQueries({ queryKey: ['/api/dashboard/chart-data'] });
+    queryClient.refetchQueries({ queryKey: ['/api/reports/revenue-by-lead-type'] });
+    queryClient.refetchQueries({ queryKey: ['/api/reports/bookings-by-vendor'] });
+    queryClient.refetchQueries({ queryKey: ['/api/email-campaigns'] });
+  }, [queryClient]);
 
   // Fetch user dashboard preferences
   const { data: userPreferences } = useQuery({
@@ -158,6 +185,8 @@ export default function TenantDashboard() {
     queryKey: [`/api/reports/dashboard`, queryParams],
     enabled: !!tenant?.id,
     refetchInterval: 30000,
+    refetchOnMount: 'always',
+    staleTime: 0,
   });
   const graphQueryParams = useMemo(() => {
     const params: any = {};
@@ -226,6 +255,8 @@ export default function TenantDashboard() {
   const { data: topLeads } = useQuery({
     queryKey: [`/api/leads`, { limit: 10, sort: "score", ...queryParams }],
     enabled: !!tenant?.id,
+    refetchOnMount: 'always',
+    staleTime: 0,
   });
   const { data: topBookings } = useQuery({
     queryKey: [
@@ -233,6 +264,8 @@ export default function TenantDashboard() {
       { limit: 10, sort: "totalAmount", ...queryParams },
     ],
     enabled: !!tenant?.id,
+    refetchOnMount: 'always',
+    staleTime: 0,
   });
   const { data: topCustomers } = useQuery({
     queryKey: [
@@ -240,6 +273,8 @@ export default function TenantDashboard() {
       { limit: 10, sort: "totalSpent", ...queryParams },
     ],
     enabled: !!tenant?.id,
+    refetchOnMount: 'always',
+    staleTime: 0,
   });
   
   const { data: topInvoices } = useQuery({
@@ -268,6 +303,8 @@ export default function TenantDashboard() {
       return Array.isArray(data) ? data : [];
     },
     enabled: !!tenant?.id,
+    refetchOnMount: 'always',
+    staleTime: 0,
   });
 
   // Fetch consultation forms SENT (not submissions)
@@ -289,6 +326,8 @@ export default function TenantDashboard() {
       return await response.json();
     },
     enabled: !!tenant?.id,
+    refetchOnMount: 'always',
+    staleTime: 0,
   });
 
   // Fetch payment forms SENT (not invoice payments)
@@ -310,6 +349,8 @@ export default function TenantDashboard() {
       return await response.json();
     },
     enabled: !!tenant?.id,
+    refetchOnMount: 'always',
+    staleTime: 0,
   });
  
   const { data: revenueByLeadTypeData } = useQuery({

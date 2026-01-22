@@ -359,3 +359,10 @@ html, body {
 .hover\:bg-muted\/50:hover {
   background-color: hsl(var(--muted) / 0.5) !important;
 }
+
+/* Override shadow-2xl to remove --tw-shadow property */
+.shadow-2xl {
+  --tw-shadow: 0 0 #0000 !important;
+  --tw-shadow-colored: 0 0 #0000 !important;
+  box-shadow: 0 0 #0000 !important;
+}

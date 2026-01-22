@@ -200,8 +200,13 @@ class TenantEmailService {
         throw new Error("Failed to create email transporter");
       }
 
+      // Format fromEmail with company name as display name
+      const fromEmailWithName = fromEmail.includes("@") 
+        ? `"${data.companyName}" <${fromEmail}>`
+        : fromEmail;
+
       const mailOptions = {
-        from: fromEmail,
+        from: fromEmailWithName,
         to: data.to,
         subject: `Welcome to ${data.companyName} - Your Account Details`,
         html: `
@@ -449,13 +454,15 @@ class TenantEmailService {
             tenantConfig.sender_email !== data.to &&
             tenantConfig.sender_email.includes("@")) {
           // Format: "Sender Name <email@example.com>" - prioritize fromName parameter, then sender_name, then just email
-          const displayName = data.fromName || tenantConfig.sender_name || "";
+          // If fromName is explicitly provided (not undefined), use it even if empty; otherwise use tenantConfig.sender_name
+          const displayName = data.fromName !== undefined ? data.fromName : (tenantConfig.sender_name || "");
           if (displayName && displayName.trim() !== "") {
             fromEmail = `"${displayName}" <${tenantConfig.sender_email}>`;
           } else {
             fromEmail = tenantConfig.sender_email;
           }
           console.log(`📧 Using sender info from database (email-settings): ${fromEmail}`);
+          console.log(`📧 fromName parameter: ${data.fromName}, tenantConfig.sender_name: ${tenantConfig.sender_name}, displayName used: ${displayName}`);
           
           // Warn if sender_email doesn't match SMTP username (can cause delivery issues)
           if (tenantConfig.smtp_username && !tenantConfig.sender_email.toLowerCase().includes(tenantConfig.smtp_username.toLowerCase())) {
@@ -467,17 +474,20 @@ class TenantEmailService {
           const smtpUsername = tenantConfig.smtp_username;
           if (smtpUsername && smtpUsername.includes("@")) {
             // Use SMTP username as from email (required for SPF/DKIM to pass)
-            const displayName = data.fromName || tenantConfig.sender_name || "";
+            // If fromName is explicitly provided (not undefined), use it even if empty; otherwise use tenantConfig.sender_name
+            const displayName = data.fromName !== undefined ? data.fromName : (tenantConfig.sender_name || "");
             if (displayName && displayName.trim() !== "") {
               fromEmail = `"${displayName}" <${smtpUsername}>`;
             } else {
               fromEmail = smtpUsername;
             }
             console.log(`📧 Using SMTP username as from email (required for SPF/DKIM): ${fromEmail}`);
+            console.log(`📧 fromName parameter: ${data.fromName}, tenantConfig.sender_name: ${tenantConfig.sender_name}, displayName used: ${displayName}`);
           } else {
             // Fall back to .env default sender email only if SMTP username is not available
             const smtpConfig = config.email.smtp;
             if (smtpConfig.fromEmail) {
+              // Prioritize fromName parameter over .env SMTP_FROM_NAME
               const displayName = data.fromName || smtpConfig.fromName || "";
               if (displayName && displayName.trim() !== "") {
                 fromEmail = `"${displayName}" <${smtpConfig.fromEmail}>`;
@@ -485,6 +495,7 @@ class TenantEmailService {
                 fromEmail = smtpConfig.fromEmail;
               }
               console.log(`📧 No SMTP username available, using .env default: ${fromEmail}`);
+              console.log(`📧 fromName parameter: ${data.fromName}, smtpConfig.fromName: ${smtpConfig.fromName}, displayName used: ${displayName}`);
             } else {
               // Last resort: use SMTP user from config
               const smtpUser = smtpConfig.user || "";
@@ -595,22 +606,26 @@ class TenantEmailService {
             const smtpUser = smtpConfig.user || "";
             if (smtpUser && smtpUser.includes("@")) {
               // Use SMTP user as from email (required for SPF/DKIM to pass)
-              const displayName = data.fromName || smtpConfig.fromName || "";
+              // Prioritize fromName parameter - if explicitly provided (even if empty), use it over .env
+              const displayName = data.fromName !== undefined ? data.fromName : (smtpConfig.fromName || "");
               if (displayName && displayName.trim() !== "") {
                 fromEmail = `"${displayName}" <${smtpUser}>`;
               } else {
                 fromEmail = smtpUser;
               }
               console.log(`📧 Using SMTP user as from email (required for SPF/DKIM): ${fromEmail}`);
+              console.log(`📧 fromName parameter: ${data.fromName}, displayName used: ${displayName}`);
             } else if (smtpConfig.fromEmail) {
               // Fallback to fromEmail only if SMTP user is not available
-              const displayName = data.fromName || smtpConfig.fromName || "";
+              // Prioritize fromName parameter - if explicitly provided (even if empty), use it over .env
+              const displayName = data.fromName !== undefined ? data.fromName : (smtpConfig.fromName || "");
               if (displayName && displayName.trim() !== "") {
                 fromEmail = `"${displayName}" <${smtpConfig.fromEmail}>`;
               } else {
                 fromEmail = smtpConfig.fromEmail;
               }
               console.log(`📧 No SMTP user available, using .env fromEmail: ${fromEmail}`);
+              console.log(`📧 fromName parameter: ${data.fromName}, smtpConfig.fromName: ${smtpConfig.fromName}, displayName used: ${displayName}`);
             } else {
               throw new Error("No valid email address available for 'from' field. Please configure SMTP_USER or EMAIL_FROM.");
             }
