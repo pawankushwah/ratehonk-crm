@@ -7061,6 +7061,7 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
           body: `Please find attached estimate ${estimate.estimate_number || `EST-${estimate.id}`}. Total amount: ${estimate.currency === 'USD' ? '$' : '₹'}${parseFloat(estimate.total_amount?.toString() || "0").toFixed(2)}`,
           htmlBody: estimateHtml,
           tenantId: tenantId,
+          fromName: tenant?.company_name || tenant?.name || undefined, // Use tenant company name
         });
 
         return res.json({ 
@@ -18013,9 +18014,17 @@ Please improve this email.`;
         "📧 Starting enhanced Gmail sync - filtering for important emails only",
       );
 
-      // Two-phase sync strategy:
-      // Phase 1: Sync recent emails (last 7 days) first to ensure today's emails are captured
-      // Phase 2: Sync all other emails
+      // Three-phase sync strategy:
+      // Phase 1: Sync today's emails first to ensure current date emails are captured
+      // Phase 2: Sync recent emails (last 7 days) 
+      // Phase 3: Sync all other emails
+      const today = new Date();
+      const todayYear = today.getFullYear();
+      const todayMonth = today.getMonth() + 1; // Gmail uses 1-based months
+      const todayDay = today.getDate();
+      
+      // Query for today's emails using Gmail date format (YYYY/M/D)
+      const todayQuery = `in:inbox -category:promotions -category:social -category:updates after:${todayYear}/${todayMonth}/${todayDay}`;
       const recentQuery = "in:inbox -category:promotions -category:social -category:updates newer_than:7d";
       const allQuery = "in:inbox -category:promotions -category:social -category:updates";
       
@@ -18227,9 +18236,10 @@ Please improve this email.`;
         return phaseSynced;
       };
 
-      // Phase 1: Sync recent emails (last 7 days) first
+      // Phase 1: Sync today's emails first to ensure current date emails are captured
       try {
-        await syncEmailsWithQuery(recentQuery, "Phase 1: Recent emails (last 7 days)");
+        const todaySynced = await syncEmailsWithQuery(todayQuery, "Phase 1: Today's emails");
+        totalSynced += todaySynced;
       } catch (error: any) {
         if (error.message === "Gmail access token expired") {
           return res.status(401).json({
@@ -18238,19 +18248,35 @@ Please improve this email.`;
             needsReauth: true,
           });
         }
-        console.error("❌ Phase 1 error:", error);
+        console.error("❌ Phase 1 (Today) error:", error);
       }
 
-      // Phase 2: Sync all other emails (excluding recent ones we already synced)
+      // Phase 2: Sync recent emails (last 7 days) - this will include today but we check for duplicates
+      try {
+        const recentSynced = await syncEmailsWithQuery(recentQuery, "Phase 2: Recent emails (last 7 days)");
+        totalSynced += recentSynced;
+      } catch (error: any) {
+        if (error.message === "Gmail access token expired") {
+          return res.status(401).json({
+            success: false,
+            message: "Gmail access token expired. Please reconnect your Gmail account.",
+            needsReauth: true,
+          });
+        }
+        console.error("❌ Phase 2 (Recent) error:", error);
+      }
+
+      // Phase 3: Sync all other emails (excluding recent ones we already synced)
       // Use a query that excludes emails from the last 7 days to avoid duplicates
-      console.log(`📧 Phase 2: Syncing all other emails (excluding recent 7 days)`);
+      console.log(`📧 Phase 3: Syncing all other emails (excluding recent 7 days)`);
       
       // Note: We'll still check for duplicates in the database, so this is safe
       // But we use older_than:7d to prioritize older emails and avoid re-processing recent ones
       const olderQuery = "in:inbox -category:promotions -category:social -category:updates older_than:7d";
       
       try {
-        await syncEmailsWithQuery(olderQuery, "Phase 2: Older emails");
+        const olderSynced = await syncEmailsWithQuery(olderQuery, "Phase 3: Older emails");
+        totalSynced += olderSynced;
       } catch (error: any) {
         if (error.message === "Gmail access token expired") {
           return res.status(401).json({
@@ -18278,7 +18304,7 @@ Please improve this email.`;
 
       res.json({
         success: true,
-        message: `Gmail sync completed - ${totalSynced} emails synced (excluding promotional/social/updates). Recent emails (last 7 days) synced first to ensure today's emails are captured.`,
+        message: `Gmail sync completed - ${totalSynced} emails synced (excluding promotional/social/updates). Today's emails synced first, followed by recent emails (last 7 days), then older emails.`,
         processed: totalSynced,
       });
     } catch (error) {
@@ -29070,6 +29096,12 @@ ${args.tenantName}`;
           return res.status(403).json({ message: "Access denied" });
         }
 
+        // Get tenant details for company name
+        const tenants = await sql`
+          SELECT * FROM tenants WHERE id = ${parseInt(tenantId)}
+        `;
+        const tenant = tenants[0] || null;
+
         // First, try to send the actual email
         let emailStatus = "failed";
         let errorMessage = null;
@@ -29084,6 +29116,7 @@ ${args.tenantName}`;
             body: req.body.body,
             htmlBody: req.body.htmlBody,
             tenantId: parseInt(tenantId),
+            fromName: tenant?.company_name || tenant?.name || undefined, // Use tenant company name, explicitly pass undefined if not available
             attachments: req.body.attachments,
           });
           emailStatus = "sent";
@@ -29164,6 +29197,12 @@ ${args.tenantName}`;
         let emailStatus = "failed";
         let errorMessage = null;
 
+        // Get tenant details for company name
+        const tenants = await sql`
+          SELECT * FROM tenants WHERE id = ${tenantId}
+        `;
+        const tenant = tenants[0] || null;
+
         try {
           const { tenantEmailService } = await import(
             "./tenant-email-service.js"
@@ -29174,6 +29213,7 @@ ${args.tenantName}`;
             body: req.body.body,
             htmlBody: req.body.htmlBody,
             tenantId: tenantId,
+            fromName: tenant?.company_name || tenant?.name || undefined, // Use tenant company name
             attachments: req.body.attachments,
           });
           emailStatus = "sent";

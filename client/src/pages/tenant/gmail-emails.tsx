@@ -1074,9 +1074,20 @@ export default function GmailEmails() {
                   <div className="border-b px-6 py-4">
                     <div className="flex items-start justify-between gap-4 mb-4">
                       <div className="flex-1 min-w-0">
-                        <h2 className="text-xl font-normal mb-2 break-words">
-                          {selectedEmail.subject || 'No Subject'}
-                        </h2>
+                        <div className="flex items-center gap-2 mb-2">
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            className="h-8 w-8 p-0 lg:hidden" 
+                            onClick={() => setSelectedEmail(null)}
+                            title="Back"
+                          >
+                            <ChevronLeft className="h-4 w-4" />
+                          </Button>
+                          <h2 className="text-xl font-normal break-words">
+                            {selectedEmail.subject || 'No Subject'}
+                          </h2>
+                        </div>
                         <div className="flex items-center gap-4 text-sm text-gray-600 dark:text-gray-400">
                           <div className="flex items-center gap-2">
                             <span className="font-medium">{selectedEmail.fromName || selectedEmail.fromEmail}</span>
@@ -1086,6 +1097,15 @@ export default function GmailEmails() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="h-8 w-8 p-0 lg:hidden" 
+                          onClick={() => setSelectedEmail(null)}
+                          title="Close"
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
                         <Button 
                           variant="ghost" 
                           size="sm" 
@@ -1115,6 +1135,24 @@ export default function GmailEmails() {
                         </Button>
                         <Button variant="ghost" size="sm" className="h-8 w-8 p-0" title="More options">
                           <MoreVertical className="h-4 w-4" />
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="h-8 w-8 p-0 hidden lg:flex" 
+                          onClick={() => setSelectedEmail(null)}
+                          title="Close"
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="h-8 w-8 p-0 hidden lg:flex" 
+                          onClick={() => setSelectedEmail(null)}
+                          title="Slide back"
+                        >
+                          <ChevronRight className="h-4 w-4" />
                         </Button>
                       </div>
                     </div>
