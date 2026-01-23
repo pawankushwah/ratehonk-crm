@@ -52,7 +52,7 @@ export default function SaasLogin() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4" autoComplete="off" data-form-type="other">
             {error && (
               <Alert variant="destructive">
                 <AlertCircle className="h-4 w-4" />
@@ -68,6 +68,8 @@ export default function SaasLogin() {
                 placeholder="admin@travelcrm.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                autoComplete="off"
+                data-form-type="other"
                 required
                 disabled={loading}
               />
@@ -82,6 +84,8 @@ export default function SaasLogin() {
                   placeholder="Enter your password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="new-password"
+                  data-form-type="other"
                   required
                   disabled={loading}
                 />
