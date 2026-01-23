@@ -7,33 +7,48 @@ export interface DateFilters {
 }
 
 export function getDateRange(filterType: string): { start: Date; end: Date } {
+  // Use UTC dates to ensure consistent calculations across timezones
   const now = new Date();
+  const utcNow = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   
   switch (filterType) {
     case "today":
       return {
-        start: startOfDay(now),
-        end: endOfDay(now)
+        start: startOfDay(utcNow),
+        end: endOfDay(utcNow)
       };
     case "this_week":
       return {
-        start: startOfWeek(now, { weekStartsOn: 1 }), // Monday start
-        end: endOfWeek(now, { weekStartsOn: 1 })
+        start: startOfWeek(utcNow, { weekStartsOn: 1 }), // Monday start
+        end: endOfWeek(utcNow, { weekStartsOn: 1 })
       };
     case "this_month":
       return {
-        start: startOfMonth(now),
-        end: endOfMonth(now)
+        start: startOfMonth(utcNow),
+        end: endOfMonth(utcNow)
       };
     case "this_year":
       return {
-        start: startOfYear(now),
-        end: endOfYear(now)
+        start: startOfYear(utcNow),
+        end: endOfYear(utcNow)
       };
+    case "this_quarter": {
+      // Calculate quarter based on UTC month to ensure consistency
+      const year = utcNow.getUTCFullYear();
+      const month = utcNow.getUTCMonth();
+      const quarter = Math.floor(month / 3);
+      const qStartMonth = quarter * 3;
+      const qEndMonth = qStartMonth + 2;
+      
+      return {
+        start: new Date(Date.UTC(year, qStartMonth, 1)),
+        end: new Date(Date.UTC(year, qEndMonth + 1, 0))
+      };
+    }
     default:
       return {
-        start: startOfDay(now),
-        end: endOfDay(now)
+        start: startOfDay(utcNow),
+        end: endOfDay(utcNow)
       };
   }
 }

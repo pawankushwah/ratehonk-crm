@@ -30793,16 +30793,25 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
     let { startDate = "", endDate = "" } = req.query;
 
 
-    const normalize = (v) =>
-      typeof v === "string" ? v.slice(0, 10) : v;
+    const normalize = (v) => {
+      if (typeof v !== "string") return v;
+      // Extract just the date part (YYYY-MM-DD) before any space, time, or timezone offset
+      const datePart = v.split(' ')[0].split('+')[0].split('T')[0];
+      return datePart;
+    };
 
     startDate = normalize(startDate);
     endDate = normalize(endDate);
 
     const getYearMonthFromString = (dateStr) => {
       if (!dateStr) return null;
-      const [year, month] = dateStr.split('-').map(Number);
-      return { year, month: month - 1 }; 
+      // Extract just the date part (YYYY-MM-DD) before any space or time component
+      const datePart = dateStr.split(' ')[0].split('+')[0].split('T')[0];
+      const [year, month, day] = datePart.split('-').map(Number);
+      // Use the actual date to determine which month to include
+      // If the date is the last day of a month, we still want to include that month
+      // But if it's the first day, we definitely want that month
+      return { year, month: month - 1, day: day || 1 }; 
     };
 
     const startInfo = getYearMonthFromString(startDate);
@@ -30880,8 +30889,42 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
     const allMonths = [];
 
     if (startInfo && endInfo) {
+      // Determine which months to include based on the date range
+      // If startDate is the last day of a month (like Dec 31), we should still include that month
+      // But for quarter calculations, we want to start from the first day of the quarter's first month
       let currentYear = startInfo.year;
       let currentMonth = startInfo.month;
+      
+      // If the start date is the last day of the month (31st, 30th, etc.), 
+      // check if we should include that month or start from the next month
+      // For quarter calculations, we typically want to start from the 1st of the quarter's first month
+      if (startInfo.day && startInfo.day > 1) {
+        // If it's not the 1st, check if it's the last day of the month
+        // For now, we'll include the month if the day is >= 1 (always include the month)
+        // But for quarter boundaries, we want to ensure we start from the 1st
+        // So if startDate is Dec 31 and we're calculating Q1, we should start from Jan
+        const startDateObj = new Date(startDate + 'T00:00:00Z');
+        const startYearActual = startDateObj.getUTCFullYear();
+        const startMonthActual = startDateObj.getUTCMonth();
+        const startDayActual = startDateObj.getUTCDate();
+        
+        // If the start date is not the 1st of the month, check if we should move to next month
+        // This handles cases where startDate is Dec 31 but we want Jan 1
+        if (startDayActual > 1) {
+          // Check if this is the last day of the previous month (timezone shift)
+          // If so, we should start from the next month
+          const nextDay = new Date(startDateObj);
+          nextDay.setUTCDate(startDayActual + 1);
+          if (nextDay.getUTCMonth() !== startMonthActual) {
+            // We're at the end of a month, start from the next month
+            currentYear = nextDay.getUTCFullYear();
+            currentMonth = nextDay.getUTCMonth();
+          }
+        } else {
+          currentYear = startYearActual;
+          currentMonth = startMonthActual;
+        }
+      }
       
       const targetYear = endInfo.year;
       const targetMonth = endInfo.month;
@@ -30893,7 +30936,6 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
         const monthStr = `${currentYear}-${(currentMonth + 1).toString().padStart(2, '0')}`;
         allMonths.push(monthStr);
         
-      
         currentMonth++;
         if (currentMonth > 11) {
           currentMonth = 0;

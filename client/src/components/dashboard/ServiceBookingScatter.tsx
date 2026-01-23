@@ -63,13 +63,14 @@ export function ServiceBookingScatter() {
           },
         }
       );
-      if (!response.ok) return { defaultCurrency: "USD" };
+      if (!response.ok) return { data: { defaultCurrency: "USD" } };
       return await response.json();
     },
     enabled: !!tenant?.id,
   });
 
-  const currentCurrency = invoiceSettings?.defaultCurrency || "USD";
+  const invoiceSettingsData = invoiceSettings?.data || invoiceSettings;
+  const currentCurrency = invoiceSettingsData?.defaultCurrency || "USD";
   const currencySymbol = getCurrencySymbol(currentCurrency);
 
 

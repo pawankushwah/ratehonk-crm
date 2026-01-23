@@ -19,10 +19,11 @@ function formatLocalYMD(date: Date) {
 }
 
 // Add this function to format with time for proper range comparison
+// Use UTC methods to ensure consistent formatting across timezones
 function formatLocalYMDWithTime(date: Date, endOfDay = false) {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(date.getUTCDate()).padStart(2, "0");
   if (endOfDay) {
     return `${y}-${m}-${d} 23:59:59`;
   }
@@ -34,14 +35,15 @@ export function buildFilterParamsFromDateFilter(
   customFrom: Date | null,
   customTo: Date | null
 ) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  // Use UTC dates to ensure consistent calculations across timezones
+  const now = new Date();
+  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 
   let startDate: string | undefined;
   let endDate: string | undefined;
 
-  const y = today.getFullYear();
-  const m = today.getMonth();
+  const y = today.getUTCFullYear();
+  const m = today.getUTCMonth();
 
   if (filter === "custom" && customFrom && customTo) {
     startDate = formatLocalYMDWithTime(customFrom, false);
@@ -54,39 +56,44 @@ export function buildFilterParamsFromDateFilter(
   }
 
   else if (filter === "this_week") {
-    const start = new Date(today);
-    const day = today.getDay();
+    const start = new Date(Date.UTC(y, m, today.getUTCDate()));
+    const day = start.getUTCDay();
     const diff = day === 0 ? 6 : day - 1; 
-    start.setDate(today.getDate() - diff);
+    start.setUTCDate(start.getUTCDate() - diff);
 
     const end = new Date(start);
-    end.setDate(start.getDate() + 6);
+    end.setUTCDate(start.getUTCDate() + 6);
 
     startDate = formatLocalYMDWithTime(start, false);
     endDate = formatLocalYMDWithTime(end, true);
   }
 
   else if (filter === "this_month") {
-    startDate = formatLocalYMDWithTime(new Date(y, m, 1), false);
-    endDate = formatLocalYMDWithTime(new Date(y, m + 1, 0), true);
+    const start = new Date(Date.UTC(y, m, 1));
+    const end = new Date(Date.UTC(y, m + 1, 0));
+    startDate = formatLocalYMDWithTime(start, false);
+    endDate = formatLocalYMDWithTime(end, true);
   }
     
-      else if (filter === "this_quarter") {
+  else if (filter === "this_quarter") {
+    // Calculate quarter based on UTC month to ensure consistency
     const quarter = Math.floor(m / 3); 
 
     const qStartMonth = quarter * 3;     
     const qEndMonth = qStartMonth + 2;   
 
-    const start = new Date(y, qStartMonth, 1);
-    const end = new Date(y, qEndMonth + 1, 0);
+    const start = new Date(Date.UTC(y, qStartMonth, 1));
+    const end = new Date(Date.UTC(y, qEndMonth + 1, 0));
 
     startDate = formatLocalYMDWithTime(start, false);
     endDate = formatLocalYMDWithTime(end, true);
   }
 
   else if (filter === "this_year") {
-    startDate = formatLocalYMDWithTime(new Date(y, 0, 1), false); 
-    endDate = formatLocalYMDWithTime(new Date(y, 11, 31), true); 
+    const start = new Date(Date.UTC(y, 0, 1));
+    const end = new Date(Date.UTC(y, 11, 31));
+    startDate = formatLocalYMDWithTime(start, false); 
+    endDate = formatLocalYMDWithTime(end, true); 
   }
 
   return { startDate, endDate };

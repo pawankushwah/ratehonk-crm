@@ -419,6 +419,51 @@ export default function TenantDashboard() {
  
  
 
+  // Fetch invoice settings to get currency
+  const { data: invoiceSettings } = useQuery({
+    queryKey: ["/api/invoice-settings", tenant?.id],
+    queryFn: async () => {
+      if (!tenant?.id) return null;
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("token");
+      const response = await fetch(
+        `/api/invoice-settings/${tenant.id}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      if (!response.ok) return { data: { defaultCurrency: "USD" } };
+      return await response.json();
+    },
+    enabled: !!tenant?.id,
+  });
+
+  // Helper function to get currency symbol
+  const getCurrencySymbol = (currencyCode: string): string => {
+    const symbols: Record<string, string> = {
+      USD: "$",
+      EUR: "€",
+      GBP: "£",
+      INR: "₹",
+      AUD: "A$",
+      CAD: "C$",
+      JPY: "¥",
+      CNY: "¥",
+      SGD: "S$",
+      HKD: "HK$",
+      NZD: "NZ$",
+      CHF: "CHF",
+    };
+    return symbols[currencyCode] || currencyCode;
+  };
+
+  // Get currency from invoice settings
+  const invoiceSettingsData = invoiceSettings?.data || invoiceSettings;
+  const currentCurrency = invoiceSettingsData?.defaultCurrency || "USD";
+  const invoiceSettingsCurrencySymbol = getCurrencySymbol(currentCurrency);
+
   const formatNumberShort = (num: number) => {
   if (num === null || num === undefined) return "0";
 
@@ -625,7 +670,7 @@ export default function TenantDashboard() {
                     <MetricCard
                       
                       title="Total Invoice"
-                      value={`C$ ${formatNumberShort(metrics.revenue)}`}
+                      value={`${invoiceSettingsCurrencySymbol} ${formatNumberShort(metrics.revenue)}`}
                       icon={DollarSign}
                       trend={`${(
                         ((monthlyData.revenue.current -
