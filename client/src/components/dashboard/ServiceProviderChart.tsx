@@ -82,40 +82,87 @@ export function ServiceProviderChart() {
           },
         }
       );
-      if (!response.ok) return { defaultCurrency: "USD" };
+      if (!response.ok) return { data: { defaultCurrency: "USD" } };
       return await response.json();
     },
     enabled: !!tenant?.id,
   });
 
-  const currentCurrency = invoiceSettings?.defaultCurrency || "USD";
+  const invoiceSettingsData = invoiceSettings?.data || invoiceSettings;
+  const currentCurrency = invoiceSettingsData?.defaultCurrency || "USD";
   const currencySymbol = getCurrencySymbol(currentCurrency);
 
-  const getLeadTypeBaseColor = (leadTypeId: string) => {
+  // Get lead type color from API, with fallback
+  const getLeadTypeColor = (leadTypeId: string) => {
     const lt = leadTypes.find((x) => String(x.id) === String(leadTypeId));
-    const name = String(lt?.name || "").toLowerCase();
-
-    // Explicit mapping for the 3 lead types shown in your screenshot
-    if (name.includes("default")) return SERVICE_PROVIDER_COLORS[0]; // dark
-    if (name.includes("flight")) return SERVICE_PROVIDER_COLORS[1]; // medium
-    if (name.includes("hotel")) return SERVICE_PROVIDER_COLORS[2]; // light
-
-    // Fallback: stable by index
-    const idx = Math.max(
-      0,
-      leadTypes.findIndex((x) => String(x.id) === String(leadTypeId)),
-    );
-    return SERVICE_PROVIDER_COLORS[idx % SERVICE_PROVIDER_COLORS.length];
+    return lt?.color || SERVICE_PROVIDER_COLORS[0];
   };
 
+  // Get lead type icon from API
+  const getLeadTypeIcon = (leadTypeId: string) => {
+    const lt = leadTypes.find((x) => String(x.id) === String(leadTypeId));
+    return lt?.icon || "";
+  };
+
+  // Generate color palette variations based on the lead type color
   const getPaletteForLeadType = (leadTypeId: string) => {
-    const base = getLeadTypeBaseColor(leadTypeId);
-    // Rotate palette so the first (largest) slice matches the lead type base color
-    if (base === SERVICE_PROVIDER_COLORS[0]) return SERVICE_PROVIDER_COLORS; // dark, medium, light
-    if (base === SERVICE_PROVIDER_COLORS[1])
-      return [SERVICE_PROVIDER_COLORS[1], SERVICE_PROVIDER_COLORS[2], SERVICE_PROVIDER_COLORS[0]]; // medium, light, dark
-    return [SERVICE_PROVIDER_COLORS[2], SERVICE_PROVIDER_COLORS[0], SERVICE_PROVIDER_COLORS[1]]; // light, dark, medium
+    const baseColor = getLeadTypeColor(leadTypeId);
+    
+    // Convert hex to RGB
+    const hexToRgb = (hex: string) => {
+      const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+      return result ? {
+        r: parseInt(result[1], 16),
+        g: parseInt(result[2], 16),
+        b: parseInt(result[3], 16)
+      } : null;
+    };
+
+    // Convert RGB to hex
+    const rgbToHex = (r: number, g: number, b: number) => {
+      return "#" + [r, g, b].map(x => {
+        const hex = Math.round(x).toString(16);
+        return hex.length === 1 ? "0" + hex : hex;
+      }).join("");
+    };
+
+    const rgb = hexToRgb(baseColor);
+    if (!rgb) return [baseColor, baseColor, baseColor];
+
+    // Generate lighter and darker variations
+    const lighten = (r: number, g: number, b: number, factor: number) => {
+      return rgbToHex(
+        Math.min(255, r + (255 - r) * factor),
+        Math.min(255, g + (255 - g) * factor),
+        Math.min(255, b + (255 - b) * factor)
+      );
+    };
+
+    const darken = (r: number, g: number, b: number, factor: number) => {
+      return rgbToHex(
+        Math.max(0, r * (1 - factor)),
+        Math.max(0, g * (1 - factor)),
+        Math.max(0, b * (1 - factor))
+      );
+    };
+
+    return [
+      baseColor, // Original color
+      lighten(rgb.r, rgb.g, rgb.b, 0.3), // Lighter variation
+      darken(rgb.r, rgb.g, rgb.b, 0.2) // Darker variation
+    ];
   };
+
+  // Sort lead types by display_order
+  const sortedLeadTypes = useMemo(() => {
+    return [...leadTypes].sort((a, b) => {
+      const orderA = a.display_order ?? 999;
+      const orderB = b.display_order ?? 999;
+      if (orderA !== orderB) return orderA - orderB;
+      // If display_order is the same, sort by name
+      return (a.name || "").localeCompare(b.name || "");
+    });
+  }, [leadTypes]);
 
   const prepareProviderData = (list: any[]) => {
     if (!list || list.length === 0) return [];
@@ -178,6 +225,7 @@ export function ServiceProviderChart() {
     if (total === 0) return [];
 
     const colors = getPaletteForLeadType(selectedLeadTypeId);
+    const leadTypeIcon = getLeadTypeIcon(selectedLeadTypeId);
 
     const sorted = Object.entries(vendorMap)
       .map(([name, amount]) => ({ name, amount }))
@@ -188,6 +236,7 @@ export function ServiceProviderChart() {
       amount: item.amount,
       value: Number(((item.amount / total) * 100).toFixed(2)),
       color: colors[index % colors.length],
+      icon: leadTypeIcon, // Add icon to each vendor item
     }));
 
     return prepareProviderData(mapped);
@@ -197,6 +246,9 @@ export function ServiceProviderChart() {
   const dummyHover = selectedLeadTypeId
     ? getPaletteForLeadType(selectedLeadTypeId)
     : SERVICE_PROVIDER_COLORS;
+  
+  // Get selected lead type for icon display
+  const selectedLeadType = sortedLeadTypes.find(lt => lt.id.toString() === selectedLeadTypeId);
 
   const dummyData = [
     { name: "Category 0", value: 40, amount: 0 },
@@ -230,10 +282,10 @@ export function ServiceProviderChart() {
   };
 
   useEffect(() => {
-    if (leadTypes.length > 0 && !selectedLeadTypeId) {
-      setSelectedLeadTypeId(leadTypes[0].id.toString());
+    if (sortedLeadTypes.length > 0 && !selectedLeadTypeId) {
+      setSelectedLeadTypeId(sortedLeadTypes[0].id.toString());
     }
-  }, [leadTypes, selectedLeadTypeId]);
+  }, [sortedLeadTypes, selectedLeadTypeId]);
 
   return (
     <Card className="col-span-12 lg:col-span-6 bg-white shadow-md rounded-xl p-4">
@@ -256,7 +308,7 @@ export function ServiceProviderChart() {
         </div>
 
         <div className="mb-5">
-          {leadTypes.length > 0 && (
+          {sortedLeadTypes.length > 0 && (
             <div className="mb-5">
               <Select
                 value={selectedLeadTypeId}
@@ -264,18 +316,27 @@ export function ServiceProviderChart() {
               >
                 <SelectTrigger className="w-full sm:w-60">
                   <SelectValue placeholder="Select Lead Type">
-                    {selectedLeadTypeId && leadTypes.find(lt => lt.id.toString() === selectedLeadTypeId)?.name}
+                    {selectedLeadTypeId && (() => {
+                      const selected = sortedLeadTypes.find(lt => lt.id.toString() === selectedLeadTypeId);
+                      return selected ? (
+                        <div className="flex items-center gap-2">
+                          {selected.icon && <span>{selected.icon}</span>}
+                          <span>{selected.name}</span>
+                        </div>
+                      ) : null;
+                    })()}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  {leadTypes.map((leadType) => (
+                  {sortedLeadTypes.map((leadType) => (
                     <SelectItem key={leadType.id} value={leadType.id.toString()}>
                       <div className="flex items-center gap-2">
+                        {leadType.icon && <span className="text-base">{leadType.icon}</span>}
                         <div
                           className="w-3 h-3 rounded-full"
-                          style={{ backgroundColor: getLeadTypeBaseColor(String(leadType.id)) }}
+                          style={{ backgroundColor: leadType.color || SERVICE_PROVIDER_COLORS[0] }}
                         />
-                        {leadType.name}
+                        <span>{leadType.name}</span>
                       </div>
                     </SelectItem>
                   ))}
@@ -338,18 +399,22 @@ export function ServiceProviderChart() {
             </div>
 
             <div className="grid grid-cols-2 gap-y-3 gap-x-6 text-xs">
-              {displayData.map((item, index) => (
-                <div className="flex items-center gap-2" key={index}>
-                  <div
-                    className="w-3 h-3 rounded-full"
-                    style={{ backgroundColor: item.color }}
-                  ></div>
-                  <div>
-                    <p className="font-medium">{item.name}</p>
-                    <p className="text-gray-500">{usingDummy ? `${currencySymbol}0.00` : `${currencySymbol}${(item.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</p>
+              {displayData.map((item, index) => {
+                const icon = selectedLeadType?.icon || "";
+                return (
+                  <div className="flex items-center gap-2" key={index}>
+                    {icon && <span className="text-base">{icon}</span>}
+                    <div
+                      className="w-3 h-3 rounded-full"
+                      style={{ backgroundColor: item.color }}
+                    ></div>
+                    <div>
+                      <p className="font-medium">{item.name}</p>
+                      <p className="text-gray-500">{usingDummy ? `${currencySymbol}0.00` : `${currencySymbol}${(item.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</p>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}

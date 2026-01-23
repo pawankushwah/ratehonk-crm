@@ -137,11 +137,6 @@ const invoiceStatuses = [
     label: "Cancelled",
     color: "bg-gray-100 text-gray-800",
   },
-  {
-    value: "void",
-    label: "Void",
-    color: "bg-purple-100 text-purple-800",
-  },
 ];
 
 export default function Invoices() {
@@ -1265,11 +1260,6 @@ export default function Invoices() {
           label: "Cancelled",
           color: "bg-gray-100 text-gray-800 border-gray-200",
         };
-      case "void":
-        return {
-          label: "Void",
-          color: "bg-purple-100 text-purple-800 border-purple-200",
-        };
       default:
         return {
           label: status || "Unknown",
@@ -1579,15 +1569,22 @@ export default function Invoices() {
       hasCancellationCharge,
       cancellationChargeAmount,
       cancellationChargeNotes,
+      paidAmount,
     }: {
       invoiceId: number;
       status: string;
       hasCancellationCharge?: boolean;
       cancellationChargeAmount?: number;
       cancellationChargeNotes?: string;
+      paidAmount?: number;
     }) => {
       const token = auth.getToken();
       const updateData: any = { status };
+      
+      // If paidAmount is provided (e.g., when changing from paid to draft), include it
+      if (paidAmount !== undefined) {
+        updateData.paidAmount = paidAmount;
+      }
       
       if (status === "cancelled" && hasCancellationCharge) {
         updateData.hasCancellationCharge = true;
@@ -2214,10 +2211,16 @@ export default function Invoices() {
                 setCancellationChargeNotes("");
                 setShowCancellationChargeFields(false);
               } else {
+                // Check if changing from "paid" to "draft" - reset paidAmount to 0
+                const invoiceData = invoice as any;
+                const currentStatus = displayStatus || invoiceData.status || invoice.status;
+                const shouldResetPaidAmount = currentStatus === "paid" && newStatus === "draft";
+                
                 // For other status changes, update directly
                 updateStatusMutation.mutate({
                   invoiceId: invoice.id,
                   status: newStatus,
+                  paidAmount: shouldResetPaidAmount ? 0 : undefined,
                 });
               }
             }}

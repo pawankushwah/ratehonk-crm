@@ -166,6 +166,54 @@ export default function Estimates() {
   const queryClient = useQueryClient();
   const defaultCurrency = useDefaultCurrency();
 
+  // Fetch estimate settings
+  const { data: estimateSettings = {
+    estimateNumberStart: 1,
+    defaultCurrency: "USD",
+    estimateNumberPrefix: "EST",
+    defaultGstSettingId: null,
+    showTax: true,
+    showDiscount: true,
+    showNotes: true,
+    showDeposit: true,
+    showPaymentTerms: true,
+  } } = useQuery({
+    queryKey: ["/api/estimate-settings", tenant?.id],
+    queryFn: async () => {
+      if (!tenant?.id) return null;
+      const token = localStorage.getItem("token") || localStorage.getItem("auth_token");
+      const response = await fetch(`/api/estimate-settings/${tenant.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error("Failed to fetch estimate settings");
+      const result = await response.json();
+      return result.data || result;
+    },
+    enabled: !!tenant?.id,
+  });
+
+  // Get currency symbol helper
+  const getCurrencySymbol = (currencyCode: string): string => {
+    const symbols: Record<string, string> = {
+      USD: "$",
+      EUR: "€",
+      GBP: "£",
+      INR: "₹",
+      AUD: "A$",
+      CAD: "C$",
+      JPY: "¥",
+      CNY: "¥",
+      SGD: "S$",
+      HKD: "HK$",
+      NZD: "NZ$",
+      CHF: "CHF",
+    };
+    return symbols[currencyCode] || currencyCode;
+  };
+
+  // Get default currency from estimate settings
+  const settingsCurrency = estimateSettings?.defaultCurrency || defaultCurrency || "USD";
+
   // State management
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [previewEstimate, setPreviewEstimate] = useState<FullEstimate | null>(
@@ -1217,19 +1265,26 @@ export default function Estimates() {
       key: "totalAmount",
       label: "Total Amount",
       sortable: true,
-      render: (totalAmount) => (
-        <div className="flex items-center font-semibold">
-          <span className="mr-1">$</span>
-          <span>
-            {totalAmount
-              ? parseFloat(totalAmount.toString()).toLocaleString(undefined, {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })
-              : "0.00"}
-          </span>
-        </div>
-      ),
+      render: (totalAmount, estimate) => {
+        // Get currency from estimate if available, otherwise use settings default
+        const estimateData = estimate as any;
+        const currency = estimateData.currency || settingsCurrency;
+        const currencySymbol = getCurrencySymbol(currency);
+        
+        return (
+          <div className="flex items-center font-semibold">
+            <span className="mr-1">{currencySymbol}</span>
+            <span>
+              {totalAmount
+                ? parseFloat(totalAmount.toString()).toLocaleString(undefined, {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })
+                : "0.00"}
+            </span>
+          </div>
+        );
+      },
     },
     {
       key: "status",
@@ -1868,7 +1923,7 @@ export default function Estimates() {
                             <div className="flex items-center gap-2">
                               <Input
                                 readOnly
-                                value={`$${item.totalPrice.toFixed(2)}`}
+                                value={`${getCurrencySymbol(formData.currency || settingsCurrency)}${item.totalPrice.toFixed(2)}`}
                                 className="bg-muted"
                               />
                               {formData.lineItems.length > 1 && (
@@ -1939,19 +1994,19 @@ export default function Estimates() {
                       <div className="pt-4 border-t space-y-1 text-sm">
                         <div className="flex justify-between">
                           <span>Subtotal:</span>
-                          <span>${totals.subtotal.toFixed(2)}</span>
+                          <span>{getCurrencySymbol(formData.currency || settingsCurrency)}{totals.subtotal.toFixed(2)}</span>
                         </div>
                         <div className="flex justify-between">
                           <span>Discount:</span>
-                          <span>-${totals.discountAmount.toFixed(2)}</span>
+                          <span>-{getCurrencySymbol(formData.currency || settingsCurrency)}{totals.discountAmount.toFixed(2)}</span>
                         </div>
                         <div className="flex justify-between">
                           <span>Tax:</span>
-                          <span>${totals.taxAmount.toFixed(2)}</span>
+                          <span>{getCurrencySymbol(formData.currency || settingsCurrency)}{totals.taxAmount.toFixed(2)}</span>
                         </div>
                         <div className="flex justify-between font-bold text-lg text-primary">
                           <span>Total:</span>
-                          <span>${totals.total.toFixed(2)}</span>
+                          <span>{getCurrencySymbol(formData.currency || settingsCurrency)}{totals.total.toFixed(2)}</span>
                         </div>
                       </div>
                     </CardContent>

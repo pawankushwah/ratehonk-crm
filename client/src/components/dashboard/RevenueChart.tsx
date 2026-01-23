@@ -48,8 +48,9 @@ const getCurrencySymbol = (currencyCode: string): string => {
 
 
 function formatYMDLocal(d: Date) {
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, "0");
+  // Use UTC methods to ensure consistent date formatting across timezones
+  const year = d.getUTCFullYear();
+  const month = String(d.getUTCMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
@@ -105,9 +106,13 @@ function endOfDay(d: Date) {
 
 
 function getRange(filter: string, customFrom: Date | null, customTo: Date | null) {
-  const today = startOfDay(new Date());
-  const year = today.getFullYear();
-  const month = today.getMonth();
+  // Use UTC dates to ensure consistent calculations across timezones
+  const now = new Date();
+  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  today.setUTCHours(0, 0, 0, 0);
+  
+  const year = today.getUTCFullYear();
+  const month = today.getUTCMonth();
 
   
   if (filter === "custom" && customFrom && customTo) {
@@ -119,43 +124,44 @@ function getRange(filter: string, customFrom: Date | null, customTo: Date | null
       return { start: today, end: today };
 
     case "this_week": {
-      const day = today.getDay();
+      const day = today.getUTCDay();
       const diff = day === 0 ? 6 : day - 1;
       const start = new Date(today);
-      start.setDate(today.getDate() - diff);
+      start.setUTCDate(today.getUTCDate() - diff);
       const end = new Date(start);
-      end.setDate(start.getDate() + 6);
+      end.setUTCDate(start.getUTCDate() + 6);
       return { start, end };
     }
 
     case "this_month":
       return {
-        start: new Date(year, month, 1),
-        end: new Date(year, month + 1, 0),
+        start: new Date(Date.UTC(year, month, 1)),
+        end: new Date(Date.UTC(year, month + 1, 0)),
       };
 
     case "this_year":
       return {
-        start: new Date(year, 0, 1),
-        end: new Date(year, 11, 31),
+        start: new Date(Date.UTC(year, 0, 1)),
+        end: new Date(Date.UTC(year, 11, 31)),
       };
 
  
     case "this_quarter": {
+      // Calculate quarter based on UTC month to ensure consistency
       const q = Math.floor(month / 3); // 0,1,2,3
       const qStartMonth = q * 3;
       const qEndMonth = qStartMonth + 2;
 
       return {
-        start: new Date(year, qStartMonth, 1),
-        end: new Date(year, qEndMonth + 1, 0),
+        start: new Date(Date.UTC(year, qStartMonth, 1)),
+        end: new Date(Date.UTC(year, qEndMonth + 1, 0)),
       };
     }
 
     default:
       return {
-        start: new Date(year, month, 1),
-        end: new Date(year, month + 1, 0),
+        start: new Date(Date.UTC(year, month, 1)),
+        end: new Date(Date.UTC(year, month + 1, 0)),
       };
   }
 }
@@ -183,12 +189,16 @@ function buildChartDataFromInvoiceMap(
   if (isMonthlyView) {
     const rows: any[] = [];
 
-    const startYear = start.getFullYear();
-    const startMonth = start.getMonth();
-    const endYear = end.getFullYear();
-    const endMonth = end.getMonth();
+    // Use UTC methods to avoid timezone issues
+    const startYear = start.getUTCFullYear();
+    const startMonth = start.getUTCMonth();
+    const endYear = end.getUTCFullYear();
+    const endMonth = end.getUTCMonth();
 
     const totalMonths = (endYear - startYear) * 12 + (endMonth - startMonth) + 1;
+
+    // Month names array to avoid timezone conversion issues
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
     for (let i = 0; i < totalMonths; i++) {
       const index = startMonth + i;
@@ -203,7 +213,7 @@ function buildChartDataFromInvoiceMap(
       });
 
       rows.push({
-        label: new Date(y, m, 1).toLocaleString("default", { month: "short" }),
+        label: monthNames[m] || `${m + 1}`, // Use month names array instead of Date conversion
         fullDate: monthKey,
         value,
       });
@@ -216,36 +226,49 @@ function buildChartDataFromInvoiceMap(
   const rows: any[] = [];
   const cursor = new Date(start);
 
+  // Day names for weekday display
+  const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
   while (cursor <= end) {
     const key = formatYMDLocal(cursor);
+    let label = "";
+    if (filter === "today") {
+      label = "Today";
+    } else if (filter === "this_week") {
+      // Use UTC day to avoid timezone issues
+      const dayIndex = cursor.getUTCDay();
+      label = dayNames[dayIndex] || "Unknown";
+    } else {
+      // Use UTC date to avoid timezone issues
+      label = String(cursor.getUTCDate()).padStart(2, "0");
+    }
+    
     rows.push({
-      label:
-        filter === "today"
-          ? "Today"
-          : filter === "this_week"
-          ? cursor.toLocaleDateString("en-US", { weekday: "short" })
-          : String(cursor.getDate()).padStart(2, "0"),
+      label,
       fullDate: key,
       current: invoiceMap[key] || 0,
       previous: 0,
     });
 
-    cursor.setDate(cursor.getDate() + 1);
+    // Increment using UTC to avoid timezone issues
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
 
  
   if (filter === "this_month") {
+    // Use UTC methods to ensure consistency
     const today = customTo ? new Date(customTo) : new Date();
-    const y = today.getFullYear();
-    const m = today.getMonth();
+    const y = today.getUTCFullYear();
+    const m = today.getUTCMonth();
 
-    const prev = new Date(y, m - 1, 1);
-    const py = prev.getFullYear();
-    const pm = prev.getMonth();
+    const prev = new Date(Date.UTC(y, m - 1, 1));
+    const py = prev.getUTCFullYear();
+    const pm = prev.getUTCMonth();
 
     rows.forEach((r) => {
       const dd = Number(r.label);
-      const prevKey = formatYMDLocal(new Date(py, pm, dd));
+      // Use UTC to create the previous month date
+      const prevKey = formatYMDLocal(new Date(Date.UTC(py, pm, dd)));
       r.previous = invoiceMap[prevKey] || 0;
     });
   }
@@ -291,13 +314,14 @@ export function RevenueChart() {
           },
         }
       );
-      if (!response.ok) return { defaultCurrency: "USD" };
+      if (!response.ok) return { data: { defaultCurrency: "USD" } };
       return await response.json();
     },
     enabled: !!tenant?.id,
   });
 
-  const currentCurrency = invoiceSettings?.defaultCurrency || "USD";
+  const invoiceSettingsData = invoiceSettings?.data || invoiceSettings;
+  const currentCurrency = invoiceSettingsData?.defaultCurrency || "USD";
   const currencySymbol = getCurrencySymbol(currentCurrency);
 
   const CustomTooltip = ({ active, payload }: any) => {
@@ -306,12 +330,30 @@ export function RevenueChart() {
     const row = payload[0].payload;
     const value = Number(payload[0].value ?? 0);
 
-    const formattedDate = new Date(row.fullDate).toLocaleDateString("en-US", {
-      weekday: "short",
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    });
+    // Parse the date string to avoid timezone conversion issues
+    let formattedDate = "";
+    if (row.fullDate && row.fullDate.includes("-")) {
+      // If it's a month string (YYYY-MM), format it directly
+      if (row.fullDate.match(/^\d{4}-\d{2}$/)) {
+        const [year, month] = row.fullDate.split("-").map(Number);
+        const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        formattedDate = `${monthNames[month - 1]} ${year}`;
+      } else {
+        // For date strings, parse and format using UTC
+        const dateParts = row.fullDate.split("-");
+        if (dateParts.length === 3) {
+          const [year, month, day] = dateParts.map(Number);
+          const date = new Date(Date.UTC(year, month - 1, day));
+          const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+          const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+          formattedDate = `${dayNames[date.getUTCDay()]}, ${monthNames[month - 1]} ${day}, ${year}`;
+        } else {
+          formattedDate = row.fullDate;
+        }
+      }
+    } else {
+      formattedDate = row.fullDate || "";
+    }
 
     return (
       <div

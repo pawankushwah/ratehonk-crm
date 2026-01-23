@@ -52,27 +52,40 @@ export function ProfitLossList({
           },
         }
       );
-      if (!response.ok) return { defaultCurrency: "USD" };
+      if (!response.ok) return { data: { defaultCurrency: "USD" } };
       return await response.json();
     },
     enabled: !!tenant?.id,
   });
 
-  const currentCurrency = invoiceSettings?.defaultCurrency || "USD";
+  const invoiceSettingsData = invoiceSettings?.data || invoiceSettings;
+  const currentCurrency = invoiceSettingsData?.defaultCurrency || "USD";
   const currencySymbol = getCurrencySymbol(currentCurrency);
 
-const latestYear = Array.isArray(profitLossData)
-  ? Math.max(...profitLossData.map((m) => Number(m.month.split("-")[0])))
-  : new Date().getFullYear();
+// Use UTC to get the current year consistently across timezones
+const currentYear = new Date().getUTCFullYear();
+const currentMonth = new Date().getUTCMonth();
 
+// For "this_quarter", we want to show months from the current quarter
+// Calculate which quarter we're in (0-3)
+const currentQuarter = Math.floor(currentMonth / 3);
+const quarterStartMonth = currentQuarter * 3;
+const quarterEndMonth = quarterStartMonth + 2;
 
+// Filter data to only show months from the current quarter of the current year
 const filtered = Array.isArray(profitLossData)
-  ? profitLossData.filter(
-      (m) => Number(m.month.split("-")[0]) === latestYear
-    )
+  ? profitLossData.filter((m) => {
+      const [year, month] = m.month.split("-").map(Number);
+      const monthIndex = month - 1; // Convert to 0-based month index
+      
+      // Include if it's in the current year and within the current quarter
+      return year === currentYear && 
+             monthIndex >= quarterStartMonth && 
+             monthIndex <= quarterEndMonth;
+    })
   : [];
 
-
+// Sort by month number (ascending) to show Jan, Feb, Mar in order
 const sortedProfitLossData = [...filtered].sort((a, b) => {
   const [, monthA] = a.month.split("-").map(Number);
   const [, monthB] = b.month.split("-").map(Number);
@@ -121,9 +134,12 @@ const sortedProfitLossData = [...filtered].sort((a, b) => {
               className="flex items-center justify-between text-xs sm:text-sm"
             >
               <span className="text-gray-500 w-6 sm:w-8">
-                {new Date(item.month + "-01").toLocaleDateString("en-US", {
-                  month: "short",
-                })}
+                {(() => {
+                  // Parse the month string (YYYY-MM) directly to avoid timezone conversion issues
+                  const [, month] = item.month.split("-").map(Number);
+                  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+                  return monthNames[month - 1] || item.month;
+                })()}
               </span>
 
               <div className="flex-1 bg-gray-200 h-2.5 sm:h-3 rounded overflow-hidden mx-2">
