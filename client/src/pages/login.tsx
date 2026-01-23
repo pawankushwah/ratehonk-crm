@@ -93,7 +93,7 @@ export default function Login() {
 
         <CardContent className="space-y-6">
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5" autoComplete="off" data-form-type="other">
               <FormField
                 control={form.control}
                 name="email"
@@ -101,7 +101,7 @@ export default function Login() {
                   <FormItem>
                     <FormLabel>Email</FormLabel>
                     <FormControl>
-                      <Input placeholder="you@example.com" autoComplete="email" {...field} />
+                      <Input placeholder="you@example.com" autoComplete="off" data-form-type="other" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -122,7 +122,7 @@ export default function Login() {
                       </Link>
                     </div>
                     <FormControl>
-                      <Input type="password" placeholder="••••••••" autoComplete="current-password" {...field} />
+                      <Input type="password" placeholder="••••••••" autoComplete="new-password" data-form-type="other" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>

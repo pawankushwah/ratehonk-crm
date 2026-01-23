@@ -505,7 +505,7 @@ export default function Login() {
                 )}
 
                 {/* Form */}
-                <form onSubmit={handleSubmit} className="space-y-5">
+                <form onSubmit={handleSubmit} className="space-y-5" autoComplete="off" data-form-type="other">
                   <div className="space-y-2">
                     <Label htmlFor="email" className="text-sm font-semibold text-gray-700">
                       Email Address
@@ -518,6 +518,8 @@ export default function Login() {
                       placeholder="you@example.com"
                       className="h-12 border-gray-300 focus:border-blue-500 focus:ring-blue-500"
                       disabled={isBlocked}
+                      autoComplete="off"
+                      data-form-type="other"
                       required
                     />
                   </div>
@@ -543,6 +545,8 @@ export default function Login() {
                         placeholder="Enter your password"
                         className="h-12 border-gray-300 focus:border-blue-500 focus:ring-blue-500 pr-10"
                         disabled={isBlocked}
+                        autoComplete="new-password"
+                        data-form-type="other"
                         required
                       />
                       <Button
