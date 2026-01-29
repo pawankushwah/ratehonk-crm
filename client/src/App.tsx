@@ -751,7 +751,7 @@ function Router() {
           </ProtectedRoute>
         </Route>
 
-        <Route path="/subscription">
+        {/* <Route path="/subscription">
           <ProtectedRoute>
             <Subscription />
           </ProtectedRoute>
