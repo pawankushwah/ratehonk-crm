@@ -14845,7 +14845,7 @@ async getDashboardMetrics(
     // REVENUE (SUM OF INVOICE.total_amount)
 
     const [revenueResult] = await sql`
-      SELECT COALESCE(SUM(i.total_amount), 0) AS revenue
+      SELECT COALESCE(SUM(i.paid_amount), 0) AS revenue
       FROM invoices i
       WHERE 
         i.tenant_id = ${tenantId}
@@ -14910,7 +14910,7 @@ async getDashboardMetrics(
       SELECT 
         TO_CHAR(i.issue_date, 'Mon') AS month,
         COUNT(i.id) AS bookings,
-        COALESCE(SUM(i.total_amount), 0) AS revenue
+        COALESCE(SUM(i.paid_amount), 0) AS revenue
       FROM invoices i
       WHERE 
         i.tenant_id = ${tenantId}

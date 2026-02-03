@@ -85,7 +85,7 @@ function groupInvoicesByDate(invoices: any[]) {
     const key = formatYMDLocal(d);
     // Sum invoice totalAmount (total invoiced) for the selected period.
     // The API already filters out void/cancelled invoices.
-    const totalAmount = Number(inv.totalAmount ?? inv.total_amount ?? 0);
+    const totalAmount = Number(inv.paidAmount ?? inv.paid_amount ?? 0);
     map[key] = (map[key] || 0) + totalAmount;
   });
   return map;

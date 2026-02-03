@@ -79,9 +79,10 @@ const filtered = Array.isArray(profitLossData)
       const monthIndex = month - 1; // Convert to 0-based month index
       
       // Include if it's in the current year and within the current quarter
-      return year === currentYear && 
-             monthIndex >= quarterStartMonth && 
-             monthIndex <= quarterEndMonth;
+      // return year === currentYear && 
+      //        monthIndex >= quarterStartMonth && 
+      //        monthIndex <= quarterEndMonth;
+      return true;
     })
   : [];
 

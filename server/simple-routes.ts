@@ -30834,6 +30834,7 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
         total_amount AS "totalAmount",
         paid_amount AS "paidAmount",
         status,
+        line_items AS "lineItems",
         TO_CHAR(issue_date, 'YYYY-MM') AS "month"
       FROM invoices
       WHERE tenant_id = ${tenantId}
@@ -30848,9 +30849,22 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
       const month = inv.month;
       // Sum paidAmount instead of totalAmount
       const paidAmount = Number(inv.paidAmount || 0);
+
+        // 👇 Sum additionalCommission safely from dynamic objects
+  let additionalCommissionTotal = 0;
+
+  if (Array.isArray(inv.lineItems)) {
+    inv.lineItems.forEach((item) => {
+      additionalCommissionTotal += Number(item.additionalCommission || 0);
+    });
+  }
+
+  // 👇 Final revenue
+  const revenue = paidAmount + additionalCommissionTotal;
+
       
-      // Revenue is the sum of paid amounts from paid/partial invoices
-      const revenue = paidAmount;
+      // // Revenue is the sum of paid amounts from paid/partial invoices
+      // const revenue = paidAmount;
 
       if (!invoiceMonthData[month]) {
         invoiceMonthData[month] = { revenue: 0 };

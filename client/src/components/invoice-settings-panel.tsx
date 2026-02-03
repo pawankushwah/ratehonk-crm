@@ -20,9 +20,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Settings, Save } from "lucide-react";
+import { Settings, Save, Plus } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import type { GstSetting } from "@shared/schema";
+import { GstSettingCreateForm } from "@/components/forms/gst-setting-create-form";
 
 interface InvoiceSettings {
   invoiceNumberStart: number;
@@ -49,6 +50,7 @@ export function InvoiceSettingsPanel({ tenantId }: InvoiceSettingsPanelProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [isTaxCreatePanelOpen, setIsTaxCreatePanelOpen] = useState(false);
   const [settings, setSettings] = useState<InvoiceSettings>({
     invoiceNumberStart: 1,
     invoiceNumberPrefix: "INV",
@@ -224,12 +226,16 @@ export function InvoiceSettingsPanel({ tenantId }: InvoiceSettingsPanelProps) {
             <Label htmlFor="defaultGstSetting">Default Tax Setting</Label>
             <Select
               value={settings.defaultGstSettingId?.toString() || "none"}
-              onValueChange={(value) =>
-                setSettings({ 
-                  ...settings, 
-                  defaultGstSettingId: value === "none" ? null : parseInt(value)
-                })
-              }
+              onValueChange={(value) => {
+                if (value === "create_new") {
+                  setIsTaxCreatePanelOpen(true);
+                  return;
+                }
+                setSettings({
+                  ...settings,
+                  defaultGstSettingId: value === "none" ? null : parseInt(value),
+                });
+              }}
             >
               <SelectTrigger data-testid="select-tax-setting">
                 <SelectValue placeholder="Select tax setting" />
@@ -243,12 +249,45 @@ export function InvoiceSettingsPanel({ tenantId }: InvoiceSettingsPanelProps) {
                       {setting.taxName} {setting.country && `(${setting.country})`}
                     </SelectItem>
                   ))}
+                <SelectItem value="create_new" className="text-primary font-medium">
+                  <Plus className="h-4 w-4 mr-2 inline" />
+                  Create new tax setting
+                </SelectItem>
               </SelectContent>
             </Select>
             <p className="text-sm text-gray-500 dark:text-gray-400">
               Default tax setting to use when creating invoices
             </p>
           </div>
+
+          {/* Create Tax Setting slide panel (nested) */}
+          <Sheet open={isTaxCreatePanelOpen} onOpenChange={setIsTaxCreatePanelOpen}>
+            <SheetContent className="w-[400px] sm:w-[480px] overflow-y-auto">
+              <SheetHeader>
+                <SheetTitle>Create New Tax Setting</SheetTitle>
+                <SheetDescription>
+                  Add a new tax setting to use as default or in line items
+                </SheetDescription>
+              </SheetHeader>
+              <div className="py-6">
+                <GstSettingCreateForm
+                  onSuccess={(newSetting) => {
+                    queryClient.invalidateQueries({ queryKey: ["/api/gst-settings"] });
+                    setSettings((prev) => ({
+                      ...prev,
+                      defaultGstSettingId: newSetting.id,
+                    }));
+                    setIsTaxCreatePanelOpen(false);
+                    toast({
+                      title: "Tax setting created",
+                      description: "New tax setting created and set as default.",
+                    });
+                  }}
+                  onCancel={() => setIsTaxCreatePanelOpen(false)}
+                />
+              </div>
+            </SheetContent>
+          </Sheet>
 
           {/* Field Visibility Toggles */}
           <div className="space-y-4 border-t pt-4">

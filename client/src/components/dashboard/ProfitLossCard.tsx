@@ -5,19 +5,19 @@ import { ProfitLossList } from "./ProfitLossList";
 import { useProfitLossData } from "@/hooks/useDashboardData";
 
 const dummyProfitLoss = [
-  { month: "2024-12", expenses: 0, revenue: 0, profit: 0 },
-  { month: "2025-01", expenses: 0, revenue: 0, profit: 0 },
-  { month: "2025-02", expenses: 0, revenue: 0, profit: 0 },
-  { month: "2025-03", expenses: 0, revenue: 0, profit: 0 },
-  { month: "2025-04", expenses: 0, revenue: 0, profit: 0 },
-  { month: "2025-05", expenses: 0, revenue: 0, profit: 0 },
-  { month: "2025-06", expenses: 0, revenue: 0, profit: 0 },
-  { month: "2025-07", expenses: 0, revenue: 0, profit: 0 },
-  { month: "2025-08", expenses: 0, revenue: 0, profit: 0 },
-  { month: "2025-09", expenses: 0, revenue: 0, profit: 0 },
-  { month: "2025-10", expenses: 0, revenue: 0, profit: 0 },
-  { month: "2025-11", expenses: 0, revenue: 0, profit: 0 },
-  { month: "2025-12", expenses: 0, revenue: 0, profit: 0 },
+  // { month: "2024-12", expenses: 0, revenue: 0, profit: 0 },
+  // { month: "2025-01", expenses: 0, revenue: 0, profit: 0 },
+  // { month: "2025-02", expenses: 0, revenue: 0, profit: 0 },
+  // { month: "2025-03", expenses: 0, revenue: 0, profit: 0 },
+  // { month: "2025-04", expenses: 0, revenue: 0, profit: 0 },
+  // { month: "2025-05", expenses: 0, revenue: 0, profit: 0 },
+  // { month: "2025-06", expenses: 0, revenue: 0, profit: 0 },
+  // { month: "2025-07", expenses: 0, revenue: 0, profit: 0 },
+  // { month: "2025-08", expenses: 0, revenue: 0, profit: 0 },
+  // { month: "2025-09", expenses: 0, revenue: 0, profit: 0 },
+  // { month: "2025-10", expenses: 0, revenue: 0, profit: 0 },
+  // { month: "2025-11", expenses: 0, revenue: 0, profit: 0 },
+  // { month: "2025-12", expenses: 0, revenue: 0, profit: 0 },
 ];
 
 export function ProfitLossCard() {
@@ -44,7 +44,8 @@ export function ProfitLossCard() {
         (m.profit ?? 0) === 0
     );
 
-  const finalProfitLoss = isDataEmpty ? dummyProfitLoss : monthlyData;
+  // const finalProfitLoss = isDataEmpty ? dummyProfitLoss : monthlyData;
+  const finalProfitLoss =  monthlyData;
 
   return (
     <Card className="lg:col-span-5">
