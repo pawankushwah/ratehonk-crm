@@ -722,7 +722,7 @@ export const emailDeliverabilityMetrics = pgTable("email_deliverability_metrics"
 // Email configuration settings for tenants
 export const emailConfigurations = pgTable("email_configurations", {
   id: serial("id").primaryKey(),
-  tenantId: integer("tenant_id").notNull().references(() => tenants.id).unique(),
+  tenantId: integer("tenant_id").references(() => tenants.id).unique(),
   senderName: text("sender_name").notNull(),
   senderEmail: text("sender_email").notNull(),
   replyToEmail: text("reply_to_email"),
@@ -732,6 +732,7 @@ export const emailConfigurations = pgTable("email_configurations", {
   smtpPassword: text("smtp_password"), // encrypted
   smtpSecurity: text("smtp_security").default("tls"), // tls, ssl, none
   isSmtpEnabled: boolean("is_smtp_enabled").default(false),
+  isSaasSmtp: boolean("is_saas_smtp").default(false).notNull(),
   dailySendLimit: integer("daily_send_limit").default(1000),
   bounceHandling: boolean("bounce_handling").default(true),
   trackOpens: boolean("track_opens").default(true),

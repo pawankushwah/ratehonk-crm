@@ -13,30 +13,66 @@ class TenantEmailService {
 
   private async getSaasOwnerEmailConfig() {
     try {
-      // Get SaaS owner email configuration - try multiple approaches to find admin config
+      // Priority 1: explicit SaaS owner config flagged in DB
       let [config] = await sql`
         SELECT * FROM email_configurations 
-        WHERE tenant_id = 1 AND is_active = true AND is_smtp_enabled = true
+        WHERE is_saas_smtp = true AND is_active = true AND is_smtp_enabled = true
         LIMIT 1
       `;
 
-      // If no config for tenant_id = 1, try to find the first available SaaS admin config
-      if (!config) {
+      if (config) {
+        console.log(
+          `📧 Found SaaS owner SMTP config (is_saas_smtp=true): host=${config.smtp_host}, user=${config.smtp_username}`,
+        );
+      } else {
+        // Priority 2: legacy tenant_id = 1 record (pre-flag rollout)
         [config] = await sql`
           SELECT * FROM email_configurations 
-          WHERE is_active = true AND is_smtp_enabled = true
-          ORDER BY tenant_id ASC
+          WHERE tenant_id = 1 AND is_active = true AND is_smtp_enabled = true
           LIMIT 1
         `;
         if (config) {
           console.log(
-            `📧 No SaaS owner config found for tenant_id=1, using tenant ${config.tenant_id} as fallback: host=${config.smtp_host}, user=${config.smtp_username}`,
+            `📧 Found legacy SaaS owner SMTP config for tenant_id=1: host=${config.smtp_host}, user=${config.smtp_username}`,
           );
         } else {
-          console.log(`📧 No SaaS owner SMTP config found (no active enabled configs in database)`);
+          // Priority 3: first available active SMTP config (as last resort)
+          [config] = await sql`
+            SELECT * FROM email_configurations 
+            WHERE is_active = true AND is_smtp_enabled = true
+            ORDER BY tenant_id ASC NULLS LAST
+            LIMIT 1
+          `;
+          if (config) {
+            console.log(
+              `📧 No SaaS owner config found, using tenant ${config.tenant_id ?? "unknown"} as fallback: host=${config.smtp_host}, user=${config.smtp_username}`,
+            );
+          } else {
+            console.log(`📧 No SaaS owner SMTP config found (no active enabled configs in database)`);
+          }
         }
-      } else {
-        console.log(`📧 Found SaaS owner SMTP config: host=${config.smtp_host}, user=${config.smtp_username}`);
+      }
+
+      if (!config) {
+        return null;
+      }
+
+      // Skip DB config if it points to localhost/127.0.0.1 so fallback uses .env (real SMTP)
+      const rawHost = (config?.smtp_host || "").toLowerCase().trim();
+      const normalizedHost = rawHost
+        .replace(/^smtp:\/\//, "")
+        .replace(/^https?:\/\//, "")
+        .split("/")[0]
+        .split(":")[0]
+        .trim();
+      const isLocalHost =
+        normalizedHost === "127.0.0.1" ||
+        normalizedHost === "localhost" ||
+        normalizedHost === "::1" ||
+        normalizedHost === "0.0.0.0";
+      if (isLocalHost) {
+        console.log(`📧 Skipping SaaS owner SMTP from DB (host=${config.smtp_host} is local); will use .env SMTP`);
+        return null;
       }
 
       return config;
