@@ -34,6 +34,7 @@ import { format } from "date-fns";
 import { RecipientSelector } from "./RecipientSelector";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/components/auth/auth-provider";
+import { apiRequest } from "@/lib/queryClient";
 
 const campaignSchema = z.object({
   name: z.string().min(1, "Campaign name is required"),
@@ -67,6 +68,56 @@ const campaignSchema = z.object({
 });
 
 type CampaignFormData = z.infer<typeof campaignSchema>;
+
+function SegmentAudienceFields({
+  form,
+  segments,
+}: {
+  form: ReturnType<typeof useForm<CampaignFormData>>;
+  segments: any[];
+}) {
+  const segmentId = form.watch("segmentId") ?? 1;
+  const value = String(segmentId);
+  return (
+    <div className="space-y-2">
+      <Label>Select Segment</Label>
+      <Select
+        value={value}
+        onValueChange={(next) => {
+          const num = parseInt(next, 10);
+          if (!Number.isNaN(num) && form.getValues("segmentId") !== num) {
+            form.setValue("segmentId", num);
+          }
+        }}
+      >
+        <SelectTrigger>
+          <SelectValue placeholder="Select a segment" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="1">All Customers</SelectItem>
+          <SelectItem value="2">New Leads</SelectItem>
+          <SelectItem value="3">Recent Bookings</SelectItem>
+          {segments.map((segment: any) => (
+            <SelectItem key={segment.id} value={segment.id.toString()}>
+              {segment.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <div className="border rounded-lg p-4 bg-muted/50">
+        <div className="flex items-center justify-between mb-2">
+          <Label>Estimated Recipients</Label>
+          <Badge variant="secondary">
+            {segmentId === 1 ? "All customers" :
+              segmentId === 2 ? "New leads" :
+              segmentId === 3 ? "Recent bookings" :
+              segments.find((s: any) => s.id === segmentId)?.subscriberCount ?? 0} contacts
+          </Badge>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 interface CampaignBuilderProps {
   onSave: (data: CampaignFormData) => void;
@@ -122,13 +173,17 @@ export function CampaignBuilder({
     enabled: !!tenant?.id,
   });
 
-  // Fetch segments
+  // Fetch segments (use apiRequest for consistency; route does not require auth but keeps pattern)
   const { data: segments = [] } = useQuery<any[]>({
     queryKey: [`/api/tenants/${tenant?.id}/email-segments`],
     queryFn: async () => {
-      const response = await fetch(`/api/tenants/${tenant?.id}/email-segments`);
-      if (!response.ok) return [];
-      return response.json();
+      try {
+        const response = await apiRequest("GET", `/api/tenants/${tenant?.id}/email-segments`);
+        const data = await response.json();
+        return Array.isArray(data) ? data : [];
+      } catch {
+        return [];
+      }
     },
     enabled: !!tenant?.id,
   });
@@ -137,7 +192,14 @@ export function CampaignBuilder({
   const objective = form.watch("objective");
 
   const handleSave = (data: CampaignFormData) => {
-    onSave({ ...data, selectedRecipients, audienceType });
+    const segmentId = form.getValues("segmentId");
+    const recipientCount =
+      audienceType === "manual"
+        ? selectedRecipients.length
+        : audienceType === "segment"
+          ? (segments.find((s: any) => s.id === segmentId)?.subscriberCount ?? 0)
+          : 0;
+    onSave({ ...data, selectedRecipients, audienceType, recipientCount });
   };
 
   const handleTemplateSelect = (templateId: number) => {
@@ -154,7 +216,14 @@ export function CampaignBuilder({
 
   const handleSend = (data: CampaignFormData) => {
     if (onSend) {
-      onSend(data);
+      const segmentId = form.getValues("segmentId");
+      const recipientCount =
+        audienceType === "manual"
+          ? selectedRecipients.length
+          : audienceType === "segment"
+            ? (segments.find((s: any) => s.id === segmentId)?.subscriberCount ?? 0)
+            : 0;
+      onSend({ ...data, selectedRecipients, audienceType, recipientCount });
     }
   };
 
@@ -468,6 +537,9 @@ export function CampaignBuilder({
                     onValueChange={(value: "segment" | "manual") => {
                       setAudienceType(value);
                       form.setValue("audienceType", value);
+                      if (value === "segment" && (form.getValues("segmentId") == null || Number.isNaN(Number(form.getValues("segmentId"))))) {
+                        form.setValue("segmentId", 1);
+                      }
                     }}
                   >
                     <SelectTrigger>
@@ -481,40 +553,7 @@ export function CampaignBuilder({
                 </div>
 
                 {audienceType === "segment" ? (
-                  <div className="space-y-2">
-                    <Label>Select Segment</Label>
-                    <Select
-                      value={form.watch("segmentId")?.toString() || ""}
-                      onValueChange={(value) => {
-                        form.setValue("segmentId", parseInt(value));
-                      }}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select a segment" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all_customers">All Customers</SelectItem>
-                        <SelectItem value="new_leads">New Leads</SelectItem>
-                        <SelectItem value="recent_bookings">Recent Bookings</SelectItem>
-                        {segments.map((segment: any) => (
-                          <SelectItem key={segment.id} value={segment.id.toString()}>
-                            {segment.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <div className="border rounded-lg p-4 bg-muted/50">
-                      <div className="flex items-center justify-between mb-2">
-                        <Label>Estimated Recipients</Label>
-                        <Badge variant="secondary">
-                          {form.watch("segmentId") === 1 ? "All customers" : 
-                           form.watch("segmentId") === 2 ? "New leads" :
-                           form.watch("segmentId") === 3 ? "Recent bookings" :
-                           segments.find((s: any) => s.id === form.watch("segmentId"))?.subscriberCount || 0} contacts
-                        </Badge>
-                      </div>
-                    </div>
-                  </div>
+                  <SegmentAudienceFields form={form} segments={segments} />
                 ) : (
                   <RecipientSelector
                     selectedRecipients={selectedRecipients}

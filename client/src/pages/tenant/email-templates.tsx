@@ -208,6 +208,7 @@ export default function EmailTemplates() {
                 <DialogContent className="max-w-7xl max-h-[90vh] overflow-hidden p-0 flex flex-col">
                   <div className="flex-1 overflow-y-auto">
                     <TemplateBuilder
+                      tenantId={tenant?.id}
                       onSave={(data) => {
                         createTemplateMutation.mutate(data);
                       }}
@@ -374,6 +375,7 @@ export default function EmailTemplates() {
           <div className="flex-1 overflow-y-auto min-h-0">
             {selectedTemplate && (
               <TemplateBuilder
+                tenantId={tenant?.id}
                 initialData={selectedTemplate}
                 onSave={(data) => {
                   updateTemplateMutation.mutate({

@@ -108,6 +108,8 @@ export const tenantSettings = pgTable("tenant_settings", {
   autoAssignmentPriorityRoleId: integer("auto_assignment_priority_role_id").references(() => roles.id),
   // Lead follow-up email automations (enable/disable at tenant level)
   leadFollowUpAutomationsEnabled: boolean("lead_follow_up_automations_enabled").default(true),
+  // Tenant's own OpenAI API key for AI features (email templates, compose, etc.)
+  openaiApiKey: text("openai_api_key"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -652,8 +654,8 @@ export const emailAutomations = pgTable("email_automations", {
   tenantId: integer("tenant_id").notNull().references(() => tenants.id),
   name: text("name").notNull(),
   description: text("description"),
-  triggerType: text("trigger_type").notNull(), // customer_signup, booking_confirmed, lead_created, lead_status_follow_up, date_based, behavior_based
-  triggerConditions: json("trigger_conditions").notNull(), // e.g. { leadStatus, intervalDays, minDaysInStatus } for lead_status_follow_up
+  triggerType: text("trigger_type").notNull(), // customer_signup, booking_confirmed, lead_created, lead_status_follow_up, invoice_status_follow_up, date_based, behavior_based
+  triggerConditions: json("trigger_conditions").notNull(), // e.g. { leadStatus, intervalDays, minDaysInStatus } for lead_status_follow_up; { invoiceStatus, intervalDays, minDaysInStatus } for invoice_status_follow_up
   isActive: boolean("is_active").default(true).notNull(),
   emailTemplateId: integer("email_template_id").references(() => emailTemplates.id),
   delayHours: integer("delay_hours").default(0), // delay before sending

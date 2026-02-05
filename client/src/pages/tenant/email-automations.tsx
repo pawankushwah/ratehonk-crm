@@ -8,67 +8,133 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useToast } from "@/hooks/use-toast";
-import { Search, Plus, Play, Pause, Settings, Clock, Users, Mail, Zap, RefreshCw } from "lucide-react";
+import { Search, Plus, Play, Pause, Settings, Clock, Users, Mail, Zap, RefreshCw, Lightbulb, ChevronDown, ChevronUp, FileText } from "lucide-react";
 import type { EmailAutomation, InsertEmailAutomation } from "@shared/schema";
 import { Layout } from "@/components/layout/layout";
 import { useAuth } from "@/components/auth/auth-provider";
 
+// Match lead statuses from Leads page. "all" = every lead regardless of status (one automation for all).
 const LEAD_STATUSES = [
+  { value: "all", label: "All statuses" },
   { value: "new", label: "New" },
   { value: "contacted", label: "Contacted" },
   { value: "qualified", label: "Qualified" },
   { value: "proposal", label: "Proposal" },
   { value: "negotiation", label: "Negotiation" },
-  { value: "pending", label: "Pending" },
   { value: "closed_won", label: "Closed Won" },
   { value: "closed_lost", label: "Closed Lost" },
+];
+
+// Match invoice statuses from Invoices page (All Status dropdown)
+const INVOICE_STATUSES = [
+  { value: "draft", label: "Draft" },
+  { value: "pending", label: "Pending" },
+  { value: "paid", label: "Paid" },
+  { value: "partial", label: "Partially Paid" },
+  { value: "overdue", label: "Overdue" },
+  { value: "cancelled", label: "Cancelled" },
 ];
 
 const INTERVAL_OPTIONS = [
   { value: 1, label: "Every 1 day" },
   { value: 2, label: "Every 2 days" },
   { value: 3, label: "Every 3 days" },
+  { value: 5, label: "Every 5 days" },
   { value: 7, label: "Every 7 days" },
+  { value: 10, label: "Every 10 days" },
   { value: 14, label: "Every 14 days" },
+  { value: 30, label: "Every 30 days" },
+  { value: 60, label: "Every 60 days" },
+  { value: 90, label: "Every 90 days" },
 ];
+
+// Recommended automation by lead status (stage-based best practices)
+const STATUS_RECOMMENDATIONS: Record<string, { goal: string; tip: string }> = {
+  all: {
+    goal: "One automation for every lead",
+    tip: "Sends follow-up emails to all leads (any status) at your chosen interval. Use a higher “min days in status” to avoid spamming brand-new leads.",
+  },
+  new: {
+    goal: "Speed + first touch",
+    tip: "Instant welcome is already sent on lead create. Add a follow-up (e.g. every 2 days) if no reply.",
+  },
+  contacted: {
+    goal: "Get qualification / no-reply follow-up",
+    tip: "E.g. Day 2 reminder, Day 5 second follow-up, Day 10 final check-in. Create one automation per step.",
+  },
+  qualified: {
+    goal: "Move to proposal",
+    tip: "Send product deck or demo link; follow up every 3–5 days until they move to Proposal.",
+  },
+  proposal: {
+    goal: "Prevent deal stalling",
+    tip: "Day 2 reminder, Day 5 value message, Day 10 “Any feedback?”. Create separate automations for each.",
+  },
+  negotiation: {
+    goal: "Close faster",
+    tip: "Short-interval reminders (every 1–2 days) or value emails while terms are discussed.",
+  },
+  closed_won: {
+    goal: "Handoff + retention",
+    tip: "Thank-you and onboarding; optional 30-day upsell. Use interval 30 days.",
+  },
+  closed_lost: {
+    goal: "Re-engage later",
+    tip: "Re-engagement after 60–90 days. Set interval to 60 or 90 and a “Still interested?” template.",
+  },
+};
 
 export default function EmailAutomations() {
   const [searchTerm, setSearchTerm] = useState("");
-  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [isCreatePanelOpen, setIsCreatePanelOpen] = useState(false);
   const [createTriggerType, setCreateTriggerType] = useState<string>("lead_status_follow_up");
-  const [createLeadStatus, setCreateLeadStatus] = useState("new");
+  const [createLeadStatus, setCreateLeadStatus] = useState("all");
+  const [createInvoiceStatus, setCreateInvoiceStatus] = useState("pending");
   const [createTemplateId, setCreateTemplateId] = useState<string>("");
   const [createIntervalDays, setCreateIntervalDays] = useState(2);
   const [createMinDaysInStatus, setCreateMinDaysInStatus] = useState(0);
+  const [showRecommendations, setShowRecommendations] = useState(false);
   const { toast } = useToast();
   const { tenant } = useAuth();
   const tenantId = tenant?.id ?? 1;
 
   const { data: automations = [], isLoading } = useQuery({
     queryKey: ["/api/tenants", tenantId, "email-automations"],
-    queryFn: () => apiRequest(`/api/tenants/${tenantId}/email-automations`).then((r) => r as EmailAutomation[]),
+    queryFn: async () => {
+      const r = await apiRequest("GET", `/api/tenants/${tenantId}/email-automations`);
+      return r.json() as Promise<EmailAutomation[]>;
+    },
     enabled: !!tenantId,
   });
 
-  const { data: templates = [] } = useQuery({
-    queryKey: ["/api/tenants", tenantId, "email-templates"],
-    queryFn: () => apiRequest(`/api/tenants/${tenantId}/email-templates`).then((r) => (Array.isArray(r) ? r : [])),
-    enabled: !!tenantId && isCreateDialogOpen,
+  const { data: templates = [], isLoading: templatesLoading } = useQuery({
+    queryKey: [`/api/tenants/${tenantId}/email-templates`],
+    queryFn: async () => {
+      const token = localStorage.getItem("auth_token");
+      const headers: Record<string, string> = {};
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      const response = await fetch(`/api/tenants/${tenantId}/email-templates`, {
+        credentials: "include",
+        headers,
+      });
+      if (!response.ok) throw new Error("Failed to fetch templates");
+      const data = await response.json();
+      return Array.isArray(data) ? data : [];
+    },
+    enabled: !!tenantId,
   });
 
   const createAutomationMutation = useMutation({
     mutationFn: (data: InsertEmailAutomation & { triggerConditions?: Record<string, unknown> }) =>
-      apiRequest(`/api/tenants/${tenantId}/email-automations`, {
-        method: "POST",
-        body: data,
-      }),
+      apiRequest("POST", `/api/tenants/${tenantId}/email-automations`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/tenants", tenantId, "email-automations"] });
-      setIsCreateDialogOpen(false);
+      setIsCreatePanelOpen(false);
       setCreateTemplateId("");
-      setCreateLeadStatus("new");
+      setCreateLeadStatus("all");
+      setCreateInvoiceStatus("pending");
       setCreateIntervalDays(2);
       setCreateMinDaysInStatus(0);
       toast({
@@ -87,9 +153,7 @@ export default function EmailAutomations() {
 
   const toggleAutomationMutation = useMutation({
     mutationFn: (id: number) =>
-      apiRequest(`/api/tenants/${tenantId}/email-automations/${id}/toggle`, {
-        method: "PATCH",
-      }),
+      apiRequest("PATCH", `/api/tenants/${tenantId}/email-automations/${id}/toggle`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/tenants", tenantId, "email-automations"] });
       toast({
@@ -118,6 +182,29 @@ export default function EmailAutomations() {
         triggerType: "lead_status_follow_up",
         triggerConditions: {
           leadStatus: createLeadStatus,
+          intervalDays: createIntervalDays,
+          minDaysInStatus: createMinDaysInStatus || 0,
+        },
+        isActive: true,
+        emailTemplateId: parseInt(createTemplateId, 10),
+        delayHours: 0,
+      };
+      createAutomationMutation.mutate(automationData);
+      return;
+    }
+
+    if (createTriggerType === "invoice_status_follow_up") {
+      if (!createTemplateId) {
+        toast({ title: "Select an email template", variant: "destructive" });
+        return;
+      }
+      const automationData: InsertEmailAutomation & { triggerConditions?: Record<string, unknown> } = {
+        tenantId,
+        name,
+        description: description || undefined,
+        triggerType: "invoice_status_follow_up",
+        triggerConditions: {
+          invoiceStatus: createInvoiceStatus,
           intervalDays: createIntervalDays,
           minDaysInStatus: createMinDaysInStatus || 0,
         },
@@ -158,6 +245,7 @@ export default function EmailAutomations() {
       booking_confirmed: "Booking Confirmed",
       lead_created: "New Lead",
       lead_status_follow_up: "Lead status follow-up",
+      invoice_status_follow_up: "Invoice status follow-up",
       date_based: "Date-Based",
       behavior_based: "Behavior-Based",
     };
@@ -170,6 +258,7 @@ export default function EmailAutomations() {
       booking_confirmed: Mail,
       lead_created: Zap,
       lead_status_follow_up: RefreshCw,
+      invoice_status_follow_up: FileText,
       date_based: Clock,
       behavior_based: Settings,
     };
@@ -178,13 +267,21 @@ export default function EmailAutomations() {
   };
 
   const getLeadStatusLabel = (value: string) => LEAD_STATUSES.find((s) => s.value === value)?.label ?? value;
+  const getInvoiceStatusLabel = (value: string) => INVOICE_STATUSES.find((s) => s.value === value)?.label ?? value;
   const getIntervalLabel = (days: number) => INTERVAL_OPTIONS.find((o) => o.value === days)?.label ?? `Every ${days} days`;
 
   const formatAutomationSummary = (a: EmailAutomation) => {
-    const cond = (a.triggerConditions || {}) as { leadStatus?: string; intervalDays?: number; minDaysInStatus?: number };
+    const cond = (a.triggerConditions || {}) as { leadStatus?: string; invoiceStatus?: string; intervalDays?: number; minDaysInStatus?: number };
     if (a.triggerType === "lead_status_follow_up" && (cond.leadStatus != null || cond.intervalDays != null)) {
       const parts = [];
       if (cond.leadStatus) parts.push(getLeadStatusLabel(cond.leadStatus));
+      if (cond.intervalDays) parts.push(getIntervalLabel(cond.intervalDays));
+      if (cond.minDaysInStatus) parts.push(`after ${cond.minDaysInStatus} days in status`);
+      return parts.join(" · ");
+    }
+    if (a.triggerType === "invoice_status_follow_up" && (cond.invoiceStatus != null || cond.intervalDays != null)) {
+      const parts = [];
+      if (cond.invoiceStatus) parts.push(getInvoiceStatusLabel(cond.invoiceStatus));
       if (cond.intervalDays) parts.push(getIntervalLabel(cond.intervalDays));
       if (cond.minDaysInStatus) parts.push(`after ${cond.minDaysInStatus} days in status`);
       return parts.join(" · ");
@@ -220,21 +317,25 @@ export default function EmailAutomations() {
               Follow-up emails for leads by status (e.g. every 1, 2, or 7 days). Enable or disable per automation.
             </p>
           </div>
-          <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-            <DialogTrigger asChild>
-              <Button className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700">
-                <Plus className="mr-2 h-4 w-4" />
-                Create Automation
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-[600px]">
-              <DialogHeader>
-                <DialogTitle>Create Email Automation</DialogTitle>
-                <DialogDescription>
+          <Button
+            className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
+            onClick={() => {
+              setIsCreatePanelOpen(true);
+              queryClient.invalidateQueries({ queryKey: [`/api/tenants/${tenantId}/email-templates`] });
+            }}
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            Create Automation
+          </Button>
+          <Sheet open={isCreatePanelOpen} onOpenChange={setIsCreatePanelOpen}>
+            <SheetContent side="right" className="w-full sm:max-w-xl overflow-y-auto">
+              <SheetHeader>
+                <SheetTitle>Create Email Automation</SheetTitle>
+                <SheetDescription>
                   Send automated follow-up emails to leads in a given status at your chosen interval.
-                </DialogDescription>
-              </DialogHeader>
-              <form onSubmit={handleCreateAutomation} className="space-y-4">
+                </SheetDescription>
+              </SheetHeader>
+              <form onSubmit={handleCreateAutomation} className="space-y-4 mt-6">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="name">Automation Name</Label>
@@ -256,6 +357,7 @@ export default function EmailAutomations() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="lead_status_follow_up">Lead status follow-up</SelectItem>
+                        <SelectItem value="invoice_status_follow_up">Invoice status follow-up</SelectItem>
                         <SelectItem value="customer_signup">Customer Signup</SelectItem>
                         <SelectItem value="booking_confirmed">Booking Confirmed</SelectItem>
                         <SelectItem value="lead_created">New Lead</SelectItem>
@@ -282,7 +384,7 @@ export default function EmailAutomations() {
                         <Label>Lead status</Label>
                         <Select value={createLeadStatus} onValueChange={setCreateLeadStatus}>
                           <SelectTrigger>
-                            <SelectValue />
+                            <SelectValue placeholder="e.g. Contacted" />
                           </SelectTrigger>
                           <SelectContent>
                             {LEAD_STATUSES.map((s) => (
@@ -292,26 +394,39 @@ export default function EmailAutomations() {
                             ))}
                           </SelectContent>
                         </Select>
+                        {STATUS_RECOMMENDATIONS[createLeadStatus] && (
+                          <p className="text-xs text-muted-foreground">
+                            {STATUS_RECOMMENDATIONS[createLeadStatus].goal}: {STATUS_RECOMMENDATIONS[createLeadStatus].tip}
+                          </p>
+                        )}
                       </div>
                       <div className="space-y-2">
                         <Label>Email template</Label>
-                        <Select value={createTemplateId} onValueChange={setCreateTemplateId} required>
+                        <Select
+                          value={createTemplateId || (templates.length === 0 ? "__none__" : "")}
+                          onValueChange={(v) => v !== "__none__" && setCreateTemplateId(v)}
+                          required
+                        >
                           <SelectTrigger>
-                            <SelectValue placeholder="Select template" />
+                            <SelectValue placeholder={templatesLoading ? "Loading…" : "Select template"} />
                           </SelectTrigger>
                           <SelectContent>
-                            {(templates as { id: number; name: string }[]).map((t) => (
-                              <SelectItem key={t.id} value={String(t.id)}>
-                                {t.name}
-                              </SelectItem>
-                            ))}
-                            {Array.isArray(templates) && templates.length === 0 && (
-                              <SelectItem value="" disabled>
-                                No templates – create one in Email Templates
-                              </SelectItem>
+                            {templatesLoading ? (
+                              <SelectItem value="__loading__" disabled>Loading templates…</SelectItem>
+                            ) : (templates as { id: number; name: string }[]).length === 0 ? (
+                              <SelectItem value="__none__" disabled>No templates — create one in Email Templates</SelectItem>
+                            ) : (
+                              (templates as { id: number; name: string }[]).map((t) => (
+                                <SelectItem key={t.id} value={String(t.id)}>
+                                  {t.name}
+                                </SelectItem>
+                              ))
                             )}
                           </SelectContent>
                         </Select>
+                        {!templatesLoading && (templates as { id: number; name: string }[]).length === 0 && (
+                          <p className="text-xs text-muted-foreground">Create templates at Settings → Email Templates (or the Email Templates page).</p>
+                        )}
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-4">
@@ -349,7 +464,90 @@ export default function EmailAutomations() {
                   </>
                 )}
 
-                {createTriggerType !== "lead_status_follow_up" && (
+                {createTriggerType === "invoice_status_follow_up" && (
+                  <>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>Invoice status</Label>
+                        <Select value={createInvoiceStatus} onValueChange={setCreateInvoiceStatus}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="e.g. Pending" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {INVOICE_STATUSES.map((s) => (
+                              <SelectItem key={s.value} value={s.value}>
+                                {s.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">Send to customers with invoices in this status (e.g. Pending or Overdue)</p>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Email template</Label>
+                        <Select
+                          value={createTemplateId || (templates.length === 0 ? "__none__" : "")}
+                          onValueChange={(v) => v !== "__none__" && setCreateTemplateId(v)}
+                          required
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder={templatesLoading ? "Loading…" : "Select template"} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {templatesLoading ? (
+                              <SelectItem value="__loading__" disabled>Loading templates…</SelectItem>
+                            ) : (templates as { id: number; name: string }[]).length === 0 ? (
+                              <SelectItem value="__none__" disabled>No templates — create one in Email Templates</SelectItem>
+                            ) : (
+                              (templates as { id: number; name: string }[]).map((t) => (
+                                <SelectItem key={t.id} value={String(t.id)}>
+                                  {t.name}
+                                </SelectItem>
+                              ))
+                            )}
+                          </SelectContent>
+                        </Select>
+                        {!templatesLoading && (templates as { id: number; name: string }[]).length === 0 && (
+                          <p className="text-xs text-muted-foreground">Create templates at Settings → Email Templates (or the Email Templates page).</p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>Send interval</Label>
+                        <Select
+                          value={String(createIntervalDays)}
+                          onValueChange={(v) => setCreateIntervalDays(parseInt(v, 10))}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {INTERVAL_OPTIONS.map((o) => (
+                              <SelectItem key={o.value} value={String(o.value)}>
+                                {o.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="minDaysInvoiceStatus">Min days in status (optional)</Label>
+                        <Input
+                          id="minDaysInvoiceStatus"
+                          type="number"
+                          min={0}
+                          value={createMinDaysInStatus || ""}
+                          onChange={(e) => setCreateMinDaysInStatus(parseInt(e.target.value, 10) || 0)}
+                          placeholder="0"
+                        />
+                        <p className="text-xs text-muted-foreground">Only send after invoice has been in this status for at least N days</p>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {createTriggerType !== "lead_status_follow_up" && createTriggerType !== "invoice_status_follow_up" && (
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="delayHours">Delay (Hours)</Label>
@@ -362,8 +560,8 @@ export default function EmailAutomations() {
                   </div>
                 )}
 
-                <div className="flex justify-end space-x-2">
-                  <Button type="button" variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
+                <div className="flex justify-end space-x-2 pt-4">
+                  <Button type="button" variant="outline" onClick={() => setIsCreatePanelOpen(false)}>
                     Cancel
                   </Button>
                   <Button
@@ -375,8 +573,8 @@ export default function EmailAutomations() {
                   </Button>
                 </div>
               </form>
-            </DialogContent>
-          </Dialog>
+            </SheetContent>
+          </Sheet>
         </div>
 
         <div className="relative">
@@ -388,6 +586,39 @@ export default function EmailAutomations() {
             className="pl-10"
           />
         </div>
+
+        <Card className="border-dashed">
+          <button
+            type="button"
+            onClick={() => setShowRecommendations(!showRecommendations)}
+            className="w-full flex items-center justify-between p-4 text-left hover:bg-muted/50 rounded-lg transition-colors"
+          >
+            <span className="flex items-center gap-2 font-medium">
+              <Lightbulb className="h-4 w-4 text-amber-500" />
+              Recommended automations by lead status
+            </span>
+            {showRecommendations ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          </button>
+          {showRecommendations && (
+            <CardContent className="pt-0 pb-4 px-4">
+              <p className="text-sm text-muted-foreground mb-3">
+                Stage-based follow-ups that match your pipeline. Create one automation per step (e.g. Day 2, Day 5, Day 10 for no-reply).
+              </p>
+              <ul className="space-y-2 text-sm">
+                {LEAD_STATUSES.map((s) => {
+                  const rec = STATUS_RECOMMENDATIONS[s.value];
+                  if (!rec) return null;
+                  return (
+                    <li key={s.value} className="flex flex-col gap-0.5">
+                      <span className="font-medium text-foreground">{s.label}</span>
+                      <span className="text-muted-foreground">{rec.goal} — {rec.tip}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </CardContent>
+          )}
+        </Card>
 
         <div className="grid gap-4 md:grid-cols-4">
           <Card>
@@ -430,10 +661,10 @@ export default function EmailAutomations() {
                 <RefreshCw className="h-12 w-12 text-muted-foreground mb-4" />
                 <h3 className="text-lg font-semibold mb-2">No automations yet</h3>
                 <p className="text-muted-foreground text-center mb-4">
-                  Create a lead status follow-up: choose a status (e.g. Pending), an email template, and how often to send (e.g. every 2 days).
+                  Create a lead status follow-up: choose a status (e.g. Contacted), an email template, and how often to send (e.g. every 2 days).
                 </p>
                 <Button
-                  onClick={() => setIsCreateDialogOpen(true)}
+                  onClick={() => setIsCreatePanelOpen(true)}
                   className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
                 >
                   <Plus className="mr-2 h-4 w-4" />

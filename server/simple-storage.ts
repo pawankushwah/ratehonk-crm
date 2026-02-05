@@ -5309,6 +5309,209 @@ async getAllLeadsByTenant(
     }
   }
 
+  private async ensureOpenAiKeyColumnExists(): Promise<void> {
+    try {
+      const [exists] = await sql`
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'tenant_settings' AND column_name = 'openai_api_key'
+      `;
+      if (!exists) {
+        await sql`ALTER TABLE tenant_settings ADD COLUMN openai_api_key TEXT`;
+        console.log("Added tenant_settings.openai_api_key column");
+      }
+    } catch (e) {
+      console.warn("ensureOpenAiKeyColumnExists:", e);
+    }
+  }
+
+  async getTenantOpenAiKey(tenantId: number): Promise<string | null> {
+    try {
+      await this.ensureOpenAiKeyColumnExists();
+      const [row] = await sql`
+        SELECT openai_api_key
+        FROM tenant_settings
+        WHERE tenant_id = ${tenantId}
+      `;
+      const key = row?.openai_api_key;
+      return typeof key === "string" && key.trim() !== "" ? key.trim() : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async updateTenantOpenAiKey(tenantId: number, openaiApiKey: string | null): Promise<void> {
+    await this.ensureOpenAiKeyColumnExists();
+    try {
+      await sql`
+        INSERT INTO tenant_settings (tenant_id, openai_api_key, created_at, updated_at)
+        VALUES (${tenantId}, ${openaiApiKey || null}, NOW(), NOW())
+        ON CONFLICT (tenant_id)
+        DO UPDATE SET openai_api_key = ${openaiApiKey || null}, updated_at = NOW()
+      `;
+    } catch (error) {
+      console.error("Error updating tenant OpenAI API key:", error);
+      throw error;
+    }
+  }
+
+  // Invoice payment reminder tracking
+  private async ensureInvoiceReminderSendsTable(): Promise<void> {
+    try {
+      const [exists] = await sql`
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'invoice_reminder_sends'
+      `;
+      if (!exists) {
+        await sql`
+          CREATE TABLE invoice_reminder_sends (
+            id SERIAL PRIMARY KEY,
+            invoice_id INTEGER NOT NULL,
+            sent_at TIMESTAMP NOT NULL DEFAULT NOW()
+          )
+        `;
+        await sql`CREATE INDEX IF NOT EXISTS idx_invoice_reminder_sends_invoice_id ON invoice_reminder_sends(invoice_id)`;
+        console.log("Created invoice_reminder_sends table");
+      }
+    } catch (e) {
+      console.warn("ensureInvoiceReminderSendsTable:", e);
+    }
+  }
+
+  async getInvoicesForPaymentReminder(): Promise<Array<{
+    id: number;
+    tenantId: number;
+    invoiceNumber: string;
+    status: string;
+    totalAmount: number;
+    paidAmount: number;
+    dueDate: Date;
+    enableReminder: boolean;
+    reminderFrequency: string | null;
+    reminderSpecificDate: Date | null;
+    customerName: string;
+    customerEmail: string;
+  }>> {
+    await this.ensureInvoiceReminderSendsTable();
+    const rows = await sql`
+      SELECT i.id, i.tenant_id, i.invoice_number, i.status,
+             COALESCE(i.total_amount::float, 0) as total_amount,
+             COALESCE(i.paid_amount::float, 0) as paid_amount,
+             i.due_date, i.enable_reminder, i.reminder_frequency, i.reminder_specific_date,
+             c.name as customer_name, c.email as customer_email
+      FROM invoices i
+      JOIN customers c ON c.id = i.customer_id AND c.tenant_id = i.tenant_id
+      WHERE i.enable_reminder = true
+        AND i.status IS DISTINCT FROM 'paid'
+        AND i.status IS DISTINCT FROM 'cancelled'
+        AND c.email IS NOT NULL AND TRIM(c.email) != ''
+    `;
+    return (rows || []).map((r: any) => ({
+      id: r.id,
+      tenantId: r.tenant_id,
+      invoiceNumber: r.invoice_number || `INV-${r.id}`,
+      status: r.status || "pending",
+      totalAmount: parseFloat(r.total_amount) || 0,
+      paidAmount: parseFloat(r.paid_amount) || 0,
+      dueDate: r.due_date,
+      enableReminder: true,
+      reminderFrequency: r.reminder_frequency,
+      reminderSpecificDate: r.reminder_specific_date,
+      customerName: r.customer_name || "Customer",
+      customerEmail: r.customer_email,
+    }));
+  }
+
+  async getLastInvoiceReminderSend(invoiceId: number): Promise<Date | null> {
+    await this.ensureInvoiceReminderSendsTable();
+    try {
+      const [row] = await sql`
+        SELECT sent_at FROM invoice_reminder_sends
+        WHERE invoice_id = ${invoiceId}
+        ORDER BY sent_at DESC LIMIT 1
+      `;
+      return row?.sent_at ? new Date(row.sent_at) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async recordInvoiceReminderSend(invoiceId: number): Promise<void> {
+    await this.ensureInvoiceReminderSendsTable();
+    await sql`INSERT INTO invoice_reminder_sends (invoice_id) VALUES (${invoiceId})`;
+  }
+
+  async ensureInvoiceAutomationSendsTable(): Promise<void> {
+    try {
+      const [exists] = await sql`
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'invoice_automation_sends'
+      `;
+      if (!exists) {
+        await sql`
+          CREATE TABLE invoice_automation_sends (
+            id SERIAL PRIMARY KEY,
+            tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+            invoice_id INTEGER NOT NULL REFERENCES invoices(id),
+            email_automation_id INTEGER NOT NULL REFERENCES email_automations(id),
+            sent_at TIMESTAMP NOT NULL DEFAULT NOW()
+          )
+        `;
+        await sql`CREATE INDEX IF NOT EXISTS idx_invoice_automation_sends_tenant_invoice_automation ON invoice_automation_sends(tenant_id, invoice_id, email_automation_id)`;
+        console.log("Created invoice_automation_sends table");
+      }
+    } catch (e) {
+      console.warn("ensureInvoiceAutomationSendsTable:", e);
+    }
+  }
+
+  async getInvoicesForStatusAutomation(tenantId: number, status: string): Promise<Array<{
+    id: number;
+    tenantId: number;
+    customerEmail: string | null;
+    customerName: string | null;
+    invoiceNumber: string;
+    updatedAt: Date;
+  }>> {
+    const rows = await sql`
+      SELECT i.id, i.tenant_id, i.invoice_number, i.updated_at,
+             c.name as customer_name, c.email as customer_email
+      FROM invoices i
+      LEFT JOIN customers c ON c.id = i.customer_id AND c.tenant_id = i.tenant_id
+      WHERE i.tenant_id = ${tenantId}
+        AND i.status = ${status}
+    `;
+    return (rows || []).map((r: any) => ({
+      id: r.id,
+      tenantId: r.tenant_id,
+      customerEmail: r.customer_email || null,
+      customerName: r.customer_name || null,
+      invoiceNumber: r.invoice_number || `INV-${r.id}`,
+      updatedAt: r.updated_at ? new Date(r.updated_at) : new Date(),
+    }));
+  }
+
+  async getLastInvoiceAutomationSend(invoiceId: number, automationId: number): Promise<Date | null> {
+    await this.ensureInvoiceAutomationSendsTable();
+    try {
+      const [row] = await sql`
+        SELECT sent_at FROM invoice_automation_sends
+        WHERE invoice_id = ${invoiceId} AND email_automation_id = ${automationId}
+        ORDER BY sent_at DESC LIMIT 1
+      `;
+      return row?.sent_at ? new Date(row.sent_at) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async recordInvoiceAutomationSend(tenantId: number, invoiceId: number, automationId: number): Promise<void> {
+    await this.ensureInvoiceAutomationSendsTable();
+    await sql`
+      INSERT INTO invoice_automation_sends (tenant_id, invoice_id, email_automation_id)
+      VALUES (${tenantId}, ${invoiceId}, ${automationId})
+    `;
+  }
+
   // Settings management methods
   async updateTenant(tenantId: number, tenantData: any) {
     try {
@@ -11302,16 +11505,28 @@ RateHonk CRM Team`,
         ORDER BY created_at DESC
       `;
 
-      return segments.map((segment) => ({
-        id: segment.id,
-        name: segment.name,
-        filterConditions: JSON.parse(segment.filter_conditions),
-        description: segment.description,
-        isActive: segment.is_active,
-        subscriberCount: segment.subscriber_count,
-        createdAt: segment.created_at,
-        updatedAt: segment.updated_at,
-      }));
+      return segments.map((segment) => {
+        let filterConditions = segment.filter_conditions;
+        if (typeof filterConditions === "string") {
+          try {
+            filterConditions = JSON.parse(filterConditions);
+          } catch {
+            filterConditions = {};
+          }
+        } else if (filterConditions == null) {
+          filterConditions = {};
+        }
+        return {
+          id: segment.id,
+          name: segment.name,
+          filterConditions,
+          description: segment.description,
+          isActive: segment.is_active,
+          subscriberCount: segment.subscriber_count,
+          createdAt: segment.created_at,
+          updatedAt: segment.updated_at,
+        };
+      });
     } catch (error) {
       console.error("Error fetching email segments:", error);
       throw error;

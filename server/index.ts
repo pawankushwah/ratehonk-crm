@@ -574,5 +574,15 @@ app.use((req, res, next) => {
     console.error("Failed to start lead follow-up scheduler:", error);
   }
 
+  // Start invoice payment reminder scheduler (sends reminders for invoices with enable_reminder)
+  try {
+    const { startInvoiceReminderScheduler } = await import("./invoice-reminder-scheduler");
+    startInvoiceReminderScheduler();
+    const { startInvoiceAutomationScheduler } = await import("./invoice-automation-scheduler");
+    startInvoiceAutomationScheduler();
+  } catch (error) {
+    console.error("Failed to start invoice reminder scheduler:", error);
+  }
+
   // Server already started above before Vite setup
 })();

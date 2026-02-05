@@ -1,8 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { 
   Search, 
-  Calendar, 
-  Users, 
   MapPin, 
   Plane, 
   Hotel,
@@ -10,11 +8,11 @@ import {
   Activity,
   TreePalm,
   Package,
-  ArrowUpDown,
-  ChevronDown,
-  Clock
+  ArrowUpDown
 } from 'lucide-react';
 import { Layout } from '@/components/layout/layout';
+import { FlightResultsView } from '@/components/flights/FlightResultsView';
+import type { FlightListApiData } from '@/types/flight-api';
 
 // Mock airport data
 const airports = [
@@ -44,8 +42,101 @@ const destinations = [
   { id: 10, name: 'Singapore', country: 'Singapore', hotels: 89 }
 ];
 
+/** Sample flight list API data (data.data) for results view. Replace with real API response. */
+const SAMPLE_FLIGHT_LIST_DATA: FlightListApiData = {
+  raw_flight_list: {
+    JourneySummary: {
+      Origin: "BOM",
+      Destination: "DEL",
+      IsDomestic: true,
+      RoundTrip: false,
+      MultiCity: false,
+    },
+    Flights: [
+      [
+        {
+          SegmentSummary: [
+            {
+              AirlineDetails: {
+                AirlineCode: "6E",
+                AirlineName: "IndiGo",
+                FlightNumber: "6045",
+                FareClass: "O",
+                FareClassCode: null,
+              },
+              OriginDetails: {
+                AirportCode: "BOM",
+                CityName: "Mumbai",
+                AirportName: "Mumbai",
+                DateTime: "2026-03-18 03:00:00",
+                Terminal: "Terminal 2",
+                _DateTime: "03:00",
+                _Date: "18-03-2026",
+              },
+              DestinationDetails: {
+                AirportCode: "DEL",
+                CityName: "Delhi",
+                AirportName: "Delhi",
+                DateTime: "2026-03-18 05:10:00",
+                Terminal: "Terminal 1",
+                _DateTime: "05:10",
+                _Date: "18-03-2026",
+              },
+              TotalStops: 0,
+              TotalDuaration: "2h 10m ",
+              Stopdetails: [],
+            },
+          ],
+          SegmentDetails: [
+            [
+              {
+                Baggage: "15 Kg (01 Piece only)",
+                CabinBaggage: "7 Kg",
+                AirlineDetails: { AirlineCode: "6E", AirlineName: "IndiGo", FlightNumber: "6045", FareClass: "O", FareClassCode: null },
+                OriginDetails: {} as any,
+                DestinationDetails: {} as any,
+                SegmentDuration: "2h 10m ",
+                StopOver: "",
+              },
+            ],
+          ],
+          FareDetails: {
+            b2c_PriceDetails: {
+              BaseFare: "1181.45",
+              TotalTax: 2140.91,
+              TotalFare: 3322.28,
+              Currency: "INR",
+              CurrencySymbol: "Rs",
+            },
+          },
+          totalStops: 0,
+          Attr: { IsRefundable: true, FareType: "SUPER_6E", IsLCC: true },
+        },
+      ],
+    ],
+  },
+  filters: {
+    p: { min: 3322, max: 74504 },
+    airline: {
+      IndiGo: { c: 190, v: "IndiGo" },
+      "AI Express": { c: 92, v: "AI Express" },
+      "Air India": { c: 422, v: "Air India" },
+      SpiceJet: { c: 6, v: "SpiceJet" },
+      "Hahn Air": { c: 7, v: "Hahn Air" },
+    },
+    stops: {
+      "Non-stop": { c: 252, v: "Non-stop" },
+      "1 Stop": { c: 465, v: "1 Stop" },
+    },
+  },
+  search_id: 2979,
+  cabin_class: "Economy",
+  trip_type: "oneway",
+};
+
 const Flights = () => {
   const [activeTab, setActiveTab] = useState('flights');
+  const [flightResultsData, setFlightResultsData] = useState<FlightListApiData | null>(null);
   
   // Flight form state
   const [tripType, setTripType] = useState('roundtrip');
@@ -176,7 +267,12 @@ const Flights = () => {
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    console.log(`Searching ${activeTab}:`, getCurrentFormData());
+    if (activeTab === "flights") {
+      // Use sample data for now. Replace with: setFlightResultsData(await fetchFlightList(...))
+      setFlightResultsData(SAMPLE_FLIGHT_LIST_DATA);
+    } else {
+      console.log(`Searching ${activeTab}:`, getCurrentFormData());
+    }
   };
 
   const getCurrentFormData = () => {
@@ -825,6 +921,24 @@ const Flights = () => {
       default: return 'SEARCH';
     }
   };
+
+  if (flightResultsData) {
+    return (
+      <Layout>
+        <div className="min-h-screen w-full bg-gray-50">
+          <header className="bg-white border-b px-4 py-3">
+            <h1 className="text-xl font-semibold text-gray-900">Flight results</h1>
+          </header>
+          <div className="py-4">
+            <FlightResultsView
+              data={flightResultsData}
+              onBack={() => setFlightResultsData(null)}
+            />
+          </div>
+        </div>
+      </Layout>
+    );
+  }
 
   return (
     <Layout>

@@ -58,12 +58,11 @@ export default function EmailCampaigns() {
   const { data: campaigns = [], isLoading } = useQuery<EmailCampaign[]>({
     queryKey: [`/api/tenants/${tenant?.id}/email-campaigns`],
     queryFn: async () => {
-      // Use the database-backed API endpoint
-      const response = await fetch(`/api/tenants/${tenant?.id}/email-campaigns`);
-      if (!response.ok) throw new Error('Failed to fetch campaigns');
+      const response = await apiRequest("GET", `/api/tenants/${tenant?.id}/email-campaigns`);
+      if (!response.ok) throw new Error("Failed to fetch campaigns");
       return response.json();
     },
-    enabled: !!tenant?.id
+    enabled: !!tenant?.id,
   });
 
   const { data: stats = {} } = useQuery<{
@@ -150,6 +149,7 @@ export default function EmailCampaigns() {
         type: campaign.type,
         status: "draft",
         targetAudience: campaign.targetAudience,
+        recipientCount: campaign.recipientCount ?? 0,
       };
       const response = await apiRequest("POST", `/api/tenants/${tenant?.id}/email-campaigns`, duplicateData);
       return response.json();
@@ -290,7 +290,10 @@ export default function EmailCampaigns() {
             </DialogTrigger>
            
             
-            <DialogContent className="max-w-7xl max-h-[90vh] p-0 flex flex-col">
+            <DialogContent className="max-w-7xl max-h-[90vh] p-0 flex flex-col" aria-describedby={undefined}>
+              <DialogHeader className="sr-only">
+                <DialogTitle>Create campaign</DialogTitle>
+              </DialogHeader>
               <div className="flex-1 overflow-y-auto min-h-0">
                 <CampaignBuilder
                   onSave={(data) => {
@@ -314,9 +317,9 @@ export default function EmailCampaigns() {
                       channel: data.channel,
                       objective: data.objective,
                       selectedRecipients: data.selectedRecipients || [],
-                      recipientCount: data.audienceType === "manual" 
+                      recipientCount: data.recipientCount ?? (data.audienceType === "manual"
                         ? (data.selectedRecipients?.length || 0)
-                        : 0,
+                        : 0),
                     };
                     createCampaignMutation.mutate(campaignData);
                   }}
@@ -340,9 +343,9 @@ export default function EmailCampaigns() {
                       channel: data.channel,
                       objective: data.objective,
                       selectedRecipients: data.selectedRecipients || [],
-                      recipientCount: data.audienceType === "manual" 
+                      recipientCount: data.recipientCount ?? (data.audienceType === "manual"
                         ? (data.selectedRecipients?.length || 0)
-                        : 0,
+                        : 0),
                     };
                     createCampaignMutation.mutate(campaignData);
                   }}
@@ -630,7 +633,10 @@ export default function EmailCampaigns() {
 
       {/* Edit Campaign Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-        <DialogContent className="max-w-7xl max-h-[90vh] p-0 flex flex-col">
+        <DialogContent className="max-w-7xl max-h-[90vh] p-0 flex flex-col" aria-describedby={undefined}>
+          <DialogHeader className="sr-only">
+            <DialogTitle>Edit campaign</DialogTitle>
+          </DialogHeader>
           <div className="flex-1 overflow-y-auto min-h-0">
             {selectedCampaign && (
               <CampaignBuilder
@@ -655,6 +661,9 @@ export default function EmailCampaigns() {
                   audienceType: (selectedCampaign as any).audienceType || "manual",
                 }}
                 onSave={(data) => {
+                  const recipientCount = data.recipientCount ?? (data.audienceType === "manual"
+                    ? (data.selectedRecipients?.length || 0)
+                    : 0);
                   updateCampaignMutation.mutate({
                     campaignId: selectedCampaign.id,
                     updates: {
@@ -666,9 +675,7 @@ export default function EmailCampaigns() {
                       templateId: data.templateId,
                       scheduledAt: data.scheduledAt,
                       selectedRecipients: data.selectedRecipients,
-                      recipientCount: data.audienceType === "manual" 
-                        ? (data.selectedRecipients?.length || 0)
-                        : 0,
+                      recipientCount,
                     },
                   });
                 }}

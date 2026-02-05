@@ -24,6 +24,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -107,6 +108,97 @@ type UserPreferences = z.infer<typeof userPreferencesSchema>;
 type SystemSettings = z.infer<typeof systemSettingsSchema>;
 type ZoomSettings = z.infer<typeof zoomSettingsSchema>;
 
+function IntegrationsTab({ tenantId }: { tenantId?: number }) {
+  const [openaiKey, setOpenaiKey] = useState("");
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const { data: aiSettings } = useQuery({
+    queryKey: ["/api/tenants", tenantId, "settings/ai"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/tenants/${tenantId}/settings/ai`);
+      if (!res.ok) throw new Error("Failed to load");
+      return res.json();
+    },
+    enabled: !!tenantId,
+  });
+
+  const updateAiMutation = useMutation({
+    mutationFn: async (key: string) => {
+      const res = await apiRequest("PUT", `/api/tenants/${tenantId}/settings/ai`, {
+        openaiApiKey: key || "",
+      });
+      if (!res.ok) throw new Error("Failed to save");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tenants", tenantId, "settings/ai"] });
+      setOpenaiKey("");
+      toast({ title: "OpenAI API key saved" });
+    },
+    onError: (e: any) => {
+      toast({ title: "Failed to save", description: e?.message, variant: "destructive" });
+    },
+  });
+
+  const configured = aiSettings?.openaiApiKeyConfigured === true;
+
+  if (!tenantId) {
+    return (
+      <Card>
+        <CardContent className="pt-6">
+          <p className="text-muted-foreground">Select a tenant to manage integrations.</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Key className="h-5 w-5" />
+          OpenAI API Key
+        </CardTitle>
+        <CardDescription>
+          Add your OpenAI API key to use AI features: email template generation, AI compose, and AI improve.
+          Your key is stored per tenant and never sent to us.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {configured && (
+          <Badge variant="secondary" className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+            Key configured
+          </Badge>
+        )}
+        <div className="space-y-2">
+          <Label htmlFor="openai-api-key">API Key</Label>
+          <Input
+            id="openai-api-key"
+            type="password"
+            placeholder="sk-..."
+            value={openaiKey}
+            onChange={(e) => setOpenaiKey(e.target.value)}
+            disabled={updateAiMutation.isPending}
+            className="max-w-md font-mono"
+          />
+          <p className="text-sm text-muted-foreground">
+            Leave empty and save to clear the stored key. Use your key from platform.openai.com
+          </p>
+        </div>
+        <Button
+          onClick={() => updateAiMutation.mutate(openaiKey)}
+          disabled={updateAiMutation.isPending}
+          className="flex items-center gap-2"
+        >
+          {updateAiMutation.isPending ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+          Save
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Settings() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -120,8 +212,8 @@ export default function Settings() {
     const params = new URLSearchParams(window.location.search);
     const tabParam = params.get("tab");
     if (tabParam) {
-      // Valid tabs: tenant, user, notifications, system
-      const validTabs = ["tenant", "user", "notifications", "system"];
+      // Valid tabs: tenant, user, notifications, system, integrations
+      const validTabs = ["tenant", "user", "notifications", "system", "integrations"];
       if (validTabs.includes(tabParam)) {
         setActiveTab(tabParam);
       }
@@ -502,7 +594,7 @@ export default function Settings() {
           onValueChange={setActiveTab}
           className="space-y-6"
         >
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="tenant" className="flex items-center gap-2">
               <Building2 className="h-4 w-4" />
               Company
@@ -514,6 +606,10 @@ export default function Settings() {
             <TabsTrigger value="system" className="flex items-center gap-2">
               <Shield className="h-4 w-4" />
               System
+            </TabsTrigger>
+            <TabsTrigger value="integrations" className="flex items-center gap-2">
+              <Key className="h-4 w-4" />
+              Integrations
             </TabsTrigger>
           </TabsList>
 
@@ -1245,6 +1341,11 @@ export default function Settings() {
                 </div>
               </form>
             </Form>
+          </TabsContent>
+
+          {/* Integrations Tab - OpenAI API key */}
+          <TabsContent value="integrations" className="space-y-6">
+            <IntegrationsTab tenantId={tenant?.id} />
           </TabsContent>
 
         </Tabs>

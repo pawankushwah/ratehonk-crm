@@ -16573,11 +16573,11 @@ David,Brown,david.brown@example.com,555-0127,email_campaign,contacted,Prefers lu
 
         console.log("🤖 AI Email Composition requested for tenant:", tenantId);
 
-        // Check if OpenAI API key is available
-        if (!process.env.OPENAI_API_KEY) {
+        const apiKey = (await simpleStorage.getTenantOpenAiKey(tenantId)) || process.env.OPENAI_API_KEY;
+        if (!apiKey) {
           return res.status(500).json({
             success: false,
-            message: "AI service not configured. Please contact administrator.",
+            message: "AI not configured. Add your OpenAI API key in Settings → Integrations.",
           });
         }
 
@@ -16607,7 +16607,7 @@ Response format should be JSON with:
           {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+              Authorization: `Bearer ${apiKey}`,
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
@@ -16700,11 +16700,11 @@ Response format should be JSON with:
 
         console.log("🤖 AI Email Improvement requested for tenant:", tenantId);
 
-        // Check if OpenAI API key is available
-        if (!process.env.OPENAI_API_KEY) {
+        const apiKey = (await simpleStorage.getTenantOpenAiKey(tenantId)) || process.env.OPENAI_API_KEY;
+        if (!apiKey) {
           return res.status(500).json({
             success: false,
-            message: "AI service not configured. Please contact administrator.",
+            message: "AI not configured. Add your OpenAI API key in Settings → Integrations.",
           });
         }
 
@@ -16738,7 +16738,7 @@ Please improve this email.`;
           {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+              Authorization: `Bearer ${apiKey}`,
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
@@ -18680,6 +18680,17 @@ Please improve this email.`;
     }
   });
 
+  app.get("/api/tenants/:tenantId/email-segments", async (req, res) => {
+    try {
+      const { tenantId } = req.params;
+      const segments = await simpleStorage.getEmailSegmentsByTenant(parseInt(tenantId));
+      res.json(segments);
+    } catch (error) {
+      console.error("Get email segments error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   app.post("/api/tenants/:tenantId/email-campaigns", async (req, res) => {
     try {
       console.log("Email campaign creation request:", req.body);
@@ -19947,6 +19958,127 @@ Please improve this email.`;
     }
   });
 
+  // Tenant AI settings (OpenAI API key) - GET returns whether key is configured (never the key itself)
+  app.get("/api/tenants/:tenantId/settings/ai", async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId);
+      const key = await simpleStorage.getTenantOpenAiKey(tenantId);
+      res.json({ openaiApiKeyConfigured: !!key });
+    } catch (error) {
+      console.error("Get tenant AI settings error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.put("/api/tenants/:tenantId/settings/ai", async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId);
+      const { openaiApiKey } = req.body ?? {};
+      const value = typeof openaiApiKey === "string" ? (openaiApiKey.trim() || null) : null;
+      await simpleStorage.updateTenantOpenAiKey(tenantId, value);
+      res.json({ openaiApiKeyConfigured: !!value });
+    } catch (error) {
+      console.error("Update tenant AI settings error:", error);
+      res.status(500).json({ message: "Failed to update AI settings" });
+    }
+  });
+
+  // AI generate email template (subject + HTML content from requirements or suggestion)
+  app.post("/api/tenants/:tenantId/email-templates/ai-generate", async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId);
+      const { prompt, subject: previousSubject, content: previousContent, suggestion } = req.body;
+
+      const apiKey = (await simpleStorage.getTenantOpenAiKey(tenantId)) || process.env.OPENAI_API_KEY;
+      if (!apiKey) {
+        return res.status(500).json({
+          success: false,
+          message: "AI not configured. Add your OpenAI API key in Settings → Integrations.",
+        });
+      }
+
+      const isRevision = !!(suggestion && (previousContent || previousSubject));
+      const systemPrompt = isRevision
+        ? `You are an expert email template designer. The user has an existing email template and wants you to revise it based on their suggestion.
+
+Rules:
+- Return valid JSON only: { "subject": "...", "content": "..." }
+- "content" must be complete HTML suitable for email (inline styles, table-based layout if needed, max width ~600px).
+- Use placeholders like {{FirstName}}, {{LastName}}, {{CompanyName}}, {{Email}}, {{AgentName}}, {{BookingLink}} where appropriate.
+- Keep the revised template professional and on-brand.`
+        : `You are an expert email template designer. Generate a professional HTML email template based on the user's requirements.
+
+Rules:
+- Return valid JSON only: { "subject": "...", "content": "..." }
+- "subject" should be a clear, engaging email subject line (can use placeholders like {{FirstName}} or {{CompanyName}}).
+- "content" must be complete HTML suitable for email: use inline styles, table-based layout for compatibility, max width ~600px, responsive where possible.
+- Include placeholders for personalization: {{FirstName}}, {{LastName}}, {{CompanyName}}, {{Email}}, {{AgentName}}, {{BookingLink}}, {{PackageName}}, {{Price}} as relevant.
+- Write clean, well-structured HTML. No markdown.`;
+
+      const userMessage = isRevision
+        ? `Current subject: ${previousSubject || "(none)"}\n\nCurrent HTML content:\n${previousContent || "(empty)"}\n\nUser request: ${suggestion}`
+        : `Generate an email template for: ${prompt || "general marketing email"}`;
+
+      const response = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "gpt-4o",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userMessage },
+          ],
+          response_format: { type: "json_object" },
+          temperature: 0.6,
+          max_tokens: 4000,
+        }),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        console.error("OpenAI API error:", response.status, errText);
+        return res.status(500).json({
+          success: false,
+          message: "AI generation failed. Please try again.",
+        });
+      }
+
+      const data = await response.json();
+      const rawContent = data.choices?.[0]?.message?.content;
+      if (!rawContent) {
+        return res.status(500).json({
+          success: false,
+          message: "AI returned no content",
+        });
+      }
+
+      let parsed: { subject?: string; content?: string };
+      try {
+        parsed = JSON.parse(rawContent);
+      } catch {
+        return res.status(500).json({
+          success: false,
+          message: "AI returned invalid format",
+        });
+      }
+
+      res.json({
+        success: true,
+        subject: parsed.subject || "Email from {{CompanyName}}",
+        content: parsed.content || "",
+      });
+    } catch (error) {
+      console.error("AI email template generation error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to generate template",
+      });
+    }
+  });
+
   // Email automations (including lead status follow-up)
   app.get("/api/tenants/:tenantId/email-automations", async (req, res) => {
     try {
@@ -20268,13 +20400,38 @@ Happy travels! 🌍✈️`,
   app.get("/api/tenants/:tenantId/email-campaigns/stats", async (req, res) => {
     try {
       const { tenantId } = req.params;
+      const campaigns = await simpleStorage.getEmailCampaignsByTenant(
+        parseInt(tenantId)
+      );
 
-      // Generate realistic stats
+      const totalCampaigns = campaigns.length;
+      const sentCampaigns = campaigns.filter((c) => c.status === "sent");
+      const totalSent = sentCampaigns.reduce(
+        (sum, c) => sum + (Number(c.recipientCount) || 0),
+        0
+      );
+
+      const openRates = sentCampaigns
+        .map((c) => (c.openRate != null ? Number(c.openRate) : null))
+        .filter((r): r is number => r != null);
+      const avgOpenRate =
+        openRates.length > 0
+          ? (openRates.reduce((a, b) => a + b, 0) / openRates.length).toFixed(1)
+          : "0";
+
+      const clickRates = sentCampaigns
+        .map((c) => (c.clickRate != null ? Number(c.clickRate) : null))
+        .filter((r): r is number => r != null);
+      const avgClickRate =
+        clickRates.length > 0
+          ? (clickRates.reduce((a, b) => a + b, 0) / clickRates.length).toFixed(1)
+          : "0";
+
       const stats = {
-        totalCampaigns: 12,
-        totalSent: 2847,
-        avgOpenRate: "26.8",
-        avgClickRate: "5.4",
+        totalCampaigns,
+        totalSent,
+        avgOpenRate,
+        avgClickRate,
       };
 
       res.json(stats);

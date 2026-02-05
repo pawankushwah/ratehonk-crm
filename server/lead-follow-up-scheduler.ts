@@ -63,7 +63,9 @@ export async function processLeadFollowUpAutomations(): Promise<void> {
         for (const lead of leads) {
           if (!lead?.email || String(lead.email).trim() === "") continue;
 
-          const leadUpdatedAt = lead.updatedAt ?? lead.updated_at ? new Date(lead.updatedAt ?? lead.updated_at) : new Date(lead.createdAt ?? lead.created_at || 0);
+          const leadUpdatedAt = (lead.updatedAt ?? lead.updated_at)
+            ? new Date(lead.updatedAt ?? lead.updated_at)
+            : new Date((lead.createdAt ?? lead.created_at) || 0);
           const now = new Date();
           const daysInStatus = (now.getTime() - leadUpdatedAt.getTime()) / (24 * 60 * 60 * 1000);
           if (minDaysInStatus > 0 && daysInStatus < minDaysInStatus) continue;

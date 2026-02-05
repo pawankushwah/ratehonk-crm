@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Search, Users, User, CheckCircle2, X } from "lucide-react";
 import { useAuth } from "@/components/auth/auth-provider";
+import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 
 interface Recipient {
@@ -35,24 +36,24 @@ export function RecipientSelector({
   const [searchTerm, setSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState<"customers" | "leads">("customers");
 
-  // Fetch customers
+  // Fetch customers (use apiRequest so auth token is sent)
   const { data: customers = [], isLoading: isLoadingCustomers } = useQuery<any[]>({
     queryKey: [`/api/tenants/${tenant?.id}/customers`],
     queryFn: async () => {
-      const response = await fetch(`/api/tenants/${tenant?.id}/customers`);
-      if (!response.ok) throw new Error('Failed to fetch customers');
-      return response.json();
+      const response = await apiRequest("GET", `/api/tenants/${tenant?.id}/customers`);
+      const data = await response.json();
+      return Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
     },
     enabled: !!tenant?.id && activeTab === "customers",
   });
 
-  // Fetch leads
+  // Fetch leads (use apiRequest so auth token is sent)
   const { data: leads = [], isLoading: isLoadingLeads } = useQuery<any[]>({
     queryKey: [`/api/tenants/${tenant?.id}/leads`],
     queryFn: async () => {
-      const response = await fetch(`/api/tenants/${tenant?.id}/leads`);
-      if (!response.ok) throw new Error('Failed to fetch leads');
-      return response.json();
+      const response = await apiRequest("GET", `/api/tenants/${tenant?.id}/leads`);
+      const data = await response.json();
+      return Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
     },
     enabled: !!tenant?.id && activeTab === "leads",
   });
@@ -261,10 +262,16 @@ export function RecipientSelector({
                           )}
                           onClick={() => toggleRecipient(customer, "customer")}
                         >
-                          <Checkbox
-                            checked={selected}
-                            onCheckedChange={() => toggleRecipient(customer, "customer")}
-                          />
+                          <div
+                            className="flex shrink-0"
+                            onClick={(e) => e.stopPropagation()}
+                            onPointerDown={(e) => e.stopPropagation()}
+                          >
+                            <Checkbox
+                              checked={selected}
+                              onCheckedChange={() => toggleRecipient(customer, "customer")}
+                            />
+                          </div>
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium truncate">
                               {customer.name || `${customer.firstName || ""} ${customer.lastName || ""}`.trim() || "Unnamed"}
@@ -319,10 +326,16 @@ export function RecipientSelector({
                           )}
                           onClick={() => toggleRecipient(lead, "lead")}
                         >
-                          <Checkbox
-                            checked={selected}
-                            onCheckedChange={() => toggleRecipient(lead, "lead")}
-                          />
+                          <div
+                            className="flex shrink-0"
+                            onClick={(e) => e.stopPropagation()}
+                            onPointerDown={(e) => e.stopPropagation()}
+                          >
+                            <Checkbox
+                              checked={selected}
+                              onCheckedChange={() => toggleRecipient(lead, "lead")}
+                            />
+                          </div>
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium truncate">
                               {lead.name || `${lead.firstName || ""} ${lead.lastName || ""}`.trim() || "Unnamed"}
