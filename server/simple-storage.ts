@@ -5101,6 +5101,214 @@ async getAllLeadsByTenant(
     }
   }
 
+  async getEmailTemplateById(templateId: number) {
+    try {
+      const [row] = await sql`
+        SELECT id, tenant_id, name, category, subject, content, preview_text,
+               COALESCE(channel, 'email') as channel, is_default, is_active, created_at
+        FROM email_templates WHERE id = ${templateId}
+      `;
+      if (!row) return null;
+      return {
+        id: row.id,
+        tenantId: row.tenant_id,
+        name: row.name,
+        category: row.category,
+        subject: row.subject,
+        content: row.content,
+        previewText: row.preview_text,
+        channel: row.channel || "email",
+        isDefault: row.is_default,
+        isActive: row.is_active,
+        createdAt: row.created_at,
+      };
+    } catch (error) {
+      console.error("Error getting email template by id:", error);
+      throw error;
+    }
+  }
+
+  // Email automations (including lead status follow-up)
+  async getEmailAutomationsByTenant(tenantId: number) {
+    try {
+      const rows = await sql`
+        SELECT ea.id, ea.tenant_id as "tenantId", ea.name, ea.description,
+               ea.trigger_type as "triggerType", ea.trigger_conditions as "triggerConditions",
+               ea.is_active as "isActive", ea.email_template_id as "emailTemplateId",
+               ea.delay_hours as "delayHours", ea.created_at as "createdAt",
+               et.name as template_name, et.subject as template_subject
+        FROM email_automations ea
+        LEFT JOIN email_templates et ON et.id = ea.email_template_id
+        WHERE ea.tenant_id = ${tenantId}
+        ORDER BY ea.created_at DESC
+      `;
+      return rows.map((r: any) => ({
+        id: r.id,
+        tenantId: r.tenantId,
+        name: r.name,
+        description: r.description,
+        triggerType: r.triggerType,
+        triggerConditions: r.triggerConditions || {},
+        isActive: r.isActive,
+        emailTemplateId: r.emailTemplateId,
+        delayHours: r.delayHours ?? 0,
+        createdAt: r.createdAt,
+        templateName: r.template_name,
+        templateSubject: r.template_subject,
+      }));
+    } catch (error) {
+      console.error("Error getting email automations by tenant:", error);
+      throw error;
+    }
+  }
+
+  async createEmailAutomation(data: {
+    tenantId: number;
+    name: string;
+    description?: string;
+    triggerType: string;
+    triggerConditions: Record<string, unknown>;
+    isActive?: boolean;
+    emailTemplateId?: number;
+    delayHours?: number;
+  }) {
+    try {
+      const [row] = await sql`
+        INSERT INTO email_automations (
+          tenant_id, name, description, trigger_type, trigger_conditions,
+          is_active, email_template_id, delay_hours
+        ) VALUES (
+          ${data.tenantId}, ${data.name}, ${data.description ?? null},
+          ${data.triggerType}, ${JSON.stringify(data.triggerConditions || {})},
+          ${data.isActive !== false}, ${data.emailTemplateId ?? null}, ${data.delayHours ?? 0}
+        )
+        RETURNING *
+      `;
+      if (!row) throw new Error("Insert failed");
+      return {
+        id: row.id,
+        tenantId: row.tenant_id,
+        name: row.name,
+        description: row.description,
+        triggerType: row.trigger_type,
+        triggerConditions: row.trigger_conditions || {},
+        isActive: row.is_active,
+        emailTemplateId: row.email_template_id,
+        delayHours: row.delay_hours ?? 0,
+        createdAt: row.created_at,
+      };
+    } catch (error) {
+      console.error("Error creating email automation:", error);
+      throw error;
+    }
+  }
+
+  async updateEmailAutomation(id: number, updates: Partial<{
+    name: string;
+    description: string;
+    triggerType: string;
+    triggerConditions: Record<string, unknown>;
+    isActive: boolean;
+    emailTemplateId: number;
+    delayHours: number;
+  }>) {
+    try {
+      const triggerConditionsVal = updates.triggerConditions !== undefined ? updates.triggerConditions : undefined;
+      const [row] = await sql`
+        UPDATE email_automations SET
+          name = COALESCE(${updates.name}, name),
+          description = COALESCE(${updates.description}, description),
+          trigger_type = COALESCE(${updates.triggerType}, trigger_type),
+          trigger_conditions = COALESCE(${triggerConditionsVal}, trigger_conditions),
+          is_active = COALESCE(${updates.isActive}, is_active),
+          email_template_id = COALESCE(${updates.emailTemplateId}, email_template_id),
+          delay_hours = COALESCE(${updates.delayHours}, delay_hours)
+        WHERE id = ${id}
+        RETURNING *
+      `;
+      if (!row) return null;
+      return {
+        id: row.id,
+        tenantId: row.tenant_id,
+        name: row.name,
+        description: row.description,
+        triggerType: row.trigger_type,
+        triggerConditions: row.trigger_conditions || {},
+        isActive: row.is_active,
+        emailTemplateId: row.email_template_id,
+        delayHours: row.delay_hours ?? 0,
+        createdAt: row.created_at,
+      };
+    } catch (error) {
+      console.error("Error updating email automation:", error);
+      throw error;
+    }
+  }
+
+  async getEmailAutomationById(id: number) {
+    try {
+      const [row] = await sql`
+        SELECT * FROM email_automations WHERE id = ${id}
+      `;
+      if (!row) return null;
+      return {
+        id: row.id,
+        tenantId: row.tenant_id,
+        name: row.name,
+        description: row.description,
+        triggerType: row.trigger_type,
+        triggerConditions: row.trigger_conditions || {},
+        isActive: row.is_active,
+        emailTemplateId: row.email_template_id,
+        delayHours: row.delay_hours ?? 0,
+        createdAt: row.created_at,
+      };
+    } catch (error) {
+      console.error("Error getting email automation by id:", error);
+      throw error;
+    }
+  }
+
+  async recordLeadAutomationSend(tenantId: number, leadId: number, emailAutomationId: number) {
+    try {
+      await sql`
+        INSERT INTO lead_automation_sends (tenant_id, lead_id, email_automation_id)
+        VALUES (${tenantId}, ${leadId}, ${emailAutomationId})
+      `;
+    } catch (error) {
+      console.error("Error recording lead automation send:", error);
+      throw error;
+    }
+  }
+
+  async getLastLeadAutomationSend(tenantId: number, leadId: number, emailAutomationId: number): Promise<Date | null> {
+    try {
+      const [row] = await sql`
+        SELECT sent_at FROM lead_automation_sends
+        WHERE tenant_id = ${tenantId} AND lead_id = ${leadId} AND email_automation_id = ${emailAutomationId}
+        ORDER BY sent_at DESC LIMIT 1
+      `;
+      return row?.sent_at ? new Date(row.sent_at) : null;
+    } catch (error) {
+      console.error("Error getting last lead automation send:", error);
+      throw error;
+    }
+  }
+
+  async getTenantSettingLeadFollowUpEnabled(tenantId: number): Promise<boolean> {
+    try {
+      const [row] = await sql`
+        SELECT lead_follow_up_automations_enabled
+        FROM tenant_settings
+        WHERE tenant_id = ${tenantId}
+      `;
+      if (!row) return true;
+      return row.lead_follow_up_automations_enabled !== false;
+    } catch {
+      return true;
+    }
+  }
+
   // Settings management methods
   async updateTenant(tenantId: number, tenantData: any) {
     try {

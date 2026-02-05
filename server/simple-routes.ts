@@ -19947,6 +19947,75 @@ Please improve this email.`;
     }
   });
 
+  // Email automations (including lead status follow-up)
+  app.get("/api/tenants/:tenantId/email-automations", async (req, res) => {
+    try {
+      const { tenantId } = req.params;
+      const automations = await simpleStorage.getEmailAutomationsByTenant(parseInt(tenantId));
+      res.json(automations);
+    } catch (error) {
+      console.error("Get email automations error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post("/api/tenants/:tenantId/email-automations", async (req, res) => {
+    try {
+      const { tenantId } = req.params;
+      const body = req.body;
+      const data = {
+        tenantId: parseInt(tenantId),
+        name: body.name,
+        description: body.description,
+        triggerType: body.triggerType,
+        triggerConditions: body.triggerConditions ?? {},
+        isActive: body.isActive !== false,
+        emailTemplateId: body.emailTemplateId ?? null,
+        delayHours: body.delayHours ?? 0,
+      };
+      const automation = await simpleStorage.createEmailAutomation(data);
+      res.status(201).json(automation);
+    } catch (error) {
+      console.error("Create email automation error:", error);
+      res.status(500).json({ message: "Failed to create automation" });
+    }
+  });
+
+  app.put("/api/tenants/:tenantId/email-automations/:automationId", async (req, res) => {
+    try {
+      const { automationId } = req.params;
+      const body = req.body;
+      const updates: any = {};
+      if (body.name !== undefined) updates.name = body.name;
+      if (body.description !== undefined) updates.description = body.description;
+      if (body.triggerType !== undefined) updates.triggerType = body.triggerType;
+      if (body.triggerConditions !== undefined) updates.triggerConditions = body.triggerConditions;
+      if (body.isActive !== undefined) updates.isActive = body.isActive;
+      if (body.emailTemplateId !== undefined) updates.emailTemplateId = body.emailTemplateId;
+      if (body.delayHours !== undefined) updates.delayHours = body.delayHours;
+      const automation = await simpleStorage.updateEmailAutomation(parseInt(automationId), updates);
+      if (!automation) return res.status(404).json({ message: "Automation not found" });
+      res.json(automation);
+    } catch (error) {
+      console.error("Update email automation error:", error);
+      res.status(500).json({ message: "Failed to update automation" });
+    }
+  });
+
+  app.patch("/api/tenants/:tenantId/email-automations/:automationId/toggle", async (req, res) => {
+    try {
+      const { automationId } = req.params;
+      const automation = await simpleStorage.getEmailAutomationById(parseInt(automationId));
+      if (!automation) return res.status(404).json({ message: "Automation not found" });
+      const newActive = !automation.isActive;
+      await simpleStorage.updateEmailAutomation(parseInt(automationId), { isActive: newActive });
+      res.json({ isActive: newActive });
+    } catch (error) {
+      console.error("Toggle email automation error:", error);
+      res.status(500).json({ message: "Failed to toggle automation" });
+    }
+  });
+
   // Create dummy templates for testing
   app.post("/api/tenants/:tenantId/email-templates/create-dummy", async (req, res) => {
     try {

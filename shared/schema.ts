@@ -106,6 +106,8 @@ export const tenantSettings = pgTable("tenant_settings", {
   customerWelcomeMessage: text("customer_welcome_message").default("Welcome! Thank you for choosing us. We're excited to serve you!"),
   // Lead Auto-Assignment Settings
   autoAssignmentPriorityRoleId: integer("auto_assignment_priority_role_id").references(() => roles.id),
+  // Lead follow-up email automations (enable/disable at tenant level)
+  leadFollowUpAutomationsEnabled: boolean("lead_follow_up_automations_enabled").default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -650,12 +652,21 @@ export const emailAutomations = pgTable("email_automations", {
   tenantId: integer("tenant_id").notNull().references(() => tenants.id),
   name: text("name").notNull(),
   description: text("description"),
-  triggerType: text("trigger_type").notNull(), // customer_signup, booking_confirmed, lead_created, date_based, behavior_based
-  triggerConditions: json("trigger_conditions").notNull(), // specific conditions for trigger
+  triggerType: text("trigger_type").notNull(), // customer_signup, booking_confirmed, lead_created, lead_status_follow_up, date_based, behavior_based
+  triggerConditions: json("trigger_conditions").notNull(), // e.g. { leadStatus, intervalDays, minDaysInStatus } for lead_status_follow_up
   isActive: boolean("is_active").default(true).notNull(),
   emailTemplateId: integer("email_template_id").references(() => emailTemplates.id),
   delayHours: integer("delay_hours").default(0), // delay before sending
   createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Track when we sent an automation email to a lead (for follow-up interval enforcement)
+export const leadAutomationSends = pgTable("lead_automation_sends", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+  leadId: integer("lead_id").notNull(),
+  emailAutomationId: integer("email_automation_id").notNull().references(() => emailAutomations.id),
+  sentAt: timestamp("sent_at").defaultNow().notNull(),
 });
 
 // Email segments for advanced targeting
@@ -1265,6 +1276,11 @@ export const insertEmailAutomationSchema = createInsertSchema(emailAutomations).
   createdAt: true,
 });
 
+export const insertLeadAutomationSendSchema = createInsertSchema(leadAutomationSends).omit({
+  id: true,
+  sentAt: true,
+});
+
 export const insertEmailSegmentSchema = createInsertSchema(emailSegments).omit({
   id: true,
   createdAt: true,
@@ -1374,6 +1390,9 @@ export type InsertEmailLog = z.infer<typeof insertEmailLogSchema>;
 
 export type EmailAutomation = typeof emailAutomations.$inferSelect;
 export type InsertEmailAutomation = z.infer<typeof insertEmailAutomationSchema>;
+
+export type LeadAutomationSend = typeof leadAutomationSends.$inferSelect;
+export type InsertLeadAutomationSend = z.infer<typeof insertLeadAutomationSendSchema>;
 
 export type EmailSegment = typeof emailSegments.$inferSelect;
 export type InsertEmailSegment = z.infer<typeof insertEmailSegmentSchema>;

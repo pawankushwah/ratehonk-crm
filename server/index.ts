@@ -566,5 +566,13 @@ app.use((req, res, next) => {
     console.error("Failed to start campaign scheduler:", error);
   }
 
+  // Start lead follow-up automation scheduler
+  try {
+    const { startLeadFollowUpScheduler } = await import("./lead-follow-up-scheduler");
+    startLeadFollowUpScheduler();
+  } catch (error) {
+    console.error("Failed to start lead follow-up scheduler:", error);
+  }
+
   // Server already started above before Vite setup
 })();
