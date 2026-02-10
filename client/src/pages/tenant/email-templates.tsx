@@ -13,10 +13,11 @@ import { useAuth } from "@/components/auth/auth-provider";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { Link } from "wouter";
 import { 
   Plus, Search, Mail, MessageSquare, Smartphone, 
   Edit, Trash2, Eye, Copy, MoreHorizontal,
-  FileText
+  FileText, Palette, ExternalLink
 } from "lucide-react";
 import { TemplateBuilder } from "@/components/campaigns/TemplateBuilder";
 import { format } from "date-fns";
@@ -175,6 +176,14 @@ export default function EmailTemplates() {
               Email Templates
             </h1>
             <div className="flex gap-3 ml-auto">
+              <Link href="/canva-setup">
+                <Button variant="outline" className="gap-2" style={{ borderColor: '#00C4CC', color: '#00a8af' }}>
+                  <span className="flex h-5 w-5 items-center justify-center rounded text-white text-xs font-bold" style={{ background: 'linear-gradient(135deg, #00C4CC 0%, #7B2FDE 100%)' }}>
+                    C
+                  </span>
+                  Canva
+                </Button>
+              </Link>
               <Button
                 variant="outline"
                 onClick={async () => {
@@ -223,6 +232,32 @@ export default function EmailTemplates() {
         </div>
 
         <div className="p-8 space-y-6">
+          {/* Canva integration card */}
+          <Card className="overflow-hidden border-0 bg-gradient-to-r from-cyan-50 to-purple-50 dark:from-cyan-950/30 dark:to-purple-950/30">
+            <CardContent className="p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-4">
+                <div className="h-12 w-12 rounded-lg flex items-center justify-center text-white font-bold text-xl shrink-0" style={{ background: 'linear-gradient(135deg, #00C4CC 0%, #7B2FDE 100%)' }}>
+                  C
+                </div>
+                <div>
+                  <h3 className="font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+                    <Palette className="h-4 w-4" />
+                    Design with Canva
+                  </h3>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-0.5">
+                    Create graphics and branded email designs in Canva, then use them in your templates.
+                  </p>
+                </div>
+              </div>
+              <Link href="/canva-setup">
+                <Button variant="outline" className="gap-2 shrink-0" style={{ borderColor: '#00C4CC' }}>
+                  <ExternalLink className="h-4 w-4" />
+                  Set up Canva
+                </Button>
+              </Link>
+            </CardContent>
+          </Card>
+
           {/* Filters */}
           <div className="flex flex-col sm:flex-row gap-4">
             <div className="relative flex-1">
