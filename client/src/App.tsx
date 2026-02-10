@@ -106,6 +106,7 @@ import WhatsAppMessaging from "@/pages/tenant/whatsapp-messages";
 import WhatsAppDevices from "@/pages/tenant/whatsapp-devices";
 import WhatsAppDeviceConnect from "@/pages/tenant/whatsapp-device-connect";
 import WhatsAppSetup from "@/pages/tenant/whatsapp-setup";
+import CanvaSetup from "@/pages/tenant/canva-setup";
 // Portfolio import
 import Portfolio from "@/pages/portfolio";
 import GstSettings from "@/pages/tenant/gst-settings";
@@ -520,6 +521,12 @@ function Router() {
         <Route path="/whatsapp-setup">
           <ProtectedRoute>
             <WhatsAppSetup />
+          </ProtectedRoute>
+        </Route>
+
+        <Route path="/canva-setup">
+          <ProtectedRoute>
+            <CanvaSetup />
           </ProtectedRoute>
         </Route>
 

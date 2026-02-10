@@ -5269,7 +5269,35 @@ async getAllLeadsByTenant(
     }
   }
 
+  private async ensureLeadAutomationSendsTable(): Promise<void> {
+    try {
+      const [exists] = await sql`
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'lead_automation_sends'
+      `;
+      if (!exists) {
+        await sql`
+          CREATE TABLE lead_automation_sends (
+            id SERIAL PRIMARY KEY,
+            tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+            lead_id INTEGER NOT NULL,
+            email_automation_id INTEGER NOT NULL REFERENCES email_automations(id),
+            sent_at TIMESTAMP NOT NULL DEFAULT NOW()
+          )
+        `;
+        await sql`
+          CREATE INDEX IF NOT EXISTS idx_lead_automation_sends_tenant_lead_automation
+          ON lead_automation_sends(tenant_id, lead_id, email_automation_id)
+        `;
+        console.log("Created lead_automation_sends table");
+      }
+    } catch (e) {
+      console.warn("ensureLeadAutomationSendsTable:", e);
+    }
+  }
+
   async recordLeadAutomationSend(tenantId: number, leadId: number, emailAutomationId: number) {
+    await this.ensureLeadAutomationSendsTable();
     try {
       await sql`
         INSERT INTO lead_automation_sends (tenant_id, lead_id, email_automation_id)
@@ -5282,6 +5310,7 @@ async getAllLeadsByTenant(
   }
 
   async getLastLeadAutomationSend(tenantId: number, leadId: number, emailAutomationId: number): Promise<Date | null> {
+    await this.ensureLeadAutomationSendsTable();
     try {
       const [row] = await sql`
         SELECT sent_at FROM lead_automation_sends

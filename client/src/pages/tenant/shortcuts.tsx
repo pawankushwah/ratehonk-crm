@@ -215,6 +215,13 @@ const TikTokIcon = ({ className }: { className?: string }) => (
   </div>
 );
 
+// Canva icon - teal/cyan brand color
+const CanvaIcon = ({ className }: { className?: string }) => (
+  <div className={`${className || 'h-10 w-10'} rounded flex items-center justify-center text-white font-bold text-lg`} style={{ background: 'linear-gradient(135deg, #00C4CC 0%, #7B2FDE 100%)' }}>
+    C
+  </div>
+);
+
 // Social media links with icons - icons sit directly on white card
 // All links point to internal settings pages
 const socialLinks = [
@@ -260,6 +267,12 @@ const socialLinks = [
     name: "TikTok",
     href: "/coming-soon/tiktok",
     icon: TikTokIcon,
+    isCustom: true,
+  },
+  {
+    name: "Canva",
+    href: "/canva-setup",
+    icon: CanvaIcon,
     isCustom: true,
   },
 ];

@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import ReactQuill from "react-quill";
+import "react-quill/dist/quill.snow.css";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -19,18 +21,6 @@ import {
   Eye,
   X,
   Plus,
-  Bold,
-  Italic,
-  Underline,
-  List,
-  Link as LinkIcon,
-  Image as ImageIcon,
-  AlignLeft,
-  AlignCenter,
-  AlignRight,
-  Type,
-  Palette,
-  Layout,
   Sparkles,
   RefreshCw,
   Copy,
@@ -143,6 +133,33 @@ export function TemplateBuilder({
     return { count: content.length, max: maxChars, parts };
   };
 
+  // Rich text editor modules and formats for email (canvas-style editor)
+  const quillModules = useMemo(
+    () => ({
+      toolbar: [
+        [{ header: [1, 2, 3, false] }],
+        ["bold", "italic", "underline", "strike"],
+        [{ list: "ordered" }, { list: "bullet" }],
+        ["link", "image"],
+        [{ align: [] }],
+        [{ color: [] }, { background: [] }],
+        ["blockquote", "code-block"],
+        ["clean"],
+      ],
+    }),
+    []
+  );
+
+  const quillFormats = [
+    "header",
+    "bold", "italic", "underline", "strike",
+    "list", "bullet",
+    "link", "image",
+    "align",
+    "color", "background",
+    "blockquote", "code-block",
+  ];
+
   return (
     <div className="flex h-full min-h-0">
       {/* Left Sidebar - Builder Tools */}
@@ -179,35 +196,6 @@ export function TemplateBuilder({
             </Button>
           </div>
         </div>
-
-        <Separator />
-
-        {/* Formatting Tools (for Email) */}
-        {selectedChannel === "email" && (
-          <div>
-            <Label className="text-sm font-semibold mb-2 block">Formatting</Label>
-            <div className="grid grid-cols-2 gap-2">
-              <Button type="button" variant="outline" size="sm" title="Bold">
-                <Bold className="h-4 w-4" />
-              </Button>
-              <Button type="button" variant="outline" size="sm" title="Italic">
-                <Italic className="h-4 w-4" />
-              </Button>
-              <Button type="button" variant="outline" size="sm" title="Underline">
-                <Underline className="h-4 w-4" />
-              </Button>
-              <Button type="button" variant="outline" size="sm" title="List">
-                <List className="h-4 w-4" />
-              </Button>
-              <Button type="button" variant="outline" size="sm" title="Link">
-                <LinkIcon className="h-4 w-4" />
-              </Button>
-              <Button type="button" variant="outline" size="sm" title="Image">
-                <ImageIcon className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-        )}
 
         <Separator />
 
@@ -532,16 +520,20 @@ export function TemplateBuilder({
                 ) : (
                   <div className="space-y-2">
                     {selectedChannel === "email" ? (
-                      <Textarea
-                        {...form.register("content")}
-                        placeholder="Write your email template here... You can use HTML tags for formatting."
-                        className="min-h-[400px] font-mono"
-                        rows={20}
-                        onChange={(e) => {
-                          form.setValue("content", e.target.value);
-                          setContent(e.target.value);
-                        }}
-                      />
+                      <div className="rounded-lg border bg-white min-h-[400px] [&_.quill]:min-h-[360px] [&_.ql-container]:min-h-[320px] [&_.ql-editor]:min-h-[300px]">
+                        <ReactQuill
+                          theme="snow"
+                          value={form.watch("content") || ""}
+                          onChange={(value) => {
+                            form.setValue("content", value);
+                            setContent(value);
+                          }}
+                          modules={quillModules}
+                          formats={quillFormats}
+                          placeholder="Write your email template here. Use the toolbar for formatting, links, and images."
+                          className="template-content-editor"
+                        />
+                      </div>
                     ) : (
                       <Textarea
                         {...form.register("content")}
