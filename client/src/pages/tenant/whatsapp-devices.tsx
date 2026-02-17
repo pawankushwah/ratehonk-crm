@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Layout } from "@/components/layout/layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -38,7 +39,13 @@ import {
   MessageCircle,
   Star,
   LogOut,
+  ExternalLink,
+  Smartphone,
+  Info,
+  FileText,
 } from "lucide-react";
+import { Link } from "wouter";
+import { formatDistanceToNow } from "date-fns";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -68,10 +75,99 @@ export default function WhatsAppDevices() {
   });
   const { toast } = useToast();
 
-  // Fetch devices
+  // ========== NEW: WhatsApp Panel - Sessions from provider API ==========
+  const { data: sessionsData, isLoading: sessionsLoading, isError: sessionsError } = useQuery<{ sessions?: any[] } | any[]>({
+    queryKey: ["/api/whatsapp/sessions"],
+    retry: false,
+  });
+
+  const sessions: any[] = Array.isArray(sessionsData)
+    ? sessionsData
+    : (sessionsData as any)?.sessions ?? (sessionsData as any)?.data ?? [];
+
+  const [showCreateSessionDialog, setShowCreateSessionDialog] = useState(false);
+  const [createSessionForm, setCreateSessionForm] = useState({
+    connectionType: "official",
+    phoneNumberId: "",
+    accessToken: "",
+    businessAccountId: "",
+  });
+
+  const createSessionMutation = useMutation({
+    mutationFn: async (data: typeof createSessionForm) => {
+      const res = await apiRequest("POST", "/api/whatsapp/sessions/create", {
+        connectionType: data.connectionType,
+        businessApiCredentials: {
+          phoneNumberId: data.phoneNumberId,
+          accessToken: data.accessToken,
+          businessAccountId: data.businessAccountId,
+        },
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/whatsapp/sessions"] });
+      setShowCreateSessionDialog(false);
+      setCreateSessionForm({
+        connectionType: "official",
+        phoneNumberId: "",
+        accessToken: "",
+        businessAccountId: "",
+      });
+      toast({ title: "Success", description: "Session created successfully" });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to create session",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleCreateSession = () => {
+    if (!createSessionForm.phoneNumberId || !createSessionForm.accessToken || !createSessionForm.businessAccountId) {
+      toast({
+        title: "Validation Error",
+        description: "Phone Number ID, Access Token, and Business Account ID are required",
+        variant: "destructive",
+      });
+      return;
+    }
+    createSessionMutation.mutate(createSessionForm);
+  };
+
+  const deleteSessionMutation = useMutation({
+    mutationFn: async (sessionId: string) => {
+      const res = await apiRequest("DELETE", `/api/whatsapp/sessions/${encodeURIComponent(sessionId)}`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/whatsapp/sessions"] });
+      toast({ title: "Success", description: "Session deleted successfully" });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete session",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleDeleteSession = (sessionId: string) => {
+    if (window.confirm("Are you sure you want to delete this session?")) {
+      deleteSessionMutation.mutate(sessionId);
+    }
+  };
+
+  /* LEGACY: devices query - commented, using sessions API
   const { data: devices = [], isLoading } = useQuery<WhatsappDevice[]>({
     queryKey: ["/api/whatsapp-devices"],
   });
+  */
+  const devices: WhatsappDevice[] = [];
+  const isLoading = false;
 
   // Add device mutation
   const addDeviceMutation = useMutation({
@@ -476,7 +572,296 @@ export default function WhatsAppDevices() {
   return (
     <Layout>
       <div className="min-h-screen bg-gray-50 p-6">
-        {/* Breadcrumb */}
+        {/* ========== NEW: WhatsApp Panel - Sessions ========== */}
+        <div className="mb-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-semibold text-gray-700">
+                Connect WhatsApp Business
+              </h1>
+              <p className="text-sm text-gray-500 mt-1">
+                Manage your WhatsApp Business phone numbers and connections.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  try {
+                    const res = await apiRequest("GET", "/api/whatsapp/panel-login-url");
+                    const data = await res.json();
+                    if (data?.url) {
+                      window.open(data.url, "_blank");
+                      toast({ title: "Opened", description: "WhatsApp panel opened in new tab" });
+                    } else {
+                      toast({ title: "Error", description: data?.error || "Failed to get panel URL", variant: "destructive" });
+                    }
+                  } catch (e: any) {
+                    toast({ title: "Error", description: e?.message || "Failed to open WhatsApp panel", variant: "destructive" });
+                  }
+                }}
+                disabled={sessionsError}
+                title="Open WhatsApp panel in new tab for auto-login"
+              >
+                <ExternalLink className="h-4 w-4 mr-2" />
+                Go to WhatsApp Panel
+              </Button>
+              <Button
+                onClick={() => setShowCreateSessionDialog(true)}
+                className="bg-orange-500 hover:bg-orange-600"
+                data-testid="button-create-session"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Connect WhatsApp Business
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        {/* Added Phone Numbers - WhatsApp panel style */}
+        <div className="mb-2">
+          <h2 className="text-lg font-medium text-gray-700">Added Phone Numbers</h2>
+          <p className="text-sm text-gray-500">
+            Phone numbers already added and available for use.
+          </p>
+        </div>
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+          <table className="w-full">
+            <thead className="bg-gray-50 border-b border-gray-200">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Verified Name
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Phone Number
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Status
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  # Phone Number ID
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <span className="inline-flex items-center gap-1">
+                    Waba ID
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Info className="h-3.5 w-3 text-gray-400 cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent>WhatsApp Business Account ID</TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </span>
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  WABA Name
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Quality
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Last Active
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {sessionsLoading ? (
+                <tr>
+                  <td colSpan={9} className="px-6 py-8 text-center text-gray-500">
+                    Loading sessions...
+                  </td>
+                </tr>
+              ) : sessionsError ? (
+                <tr>
+                  <td colSpan={9} className="px-6 py-8 text-center text-amber-600">
+                    WhatsApp is not configured or provider API error. Complete setup at WhatsApp Setup first.
+                  </td>
+                </tr>
+              ) : sessions.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="px-6 py-8 text-center text-gray-500">
+                    No active sessions. Click &quot;Create Session&quot; to add one.
+                  </td>
+                </tr>
+              ) : (
+                sessions.map((session: any, idx: number) => {
+                  const di = session.deviceInfo;
+                  const statusDisplay = session.status === "connected"
+                    ? (di?.codeVerificationStatus ?? "Connected")
+                    : "Disconnected";
+                  const qualityColor =
+                    di?.qualityRating === "GREEN"
+                      ? "bg-green-500"
+                      : di?.qualityRating === "YELLOW"
+                        ? "bg-yellow-500"
+                        : di?.qualityRating === "RED"
+                          ? "bg-red-500"
+                          : "bg-gray-400";
+                  return (
+                    <tr key={session.id ?? session.sessionId ?? idx} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        <span className="inline-flex items-center gap-2">
+                          <Smartphone className="h-4 w-4 text-orange-500" />
+                          {di?.verifiedName ?? di?.wabaName ?? "-"}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                        {di?.displayPhoneNumber ?? di?.phoneNumber ?? "-"}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <Badge
+                          variant={session.status === "connected" ? "default" : "secondary"}
+                          className={
+                            session.status === "connected"
+                              ? "bg-orange-500 hover:bg-orange-600"
+                              : "bg-gray-400"
+                          }
+                        >
+                          <CheckCircle2 className="h-3.5 w-3 mr-1" />
+                          {statusDisplay}
+                        </Badge>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-600">
+                        {di?.apiPhoneNumberId ? `# ${di.apiPhoneNumberId}` : "-"}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                        {di?.wabaId ?? "-"}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                        {di?.wabaName ?? "-"}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {di?.qualityRating ? (
+                          <Badge className={`${qualityColor} text-white`}>
+                            {di.qualityRating}
+                          </Badge>
+                        ) : (
+                          "-"
+                        )}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {session.lastActive
+                          ? formatDistanceToNow(new Date(session.lastActive), { addSuffix: true })
+                          : "-"}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center gap-1">
+                          {di?.apiPhoneNumberId ? (
+                            <Link
+                              href={`/whatsapp-templates?phoneNumberId=${encodeURIComponent(di.apiPhoneNumberId)}&verifiedName=${encodeURIComponent(di.verifiedName || di.wabaName || "Templates")}`}
+                            >
+                              <Button variant="ghost" size="icon" className="h-8 w-8" title="Templates">
+                                <FileText className="h-4 w-4" />
+                              </Button>
+                            </Link>
+                          ) : (
+                            <Button variant="ghost" size="icon" className="h-8 w-8 opacity-50 cursor-not-allowed" title="Templates (connect first)">
+                              <FileText className="h-4 w-4" />
+                            </Button>
+                          )}
+                          <Button variant="ghost" size="icon" className="h-8 w-8" title="Open">
+                            <ExternalLink className="h-4 w-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-orange-600" title="Add">
+                            <Plus className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-red-600"
+                            title="Delete"
+                            onClick={() => handleDeleteSession(session.sessionId)}
+                            disabled={deleteSessionMutation.isPending}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Create Session Dialog */}
+        <Dialog open={showCreateSessionDialog} onOpenChange={setShowCreateSessionDialog}>
+          <DialogContent data-testid="dialog-create-session" className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Create Session</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div>
+                <Label htmlFor="connectionType">Connection Type</Label>
+                <Input
+                  id="connectionType"
+                  value={createSessionForm.connectionType}
+                  onChange={(e) =>
+                    setCreateSessionForm({ ...createSessionForm, connectionType: e.target.value })
+                  }
+                  placeholder="official"
+                />
+                <p className="text-xs text-gray-500 mt-1">e.g. official</p>
+              </div>
+              <div>
+                <Label htmlFor="phoneNumberId">Phone Number ID *</Label>
+                <Input
+                  id="phoneNumberId"
+                  value={createSessionForm.phoneNumberId}
+                  onChange={(e) =>
+                    setCreateSessionForm({ ...createSessionForm, phoneNumberId: e.target.value })
+                  }
+                  placeholder="YOUR_PHONE_NUMBER_ID"
+                />
+              </div>
+              <div>
+                <Label htmlFor="accessToken">Access Token *</Label>
+                <Textarea
+                  id="accessToken"
+                  value={createSessionForm.accessToken}
+                  onChange={(e) =>
+                    setCreateSessionForm({ ...createSessionForm, accessToken: e.target.value })
+                  }
+                  placeholder="YOUR_META_ACCESS_TOKEN"
+                  rows={3}
+                  className="font-mono text-sm"
+                />
+              </div>
+              <div>
+                <Label htmlFor="businessAccountId">Business Account ID (WABA ID) *</Label>
+                <Input
+                  id="businessAccountId"
+                  value={createSessionForm.businessAccountId}
+                  onChange={(e) =>
+                    setCreateSessionForm({ ...createSessionForm, businessAccountId: e.target.value })
+                  }
+                  placeholder="YOUR_WABA_ID"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowCreateSessionDialog(false)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={handleCreateSession}
+                className="bg-indigo-600 hover:bg-indigo-700"
+                disabled={createSessionMutation.isPending}
+              >
+                {createSessionMutation.isPending ? "Creating..." : "Create Session"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* LEGACY: Devices table - disabled (use sessions API) */}
+        {false && (
+        <>
         <div className="mb-6">
           <div className="flex items-center gap-2 text-sm text-gray-500 mb-2">
             <span className="text-indigo-600">Devices</span>
@@ -484,205 +869,42 @@ export default function WhatsAppDevices() {
             <span>Whatsapp Account</span>
           </div>
           <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-semibold text-gray-700">
-              Whatsapp Account
-            </h1>
-            <Button
-              onClick={() => setShowAddDialog(true)}
-              className="bg-indigo-600 hover:bg-indigo-700"
-              data-testid="button-add-device"
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              Add Device
+            <h1 className="text-2xl font-semibold text-gray-700">Whatsapp Account</h1>
+            <Button onClick={() => setShowAddDialog(true)} className="bg-indigo-600 hover:bg-indigo-700" data-testid="button-add-device">
+              <Plus className="h-4 w-4 mr-2" /> Add Device
             </Button>
           </div>
         </div>
-
-        {/* Devices Table */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
           <table className="w-full">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  NUMBER
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  WEBHOOK URL
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  SENT
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  STATUS
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  LIVE CHAT
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  OPTIONS
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  ACTION
-                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">NUMBER</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">WEBHOOK URL</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">SENT</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">STATUS</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">LIVE CHAT</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">OPTIONS</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ACTION</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {isLoading ? (
-                <tr>
-                  <td
-                    colSpan={7}
-                    className="px-6 py-8 text-center text-gray-500"
-                  >
-                    Loading devices...
-                  </td>
-                </tr>
+                <tr><td colSpan={7} className="px-6 py-8 text-center text-gray-500">Loading devices...</td></tr>
               ) : devices.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan={7}
-                    className="px-6 py-8 text-center text-gray-500"
-                  >
-                    No devices added yet. Click "Add Device" to get started.
-                  </td>
-                </tr>
+                <tr><td colSpan={7} className="px-6 py-8 text-center text-gray-500">No devices added yet. Click "Add Device" to get started.</td></tr>
               ) : (
-                devices.map((device) => (
-                  <tr
-                    key={device.id}
-                    className="hover:bg-gray-50"
-                    data-testid={`row-device-${device.id}`}
-                  >
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      <div className="flex items-center gap-2">
-                        {device.number}
-                        {device.isDefault && (
-                          <Badge className="bg-yellow-400 text-gray-900 hover:bg-yellow-400">
-                            <Star className="h-3 w-3 mr-1 fill-current" />
-                            Default
-                          </Badge>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      <Input
-                        value={device.webhookUrl || "webhook"}
-                        readOnly
-                        className="max-w-xs"
-                        data-testid={`input-webhook-${device.id}`}
-                      />
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {device.messagesSent}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span
-                        className={`inline-flex items-center gap-2 ${
-                          device.status === "connected"
-                            ? "text-green-600"
-                            : "text-red-600"
-                        }`}
-                      >
-                        <span
-                          className={`h-2 w-2 rounded-full ${
-                            device.status === "connected"
-                              ? "bg-green-500"
-                              : "bg-red-500"
-                          }`}
-                        />
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleOpenLiveChat(device)}
-                                disabled={device.status !== "connected"}
-                                data-testid={`button-live-chat-${device.id}`}
-                              >
-                                <MessageCircle className="h-4 w-4 mr-2" />
-                                Live Chat
-                              </Button>
-                            </span>
-                          </TooltipTrigger>
-                          {device.status !== "connected" && (
-                            <TooltipContent>
-                              <p>
-                                {device.status === "scanning"
-                                  ? "Please scan the QR code to connect this device first"
-                                  : "Device must be connected to use Live Chat"}
-                              </p>
-                            </TooltipContent>
-                          )}
-                        </Tooltip>
-                      </TooltipProvider>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleOpenOptions(device)}
-                        data-testid={`button-options-${device.id}`}
-                      >
-                        <Settings className="h-4 w-4 mr-2" />
-                        Options
-                      </Button>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            data-testid={`button-action-${device.id}`}
-                          >
-                            <MoreVertical className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            onClick={() => handleConnectDevice(device)}
-                          >
-                            <QrCode className="h-4 w-4 mr-2" />
-                            Connect Via QR
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => handleSetDefaultDevice(device)}
-                            disabled={device.status !== "connected"}
-                          >
-                            <Star className={`h-4 w-4 mr-2 ${device.isDefault ? "fill-yellow-400 text-yellow-400" : ""}`} />
-                            {device.isDefault ? "Default Device" : "Set as Default"}
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => handleLogoutDevice(device)}
-                            disabled={device.status !== "connected"}
-                            className="text-orange-600"
-                            data-testid="button-logout-device"
-                          >
-                            <LogOut className="h-4 w-4 mr-2" />
-                            Logout Device
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => handleDeleteDevice(device)}
-                            className="text-red-600"
-                          >
-                            <Trash2 className="h-4 w-4 mr-2" />
-                            Delete
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </td>
-                  </tr>
-                ))
+                devices.map((device) => <tr key={device.id}>...</tr>)
               )}
             </tbody>
           </table>
         </div>
+        </>
+        )}
 
-        {/* Add Device Dialog */}
+        {/* LEGACY: Add Device, Options, QR dialogs - disabled (use sessions API) */}
+        {false && (
+        <>
         <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
           <DialogContent data-testid="dialog-add-device">
             <DialogHeader>
@@ -984,6 +1206,8 @@ export default function WhatsAppDevices() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        </>
+        )}
 
       </div>
     </Layout>

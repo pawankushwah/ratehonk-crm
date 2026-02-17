@@ -105,6 +105,7 @@ import WhatsApp from "@/pages/tenant/whatsapp";
 import WhatsAppMessaging from "@/pages/tenant/whatsapp-messages";
 import WhatsAppDevices from "@/pages/tenant/whatsapp-devices";
 import WhatsAppDeviceConnect from "@/pages/tenant/whatsapp-device-connect";
+import WhatsAppTemplates from "@/pages/tenant/whatsapp-templates";
 import WhatsAppSetup from "@/pages/tenant/whatsapp-setup";
 import CanvaSetup from "@/pages/tenant/canva-setup";
 // Portfolio import
@@ -515,6 +516,12 @@ function Router() {
         <Route path="/whatsapp-devices/:id/connect">
           <ProtectedRoute>
             <WhatsAppDeviceConnect />
+          </ProtectedRoute>
+        </Route>
+
+        <Route path="/whatsapp-templates">
+          <ProtectedRoute>
+            <WhatsAppTemplates />
           </ProtectedRoute>
         </Route>
 

@@ -1,3 +1,7 @@
+/* ========== LEGACY: Original WhatsApp Messaging page - commented out, using new Inbox UI ==========
+ * Set USE_NEW_INBOX = false below to restore the legacy Test Message UI.
+ * The new inbox uses WHATSAPP_PROVIDER_API_BASE APIs: sessions, chats, messages, send-text.
+ ========== */
 import { useState, useRef, useCallback } from "react";
 import {
   MessageSquare,
@@ -47,6 +51,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Users, UserPlus } from "lucide-react";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import type { UploadResult } from "@uppy/core";
+import { WhatsAppInboxPanel } from "@/components/whatsapp/WhatsAppInboxPanel";
+
+const USE_NEW_INBOX = true; // Set to false to restore legacy Test Message UI
 
 // Fix for default marker icons in Leaflet
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -1749,6 +1756,16 @@ export default function WhatsAppMessaging() {
     }
   };
 
+  // NEW: WhatsApp Inbox UI (provider API)
+  if (USE_NEW_INBOX) {
+    return (
+      <Layout>
+        <WhatsAppInboxPanel />
+      </Layout>
+    );
+  }
+
+  // LEGACY: Original Test Message UI (commented out - kept for reference)
   return (
     <Layout>
       <div className="min-h-screen bg-gray-50 p-6">

@@ -5,8 +5,12 @@ import type { InsertWhatsappConfig } from "@shared/schema";
 import { spawn } from "child_process";
 import { z } from "zod";
 
-// WhatsApp Business API base URL
+// WhatsApp Business API base URL (legacy provider - commented out in setup, still used for send-message etc.)
 const WHATSAPP_API_BASE = "https://whatsappbusiness.ratehonk.com";
+
+// New WhatsApp CRM Provider API base URL (from .env)
+const WHATSAPP_PROVIDER_API_BASE =
+  process.env.WHATSAPP_PROVIDER_API_BASE || "";
 
 // Helper function to send WhatsApp welcome messages
 export async function sendWhatsAppWelcomeMessage(
@@ -311,14 +315,21 @@ const WhatsAppAPIResponseSchema = z.object({
 });
 
 export function registerWhatsAppRoutes(app: Express) {
-  // Setup WhatsApp tenant - Call external API and save credentials
+  // Setup WhatsApp tenant - Call new CRM provider API
   app.post("/api/whatsapp/setup", authenticate, async (req: any, res) => {
     try {
       const tenantId = req.user.tenantId;
-      const { email, expire = 30, limitDevice = 10 } = req.body;
+      const { email } = req.body;
 
       if (!email) {
         return res.status(400).json({ error: "Email is required" });
+      }
+
+      if (!WHATSAPP_PROVIDER_API_BASE) {
+        return res.status(500).json({
+          error:
+            "WhatsApp provider API is not configured. Set WHATSAPP_PROVIDER_API_BASE in .env",
+        });
       }
 
       // Check if WhatsApp is already configured for this tenant
@@ -330,134 +341,79 @@ export function registerWhatsAppRoutes(app: Express) {
         });
       }
 
-      // Call external WhatsApp API to create tenant using cURL
-      const requestBody = JSON.stringify({
+      // Fetch tenant for organizationName and phone
+      const tenant = await storage.getTenant(tenantId);
+      const firstName = req.user.first_name || req.user.firstName || "";
+      const lastName = req.user.last_name || req.user.lastName || "";
+      const organizationName =
+        tenant?.company_name || tenant?.companyName || "Organization";
+      const phone =
+        req.user.phone ||
+        tenant?.contact_phone ||
+        tenant?.contactPhone ||
+        "";
+
+      const payload = {
         email,
-        tenant_id: tenantId,
-        expire,
-        limit_device: limitDevice,
-      });
+        tenant_id: String(tenantId),
+        firstName: firstName || "User",
+        lastName: lastName || "Name",
+        organizationName,
+        phone: phone || "0000000000",
+      };
 
-      console.log("Calling WhatsApp API to create tenant for email:", email);
+      console.log(
+        "Calling new WhatsApp provider API to register for email:",
+        email,
+      );
 
-      // Use spawn for safer execution (prevents command injection)
-      const data: any = await new Promise((resolve, reject) => {
-        const curl = spawn("curl", [
-          "-X",
-          "POST",
-          `${WHATSAPP_API_BASE}/create-tenant`,
-          "-H",
-          "Content-Type: application/json",
-          "-d",
-          requestBody,
-          "-s",
-          "-w",
-          "\n%{http_code}",
-          "--max-time",
-          "30", // 30 second timeout
-        ]);
+      const response = await fetch(
+        `${WHATSAPP_PROVIDER_API_BASE}/api/crm/register`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(30000),
+        },
+      );
 
-        let stdout = "";
-        let stderr = "";
+      const responseData = await response.json();
 
-        // Set a safety timeout
-        const timeout = setTimeout(() => {
-          curl.kill();
-          reject(new Error("WhatsApp API request timed out after 30 seconds"));
-        }, 31000); // Slightly longer than curl's max-time
-
-        curl.stdout.on("data", (data) => {
-          stdout += data.toString();
+      if (!response.ok) {
+        const message =
+          responseData?.message ||
+          responseData?.errors ||
+          `API request failed with status ${response.status}`;
+        return res.status(response.status).json({
+          error: typeof message === "string" ? message : JSON.stringify(message),
         });
+      }
 
-        curl.stderr.on("data", (data) => {
-          stderr += data.toString();
+      const { user, apiKey, subscription } = responseData;
+
+      if (!user || !apiKey) {
+        return res.status(500).json({
+          error: "Invalid response from WhatsApp provider API",
         });
+      }
 
-        curl.on("close", (code) => {
-          clearTimeout(timeout); // Clear the timeout when process completes
+      // Map externalUserId: new API returns UUID string, schema expects integer - use hash of UUID
+      const externalUserId = user.id
+        ? parseInt(user.id.replace(/-/g, "").slice(0, 8), 16) || 1
+        : 1;
 
-          if (code !== 0) {
-            console.error("cURL stderr:", stderr);
-            reject(new Error(`cURL process exited with code ${code}`));
-            return;
-          }
-
-          try {
-            // Parse response - last line is HTTP status code
-            const lines = stdout.trim().split("\n");
-            const httpCode = lines[lines.length - 1];
-            const responseBody = lines.slice(0, -1).join("\n");
-
-            console.log("WhatsApp API HTTP Status:", httpCode);
-
-            if (!httpCode.match(/^2\d{2}$/)) {
-              const errorData = responseBody
-                ? JSON.parse(responseBody)
-                : { message: "Unknown error" };
-              reject(
-                new Error(
-                  errorData.message ||
-                    `API request failed with status ${httpCode}`,
-                ),
-              );
-              return;
-            }
-
-            const parsedData = JSON.parse(responseBody);
-
-            // Validate response structure using Zod schema
-            const validationResult =
-              WhatsAppAPIResponseSchema.safeParse(parsedData);
-
-            if (!validationResult.success) {
-              console.error(
-                "WhatsApp API response validation failed:",
-                validationResult.error.format(),
-              );
-              reject(
-                new Error(
-                  `Invalid response from WhatsApp API: ${validationResult.error.errors.map((e) => e.message).join(", ")}`,
-                ),
-              );
-              return;
-            }
-
-            const data = validationResult.data;
-
-            if (!data.status || !data.data) {
-              reject(
-                new Error(data.message || "Failed to create WhatsApp tenant"),
-              );
-              return;
-            }
-
-            resolve(data);
-          } catch (error) {
-            reject(error);
-          }
-        });
-
-        curl.on("error", (error) => {
-          clearTimeout(timeout); // Clear the timeout on error
-          console.error("cURL spawn error:", error);
-          reject(error);
-        });
-      });
-
-      // Save configuration to database
       const whatsappConfig: InsertWhatsappConfig = {
         tenantId,
-        username: data.data.username,
-        email: data.data.email,
-        apiKey: data.data.api_key,
-        chunkBlast: data.data.chunk_blast || 0,
-        subscriptionExpired: data.data.subscription_expired
-          ? new Date(data.data.subscription_expired)
+        username: `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email,
+        email: user.email,
+        apiKey,
+        chunkBlast: 0,
+        subscriptionExpired: subscription?.currentPeriodEnd
+          ? new Date(subscription.currentPeriodEnd)
           : null,
-        activeSubscription: data.data.active_subscription || "active",
-        limitDevice: data.data.limit_device,
-        externalUserId: data.data.id,
+        activeSubscription: subscription?.status || "active",
+        limitDevice: 10,
+        externalUserId,
       };
 
       console.log("Saving WhatsApp config for tenant:", tenantId);
@@ -482,6 +438,127 @@ export function registerWhatsAppRoutes(app: Express) {
       });
     }
   });
+
+  /* ========== LEGACY: Previous WhatsApp API (create-tenant via cURL) - commented out ==========
+  app.post("/api/whatsapp/setup", authenticate, async (req: any, res) => {
+    try {
+      const tenantId = req.user.tenantId;
+      const { email, expire = 30, limitDevice = 10 } = req.body;
+
+      if (!email) {
+        return res.status(400).json({ error: "Email is required" });
+      }
+
+      const existingConfig = await storage.getWhatsAppConfigByTenant(tenantId);
+      if (existingConfig) {
+        return res.status(400).json({
+          error:
+            "WhatsApp is already configured for this tenant. Please delete the existing configuration first.",
+        });
+      }
+
+      const requestBody = JSON.stringify({
+        email,
+        tenant_id: tenantId,
+        expire,
+        limit_device: limitDevice,
+      });
+
+      console.log("Calling WhatsApp API to create tenant for email:", email);
+
+      const data: any = await new Promise((resolve, reject) => {
+        const curl = spawn("curl", [
+          "-X", "POST",
+          `${WHATSAPP_API_BASE}/create-tenant`,
+          "-H", "Content-Type: application/json",
+          "-d", requestBody,
+          "-s", "-w", "\n%{http_code}",
+          "--max-time", "30",
+        ]);
+
+        let stdout = "";
+        let stderr = "";
+        const timeout = setTimeout(() => {
+          curl.kill();
+          reject(new Error("WhatsApp API request timed out after 30 seconds"));
+        }, 31000);
+
+        curl.stdout.on("data", (data) => { stdout += data.toString(); });
+        curl.stderr.on("data", (data) => { stderr += data.toString(); });
+
+        curl.on("close", (code) => {
+          clearTimeout(timeout);
+          if (code !== 0) {
+            console.error("cURL stderr:", stderr);
+            reject(new Error(`cURL process exited with code ${code}`));
+            return;
+          }
+          try {
+            const lines = stdout.trim().split("\n");
+            const httpCode = lines[lines.length - 1];
+            const responseBody = lines.slice(0, -1).join("\n");
+            if (!httpCode.match(/^2\d{2}$/)) {
+              const errorData = responseBody ? JSON.parse(responseBody) : { message: "Unknown error" };
+              reject(new Error(errorData.message || `API request failed with status ${httpCode}`));
+              return;
+            }
+            const parsedData = JSON.parse(responseBody);
+            const validationResult = WhatsAppAPIResponseSchema.safeParse(parsedData);
+            if (!validationResult.success) {
+              reject(new Error(`Invalid response: ${validationResult.error.errors.map((e) => e.message).join(", ")}`));
+              return;
+            }
+            const data = validationResult.data;
+            if (!data.status || !data.data) {
+              reject(new Error(data.message || "Failed to create WhatsApp tenant"));
+              return;
+            }
+            resolve(data);
+          } catch (error) {
+            reject(error);
+          }
+        });
+
+        curl.on("error", (error) => {
+          clearTimeout(timeout);
+          reject(error);
+        });
+      });
+
+      const whatsappConfig: InsertWhatsappConfig = {
+        tenantId,
+        username: data.data.username,
+        email: data.data.email,
+        apiKey: data.data.api_key,
+        chunkBlast: data.data.chunk_blast || 0,
+        subscriptionExpired: data.data.subscription_expired ? new Date(data.data.subscription_expired) : null,
+        activeSubscription: data.data.active_subscription || "active",
+        limitDevice: data.data.limit_device,
+        externalUserId: data.data.id,
+      };
+
+      const savedConfig = await storage.createWhatsAppConfig(whatsappConfig);
+
+      res.json({
+        success: true,
+        message: "WhatsApp integration configured successfully",
+        config: {
+          id: savedConfig.id,
+          username: savedConfig.username,
+          email: savedConfig.email,
+          subscriptionExpired: savedConfig.subscriptionExpired,
+          activeSubscription: savedConfig.activeSubscription,
+          limitDevice: savedConfig.limitDevice,
+        },
+      });
+    } catch (error: any) {
+      console.error("WhatsApp setup error:", error);
+      res.status(500).json({
+        error: error.message || "Failed to configure WhatsApp integration",
+      });
+    }
+  });
+  ========== END LEGACY ========== */
 
   // Get WhatsApp configuration for current tenant
   app.get("/api/whatsapp/config", authenticate, async (req: any, res) => {
@@ -551,7 +628,597 @@ export function registerWhatsAppRoutes(app: Express) {
     }
   });
 
-  // Get all WhatsApp devices for current tenant
+  // ========== NEW: WhatsApp Panel API - Sessions (proxy to provider) ==========
+  // GET /api/whatsapp/panel-login-url - Return URL for WhatsApp panel auto-login (crm-login?apiKey=...&redirect=/settings)
+  app.get("/api/whatsapp/panel-login-url", authenticate, async (req: any, res) => {
+    try {
+      const tenantId = req.user.tenantId;
+      const config = await storage.getWhatsAppConfigByTenant(tenantId);
+      if (!config) {
+        return res.status(400).json({
+          error: "WhatsApp is not configured. Please complete the setup first.",
+        });
+      }
+      if (!WHATSAPP_PROVIDER_API_BASE) {
+        return res.status(500).json({
+          error: "WhatsApp provider API is not configured. Set WHATSAPP_PROVIDER_API_BASE in .env",
+        });
+      }
+      const base = WHATSAPP_PROVIDER_API_BASE.replace(/\/$/, "");
+      const redirect = (req.query.redirect as string) || "/dashboard";
+      const panelUrl = `${base}/crm-login?apiKey=${encodeURIComponent(config.apiKey)}&redirect=${encodeURIComponent(redirect)}`;
+      res.json({ url: panelUrl });
+    } catch (error: any) {
+      console.error("Error building WhatsApp panel login URL:", error);
+      res.status(500).json({
+        error: error.message || "Failed to get WhatsApp panel URL",
+      });
+    }
+  });
+
+  // GET /api/whatsapp/sessions - List active sessions from provider
+  app.get("/api/whatsapp/sessions", authenticate, async (req: any, res) => {
+    try {
+      const tenantId = req.user.tenantId;
+      const config = await storage.getWhatsAppConfigByTenant(tenantId);
+      if (!config) {
+        return res.status(400).json({
+          error: "WhatsApp is not configured. Please complete the setup first.",
+        });
+      }
+      if (!WHATSAPP_PROVIDER_API_BASE) {
+        return res.status(500).json({
+          error: "WhatsApp provider API is not configured. Set WHATSAPP_PROVIDER_API_BASE in .env",
+        });
+      }
+
+      const response = await fetch(
+        `${WHATSAPP_PROVIDER_API_BASE}/api/project/v1/sessions`,
+        {
+          method: "GET",
+          headers: {
+            "X-API-Key": config.apiKey,
+            "Content-Type": "application/json",
+          },
+          signal: AbortSignal.timeout(30000),
+        },
+      );
+
+      const data = await response.json();
+      if (!response.ok) {
+        return res.status(response.status).json(
+          data || { error: `Provider API error: ${response.status}` },
+        );
+      }
+
+      res.json(data);
+    } catch (error: any) {
+      console.error("Error fetching WhatsApp sessions:", error);
+      res.status(500).json({
+        error: error.message || "Failed to fetch WhatsApp sessions",
+      });
+    }
+  });
+
+  // POST /api/whatsapp/sessions/create - Create new session via provider
+  app.post("/api/whatsapp/sessions/create", authenticate, async (req: any, res) => {
+    try {
+      const tenantId = req.user.tenantId;
+      const config = await storage.getWhatsAppConfigByTenant(tenantId);
+      if (!config) {
+        return res.status(400).json({
+          error: "WhatsApp is not configured. Please complete the setup first.",
+        });
+      }
+      if (!WHATSAPP_PROVIDER_API_BASE) {
+        return res.status(500).json({
+          error: "WhatsApp provider API is not configured. Set WHATSAPP_PROVIDER_API_BASE in .env",
+        });
+      }
+
+      const { connectionType, businessApiCredentials } = req.body;
+
+      if (!connectionType || !businessApiCredentials) {
+        return res.status(400).json({
+          error: "connectionType and businessApiCredentials are required",
+        });
+      }
+
+      const payload = {
+        connectionType: connectionType || "official",
+        businessApiCredentials: {
+          phoneNumberId: businessApiCredentials.phoneNumberId || "",
+          accessToken: businessApiCredentials.accessToken || "",
+          businessAccountId: businessApiCredentials.businessAccountId || "",
+        },
+      };
+
+      const response = await fetch(
+        `${WHATSAPP_PROVIDER_API_BASE}/api/sessions/create`,
+        {
+          method: "POST",
+          headers: {
+            "X-API-Key": config.apiKey,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(30000),
+        },
+      );
+
+      const data = await response.json();
+      if (!response.ok) {
+        return res.status(response.status).json(
+          data || { error: `Provider API error: ${response.status}` },
+        );
+      }
+
+      res.json(data);
+    } catch (error: any) {
+      console.error("Error creating WhatsApp session:", error);
+      res.status(500).json({
+        error: error.message || "Failed to create WhatsApp session",
+      });
+    }
+  });
+
+  // DELETE /api/whatsapp/sessions/:sessionId - Delete session via provider
+  app.delete("/api/whatsapp/sessions/:sessionId", authenticate, async (req: any, res) => {
+    try {
+      const tenantId = req.user.tenantId;
+      const config = await storage.getWhatsAppConfigByTenant(tenantId);
+      if (!config) {
+        return res.status(400).json({
+          error: "WhatsApp is not configured. Please complete the setup first.",
+        });
+      }
+      if (!WHATSAPP_PROVIDER_API_BASE) {
+        return res.status(500).json({
+          error: "WhatsApp provider API is not configured. Set WHATSAPP_PROVIDER_API_BASE in .env",
+        });
+      }
+
+      const sessionId = req.params.sessionId;
+      if (!sessionId) {
+        return res.status(400).json({ error: "sessionId is required" });
+      }
+
+      const response = await fetch(
+        `${WHATSAPP_PROVIDER_API_BASE}/api/project/v1/sessions/${encodeURIComponent(sessionId)}`,
+        {
+          method: "DELETE",
+          headers: {
+            "X-API-Key": config.apiKey,
+            "Content-Type": "application/json",
+          },
+          signal: AbortSignal.timeout(30000),
+        },
+      );
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        return res.status(response.status).json(
+          data || { error: `Provider API error: ${response.status}` },
+        );
+      }
+
+      res.json(data);
+    } catch (error: any) {
+      console.error("Error deleting WhatsApp session:", error);
+      res.status(500).json({
+        error: error.message || "Failed to delete WhatsApp session",
+      });
+    }
+  });
+
+  // GET /api/whatsapp/templates - List templates from provider (phoneNumberId required)
+  app.get("/api/whatsapp/templates", authenticate, async (req: any, res) => {
+    try {
+      const tenantId = req.user.tenantId;
+      const config = await storage.getWhatsAppConfigByTenant(tenantId);
+      if (!config) {
+        return res.status(400).json({
+          error: "WhatsApp is not configured. Please complete the setup first.",
+        });
+      }
+      if (!WHATSAPP_PROVIDER_API_BASE) {
+        return res.status(500).json({
+          error: "WhatsApp provider API is not configured. Set WHATSAPP_PROVIDER_API_BASE in .env",
+        });
+      }
+
+      const phoneNumberId = req.query.phoneNumberId as string;
+      const organizationId = req.query.organizationId as string | undefined;
+
+      if (!phoneNumberId) {
+        return res.status(400).json({
+          error: "phoneNumberId is required",
+        });
+      }
+
+      const params = new URLSearchParams({ phoneNumberId });
+      if (organizationId) params.append("organizationId", organizationId);
+
+      const response = await fetch(
+        `${WHATSAPP_PROVIDER_API_BASE}/api/project/v1/templates?${params.toString()}`,
+        {
+          method: "GET",
+          headers: {
+            "X-API-Key": config.apiKey,
+            "Content-Type": "application/json",
+          },
+          signal: AbortSignal.timeout(30000),
+        },
+      );
+
+      const data = await response.json();
+      if (!response.ok) {
+        return res.status(response.status).json(
+          data || { error: `Provider API error: ${response.status}` },
+        );
+      }
+
+      res.json(data);
+    } catch (error: any) {
+      console.error("Error fetching WhatsApp templates:", error);
+      res.status(500).json({
+        error: error.message || "Failed to fetch WhatsApp templates",
+      });
+    }
+  });
+
+  // GET /api/whatsapp/tags - List tags from provider
+  app.get("/api/whatsapp/tags", authenticate, async (req: any, res) => {
+    try {
+      const tenantId = req.user.tenantId;
+      const config = await storage.getWhatsAppConfigByTenant(tenantId);
+      if (!config) {
+        return res.status(400).json({
+          error: "WhatsApp is not configured. Please complete the setup first.",
+        });
+      }
+      if (!WHATSAPP_PROVIDER_API_BASE) {
+        return res.status(500).json({
+          error: "WhatsApp provider API is not configured. Set WHATSAPP_PROVIDER_API_BASE in .env",
+        });
+      }
+
+      const organizationId = req.query.organizationId as string | undefined;
+      const params = new URLSearchParams();
+      if (organizationId) params.append("organizationId", organizationId);
+
+      const response = await fetch(
+        `${WHATSAPP_PROVIDER_API_BASE}/api/project/v1/tags${params.toString() ? `?${params.toString()}` : ""}`,
+        {
+          method: "GET",
+          headers: {
+            "X-API-Key": config.apiKey,
+            "Content-Type": "application/json",
+          },
+          signal: AbortSignal.timeout(30000),
+        },
+      );
+
+      const data = await response.json();
+      if (!response.ok) {
+        return res.status(response.status).json(
+          data || { error: `Provider API error: ${response.status}` },
+        );
+      }
+      res.json(data);
+    } catch (error: any) {
+      console.error("Error fetching WhatsApp tags:", error);
+      res.status(500).json({
+        error: error.message || "Failed to fetch tags",
+      });
+    }
+  });
+
+  // GET /api/whatsapp/contacts - List contacts (filter by tags using tag names)
+  app.get("/api/whatsapp/contacts", authenticate, async (req: any, res) => {
+    try {
+      const tenantId = req.user.tenantId;
+      const config = await storage.getWhatsAppConfigByTenant(tenantId);
+      if (!config) {
+        return res.status(400).json({
+          error: "WhatsApp is not configured. Please complete the setup first.",
+        });
+      }
+      if (!WHATSAPP_PROVIDER_API_BASE) {
+        return res.status(500).json({
+          error: "WhatsApp provider API is not configured. Set WHATSAPP_PROVIDER_API_BASE in .env",
+        });
+      }
+      const sessionId = req.query.sessionId as string | undefined;
+      const tags = req.query.tags as string | undefined; // comma-separated tag names
+      const params = new URLSearchParams();
+      if (sessionId) params.append("sessionId", sessionId);
+      if (tags) params.append("tags", tags);
+
+      const response = await fetch(
+        `${WHATSAPP_PROVIDER_API_BASE}/api/project/v1/contacts${params.toString() ? `?${params.toString()}` : ""}`,
+        {
+          method: "GET",
+          headers: {
+            "X-API-Key": config.apiKey,
+            "Content-Type": "application/json",
+          },
+          signal: AbortSignal.timeout(30000),
+        },
+      );
+
+      const data = await response.json();
+      if (!response.ok) {
+        return res.status(response.status).json(
+          data || { error: `Provider API error: ${response.status}` },
+        );
+      }
+      res.json(data);
+    } catch (error: any) {
+      console.error("Error fetching WhatsApp contacts:", error);
+      res.status(500).json({
+        error: error.message || "Failed to fetch contacts",
+      });
+    }
+  });
+
+  // GET /api/whatsapp/chats - List conversations (inbox list)
+  app.get("/api/whatsapp/chats", authenticate, async (req: any, res) => {
+    try {
+      const tenantId = req.user.tenantId;
+      const config = await storage.getWhatsAppConfigByTenant(tenantId);
+      if (!config) {
+        return res.status(400).json({
+          error: "WhatsApp is not configured. Please complete the setup first.",
+        });
+      }
+      if (!WHATSAPP_PROVIDER_API_BASE) {
+        return res.status(500).json({
+          error: "WhatsApp provider API is not configured. Set WHATSAPP_PROVIDER_API_BASE in .env",
+        });
+      }
+      const sessionId = req.query.sessionId as string | undefined;
+      const organizationId = req.query.organizationId as string | undefined;
+      const params = new URLSearchParams();
+      if (sessionId) params.append("sessionId", sessionId);
+      if (organizationId) params.append("organizationId", organizationId);
+
+      const response = await fetch(
+        `${WHATSAPP_PROVIDER_API_BASE}/api/project/v1/chats${params.toString() ? `?${params.toString()}` : ""}`,
+        {
+          method: "GET",
+          headers: {
+            "X-API-Key": config.apiKey,
+            "Content-Type": "application/json",
+          },
+          signal: AbortSignal.timeout(30000),
+        },
+      );
+
+      const data = await response.json();
+      if (!response.ok) {
+        return res.status(response.status).json(
+          data || { error: `Provider API error: ${response.status}` },
+        );
+      }
+      res.json(data);
+    } catch (error: any) {
+      console.error("Error fetching WhatsApp chats:", error);
+      res.status(500).json({
+        error: error.message || "Failed to fetch chats",
+      });
+    }
+  });
+
+  // GET /api/whatsapp/messages - List messages for one chat
+  app.get("/api/whatsapp/messages", authenticate, async (req: any, res) => {
+    try {
+      const tenantId = req.user.tenantId;
+      const config = await storage.getWhatsAppConfigByTenant(tenantId);
+      if (!config) {
+        return res.status(400).json({
+          error: "WhatsApp is not configured. Please complete the setup first.",
+        });
+      }
+      if (!WHATSAPP_PROVIDER_API_BASE) {
+        return res.status(500).json({
+          error: "WhatsApp provider API is not configured. Set WHATSAPP_PROVIDER_API_BASE in .env",
+        });
+      }
+      const chatId = req.query.chatId as string;
+      if (!chatId) {
+        return res.status(400).json({ error: "chatId is required" });
+      }
+
+      const params = new URLSearchParams({ chatId });
+      const response = await fetch(
+        `${WHATSAPP_PROVIDER_API_BASE}/api/project/v1/messages?${params.toString()}`,
+        {
+          method: "GET",
+          headers: {
+            "X-API-Key": config.apiKey,
+            "Content-Type": "application/json",
+          },
+          signal: AbortSignal.timeout(30000),
+        },
+      );
+
+      const data = await response.json();
+      if (!response.ok) {
+        return res.status(response.status).json(
+          data || { error: `Provider API error: ${response.status}` },
+        );
+      }
+      res.json(data);
+    } catch (error: any) {
+      console.error("Error fetching WhatsApp messages:", error);
+      res.status(500).json({
+        error: error.message || "Failed to fetch messages",
+      });
+    }
+  });
+
+  // POST /api/whatsapp/messages/send-text - Send text reply
+  app.post("/api/whatsapp/messages/send-text", authenticate, async (req: any, res) => {
+    try {
+      const tenantId = req.user.tenantId;
+      const config = await storage.getWhatsAppConfigByTenant(tenantId);
+      if (!config) {
+        return res.status(400).json({
+          error: "WhatsApp is not configured. Please complete the setup first.",
+        });
+      }
+      if (!WHATSAPP_PROVIDER_API_BASE) {
+        return res.status(500).json({
+          error: "WhatsApp provider API is not configured. Set WHATSAPP_PROVIDER_API_BASE in .env",
+        });
+      }
+      const { sessionId, to, message } = req.body;
+      if (!sessionId || !to || !message) {
+        return res.status(400).json({
+          error: "sessionId, to, and message are required",
+        });
+      }
+
+      const response = await fetch(
+        `${WHATSAPP_PROVIDER_API_BASE}/api/project/v1/messages/send-text`,
+        {
+          method: "POST",
+          headers: {
+            "X-API-Key": config.apiKey,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ sessionId, to, message }),
+          signal: AbortSignal.timeout(30000),
+        },
+      );
+
+      const data = await response.json();
+      if (!response.ok) {
+        return res.status(response.status).json(
+          data || { error: `Provider API error: ${response.status}` },
+        );
+      }
+      res.json(data);
+    } catch (error: any) {
+      console.error("Error sending WhatsApp message:", error);
+      res.status(500).json({
+        error: error.message || "Failed to send message",
+      });
+    }
+  });
+
+  // POST /api/whatsapp/messages/send-media - Send media (image, document, etc.)
+  app.post("/api/whatsapp/messages/send-media", authenticate, async (req: any, res) => {
+    try {
+      const tenantId = req.user.tenantId;
+      const config = await storage.getWhatsAppConfigByTenant(tenantId);
+      if (!config) {
+        return res.status(400).json({
+          error: "WhatsApp is not configured. Please complete the setup first.",
+        });
+      }
+      if (!WHATSAPP_PROVIDER_API_BASE) {
+        return res.status(500).json({
+          error: "WhatsApp provider API is not configured. Set WHATSAPP_PROVIDER_API_BASE in .env",
+        });
+      }
+      const { sessionId, to, mediaType, url, caption } = req.body;
+      if (!sessionId || !to || !mediaType || !url) {
+        return res.status(400).json({
+          error: "sessionId, to, mediaType, and url are required",
+        });
+      }
+
+      const response = await fetch(
+        `${WHATSAPP_PROVIDER_API_BASE}/api/project/v1/messages/send-media`,
+        {
+          method: "POST",
+          headers: {
+            "X-API-Key": config.apiKey,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ sessionId, to, mediaType, url, caption }),
+          signal: AbortSignal.timeout(60000),
+        },
+      );
+
+      const data = await response.json();
+      if (!response.ok) {
+        return res.status(response.status).json(
+          data || { error: `Provider API error: ${response.status}` },
+        );
+      }
+      res.json(data);
+    } catch (error: any) {
+      console.error("Error sending WhatsApp media:", error);
+      res.status(500).json({
+        error: error.message || "Failed to send media",
+      });
+    }
+  });
+
+  // POST /api/whatsapp/messages/send-template - Send template message
+  app.post("/api/whatsapp/messages/send-template", authenticate, async (req: any, res) => {
+    try {
+      const tenantId = req.user.tenantId;
+      const config = await storage.getWhatsAppConfigByTenant(tenantId);
+      if (!config) {
+        return res.status(400).json({
+          error: "WhatsApp is not configured. Please complete the setup first.",
+        });
+      }
+      if (!WHATSAPP_PROVIDER_API_BASE) {
+        return res.status(500).json({
+          error: "WhatsApp provider API is not configured. Set WHATSAPP_PROVIDER_API_BASE in .env",
+        });
+      }
+      const { sessionId, to, templateName, templateLanguage, languageCode, templateParams, headerMediaUrl, headerImageUrl } = req.body;
+      if (!sessionId || !to || !templateName) {
+        return res.status(400).json({
+          error: "sessionId, to, and templateName are required",
+        });
+      }
+
+      const payload: any = { sessionId, to, templateName };
+      const lang = languageCode || templateLanguage || "en";
+      payload.languageCode = lang;
+      if (templateParams && Array.isArray(templateParams) && templateParams.length > 0) {
+        payload.templateParams = templateParams;
+      }
+      const headerUrl = headerImageUrl || headerMediaUrl;
+      if (headerUrl) payload.headerImageUrl = headerUrl;
+
+      const response = await fetch(
+        `${WHATSAPP_PROVIDER_API_BASE}/api/project/v1/messages/send-template`,
+        {
+          method: "POST",
+          headers: {
+            "X-API-Key": config.apiKey,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(30000),
+        },
+      );
+
+      const data = await response.json();
+      if (!response.ok) {
+        return res.status(response.status).json(
+          data || { error: `Provider API error: ${response.status}` },
+        );
+      }
+      res.json(data);
+    } catch (error: any) {
+      console.error("Error sending WhatsApp template:", error);
+      res.status(500).json({
+        error: error.message || "Failed to send template",
+      });
+    }
+  });
+  // ========== END NEW: WhatsApp Panel API ==========
+
+  // Get all WhatsApp devices for current tenant (legacy - used by other components)
   app.get("/api/whatsapp-devices", authenticate, async (req: any, res) => {
     try {
       const tenantId = req.user.tenantId;
