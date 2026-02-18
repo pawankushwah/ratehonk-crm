@@ -19158,6 +19158,12 @@ Please improve this email.`;
           enableCustomerWelcomeMessage: settings.enableCustomerWelcomeMessage ?? true,
           customerWelcomeMessage: settings.customerWelcomeMessage ||
             "Welcome! Thank you for choosing us. We're excited to serve you!",
+          leadWelcomeTemplateName: (settings as any).leadWelcomeTemplateName || null,
+          leadWelcomeTemplateLanguage: (settings as any).leadWelcomeTemplateLanguage || "en",
+          leadWelcomeTemplateSessionId: (settings as any).leadWelcomeTemplateSessionId || null,
+          customerWelcomeTemplateName: (settings as any).customerWelcomeTemplateName || null,
+          customerWelcomeTemplateLanguage: (settings as any).customerWelcomeTemplateLanguage || "en",
+          customerWelcomeTemplateSessionId: (settings as any).customerWelcomeTemplateSessionId || null,
         } : {
           enableLeadWelcomeMessage: true,
           leadWelcomeMessage:
@@ -19165,6 +19171,12 @@ Please improve this email.`;
           enableCustomerWelcomeMessage: true,
           customerWelcomeMessage:
             "Welcome! Thank you for choosing us. We're excited to serve you!",
+          leadWelcomeTemplateName: null,
+          leadWelcomeTemplateLanguage: "en",
+          leadWelcomeTemplateSessionId: null,
+          customerWelcomeTemplateName: null,
+          customerWelcomeTemplateLanguage: "en",
+          customerWelcomeTemplateSessionId: null,
         },
       );
     } catch (error) {
@@ -19189,6 +19201,12 @@ Please improve this email.`;
           leadWelcomeMessage,
           enableCustomerWelcomeMessage,
           customerWelcomeMessage,
+          leadWelcomeTemplateName,
+          leadWelcomeTemplateLanguage,
+          leadWelcomeTemplateSessionId,
+          customerWelcomeTemplateName,
+          customerWelcomeTemplateLanguage,
+          customerWelcomeTemplateSessionId,
         } = req.body;
 
         console.log(
@@ -19205,6 +19223,12 @@ Please improve this email.`;
             leadWelcomeMessage,
             enableCustomerWelcomeMessage,
             customerWelcomeMessage,
+            leadWelcomeTemplateName: leadWelcomeTemplateName || null,
+            leadWelcomeTemplateLanguage: leadWelcomeTemplateLanguage || "en",
+            leadWelcomeTemplateSessionId: leadWelcomeTemplateSessionId || null,
+            customerWelcomeTemplateName: customerWelcomeTemplateName || null,
+            customerWelcomeTemplateLanguage: customerWelcomeTemplateLanguage || "en",
+            customerWelcomeTemplateSessionId: customerWelcomeTemplateSessionId || null,
             autoAssignmentPriorityRoleId: req.body.autoAssignmentPriorityRoleId || null,
           },
         );

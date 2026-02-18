@@ -763,12 +763,6 @@ export default function WhatsAppDevices() {
                               <FileText className="h-4 w-4" />
                             </Button>
                           )}
-                          <Button variant="ghost" size="icon" className="h-8 w-8" title="Open">
-                            <ExternalLink className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-orange-600" title="Add">
-                            <Plus className="h-4 w-4" />
-                          </Button>
                           <Button
                             variant="ghost"
                             size="icon"

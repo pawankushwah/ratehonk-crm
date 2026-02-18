@@ -102,8 +102,14 @@ export const tenantSettings = pgTable("tenant_settings", {
   // WhatsApp Welcome Messages
   enableLeadWelcomeMessage: boolean("enable_lead_welcome_message").default(true),
   leadWelcomeMessage: text("lead_welcome_message").default("Hello! Thank you for your interest. Our team will get in touch with you shortly."),
+  leadWelcomeTemplateName: text("lead_welcome_template_name"),
+  leadWelcomeTemplateLanguage: text("lead_welcome_template_language").default("en"),
+  leadWelcomeTemplateSessionId: text("lead_welcome_template_session_id"),
   enableCustomerWelcomeMessage: boolean("enable_customer_welcome_message").default(true),
   customerWelcomeMessage: text("customer_welcome_message").default("Welcome! Thank you for choosing us. We're excited to serve you!"),
+  customerWelcomeTemplateName: text("customer_welcome_template_name"),
+  customerWelcomeTemplateLanguage: text("customer_welcome_template_language").default("en"),
+  customerWelcomeTemplateSessionId: text("customer_welcome_template_session_id"),
   // Lead Auto-Assignment Settings
   autoAssignmentPriorityRoleId: integer("auto_assignment_priority_role_id").references(() => roles.id),
   // Lead follow-up email automations (enable/disable at tenant level)

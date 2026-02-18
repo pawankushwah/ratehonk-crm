@@ -45,10 +45,28 @@ export function FloatingWhatsAppButton() {
       }
 
       if (!data.hasDefaultDevice) {
-        toast({
-          title: "No Default Device",
-          description: "Please set a default device first...",
-        });
+        // If provider panel URL is available, open it instead of redirecting
+        if (data.panelUrl) {
+          const popupWindow = window.open(
+            data.panelUrl,
+            "WhatsApp Panel",
+            "width=1000,height=700,scrollbars=yes,resizable=yes"
+          );
+          if (!popupWindow || popupWindow.closed || typeof popupWindow.closed === "undefined") {
+            window.open(data.panelUrl, "_blank");
+            toast({
+              title: "Popup Blocked",
+              description: "Opening WhatsApp panel in new tab instead.",
+            });
+          } else {
+            toast({
+              title: "WhatsApp Panel",
+              description: "Opening WhatsApp panel. Add a phone number in Settings if needed.",
+            });
+          }
+          return;
+        }
+        // No panel URL - redirect to devices page without showing the toast
         setLocation("/whatsapp-devices");
         return;
       }

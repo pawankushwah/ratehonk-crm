@@ -49,41 +49,6 @@ export async function sendWhatsAppWelcomeMessage(
       };
     }
 
-    // Get the welcome message template
-    const welcomeMessage =
-      messageType === "lead"
-        ? settings.leadWelcomeMessage
-        : settings.customerWelcomeMessage;
-
-    if (!welcomeMessage) {
-      return {
-        success: false,
-        error: "Welcome message template not configured",
-      };
-    }
-
-    // Get WhatsApp config
-    const config = await storage.getWhatsAppConfigByTenant(tenantId);
-    if (!config) {
-      return {
-        success: false,
-        error: "WhatsApp is not configured",
-      };
-    }
-
-    // Get default WhatsApp device
-    const devices = await storage.getWhatsAppDevicesByTenant(tenantId);
-    const defaultDevice = devices.find(
-      (d: any) => d.isDefault === true && d.status === "connected",
-    );
-
-    if (!defaultDevice) {
-      return {
-        success: false,
-        error: "No default WhatsApp device configured or device is not connected",
-      };
-    }
-
     // Validate phone number
     if (!phoneNumber || phoneNumber.trim() === "") {
       return {
@@ -92,78 +57,204 @@ export async function sendWhatsAppWelcomeMessage(
       };
     }
 
-    // Build request body for WhatsApp API
-    const requestBody = {
-      api_key: config.apiKey,
-      sender: defaultDevice.number,
-      number: phoneNumber.trim(),
-      message: welcomeMessage,
-    };
+    const settingsAny = settings as any;
+    const templateName =
+      messageType === "lead"
+        ? settingsAny.leadWelcomeTemplateName
+        : settingsAny.customerWelcomeTemplateName;
+    const templateLanguage =
+      messageType === "lead"
+        ? settingsAny.leadWelcomeTemplateLanguage || "en"
+        : settingsAny.customerWelcomeTemplateLanguage || "en";
+    const sessionId =
+      messageType === "lead"
+        ? settingsAny.leadWelcomeTemplateSessionId
+        : settingsAny.customerWelcomeTemplateSessionId;
 
-    console.log("Sending welcome message via WhatsApp API:", {
-      sender: defaultDevice.number,
-      recipient: phoneNumber,
-      messageLength: welcomeMessage.length,
-    });
+    // NEW: Use template message via provider API when template is configured
+    if (templateName && WHATSAPP_PROVIDER_API_BASE) {
+      const config = await storage.getWhatsAppConfigByTenant(tenantId);
+      if (!config) {
+        return { success: false, error: "WhatsApp is not configured" };
+      }
 
-    // Call WhatsApp Business API to send message
-    const response = await fetch(`${WHATSAPP_API_BASE}/send-message`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(requestBody),
-    });
+      // Resolve sessionId - use configured or fetch first available
+      let resolvedSessionId = sessionId;
+      if (!resolvedSessionId) {
+        const sessionsRes = await fetch(
+          `${WHATSAPP_PROVIDER_API_BASE}/api/project/v1/sessions`,
+          {
+            method: "GET",
+            headers: {
+              "X-API-Key": config.apiKey,
+              "Content-Type": "application/json",
+            },
+            signal: AbortSignal.timeout(10000),
+          },
+        );
+        const sessionsData = await sessionsRes.json();
+        const sessionsList = Array.isArray(sessionsData) ? sessionsData : sessionsData?.data ?? [];
+        resolvedSessionId = sessionsList[0]?.sessionId;
+      }
+      if (!resolvedSessionId) {
+        return {
+          success: false,
+          error: "No WhatsApp session available. Configure a session in WhatsApp Setup.",
+        };
+      }
 
-    const responseData = await response.json();
-    console.log("WhatsApp API welcome message response:", responseData);
+      // Get entity name for template param {{1}}
+      let entityName = "Customer";
+      if (entityId) {
+        try {
+          if (messageType === "lead") {
+            const lead = await storage.getLeadById(entityId, tenantId);
+            entityName = lead?.name || (lead as any)?.firstName || (lead as any)?.first_name || "Lead";
+          } else {
+            const customer = await storage.getCustomerById(entityId, tenantId);
+            entityName = customer?.name || "Customer";
+          }
+        } catch {
+          entityName = messageType === "lead" ? "Lead" : "Customer";
+        }
+      }
 
-    if (responseData.status === true) {
-      // Update message count for the device
-      await storage.incrementDeviceMessageCount(defaultDevice.id);
+      // Fetch template structure to get expected param count (avoids #132000 "params mismatch" error)
+      let templateParams: string[] = [];
+      try {
+        const sessionsRes = await fetch(
+          `${WHATSAPP_PROVIDER_API_BASE}/api/project/v1/sessions`,
+          {
+            method: "GET",
+            headers: {
+              "X-API-Key": config.apiKey,
+              "Content-Type": "application/json",
+            },
+            signal: AbortSignal.timeout(10000),
+          },
+        );
+        const sessionsData = await sessionsRes.json();
+        const sessionsList = Array.isArray(sessionsData) ? sessionsData : sessionsData?.data ?? sessionsData?.sessions ?? [];
+        const session = sessionsList.find((s: any) => s.sessionId === resolvedSessionId || s.id === resolvedSessionId);
+        const phoneNumberId = session?.deviceInfo?.apiPhoneNumberId;
 
-      // Log activity in lead_activities or customer_activities table
+        if (phoneNumberId) {
+          const templatesRes = await fetch(
+            `${WHATSAPP_PROVIDER_API_BASE}/api/project/v1/templates?phoneNumberId=${encodeURIComponent(phoneNumberId)}`,
+            {
+              method: "GET",
+              headers: {
+                "X-API-Key": config.apiKey,
+                "Content-Type": "application/json",
+              },
+              signal: AbortSignal.timeout(10000),
+            },
+          );
+          const templatesData = await templatesRes.json();
+          const templatesList = Array.isArray(templatesData) ? templatesData : templatesData?.data ?? templatesData?.waba_templates ?? [];
+          const lang = (templateLanguage || "en").split("-")[0];
+          const tpl = templatesList.find(
+            (t: any) =>
+              (t.name === templateName || t.templateId === templateName) &&
+              (!t.language || !lang || t.language === lang || String(t.language || "").startsWith(lang)),
+          );
+
+          if (tpl?.components) {
+            const placeholders: string[] = [];
+            for (const c of tpl.components) {
+              if (c.type === "HEADER" && c.format === "TEXT" && c.text) {
+                (c.text.match(/\{\{(\d+)\}\}/g) || []).forEach((x: string) => placeholders.push(x.replace(/\{\{|\}\}/g, "")));
+              }
+              if (c.type === "BODY" && c.text) {
+                (c.text.match(/\{\{(\d+)\}\}/g) || []).forEach((x: string) => placeholders.push(x.replace(/\{\{|\}\}/g, "")));
+              }
+              if (c.type === "BUTTONS" && c.buttons) {
+                for (const btn of c.buttons) {
+                  if (btn.url) (btn.url.match(/\{\{(\d+)\}\}/g) || []).forEach((x: string) => placeholders.push(x.replace(/\{\{|\}\}/g, "")));
+                }
+              }
+            }
+            const uniqueOrdered = [...new Set(placeholders)].sort((a, b) => parseInt(a) - parseInt(b));
+            templateParams = uniqueOrdered.map((idx) => {
+              if (idx === "1") return entityName;
+              return messageType === "lead" ? "Lead" : "Customer";
+            });
+          }
+        }
+      } catch (fetchErr) {
+        console.warn("Could not fetch template structure, using single param:", fetchErr);
+        templateParams = [entityName];
+      }
+
+      const payload: any = {
+        sessionId: resolvedSessionId,
+        to: phoneNumber.replace(/\D/g, "").replace(/^0+/, ""),
+        templateName,
+        languageCode: templateLanguage,
+      };
+      if (templateParams.length > 0) {
+        payload.templateParams = templateParams;
+      }
+
+      const response = await fetch(
+        `${WHATSAPP_PROVIDER_API_BASE}/api/project/v1/messages/send-template`,
+        {
+          method: "POST",
+          headers: {
+            "X-API-Key": config.apiKey,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(30000),
+        },
+      );
+      const data = await response.json();
+
+      if (!response.ok) {
+        console.error("WhatsApp template welcome message error:", data);
+        return {
+          success: false,
+          error: data?.error || data?.message || "Failed to send welcome template",
+        };
+      }
+
+      // Log activity
       if (entityId && userId) {
         try {
           const activityData = {
             tenantId,
             userId,
-            activityType: 5, // 5 = WhatsApp message sent
-            activityTitle: `WhatsApp Welcome Message Sent`,
-            activityDescription: `Automated welcome message sent to ${phoneNumber}: "${welcomeMessage.substring(0, 100)}${welcomeMessage.length > 100 ? '...' : ''}"`,
-            activityStatus: 1, // 1 = Completed
+            activityType: 5,
+            activityTitle: "WhatsApp Welcome Message Sent",
+            activityDescription: `Template "${templateName}" sent to ${phoneNumber}`,
+            activityStatus: 1,
             activityDate: new Date().toISOString(),
           };
-
           if (messageType === "lead") {
-            await storage.createLeadActivity({
-              ...activityData,
-              leadId: entityId,
-            });
-            console.log(`✅ Lead activity logged for lead ${entityId}`);
+            await storage.createLeadActivity({ ...activityData, leadId: entityId });
           } else {
-            await storage.createCustomerActivity({
-              ...activityData,
-              customerId: entityId,
-            });
-            console.log(`✅ Customer activity logged for customer ${entityId}`);
+            await storage.createCustomerActivity({ ...activityData, customerId: entityId });
           }
         } catch (activityError) {
-          // Don't fail the whole operation if activity logging fails
           console.error("⚠️ Failed to log WhatsApp activity:", activityError);
         }
       }
 
-      return {
-        success: true,
-        message: "Welcome message sent successfully",
-      };
-    } else {
-      return {
-        success: false,
-        error: responseData.msg || "Failed to send welcome message",
-      };
+      return { success: true, message: "Welcome message sent successfully" };
     }
+
+    // OLD: Legacy text message via whatsappbusiness.ratehonk.com (commented - use template in Settings)
+    // const welcomeMessage = messageType === "lead" ? settings.leadWelcomeMessage : settings.customerWelcomeMessage;
+    // if (!welcomeMessage) return { success: false, error: "Welcome message template not configured" };
+    // const config = await storage.getWhatsAppConfigByTenant(tenantId);
+    // const devices = await storage.getWhatsAppDevicesByTenant(tenantId);
+    // const defaultDevice = devices.find((d: any) => d.isDefault === true && d.status === "connected");
+    // ... fetch WHATSAPP_API_BASE/send-message with api_key, sender, number, message
+
+    return {
+      success: false,
+      error: "No welcome template configured. Select a template in Settings → WhatsApp Settings.",
+    };
   } catch (error: any) {
     console.error("Error sending WhatsApp welcome message:", error);
     return {
@@ -2764,17 +2855,25 @@ export function registerWhatsAppRoutes(app: Express) {
           });
         }
 
-        // Get devices to check for default
+        // Get devices to check for default (legacy)
         const devices = await storage.getWhatsAppDevicesByTenant(tenantId);
         const defaultDevice = devices.find(
           (d: any) => d.isDefault === true && d.status === "connected",
         );
+
+        // When no default device, provide panel URL so floating button can open it
+        let panelUrl: string | undefined;
+        if (!defaultDevice && WHATSAPP_PROVIDER_API_BASE) {
+          const base = WHATSAPP_PROVIDER_API_BASE.replace(/\/$/, "");
+          panelUrl = `${base}/crm-login?apiKey=${encodeURIComponent(config.apiKey)}&redirect=${encodeURIComponent("/chat")}`;
+        }
 
         res.json({
           hasIntegration: true,
           hasDefaultDevice: !!defaultDevice,
           defaultDevice: defaultDevice || null,
           apiKey: config.apiKey,
+          panelUrl: panelUrl || undefined,
         });
       } catch (error: any) {
         console.error("Error checking WhatsApp integration:", error);

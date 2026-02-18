@@ -33,15 +33,26 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { MessageCircle, Save } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
-// Schema for WhatsApp settings
+// Schema for WhatsApp settings - template selection for welcome messages
 const whatsappSettingsSchema = z.object({
   enableLeadWelcomeMessage: z.boolean(),
-  leadWelcomeMessage: z.string().min(1, "Lead welcome message is required"),
+  leadWelcomeMessage: z.string(), // Kept for backward compat, optional when using template
+  leadWelcomeTemplateName: z.string().optional().nullable(),
+  leadWelcomeTemplateLanguage: z.string().optional(),
+  leadWelcomeTemplateSessionId: z.string().optional().nullable(),
   enableCustomerWelcomeMessage: z.boolean(),
-  customerWelcomeMessage: z
-    .string()
-    .min(1, "Customer welcome message is required"),
+  customerWelcomeMessage: z.string(),
+  customerWelcomeTemplateName: z.string().optional().nullable(),
+  customerWelcomeTemplateLanguage: z.string().optional(),
+  customerWelcomeTemplateSessionId: z.string().optional().nullable(),
 });
 
 type WhatsAppSettings = z.infer<typeof whatsappSettingsSchema>;
@@ -68,25 +79,59 @@ export function WhatsAppSettingsPanel({
     defaultValues: {
       enableLeadWelcomeMessage: true,
       leadWelcomeMessage: "",
+      leadWelcomeTemplateName: null,
+      leadWelcomeTemplateLanguage: "en",
+      leadWelcomeTemplateSessionId: null,
       enableCustomerWelcomeMessage: true,
       customerWelcomeMessage: "",
+      customerWelcomeTemplateName: null,
+      customerWelcomeTemplateLanguage: "en",
+      customerWelcomeTemplateSessionId: null,
     },
   });
+
+  // Fetch sessions and templates for template selection
+  const { data: sessionsData } = useQuery<any[]>({
+    queryKey: ["/api/whatsapp/sessions"],
+    enabled: open,
+  });
+  const sessions: any[] = Array.isArray(sessionsData) ? sessionsData : (sessionsData as any)?.data ?? [];
+  const leadSessionId = whatsappForm.watch("leadWelcomeTemplateSessionId");
+  const customerSessionId = whatsappForm.watch("customerWelcomeTemplateSessionId");
+  const leadPhoneNumberId = sessions.find((s) => s.sessionId === leadSessionId)?.deviceInfo?.apiPhoneNumberId;
+  const customerPhoneNumberId = sessions.find((s) => s.sessionId === customerSessionId)?.deviceInfo?.apiPhoneNumberId;
+  const { data: leadTemplatesData } = useQuery<any[] | { templates?: any[] }>({
+    queryKey: [`/api/whatsapp/templates?phoneNumberId=${encodeURIComponent(leadPhoneNumberId || "")}`],
+    enabled: open && !!leadPhoneNumberId,
+  });
+  const { data: customerTemplatesData } = useQuery<any[] | { templates?: any[] }>({
+    queryKey: [`/api/whatsapp/templates?phoneNumberId=${encodeURIComponent(customerPhoneNumberId || "")}`],
+    enabled: open && !!customerPhoneNumberId,
+  });
+  const leadTemplates: any[] = Array.isArray(leadTemplatesData)
+    ? leadTemplatesData
+    : (leadTemplatesData as any)?.templates ?? (leadTemplatesData as any)?.data ?? [];
+  const customerTemplates: any[] = Array.isArray(customerTemplatesData)
+    ? customerTemplatesData
+    : (customerTemplatesData as any)?.templates ?? (customerTemplatesData as any)?.data ?? [];
+  const approvedLeadTemplates = leadTemplates.filter((t) => (t.status || "").toLowerCase() === "approved");
+  const approvedCustomerTemplates = customerTemplates.filter((t) => (t.status || "").toLowerCase() === "approved");
 
   // Update WhatsApp form when data loads
   useEffect(() => {
     if (whatsappData) {
+      const d = whatsappData as any;
       whatsappForm.reset({
-        enableLeadWelcomeMessage:
-          (whatsappData as any).enableLeadWelcomeMessage !== false,
-        leadWelcomeMessage:
-          (whatsappData as any).leadWelcomeMessage ||
-          "Hello! Thank you for your interest. Our team will get in touch with you shortly.",
-        enableCustomerWelcomeMessage:
-          (whatsappData as any).enableCustomerWelcomeMessage !== false,
-        customerWelcomeMessage:
-          (whatsappData as any).customerWelcomeMessage ||
-          "Welcome! Thank you for choosing us. We're excited to serve you!",
+        enableLeadWelcomeMessage: d.enableLeadWelcomeMessage !== false,
+        leadWelcomeMessage: d.leadWelcomeMessage || "Hello! Thank you for your interest. Our team will get in touch with you shortly.",
+        leadWelcomeTemplateName: d.leadWelcomeTemplateName || null,
+        leadWelcomeTemplateLanguage: d.leadWelcomeTemplateLanguage || "en",
+        leadWelcomeTemplateSessionId: d.leadWelcomeTemplateSessionId || null,
+        enableCustomerWelcomeMessage: d.enableCustomerWelcomeMessage !== false,
+        customerWelcomeMessage: d.customerWelcomeMessage || "Welcome! Thank you for choosing us. We're excited to serve you!",
+        customerWelcomeTemplateName: d.customerWelcomeTemplateName || null,
+        customerWelcomeTemplateLanguage: d.customerWelcomeTemplateLanguage || "en",
+        customerWelcomeTemplateSessionId: d.customerWelcomeTemplateSessionId || null,
       });
     }
   }, [whatsappData, whatsappForm]);
@@ -148,7 +193,7 @@ export function WhatsAppSettingsPanel({
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
-                  {/* Lead Welcome Message Settings */}
+                  {/* Lead Welcome Message Settings - Template selection */}
                   <div className="space-y-4 p-4 border rounded-lg">
                     <div className="flex items-center justify-between">
                       <div>
@@ -157,7 +202,7 @@ export function WhatsAppSettingsPanel({
                         </h3>
                         <p className="text-sm text-muted-foreground">
                           Send automatically when a new lead is created with a
-                          phone number
+                          phone number. Select a WhatsApp template ({'{{1}}'} will be replaced with lead name).
                         </p>
                       </div>
                       <FormField
@@ -178,29 +223,65 @@ export function WhatsAppSettingsPanel({
                     </div>
                     <FormField
                       control={whatsappForm.control}
-                      name="leadWelcomeMessage"
+                      name="leadWelcomeTemplateSessionId"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Message Template</FormLabel>
-                          <FormControl>
-                            <Textarea
-                              placeholder="Enter your lead welcome message..."
-                              {...field}
-                              rows={4}
-                              data-testid="textarea-lead-welcome-message"
-                            />
-                          </FormControl>
-                          <FormDescription>
-                            This message will be sent via WhatsApp to new
-                            leads
-                          </FormDescription>
-                          <FormMessage />
+                          <FormLabel>WhatsApp Session</FormLabel>
+                          <Select onValueChange={field.onChange} value={field.value || ""}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select session" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {sessions.map((s) => (
+                                <SelectItem key={s.sessionId} value={s.sessionId}>
+                                  {s.deviceInfo?.phoneNumber || s.sessionId}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormDescription>Session (phone number) to send from</FormDescription>
                         </FormItem>
                       )}
                     />
+                    <FormField
+                      control={whatsappForm.control}
+                      name="leadWelcomeTemplateName"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Template</FormLabel>
+                          <Select onValueChange={field.onChange} value={field.value || ""}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select template" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {approvedLeadTemplates.map((t) => (
+                                <SelectItem key={t.templateId || t.name} value={t.name || t.templateId}>
+                                  {t.name || t.templateId} ({t.language || "en"})
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormDescription>Approved WhatsApp template. {'{{1}}'} = lead name</FormDescription>
+                        </FormItem>
+                      )}
+                    />
+                    {/* OLD: Text message - commented out, replaced by template selection
+                    <FormField control={whatsappForm.control} name="leadWelcomeMessage" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Message Template (legacy)</FormLabel>
+                        <FormControl>
+                          <Textarea placeholder="Enter your lead welcome message..." {...field} rows={4} />
+                        </FormControl>
+                      </FormItem>
+                    )} />
+                    */}
                   </div>
 
-                  {/* Customer Welcome Message Settings */}
+                  {/* Customer Welcome Message Settings - Template selection */}
                   <div className="space-y-4 p-4 border rounded-lg">
                     <div className="flex items-center justify-between">
                       <div>
@@ -209,7 +290,7 @@ export function WhatsAppSettingsPanel({
                         </h3>
                         <p className="text-sm text-muted-foreground">
                           Send automatically when a new customer is created
-                          with a phone number
+                          with a phone number. Select a WhatsApp template ({'{{1}}'} will be replaced with customer name).
                         </p>
                       </div>
                       <FormField
@@ -230,26 +311,62 @@ export function WhatsAppSettingsPanel({
                     </div>
                     <FormField
                       control={whatsappForm.control}
-                      name="customerWelcomeMessage"
+                      name="customerWelcomeTemplateSessionId"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Message Template</FormLabel>
-                          <FormControl>
-                            <Textarea
-                              placeholder="Enter your customer welcome message..."
-                              {...field}
-                              rows={4}
-                              data-testid="textarea-customer-welcome-message"
-                            />
-                          </FormControl>
-                          <FormDescription>
-                            This message will be sent via WhatsApp to new
-                            customers
-                          </FormDescription>
-                          <FormMessage />
+                          <FormLabel>WhatsApp Session</FormLabel>
+                          <Select onValueChange={field.onChange} value={field.value || ""}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select session" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {sessions.map((s) => (
+                                <SelectItem key={s.sessionId} value={s.sessionId}>
+                                  {s.deviceInfo?.phoneNumber || s.sessionId}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormDescription>Session (phone number) to send from</FormDescription>
                         </FormItem>
                       )}
                     />
+                    <FormField
+                      control={whatsappForm.control}
+                      name="customerWelcomeTemplateName"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Template</FormLabel>
+                          <Select onValueChange={field.onChange} value={field.value || ""}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select template" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {approvedCustomerTemplates.map((t) => (
+                                <SelectItem key={t.templateId || t.name} value={t.name || t.templateId}>
+                                  {t.name || t.templateId} ({t.language || "en"})
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormDescription>Approved WhatsApp template. {'{{1}}'} = customer name</FormDescription>
+                        </FormItem>
+                      )}
+                    />
+                    {/* OLD: Text message - commented out, replaced by template selection
+                    <FormField control={whatsappForm.control} name="customerWelcomeMessage" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Message Template (legacy)</FormLabel>
+                        <FormControl>
+                          <Textarea placeholder="Enter your customer welcome message..." {...field} rows={4} />
+                        </FormControl>
+                      </FormItem>
+                    )} />
+                    */}
                   </div>
 
                   <div className="flex items-center justify-between pt-4 border-t">
@@ -265,13 +382,12 @@ export function WhatsAppSettingsPanel({
                         </Link>
                       </p>
                       <p className="text-sm text-muted-foreground">
-                        Make sure you have a default WhatsApp device
-                        configured in{" "}
+                        Configure WhatsApp sessions and templates in{" "}
                         <Link
-                          href="/whatsapp-devices"
+                          href="/whatsapp-setup"
                           className="text-primary hover:underline"
                         >
-                          WhatsApp Devices
+                          WhatsApp Setup
                         </Link>
                       </p>
                     </div>

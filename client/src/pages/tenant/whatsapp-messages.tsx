@@ -1760,7 +1760,55 @@ export default function WhatsAppMessaging() {
   if (USE_NEW_INBOX) {
     return (
       <Layout>
-        <WhatsAppInboxPanel />
+        <div className="flex flex-col h-full">
+          <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 bg-white">
+            <h1 className="text-lg font-semibold text-gray-800">WhatsApp Inbox</h1>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                title="WhatsApp Setup"
+                onClick={() => setIsSetupPanelOpen(true)}
+              >
+                <Wrench className="h-4 w-4 mr-1" />
+                Setup
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                title="WhatsApp Devices"
+                onClick={() => setIsDevicesPanelOpen(true)}
+              >
+                <Smartphone className="h-4 w-4 mr-1" />
+                Devices
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                title="Welcome Message Settings"
+                onClick={() => setIsSettingsPanelOpen(true)}
+              >
+                <Settings className="h-4 w-4 mr-1" />
+                Welcome Settings
+              </Button>
+            </div>
+          </div>
+          <div className="flex-1 min-h-0">
+            <WhatsAppInboxPanel />
+          </div>
+        </div>
+        <WhatsAppSettingsPanel
+          open={isSettingsPanelOpen}
+          onOpenChange={setIsSettingsPanelOpen}
+        />
+        <WhatsAppDevicesPanel
+          open={isDevicesPanelOpen}
+          onOpenChange={setIsDevicesPanelOpen}
+        />
+        <WhatsAppSetupPanel
+          open={isSetupPanelOpen}
+          onOpenChange={setIsSetupPanelOpen}
+        />
       </Layout>
     );
   }
