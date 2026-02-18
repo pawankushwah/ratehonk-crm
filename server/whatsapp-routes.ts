@@ -1204,63 +1204,14 @@ export function registerWhatsAppRoutes(app: Express) {
         payload.templateParams = templateParams;
       }
 
-      // Use header: { type: "image", id: "MEDIA_ID" } format (correct for provider API)
-      let mediaId: string | undefined;
+      // Provider supports headerImageUrl (fetches URL internally) or header: { type, id } for media ID
       if (header && typeof header === "object" && (header.id || header.mediaId)) {
-        mediaId = header.id || header.mediaId;
+        payload.header = { type: "image", id: header.id || header.mediaId };
       } else if (headerImageId) {
-        mediaId = headerImageId;
+        payload.header = { type: "image", id: headerImageId };
       } else {
         const headerUrl = headerImageUrl || headerMediaUrl;
-        if (headerUrl) {
-          // Fetch image and upload to provider to get media ID
-          try {
-            const base = WHATSAPP_PROVIDER_API_BASE.replace(/\/$/, "");
-            let imageBuf: Buffer;
-            let fileName = "image.jpg";
-            if (headerUrl.startsWith("http://") || headerUrl.startsWith("https://")) {
-              const imgRes = await fetch(headerUrl, { signal: AbortSignal.timeout(15000) });
-              if (!imgRes.ok) throw new Error(`Failed to fetch image: ${imgRes.status}`);
-              imageBuf = Buffer.from(await imgRes.arrayBuffer());
-              const urlPath = new URL(headerUrl).pathname;
-              fileName = urlPath.split("/").pop() || fileName;
-            } else {
-              const { readFileSync, existsSync } = await import("fs");
-              const { join } = await import("path");
-              const decodedPath = decodeURIComponent(headerUrl.replace(/^\//, ""));
-              const localPath = join(process.cwd(), decodedPath);
-              if (!existsSync(localPath)) throw new Error(`Image file not found: ${headerUrl}`);
-              imageBuf = readFileSync(localPath);
-              fileName = decodedPath.split("/").pop() || fileName;
-            }
-            const FormData = (await import("form-data")).default;
-            const form = new FormData();
-            form.append("sessionId", sessionId);
-            form.append("file", imageBuf, { filename: fileName });
-            const uploadRes = await fetch(`${base}/api/media/upload`, {
-              method: "POST",
-              headers: {
-                "X-API-Key": config.apiKey,
-                ...form.getHeaders(),
-              },
-              body: form as any,
-              signal: AbortSignal.timeout(30000),
-            });
-            const uploadData = await uploadRes.json();
-            if (!uploadRes.ok) throw new Error(uploadData?.error || uploadData?.message || "Upload failed");
-            mediaId = uploadData.mediaId || uploadData.id;
-            if (!mediaId) throw new Error("No media ID in upload response");
-          } catch (e: any) {
-            console.error("WhatsApp template header image upload error:", e);
-            return res.status(400).json({
-              error: "Failed to upload header image",
-              message: e.message || "Could not upload image for template header",
-            });
-          }
-        }
-      }
-      if (mediaId) {
-        payload.header = { type: "image", id: mediaId };
+        if (headerUrl) payload.headerImageUrl = headerUrl;
       }
 
       const response = await fetch(

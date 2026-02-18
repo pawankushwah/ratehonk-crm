@@ -692,14 +692,45 @@ export function WhatsAppInboxPanel() {
                         >
                           {msg.mediaUrl && (
                             <div className="mb-2">
-                              <img
-                                src={msg.mediaUrl}
-                                alt=""
-                                className="max-w-full rounded max-h-48 object-cover"
-                              />
+                              {msg.type === "image" || !msg.type ? (
+                                <img
+                                  src={msg.mediaUrl}
+                                  alt=""
+                                  className="max-w-full rounded max-h-48 object-cover"
+                                />
+                              ) : msg.type === "video" ? (
+                                <video
+                                  src={msg.mediaUrl}
+                                  controls
+                                  className="max-w-full rounded max-h-48"
+                                />
+                              ) : msg.type === "document" ? (
+                                <a
+                                  href={msg.mediaUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className={`inline-flex items-center gap-2 px-3 py-2 rounded ${msg.fromMe ? "bg-white/20 hover:bg-white/30" : "bg-black/10 hover:bg-black/20"}`}
+                                >
+                                  <File className="h-5 w-5 flex-shrink-0" />
+                                  <span className="text-sm truncate max-w-[180px]">
+                                    {msg.mediaUrl.split("/").pop() || "Document"}
+                                  </span>
+                                  <ExternalLink className="h-3.5 w-3.5 flex-shrink-0" />
+                                </a>
+                              ) : msg.type === "audio" ? (
+                                <audio src={msg.mediaUrl} controls className="max-w-full" />
+                              ) : (
+                                <img
+                                  src={msg.mediaUrl}
+                                  alt=""
+                                  className="max-w-full rounded max-h-48 object-cover"
+                                />
+                              )}
                             </div>
                           )}
-                          <p className="text-sm whitespace-pre-wrap break-words">{msg.body}</p>
+                          {(msg.body && msg.body !== "[Media]") && (
+                            <p className="text-sm whitespace-pre-wrap break-words">{msg.body}</p>
+                          )}
                           {footerButtons.length > 0 && (
                             <div className={`flex flex-wrap gap-2 mt-2 pt-2 border-t ${msg.fromMe ? "border-white/20" : "border-gray-300"}`}>
                               {footerButtons.map((btn, i) => (
