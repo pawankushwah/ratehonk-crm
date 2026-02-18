@@ -261,10 +261,10 @@ export function WhatsAppInboxPanel() {
     },
     onSuccess: () => {
       setMessageInput("");
-      queryClient.invalidateQueries({
+      queryClient.refetchQueries({
         predicate: (q) => String(q.queryKey[0] || "").includes("/api/whatsapp/messages"),
       });
-      queryClient.invalidateQueries({
+      queryClient.refetchQueries({
         predicate: (q) => {
           const key = String(q.queryKey[0] || "");
           return key.includes("/api/whatsapp/chats") || key.includes("/api/whatsapp/contacts");
@@ -315,10 +315,10 @@ export function WhatsAppInboxPanel() {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({
+      queryClient.refetchQueries({
         predicate: (q) => String(q.queryKey[0] || "").includes("/api/whatsapp/messages"),
       });
-      queryClient.invalidateQueries({
+      queryClient.refetchQueries({
         predicate: (q) => {
           const key = String(q.queryKey[0] || "");
           return key.includes("/api/whatsapp/chats") || key.includes("/api/whatsapp/contacts");
@@ -338,10 +338,10 @@ export function WhatsAppInboxPanel() {
     },
     onSuccess: () => {
       handleTemplateDialogClose(false);
-      queryClient.invalidateQueries({
+      queryClient.refetchQueries({
         predicate: (q) => String(q.queryKey[0] || "").includes("/api/whatsapp/messages"),
       });
-      queryClient.invalidateQueries({
+      queryClient.refetchQueries({
         predicate: (q) => {
           const key = String(q.queryKey[0] || "");
           return key.includes("/api/whatsapp/chats") || key.includes("/api/whatsapp/contacts");
