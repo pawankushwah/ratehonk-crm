@@ -1,15 +1,32 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { 
   Search, MessageCircle, Phone, Mail, FileText, Video, 
   Book, HelpCircle, CheckCircle, Clock, AlertCircle,
-  ExternalLink, Download, Star, Users, Zap, Shield, Loader2
+  ExternalLink, Download, Star, Users, Zap, Shield, Loader2,
+  Ticket, ChevronRight, Paperclip, X, Send
 } from "lucide-react";
+import { formatDistanceToNow } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -131,42 +148,9 @@ const resourcesData = [
   }
 ];
 
-const supportChannels = [
-  {
-    title: "Live Chat",
-    description: "Get instant help from our support team",
-    icon: MessageCircle,
-    availability: "24/7",
-    responseTime: "< 2 minutes",
-    action: "Start Chat"
-  },
-  {
-    title: "Email Support",
-    description: "Send detailed questions and get comprehensive answers",
-    icon: Mail,
-    availability: "24/7",
-    responseTime: "< 4 hours",
-    action: "Send Email"
-  },
-  {
-    title: "Phone Support",
-    description: "Speak directly with our support experts",
-    icon: Phone,
-    availability: "Mon-Fri 9AM-6PM",
-    responseTime: "Immediate",
-    action: "Call Now"
-  },
-  {
-    title: "Community Forum",
-    description: "Connect with other travel business owners",
-    icon: Users,
-    availability: "24/7",
-    responseTime: "Community driven",
-    action: "Visit Forum"
-  }
-];
-
 export default function SupportPage() {
+  const [activeTab, setActiveTab] = useState("faq");
+  const [supportDialogOpen, setSupportDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [supportForm, setSupportForm] = useState({
@@ -175,6 +159,11 @@ export default function SupportPage() {
     priority: "",
     message: ""
   });
+  const [attachments, setAttachments] = useState<Array<{ filename: string; path: string }>>([]);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
+  const [selectedTicketId, setSelectedTicketId] = useState<number | null>(null);
+  const [replyText, setReplyText] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -204,16 +193,87 @@ export default function SupportPage() {
     refetchInterval: 30000 // Refresh every 30 seconds
   });
 
+  // Fetch support contact info (email, phone, whatsapp)
+  const { data: contactInfo, isLoading: loadingContactInfo } = useQuery({
+    queryKey: ["/api/support/contact-info"],
+    queryFn: async () => {
+      const r = await fetch("/api/support/contact-info", {
+        headers: { Authorization: `Bearer ${localStorage.getItem("auth_token") || localStorage.getItem("token")}` },
+      });
+      if (!r.ok) throw new Error("Failed to fetch");
+      return r.json();
+    },
+  });
+
+  // Fetch tenant's own tickets
+  const { data: myTickets = [], refetch: refetchTickets } = useQuery({
+    queryKey: ["/api/support/tickets"],
+    queryFn: async () => {
+      const r = await fetch("/api/support/tickets", {
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      });
+      if (!r.ok) throw new Error("Failed to fetch");
+      return r.json();
+    },
+  });
+
+  // Fetch ticket detail when one is selected
+  const { data: ticketDetail, isLoading: loadingTicketDetail } = useQuery({
+    queryKey: ["/api/support/tickets", selectedTicketId],
+    queryFn: async () => {
+      const r = await fetch(`/api/support/tickets/${selectedTicketId}`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem("auth_token") || localStorage.getItem("token")}` },
+      });
+      if (!r.ok) throw new Error("Failed to fetch");
+      return r.json();
+    },
+    enabled: !!selectedTicketId,
+  });
+
+  // Add reply mutation
+  const addReplyMutation = useMutation({
+    mutationFn: async ({ ticketId, message }: { ticketId: number; message: string }) => {
+      const r = await fetch(`/api/support/tickets/${ticketId}/messages`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("auth_token") || localStorage.getItem("token")}`,
+        },
+        body: JSON.stringify({ message }),
+      });
+      if (!r.ok) {
+        const err = await r.json();
+        throw new Error(err.message || "Failed to send reply");
+      }
+      return r.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/support/tickets"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/support/tickets", selectedTicketId] });
+      setReplyText("");
+      toast({ title: "Reply sent" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to send reply", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const handleSendReply = () => {
+    if (!replyText.trim() || !selectedTicketId) return;
+    addReplyMutation.mutate({ ticketId: selectedTicketId, message: replyText.trim() });
+  };
+
   // Submit support ticket mutation
   const submitTicketMutation = useMutation({
-    mutationFn: async (ticketData: typeof supportForm) => {
+    mutationFn: async (ticketData: typeof supportForm & { attachments?: Array<{ filename: string; path: string }> }) => {
+      const { attachments: att, ...rest } = ticketData;
       const response = await fetch("/api/support/tickets", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${localStorage.getItem("token")}`
         },
-        body: JSON.stringify(ticketData)
+        body: JSON.stringify({ ...rest, attachments: att?.length ? att : undefined })
       });
       
       if (!response.ok) {
@@ -224,11 +284,15 @@ export default function SupportPage() {
       return response.json();
     },
     onSuccess: (data: any) => {
-      toast({
-        title: "Support ticket submitted",
-        description: `Ticket #${data.ticketId} created. We'll get back to you within 4 hours.`,
-      });
+      queryClient.invalidateQueries({ queryKey: ["/api/support/tickets"] });
+      setSupportDialogOpen(false);
       setSupportForm({ subject: "", category: "", priority: "", message: "" });
+      setAttachments([]);
+      setActiveTab("my-tickets");
+      toast({
+        title: "Support request received",
+        description: `Ticket #${data.ticketId} created. We've received your query and will reply within 24-48 hours. A confirmation has been sent to your email.`,
+      });
     },
     onError: (error: Error) => {
       toast({
@@ -241,7 +305,42 @@ export default function SupportPage() {
 
   const handleSupportSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    submitTicketMutation.mutate(supportForm);
+    submitTicketMutation.mutate({ ...supportForm, attachments });
+  };
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    if (attachments.length + files.length > 5) {
+      toast({ title: "Maximum 5 attachments allowed", variant: "destructive" });
+      return;
+    }
+    setUploadingFiles(true);
+    try {
+      const formData = new FormData();
+      Array.from(files).forEach((file) => formData.append("attachments", file));
+      const res = await fetch("/api/email-attachments/upload", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${localStorage.getItem("auth_token") || localStorage.getItem("token")}` },
+        body: formData,
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message || "Upload failed");
+      }
+      const data = await res.json();
+      const newFiles = (data.files || []).map((f: { filename: string; path: string }) => ({ filename: f.filename, path: f.path }));
+      setAttachments((prev) => [...prev, ...newFiles]);
+    } catch (err: any) {
+      toast({ title: "Upload failed", description: err.message, variant: "destructive" });
+    } finally {
+      setUploadingFiles(false);
+      e.target.value = "";
+    }
+  };
+
+  const removeAttachment = (index: number) => {
+    setAttachments((prev) => prev.filter((_, i) => i !== index));
   };
 
   // Group FAQ data by category for display
@@ -268,22 +367,19 @@ export default function SupportPage() {
             </div>
             <Button 
               className="bg-blue-600 hover:bg-blue-700"
-              onClick={() => {
-                // Scroll to contact tab
-                const contactTab = document.querySelector('[value="contact"]') as HTMLElement;
-                contactTab?.click();
-              }}
+              onClick={() => setSupportDialogOpen(true)}
             >
               <MessageCircle className="w-4 h-4 mr-2" />
               Contact Support
             </Button>
           </div>
 
-          <Tabs defaultValue="faq" className="space-y-6">
-            <TabsList className="grid w-full grid-cols-4">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+            <TabsList className="grid w-full grid-cols-5">
               <TabsTrigger value="faq">FAQ</TabsTrigger>
               <TabsTrigger value="resources">Resources</TabsTrigger>
               <TabsTrigger value="contact">Contact</TabsTrigger>
+              <TabsTrigger value="my-tickets">My Tickets</TabsTrigger>
               <TabsTrigger value="status">System Status</TabsTrigger>
             </TabsList>
 
@@ -465,135 +561,453 @@ export default function SupportPage() {
             </TabsContent>
 
             <TabsContent value="contact" className="space-y-6">
-              <div className="grid md:grid-cols-2 gap-6">
-                {/* Support Channels */}
-                <div className="space-y-4">
-                  <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Support Channels</h2>
-                  {supportChannels.map((channel, index) => (
-                    <Card key={index}>
+              <div className="space-y-4">
+                <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Contact Support</h2>
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  Reach out to our support team through any of the channels below.
+                </p>
+                <div className="grid md:grid-cols-2 gap-6">
+                  {loadingContactInfo && (
+                    <Card className="md:col-span-2">
+                      <CardContent className="p-6 flex items-center justify-center gap-2 text-muted-foreground">
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                        Loading contact details...
+                      </CardContent>
+                    </Card>
+                  )}
+                  {!loadingContactInfo && contactInfo?.support_email && (
+                    <Card>
                       <CardContent className="p-4">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-3">
-                            <channel.icon className="w-6 h-6 text-blue-600" />
+                            <Mail className="w-6 h-6 text-blue-600" />
                             <div>
-                              <h3 className="font-medium text-gray-900 dark:text-white">
-                                {channel.title}
-                              </h3>
+                              <h3 className="font-medium text-gray-900 dark:text-white">Email Support</h3>
                               <p className="text-sm text-gray-600 dark:text-gray-400">
-                                {channel.description}
+                                Send detailed questions and get comprehensive answers
                               </p>
-                              <div className="flex gap-4 mt-1 text-xs text-gray-500">
-                                <span>Available: {channel.availability}</span>
-                                <span>Response: {channel.responseTime}</span>
-                              </div>
+                              <p className="text-sm font-medium text-blue-600 mt-1">{contactInfo.support_email}</p>
                             </div>
                           </div>
-                          <Button 
-                            size="sm"
-                            onClick={() => {
-                              toast({
-                                title: `${channel.title} activated`,
-                                description: `Opening ${channel.title.toLowerCase()} support channel.`,
-                              });
-                            }}
-                          >
-                            {channel.action}
+                          <Button size="sm" asChild>
+                            <a href={`mailto:${contactInfo.support_email}`}>Send Email</a>
                           </Button>
                         </div>
                       </CardContent>
                     </Card>
-                  ))}
+                  )}
+                  {!loadingContactInfo && contactInfo?.support_phone && (
+                    <Card>
+                      <CardContent className="p-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <Phone className="w-6 h-6 text-blue-600" />
+                            <div>
+                              <h3 className="font-medium text-gray-900 dark:text-white">Phone Support</h3>
+                              <p className="text-sm text-gray-600 dark:text-gray-400">
+                                Speak directly with our support experts
+                              </p>
+                              <p className="text-sm font-medium text-blue-600 mt-1">{contactInfo.support_phone}</p>
+                            </div>
+                          </div>
+                          <Button size="sm" asChild>
+                            <a href={`tel:${contactInfo.support_phone.replace(/\s/g, "")}`}>Call Now</a>
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+                  {!loadingContactInfo && contactInfo?.support_whatsapp && (
+                    <Card>
+                      <CardContent className="p-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <MessageCircle className="w-6 h-6 text-green-600" />
+                            <div>
+                              <h3 className="font-medium text-gray-900 dark:text-white">WhatsApp Support</h3>
+                              <p className="text-sm text-gray-600 dark:text-gray-400">
+                                Chat with us on WhatsApp for quick assistance
+                              </p>
+                              <p className="text-sm font-medium text-green-600 mt-1">{contactInfo.support_whatsapp}</p>
+                            </div>
+                          </div>
+                          <Button size="sm" asChild>
+                            <a
+                              href={`https://wa.me/${contactInfo.support_whatsapp.replace(/[^0-9]/g, "")}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              Open WhatsApp
+                            </a>
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+                  {!loadingContactInfo && !contactInfo?.support_email && !contactInfo?.support_phone && !contactInfo?.support_whatsapp && (
+                    <Card className="md:col-span-2">
+                      <CardContent className="p-6 text-center text-muted-foreground">
+                        <p className="mb-4">Support contact details are not configured yet.</p>
+                        <p className="text-sm">Use the &quot;Contact Support&quot; button above to submit a support request.</p>
+                      </CardContent>
+                    </Card>
+                  )}
                 </div>
-
-                {/* Contact Form */}
                 <Card>
-                  <CardHeader>
-                    <CardTitle>Submit a Support Request</CardTitle>
-                    <CardDescription>
-                      Can't find what you're looking for? Send us a message and we'll help you out.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                      <form onSubmit={handleSupportSubmit} className="space-y-4">
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <Ticket className="w-6 h-6 text-blue-600" />
                         <div>
-                          <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                            Subject
-                          </label>
-                          <Input
-                            value={supportForm.subject}
-                            onChange={(e) => setSupportForm({...supportForm, subject: e.target.value})}
-                            placeholder="Brief description of your issue"
-                            required
-                          />
+                          <h3 className="font-medium text-gray-900 dark:text-white">Submit Support Request</h3>
+                          <p className="text-sm text-gray-600 dark:text-gray-400">
+                            Can&apos;t find what you&apos;re looking for? Submit a ticket and we&apos;ll reply within 24-48 hours.
+                          </p>
                         </div>
+                      </div>
+                      <Button size="sm" onClick={() => setSupportDialogOpen(true)}>
+                        Open Form
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </TabsContent>
 
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                              Category
-                            </label>
-                            <select
-                              value={supportForm.category}
-                              onChange={(e) => setSupportForm({...supportForm, category: e.target.value})}
-                              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800"
-                              required
+            {/* Support Request Dialog */}
+            <Dialog open={supportDialogOpen} onOpenChange={(open) => {
+              setSupportDialogOpen(open);
+              if (!open) setAttachments([]);
+            }}>
+              <DialogContent className="sm:max-w-[500px]">
+                <DialogHeader>
+                  <DialogTitle>Submit a Support Request</DialogTitle>
+                  <DialogDescription>
+                    Can't find what you're looking for? Send us a message and we'll help you out.
+                  </DialogDescription>
+                </DialogHeader>
+                <form onSubmit={handleSupportSubmit} className="space-y-4">
+                  <div>
+                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Subject
+                    </label>
+                    <Input
+                      value={supportForm.subject}
+                      onChange={(e) => setSupportForm({...supportForm, subject: e.target.value})}
+                      placeholder="Brief description of your issue"
+                      required
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                        Category
+                      </label>
+                      <select
+                        value={supportForm.category}
+                        onChange={(e) => setSupportForm({...supportForm, category: e.target.value})}
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800"
+                        required
+                      >
+                        <option value="">Select category</option>
+                        <option value="technical">Technical Issue</option>
+                        <option value="billing">Billing & Payments</option>
+                        <option value="feature">Feature Request</option>
+                        <option value="integration">Integration Help</option>
+                        <option value="other">Other</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                        Priority
+                      </label>
+                      <select
+                        value={supportForm.priority}
+                        onChange={(e) => setSupportForm({...supportForm, priority: e.target.value})}
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800"
+                        required
+                      >
+                        <option value="">Select priority</option>
+                        <option value="low">Low</option>
+                        <option value="medium">Medium</option>
+                        <option value="high">High</option>
+                        <option value="urgent">Urgent</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Message
+                    </label>
+                    <Textarea
+                      value={supportForm.message}
+                      onChange={(e) => setSupportForm({...supportForm, message: e.target.value})}
+                      placeholder="Please provide as much detail as possible about your issue..."
+                      rows={5}
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Attachments
+                    </label>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.webp,.txt,.csv"
+                      className="hidden"
+                      onChange={handleFileSelect}
+                    />
+                    <div className="flex flex-col gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={uploadingFiles || attachments.length >= 5}
+                        className="w-fit"
+                      >
+                        {uploadingFiles ? (
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        ) : (
+                          <Paperclip className="w-4 h-4 mr-2" />
+                        )}
+                        {uploadingFiles ? "Uploading..." : "Add attachment"}
+                        {attachments.length >= 5 && " (max 5)"}
+                      </Button>
+                      {attachments.length > 0 && (
+                        <div className="flex flex-wrap gap-2">
+                          {attachments.map((att, i) => (
+                            <div
+                              key={i}
+                              className="flex items-center gap-1 px-2 py-1 rounded-md bg-muted text-sm"
                             >
-                              <option value="">Select category</option>
-                              <option value="technical">Technical Issue</option>
-                              <option value="billing">Billing & Payments</option>
-                              <option value="feature">Feature Request</option>
-                              <option value="integration">Integration Help</option>
-                              <option value="other">Other</option>
-                            </select>
-                          </div>
+                              <FileText className="w-3 h-3 shrink-0" />
+                              <span className="truncate max-w-[140px]">{att.filename}</span>
+                              <button
+                                type="button"
+                                onClick={() => removeAttachment(i)}
+                                className="ml-1 p-0.5 hover:bg-muted-foreground/20 rounded"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
 
-                          <div>
-                            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                              Priority
-                            </label>
-                            <select
-                              value={supportForm.priority}
-                              onChange={(e) => setSupportForm({...supportForm, priority: e.target.value})}
-                              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800"
-                              required
+                  <Button type="submit" className="w-full" disabled={submitTicketMutation.isPending}>
+                    {submitTicketMutation.isPending ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Submitting...
+                      </>
+                    ) : (
+                      "Submit Support Request"
+                    )}
+                  </Button>
+                </form>
+              </DialogContent>
+            </Dialog>
+
+            {/* Ticket Details Dialog */}
+            <Dialog
+              open={!!selectedTicketId}
+              onOpenChange={(open) => {
+                if (!open) {
+                  setSelectedTicketId(null);
+                  setReplyText("");
+                }
+              }}
+            >
+              <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
+                <DialogHeader>
+                  <DialogTitle>
+                    {ticketDetail?.subject ?? (myTickets as any[]).find((t: any) => t.id === selectedTicketId)?.subject ?? "Ticket Details"}
+                  </DialogTitle>
+                  <DialogDescription>
+                    {ticketDetail?.ticket_number || ticketDetail?.ticketNumber || (myTickets as any[]).find((t: any) => t.id === selectedTicketId)?.ticket_number}
+                    {" • "}
+                    <Badge variant="outline" className="ml-1">
+                      {ticketDetail?.status ?? (myTickets as any[]).find((t: any) => t.id === selectedTicketId)?.status ?? "-"}
+                    </Badge>
+                    {" • "}
+                    {ticketDetail?.category && (
+                      <span className="capitalize">{ticketDetail.category}</span>
+                    )}
+                  </DialogDescription>
+                </DialogHeader>
+                {selectedTicketId && (
+                  <>
+                    <div className="space-y-4 flex-1 min-h-0 overflow-y-auto max-h-80">
+                      {loadingTicketDetail ? (
+                        <div className="flex items-center justify-center py-8">
+                          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                        </div>
+                      ) : (
+                        (ticketDetail?.messages || []).map((m: any) => (
+                          <div
+                            key={m.id}
+                            className={`p-3 rounded-lg ${
+                              m.sender_type === "saas_owner"
+                                ? "bg-blue-50 dark:bg-blue-950/30 ml-8"
+                                : "bg-muted mr-8"
+                            }`}
+                          >
+                            <div className="text-xs text-muted-foreground mb-1">
+                              {m.sender_name || m.sender_email || (m.sender_type === "tenant" ? "You" : "Support")}
+                              {" • "}
+                              {formatDistanceToNow(new Date(m.created_at), { addSuffix: true })}
+                            </div>
+                            <div className="whitespace-pre-wrap">{m.message}</div>
+                            {m.attachments && Array.isArray(m.attachments) && m.attachments.length > 0 && (
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                {m.attachments.map((a: { filename: string; path: string }, i: number) => (
+                                  <a
+                                    key={i}
+                                    href={a.path}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-xs text-primary hover:underline flex items-center gap-1"
+                                  >
+                                    <FileText className="w-3 h-3" />
+                                    {a.filename}
+                                  </a>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                    <div className="flex gap-2 pt-4 border-t shrink-0">
+                      <Textarea
+                        placeholder="Type your reply..."
+                        value={replyText}
+                        onChange={(e) => setReplyText(e.target.value)}
+                        rows={3}
+                        className="flex-1"
+                      />
+                      <Button
+                        onClick={handleSendReply}
+                        disabled={!replyText.trim() || addReplyMutation.isPending}
+                      >
+                        {addReplyMutation.isPending ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <>
+                            <Send className="h-4 w-4 mr-2" />
+                            Send
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </>
+                )}
+              </DialogContent>
+            </Dialog>
+
+            <TabsContent value="my-tickets" className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Ticket className="w-5 h-5 text-blue-600" />
+                    My Support Tickets
+                  </CardTitle>
+                  <CardDescription>
+                    View and track your submitted support requests
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {myTickets.length === 0 ? (
+                    <div className="text-center py-12 text-muted-foreground">
+                      <Ticket className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                      <p className="font-medium mb-1">No tickets yet</p>
+                      <p className="text-sm mb-4">Submit a support request to get started.</p>
+                      <Button
+                        variant="outline"
+                        onClick={() => setSupportDialogOpen(true)}
+                      >
+                        <MessageCircle className="w-4 h-4 mr-2" />
+                        Go to Contact
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="rounded-md border">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Ticket #</TableHead>
+                            <TableHead>Subject</TableHead>
+                            <TableHead>Category</TableHead>
+                            <TableHead>Priority</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead>Created</TableHead>
+                            <TableHead className="w-[80px]"></TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {myTickets.map((t: any) => (
+                            <TableRow
+                              key={t.id}
+                              className="cursor-pointer hover:bg-muted/50"
+                              onClick={() => setSelectedTicketId(t.id)}
                             >
-                              <option value="">Select priority</option>
-                              <option value="low">Low</option>
-                              <option value="medium">Medium</option>
-                              <option value="high">High</option>
-                              <option value="urgent">Urgent</option>
-                            </select>
-                          </div>
-                        </div>
-
-                        <div>
-                          <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                            Message
-                          </label>
-                          <Textarea
-                            value={supportForm.message}
-                            onChange={(e) => setSupportForm({...supportForm, message: e.target.value})}
-                            placeholder="Please provide as much detail as possible about your issue..."
-                            rows={5}
-                            required
-                          />
-                        </div>
-
-                        <Button type="submit" className="w-full" disabled={submitTicketMutation.isPending}>
-                          {submitTicketMutation.isPending ? (
-                            <>
-                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                              Submitting...
-                            </>
-                          ) : (
-                            "Submit Support Request"
-                          )}
-                        </Button>
-                      </form>
-                    </CardContent>
-                  </Card>
-                </div>
-              </TabsContent>
+                              <TableCell className="font-mono text-sm">
+                                #{t.ticket_number || t.ticketNumber}
+                              </TableCell>
+                              <TableCell className="font-medium">{t.subject}</TableCell>
+                              <TableCell className="capitalize">{t.category}</TableCell>
+                              <TableCell>
+                                <Badge variant="outline" className="capitalize">
+                                  {t.priority}
+                                </Badge>
+                              </TableCell>
+                              <TableCell>
+                                <Badge
+                                  variant={
+                                    t.status === "open"
+                                      ? "destructive"
+                                      : t.status === "resolved" || t.status === "closed"
+                                        ? "secondary"
+                                        : "default"
+                                  }
+                                >
+                                  {t.status.replace("_", " ")}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-muted-foreground text-sm">
+                                {t.created_at
+                                  ? new Date(t.created_at).toLocaleDateString()
+                                  : t.createdAt
+                                    ? new Date(t.createdAt).toLocaleDateString()
+                                    : "-"}
+                              </TableCell>
+                              <TableCell onClick={(e) => e.stopPropagation()}>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setSelectedTicketId(t.id)}
+                                >
+                                  <ChevronRight className="w-4 h-4" />
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
 
             <TabsContent value="status" className="space-y-6">
               {statusLoading ? (

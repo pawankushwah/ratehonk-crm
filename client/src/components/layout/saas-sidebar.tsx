@@ -35,7 +35,9 @@ import {
   DollarSign,
   Activity,
   PieChart,
+  MessageCircle,
 } from "lucide-react";
+import { SaasNotificationBell } from "@/components/notifications/SaasNotificationBell";
 // import Logo from "../../assets/Logo-sidebar.svg";
 import Logo from "../../assets/RATEHONKLOGO.png";
 
@@ -83,6 +85,12 @@ const saasMenuItems = [
     group: null,
   },
   {
+    name: "Support Tickets",
+    href: "/saas/support-tickets",
+    icon: MessageCircle,
+    group: null,
+  },
+  {
     name: "Settings",
     href: "/saas/settings",
     icon: Settings,
@@ -117,14 +125,16 @@ export function SaasSidebar() {
             {/* <span className="font-bold text-lg">SaaS Admin</span> */}
           </Link>
         )}
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          className="ml-auto"
-        >
-          {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronRight className="h-4 w-4 rotate-180" />}
-        </Button>
+        <div className="flex items-center gap-1 ml-auto">
+          <SaasNotificationBell />
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setIsCollapsed(!isCollapsed)}
+          >
+            {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronRight className="h-4 w-4 rotate-180" />}
+          </Button>
+        </div>
       </div>
 
       {/* Menu Items */}

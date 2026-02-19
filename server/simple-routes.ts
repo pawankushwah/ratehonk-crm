@@ -18876,36 +18876,157 @@ Please improve this email.`;
   app.post("/api/support/tickets", authenticateToken, async (req, res) => {
     try {
       const user = (req as any).user;
-      const { subject, category, priority, message } = req.body;
+      const { subject, category, priority, message, attachments } = req.body;
 
       if (!subject || !category || !priority || !message) {
         return res.status(400).json({ message: "All fields are required" });
       }
 
-      // In a real implementation, this would save to a support ticket system
-      const ticket = {
-        id: Math.random().toString(36).substr(2, 9).toUpperCase(),
+      const tenant = await simpleStorage.getTenantById(user.tenantId);
+      const companyName = tenant?.company_name || tenant?.companyName || "Your Company";
+
+      const ticket = await simpleStorage.createSupportTicket({
+        tenantId: user.tenantId,
+        userId: user.id,
         subject,
         category,
         priority,
         message,
-        status: "open",
-        createdAt: new Date().toISOString(),
-        userId: user.id,
-        tenantId: user.tenantId,
         userEmail: user.email,
-        userName: `${user.firstName} ${user.lastName}`,
-      };
+        userName: `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email,
+        companyName,
+        attachments: Array.isArray(attachments) ? attachments : undefined,
+      });
 
-      console.log("Support ticket created:", ticket);
+      const ticketNumber = ticket.ticket_number || ticket.ticketNumber || `TKT-${ticket.id}`;
+
+      // Send confirmation email to tenant
+      tenantEmailService.sendSupportTicketConfirmationEmail({
+        to: user.email,
+        userName: `${user.firstName || ""} ${user.lastName || ""}`.trim() || "there",
+        ticketNumber,
+        subject,
+        companyName,
+        tenantId: user.tenantId,
+      }).catch((err) => console.error("Support confirmation email error:", err));
+
+      // Send notification to SaaS owner support email
+      const supportEmail = await simpleStorage.getSaasSetting("support_email");
+      if (supportEmail && supportEmail.trim()) {
+        tenantEmailService.sendSupportTicketToOwnerEmail({
+          to: supportEmail.trim(),
+          ticketNumber,
+          subject,
+          category,
+          priority,
+          message,
+          userName: `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email,
+          userEmail: user.email,
+          companyName,
+          tenantId: user.tenantId,
+        }).catch((err) => console.error("Support notification email error:", err));
+      }
+
+      // Create in-app notification for all SaaS owners
+      try {
+        const saasOwnerIds = await simpleStorage.getSaasOwnerUserIds();
+        for (const ownerId of saasOwnerIds) {
+          await simpleStorage.createSaasNotification({
+            userId: ownerId,
+            title: "New support ticket",
+            message: `${companyName}: ${subject} (${ticketNumber})`,
+            type: "support_ticket",
+            entityType: "support_ticket",
+            entityId: ticket.id,
+            actionUrl: "/saas/support-tickets",
+            priority: priority === "urgent" ? "high" : "medium",
+          });
+        }
+      } catch (err) {
+        console.error("SaaS notification error:", err);
+      }
 
       res.status(201).json({
         message: "Support ticket submitted successfully",
-        ticketId: ticket.id,
-        ticket,
+        ticketId: ticketNumber,
+        ticket: { ...ticket, ticketId: ticketNumber },
       });
     } catch (error) {
       console.error("Create support ticket error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Tenant: get own support tickets
+  app.get("/api/support/tickets", authenticateToken, async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const tickets = await simpleStorage.getSupportTickets({ tenantId: user.tenantId, limit: 50 });
+      res.json(tickets);
+    } catch (error) {
+      console.error("Get support tickets error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Tenant: get single ticket with messages
+  app.get("/api/support/tickets/:id", authenticateToken, async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const ticket = await simpleStorage.getSupportTicketById(parseInt(req.params.id));
+      if (!ticket || ticket.tenant_id !== user.tenantId) {
+        return res.status(404).json({ message: "Ticket not found" });
+      }
+      const messages = await simpleStorage.getSupportTicketMessages(ticket.id);
+      res.json({ ...ticket, messages });
+    } catch (error) {
+      console.error("Get support ticket error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Tenant: add reply to ticket
+  app.post("/api/support/tickets/:id/messages", authenticateToken, async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const { message } = req.body;
+      const ticket = await simpleStorage.getSupportTicketById(parseInt(req.params.id));
+      if (!ticket || ticket.tenant_id !== user.tenantId) {
+        return res.status(404).json({ message: "Ticket not found" });
+      }
+      if (!message || !String(message).trim()) {
+        return res.status(400).json({ message: "Message is required" });
+      }
+      const msg = await simpleStorage.addSupportTicketMessage({
+        ticketId: ticket.id,
+        senderType: "tenant",
+        senderUserId: user.id,
+        senderEmail: user.email,
+        senderName: `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email,
+        message: String(message).trim(),
+      });
+      res.status(201).json(msg);
+    } catch (error) {
+      console.error("Add ticket message error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Tenant: get support contact info (email, phone, whatsapp)
+  app.get("/api/support/contact-info", authenticateToken, async (req, res) => {
+    try {
+      const [supportEmail, supportPhone, supportWhatsapp] = await Promise.all([
+        simpleStorage.getSaasSetting("support_email"),
+        simpleStorage.getSaasSetting("support_phone"),
+        simpleStorage.getSaasSetting("support_whatsapp"),
+      ]);
+      res.json({
+        support_email: supportEmail || "",
+        support_phone: supportPhone || "",
+        support_whatsapp: supportWhatsapp || "",
+      });
+    } catch (error) {
+      console.error("Get support contact info error:", error);
       res.status(500).json({ message: "Internal server error" });
     }
   });
@@ -31997,6 +32118,206 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
     }
   });
 
+  // SaaS Notifications
+  app.get("/api/saas/notifications", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const user = req.user;
+      if (!user?.id) return res.status(401).json({ message: "Unauthorized" });
+      const includeRead = req.query.includeRead !== "false";
+      const limit = parseInt(req.query.limit as string) || 50;
+      const offset = parseInt(req.query.offset as string) || 0;
+      const notifications = await simpleStorage.getSaasNotifications(user.id, { includeRead, limit, offset });
+      const unreadCount = await simpleStorage.getSaasUnreadCount(user.id);
+      res.json({ notifications, unreadCount, total: notifications.length });
+    } catch (err: any) {
+      console.error("Get SaaS notifications error:", err);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.put("/api/saas/notifications/:id/read", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const user = req.user;
+      if (!user?.id) return res.status(401).json({ message: "Unauthorized" });
+      await simpleStorage.markSaasNotificationRead(parseInt(req.params.id), user.id);
+      res.json({ message: "Marked as read" });
+    } catch (err: any) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.put("/api/saas/notifications/mark-all-read", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const user = req.user;
+      if (!user?.id) return res.status(401).json({ message: "Unauthorized" });
+      await simpleStorage.markAllSaasNotificationsRead(user.id);
+      res.json({ message: "All marked as read" });
+    } catch (err: any) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.delete("/api/saas/notifications/:id", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const user = req.user;
+      if (!user?.id) return res.status(401).json({ message: "Unauthorized" });
+      await simpleStorage.deleteSaasNotification(parseInt(req.params.id), user.id);
+      res.json({ message: "Deleted" });
+    } catch (err: any) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.delete("/api/saas/notifications/read/all", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const user = req.user;
+      if (!user?.id) return res.status(401).json({ message: "Unauthorized" });
+      await simpleStorage.deleteAllReadSaasNotifications(user.id);
+      res.json({ message: "Deleted" });
+    } catch (err: any) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // SaaS Settings - support email, phone, whatsapp
+  app.get("/api/saas/settings", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const [supportEmail, supportPhone, supportWhatsapp] = await Promise.all([
+        simpleStorage.getSaasSetting("support_email"),
+        simpleStorage.getSaasSetting("support_phone"),
+        simpleStorage.getSaasSetting("support_whatsapp"),
+      ]);
+      res.json({
+        support_email: supportEmail || "",
+        support_phone: supportPhone || "",
+        support_whatsapp: supportWhatsapp || "",
+      });
+    } catch (error: any) {
+      console.error("Get SaaS settings error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.put("/api/saas/settings", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const { support_email, support_phone, support_whatsapp } = req.body;
+      if (support_email !== undefined) await simpleStorage.setSaasSetting("support_email", String(support_email || "").trim());
+      if (support_phone !== undefined) await simpleStorage.setSaasSetting("support_phone", String(support_phone || "").trim());
+      if (support_whatsapp !== undefined) await simpleStorage.setSaasSetting("support_whatsapp", String(support_whatsapp || "").trim());
+      const [supportEmail, supportPhone, supportWhatsapp] = await Promise.all([
+        simpleStorage.getSaasSetting("support_email"),
+        simpleStorage.getSaasSetting("support_phone"),
+        simpleStorage.getSaasSetting("support_whatsapp"),
+      ]);
+      res.json({
+        support_email: supportEmail || "",
+        support_phone: supportPhone || "",
+        support_whatsapp: supportWhatsapp || "",
+      });
+    } catch (error: any) {
+      console.error("Update SaaS settings error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // SaaS Support Tickets - list all
+  app.get("/api/saas/support-tickets", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const { status, limit, offset } = req.query;
+      const tickets = await simpleStorage.getSupportTickets({
+        status: status as string | undefined,
+        limit: limit ? parseInt(limit as string) : 100,
+        offset: offset ? parseInt(offset as string) : 0,
+      });
+      res.json(tickets);
+    } catch (error: any) {
+      console.error("Get SaaS support tickets error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // SaaS Support Ticket - get single with messages
+  app.get("/api/saas/support-tickets/:id", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const ticket = await simpleStorage.getSupportTicketById(parseInt(req.params.id));
+      if (!ticket) return res.status(404).json({ message: "Ticket not found" });
+      const messages = await simpleStorage.getSupportTicketMessages(ticket.id);
+      res.json({ ...ticket, messages });
+    } catch (error: any) {
+      console.error("Get SaaS support ticket error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // SaaS Support Ticket - update status
+  app.put("/api/saas/support-tickets/:id/status", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const { status } = req.body;
+      if (!status || !["open", "in_progress", "resolved", "closed"].includes(status)) {
+        return res.status(400).json({ message: "Invalid status" });
+      }
+      const ticket = await simpleStorage.updateSupportTicketStatus(parseInt(req.params.id), status);
+      if (!ticket) return res.status(404).json({ message: "Ticket not found" });
+      // Notify ticket creator when status changes
+      if (ticket.user_id && ticket.tenant_id) {
+        await simpleStorage.createNotification({
+          tenantId: ticket.tenant_id,
+          userId: ticket.user_id,
+          title: "Support ticket status updated",
+          message: `Your ticket #${ticket.ticket_number} (${ticket.subject}) is now ${status.replace("_", " ")}.`,
+          type: "support_ticket",
+          entityType: "support_ticket",
+          entityId: ticket.id,
+          actionUrl: "/support",
+          priority: "medium",
+        });
+      }
+      res.json(ticket);
+    } catch (error: any) {
+      console.error("Update ticket status error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // SaaS Support Ticket - add reply
+  app.post("/api/saas/support-tickets/:id/messages", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const user = (req as any).user;
+      const { message } = req.body;
+      const ticket = await simpleStorage.getSupportTicketById(parseInt(req.params.id));
+      if (!ticket) return res.status(404).json({ message: "Ticket not found" });
+      if (!message || !String(message).trim()) {
+        return res.status(400).json({ message: "Message is required" });
+      }
+      const msg = await simpleStorage.addSupportTicketMessage({
+        ticketId: ticket.id,
+        senderType: "saas_owner",
+        senderUserId: user.id,
+        senderEmail: user.email,
+        senderName: `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email,
+        message: String(message).trim(),
+      });
+      // Notify ticket creator when SaaS owner replies
+      if (ticket.user_id && ticket.tenant_id) {
+        await simpleStorage.createNotification({
+          tenantId: ticket.tenant_id,
+          userId: ticket.user_id,
+          title: "New reply on your support ticket",
+          message: `Support team replied to #${ticket.ticket_number}: "${String(message).trim().slice(0, 80)}${String(message).trim().length > 80 ? "..." : ""}"`,
+          type: "support_ticket",
+          entityType: "support_ticket",
+          entityId: ticket.id,
+          actionUrl: "/support",
+          priority: "medium",
+        });
+      }
+      res.status(201).json(msg);
+    } catch (error: any) {
+      console.error("Add SaaS ticket message error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   // Update SaaS tenants endpoint to use SaaS auth
   app.get("/api/saas/tenants", authenticateSaasToken, async (req: any, res) => {
     try {
@@ -32260,6 +32581,122 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
     } catch (error: any) {
       console.error("Create plan error:", error);
       res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+  });
+
+  // SaaS settings (duplicate - kept in sync with above)
+  app.get("/api/saas/settings", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const [supportEmail, supportPhone, supportWhatsapp] = await Promise.all([
+        simpleStorage.getSaasSetting("support_email"),
+        simpleStorage.getSaasSetting("support_phone"),
+        simpleStorage.getSaasSetting("support_whatsapp"),
+      ]);
+      res.json({
+        support_email: supportEmail || "",
+        support_phone: supportPhone || "",
+        support_whatsapp: supportWhatsapp || "",
+      });
+    } catch (error) {
+      console.error("Get SaaS settings error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.put("/api/saas/settings", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const { support_email, support_phone, support_whatsapp } = req.body;
+      if (support_email !== undefined) await simpleStorage.setSaasSetting("support_email", String(support_email || "").trim());
+      if (support_phone !== undefined) await simpleStorage.setSaasSetting("support_phone", String(support_phone || "").trim());
+      if (support_whatsapp !== undefined) await simpleStorage.setSaasSetting("support_whatsapp", String(support_whatsapp || "").trim());
+      const [supportEmail, supportPhone, supportWhatsapp] = await Promise.all([
+        simpleStorage.getSaasSetting("support_email"),
+        simpleStorage.getSaasSetting("support_phone"),
+        simpleStorage.getSaasSetting("support_whatsapp"),
+      ]);
+      res.json({
+        support_email: supportEmail || "",
+        support_phone: supportPhone || "",
+        support_whatsapp: supportWhatsapp || "",
+      });
+    } catch (error) {
+      console.error("Update SaaS settings error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // SaaS support tickets
+  app.get("/api/saas/support-tickets", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const { status, limit, offset } = req.query;
+      const tickets = await simpleStorage.getSupportTickets({
+        status: status as string | undefined,
+        limit: limit ? parseInt(limit as string) : 100,
+        offset: offset ? parseInt(offset as string) : 0,
+      });
+      const withTenant = await Promise.all(
+        tickets.map(async (t: any) => {
+          const tenant = await simpleStorage.getTenantById(t.tenant_id);
+          return { ...t, tenantName: tenant?.company_name || tenant?.companyName || `Tenant ${t.tenant_id}` };
+        })
+      );
+      res.json(withTenant);
+    } catch (error) {
+      console.error("Get SaaS support tickets error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.get("/api/saas/support-tickets/:id", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const ticket = await simpleStorage.getSupportTicketById(parseInt(req.params.id));
+      if (!ticket) return res.status(404).json({ message: "Ticket not found" });
+      const messages = await simpleStorage.getSupportTicketMessages(ticket.id);
+      const tenant = await simpleStorage.getTenantById(ticket.tenant_id);
+      res.json({ ...ticket, messages, tenantName: tenant?.company_name || tenant?.companyName });
+    } catch (error) {
+      console.error("Get SaaS support ticket error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post("/api/saas/support-tickets/:id/messages", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const user = (req as any).user;
+      const { message } = req.body;
+      const ticket = await simpleStorage.getSupportTicketById(parseInt(req.params.id));
+      if (!ticket) return res.status(404).json({ message: "Ticket not found" });
+      if (!message || !String(message).trim()) {
+        return res.status(400).json({ message: "Message is required" });
+      }
+      const msg = await simpleStorage.addSupportTicketMessage({
+        ticketId: ticket.id,
+        senderType: "saas_owner",
+        senderUserId: user.id,
+        senderEmail: user.email,
+        senderName: `${user.first_name || ""} ${user.last_name || ""}`.trim() || user.email,
+        message: String(message).trim(),
+      });
+      res.status(201).json(msg);
+    } catch (error) {
+      console.error("Add SaaS ticket message error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.put("/api/saas/support-tickets/:id/status", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const { status } = req.body;
+      const ticket = await simpleStorage.getSupportTicketById(parseInt(req.params.id));
+      if (!ticket) return res.status(404).json({ message: "Ticket not found" });
+      if (!["open", "in_progress", "resolved", "closed"].includes(status)) {
+        return res.status(400).json({ message: "Invalid status" });
+      }
+      const updated = await simpleStorage.updateSupportTicketStatus(ticket.id, status);
+      res.json(updated);
+    } catch (error) {
+      console.error("Update ticket status error:", error);
+      res.status(500).json({ message: "Internal server error" });
     }
   });
 

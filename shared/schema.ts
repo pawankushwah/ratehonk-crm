@@ -1915,3 +1915,44 @@ export const whatsappMessageInsertSchema = createInsertSchema(whatsappMessages).
 
 export type WhatsappMessage = typeof whatsappMessages.$inferSelect;
 export type InsertWhatsappMessage = z.infer<typeof whatsappMessageInsertSchema>;
+
+// SaaS/Platform settings (support email, etc.)
+export const saasSettings = pgTable("saas_settings", {
+  id: serial("id").primaryKey(),
+  key: text("key").notNull().unique(),
+  value: text("value"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Support tickets
+export const supportTickets = pgTable("support_tickets", {
+  id: serial("id").primaryKey(),
+  ticketNumber: text("ticket_number").notNull().unique(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  userId: integer("user_id").references(() => users.id, { onDelete: "set null" }),
+  subject: text("subject").notNull(),
+  category: text("category").notNull(),
+  priority: text("priority").notNull().default("medium"),
+  status: text("status").notNull().default("open"),
+  userEmail: text("user_email").notNull(),
+  userName: text("user_name").notNull(),
+  companyName: text("company_name"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Support ticket messages (conversation thread)
+export const supportTicketMessages = pgTable("support_ticket_messages", {
+  id: serial("id").primaryKey(),
+  ticketId: integer("ticket_id").notNull().references(() => supportTickets.id, { onDelete: "cascade" }),
+  senderType: text("sender_type").notNull(), // 'tenant' | 'saas_owner'
+  senderUserId: integer("sender_user_id").references(() => users.id, { onDelete: "set null" }),
+  senderEmail: text("sender_email"),
+  senderName: text("sender_name"),
+  message: text("message").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type SupportTicket = typeof supportTickets.$inferSelect;
+export type SupportTicketMessage = typeof supportTicketMessages.$inferSelect;

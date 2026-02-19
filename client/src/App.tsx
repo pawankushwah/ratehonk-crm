@@ -76,6 +76,7 @@ import SaasBilling from "@/pages/saas/billing";
 import SaasAnalytics from "@/pages/saas/analytics";
 import SaasReports from "@/pages/saas/reports";
 import SaasSettings from "@/pages/saas/settings";
+import SaasSupportTickets from "@/pages/saas/support-tickets";
 import LeadAnalytics from "@/pages/tenant/lead-analytics";
 import AutomationWorkflows from "@/pages/tenant/automation-workflows";
 import BookingRecommendations from "@/pages/tenant/booking-recommendations";
@@ -835,6 +836,12 @@ function Router() {
         <Route path="/saas/settings">
           <SaasProtectedRoute>
             <SaasSettings />
+          </SaasProtectedRoute>
+        </Route>
+
+        <Route path="/saas/support-tickets">
+          <SaasProtectedRoute>
+            <SaasSupportTickets />
           </SaasProtectedRoute>
         </Route>
 

@@ -17796,6 +17796,197 @@ async getDashboardMetrics(
       throw error;
     }
   }
+
+  // Support tickets
+  async createSupportTicket(data: {
+    tenantId: number;
+    userId?: number;
+    subject: string;
+    category: string;
+    priority: string;
+    message: string;
+    userEmail: string;
+    userName: string;
+    companyName?: string;
+    attachments?: Array<{ filename: string; path: string }>;
+  }) {
+    const ticketNum = `TKT-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+    const [ticket] = await sql`
+      INSERT INTO support_tickets (tenant_id, user_id, subject, category, priority, status, user_email, user_name, company_name, ticket_number)
+      VALUES (${data.tenantId}, ${data.userId ?? null}, ${data.subject}, ${data.category}, ${data.priority}, 'open', ${data.userEmail}, ${data.userName}, ${data.companyName ?? null}, ${ticketNum})
+      RETURNING *
+    `;
+    if (!ticket) throw new Error("Failed to create support ticket");
+    const attachmentsJson = data.attachments && data.attachments.length > 0
+      ? JSON.stringify(data.attachments)
+      : "[]";
+    await sql`
+      INSERT INTO support_ticket_messages (ticket_id, sender_type, sender_user_id, sender_email, sender_name, message, attachments)
+      VALUES (${ticket.id}, 'tenant', ${data.userId ?? null}, ${data.userEmail}, ${data.userName}, ${data.message}, ${attachmentsJson}::jsonb)
+    `;
+    return ticket;
+  }
+
+  async getSupportTickets(filters?: { tenantId?: number; status?: string; limit?: number; offset?: number }) {
+    const rows = await sql`SELECT * FROM support_tickets
+      WHERE 1=1
+      ${filters?.tenantId ? sql`AND tenant_id = ${filters.tenantId}` : sql``}
+      ${filters?.status ? sql`AND status = ${filters.status}` : sql``}
+      ORDER BY created_at DESC
+      ${filters?.limit ? sql`LIMIT ${filters.limit}` : sql``}
+      ${filters?.offset ? sql`OFFSET ${filters.offset}` : sql``}
+    `;
+    return rows;
+  }
+
+  async getSupportTicketById(id: number) {
+    const [ticket] = await sql`SELECT * FROM support_tickets WHERE id = ${id}`;
+    return ticket;
+  }
+
+  async getSupportTicketMessages(ticketId: number) {
+    return sql`SELECT * FROM support_ticket_messages WHERE ticket_id = ${ticketId} ORDER BY created_at ASC`;
+  }
+
+  async addSupportTicketMessage(data: {
+    ticketId: number;
+    senderType: "tenant" | "saas_owner";
+    senderUserId?: number;
+    senderEmail?: string;
+    senderName?: string;
+    message: string;
+  }) {
+    const [msg] = await sql`
+      INSERT INTO support_ticket_messages (ticket_id, sender_type, sender_user_id, sender_email, sender_name, message)
+      VALUES (${data.ticketId}, ${data.senderType}, ${data.senderUserId ?? null}, ${data.senderEmail ?? null}, ${data.senderName ?? null}, ${data.message})
+      RETURNING *
+    `;
+    await sql`UPDATE support_tickets SET updated_at = NOW() WHERE id = ${data.ticketId}`;
+    return msg;
+  }
+
+  async updateSupportTicketStatus(id: number, status: string) {
+    const [ticket] = await sql`UPDATE support_tickets SET status = ${status}, updated_at = NOW() WHERE id = ${id} RETURNING *`;
+    return ticket;
+  }
+
+  async getSaasSetting(key: string): Promise<string | null> {
+    const [row] = await sql`SELECT value FROM saas_settings WHERE key = ${key}`;
+    return row?.value ?? null;
+  }
+
+  async setSaasSetting(key: string, value: string) {
+    await sql`
+      INSERT INTO saas_settings (key, value, updated_at) VALUES (${key}, ${value}, NOW())
+      ON CONFLICT (key) DO UPDATE SET value = ${value}, updated_at = NOW()
+    `;
+  }
+
+  // SaaS Notifications (platform-level, no tenant)
+  async createSaasNotification(data: {
+    userId: number;
+    title: string;
+    message: string;
+    type: string;
+    entityType?: string;
+    entityId?: number;
+    actionUrl?: string;
+    priority?: string;
+  }) {
+    try {
+      const tableExists = await sql`
+        SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'saas_notifications')
+      `;
+      if (!tableExists[0]?.exists) return { id: 0 };
+      const [n] = await sql`
+        INSERT INTO saas_notifications (user_id, title, message, type, entity_type, entity_id, action_url, priority)
+        VALUES (${data.userId}, ${data.title}, ${data.message}, ${data.type}, ${data.entityType ?? null},
+          ${data.entityId ?? null}, ${data.actionUrl ?? null}, ${data.priority ?? "medium"})
+        RETURNING *
+      `;
+      return n;
+    } catch (e) {
+      console.error("createSaasNotification error:", e);
+      throw e;
+    }
+  }
+
+  async getSaasOwnerUserIds(): Promise<number[]> {
+    const rows = await sql`SELECT id FROM users WHERE role = 'saas_owner' AND is_active = true`;
+    return rows.map((r: any) => r.id);
+  }
+
+  async getSaasNotifications(
+    userId: number,
+    options?: { includeRead?: boolean; limit?: number; offset?: number }
+  ) {
+    try {
+      const tableExists = await sql`
+        SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'saas_notifications')
+      `;
+      if (!tableExists[0]?.exists) return [];
+      const includeRead = options?.includeRead ?? true;
+      const limit = options?.limit ?? 50;
+      const offset = options?.offset ?? 0;
+      let q = sql`
+        SELECT * FROM saas_notifications WHERE user_id = ${userId}
+        AND (expires_at IS NULL OR expires_at > NOW())
+      `;
+      if (!includeRead) q = sql`${q} AND is_read = false`;
+      const rows = await sql`${q} ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`;
+      return rows.map((r: any) => ({
+        id: r.id,
+        title: r.title,
+        message: r.message,
+        type: r.type,
+        entityType: r.entity_type,
+        entityId: r.entity_id,
+        isRead: r.is_read,
+        priority: r.priority,
+        actionUrl: r.action_url,
+        createdAt: r.created_at,
+      }));
+    } catch (e) {
+      console.error("getSaasNotifications error:", e);
+      return [];
+    }
+  }
+
+  async getSaasUnreadCount(userId: number): Promise<number> {
+    try {
+      const tableExists = await sql`
+        SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'saas_notifications')
+      `;
+      if (!tableExists[0]?.exists) return 0;
+      const [r] = await sql`
+        SELECT COUNT(*)::int as c FROM saas_notifications
+        WHERE user_id = ${userId} AND is_read = false
+        AND (expires_at IS NULL OR expires_at > NOW())
+      `;
+      return (r as any)?.c ?? 0;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  async markSaasNotificationRead(notificationId: number, userId: number) {
+    await sql`
+      UPDATE saas_notifications SET is_read = true
+      WHERE id = ${notificationId} AND user_id = ${userId}
+    `;
+  }
+
+  async markAllSaasNotificationsRead(userId: number) {
+    await sql`UPDATE saas_notifications SET is_read = true WHERE user_id = ${userId}`;
+  }
+
+  async deleteSaasNotification(notificationId: number, userId: number) {
+    await sql`DELETE FROM saas_notifications WHERE id = ${notificationId} AND user_id = ${userId}`;
+  }
+
+  async deleteAllReadSaasNotifications(userId: number) {
+    await sql`DELETE FROM saas_notifications WHERE user_id = ${userId} AND is_read = true`;
+  }
 }
 
 export const simpleStorage = new SimpleStorage();

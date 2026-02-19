@@ -465,6 +465,7 @@ class TenantEmailService {
     htmlBody?: string;
     tenantId: number;
     fromName?: string; // Optional: Override the "from" name with tenant company name
+    useSaasOwnerForSending?: boolean; // When true, use SaaS owner SMTP (for platform emails)
     attachments?: Array<{
       filename: string;
       path?: string;
@@ -478,8 +479,12 @@ class TenantEmailService {
       let emailSource = "";
       let tenantConfig: any = null; // Store tenant config for later use (reply-to)
 
-      // Priority 1: Try tenant-specific SMTP configuration
-      tenantConfig = await this.getTenantEmailConfig(data.tenantId);
+      // When useSaasOwnerForSending, skip tenant config and use SaaS owner directly
+      if (data.useSaasOwnerForSending) {
+        tenantConfig = null;
+      } else {
+        tenantConfig = await this.getTenantEmailConfig(data.tenantId);
+      }
       if (tenantConfig) {
         transporter = this.createTenantTransporter(tenantConfig);
         // Use sender_email from database if it exists and is valid
@@ -1809,6 +1814,111 @@ This is an automated notification from ${companyName}.
     } catch (error: any) {
       console.error(`❌ Error sending follow-up priority change email to ${data.to}:`, error);
       return false;
+    }
+  }
+
+  /**
+   * Send support ticket confirmation to tenant (we have received your query)
+   */
+  async sendSupportTicketConfirmationEmail(data: {
+    to: string;
+    userName: string;
+    ticketNumber: string;
+    subject: string;
+    companyName: string;
+    tenantId: number;
+  }) {
+    try {
+      const htmlBody = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <div style="background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+            <h1 style="color: white; margin: 0; font-size: 24px;">We've Received Your Support Request</h1>
+          </div>
+          <div style="background-color: #ffffff; padding: 40px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 10px 10px;">
+            <p style="color: #333; font-size: 16px; margin-bottom: 20px;">Hello ${data.userName},</p>
+            <p style="color: #666; font-size: 14px; line-height: 1.6; margin-bottom: 20px;">
+              Thank you for contacting our support team. We have received your query and our team will get back to you within <strong>24-48 hours</strong>.
+            </p>
+            <div style="background-color: #f8fafc; padding: 20px; border-radius: 8px; margin: 25px 0; border-left: 4px solid #2563eb;">
+              <p style="margin: 0 0 8px 0; font-weight: bold; color: #1e40af;">Ticket Details</p>
+              <p style="margin: 0; color: #475569;"><strong>Ticket #:</strong> ${data.ticketNumber}</p>
+              <p style="margin: 8px 0 0 0; color: #475569;"><strong>Subject:</strong> ${data.subject}</p>
+            </div>
+            <p style="color: #666; font-size: 14px; line-height: 1.6;">
+              If your matter is urgent, please mention your ticket number (#${data.ticketNumber}) in any follow-up communication.
+            </p>
+            <p style="color: #333; font-size: 14px; margin-top: 30px;">
+              Best regards,<br><strong>${data.companyName} Support Team</strong>
+            </p>
+          </div>
+        </div>
+      `;
+      const textBody = `Hello ${data.userName},\n\nWe have received your support request (Ticket #${data.ticketNumber}). Our team will reply within 24-48 hours.\n\nSubject: ${data.subject}\n\nBest regards,\n${data.companyName} Support Team`;
+
+      await this.sendCustomerEmail({
+        to: data.to,
+        subject: `We've Received Your Query - Ticket #${data.ticketNumber}`,
+        body: textBody,
+        htmlBody,
+        tenantId: data.tenantId,
+        fromName: `${data.companyName} Support`,
+      });
+      console.log(`✅ Support ticket confirmation sent to ${data.to}`);
+    } catch (error: any) {
+      console.error(`❌ Error sending support ticket confirmation:`, error);
+    }
+  }
+
+  /**
+   * Send support ticket notification to SaaS owner (new ticket received)
+   */
+  async sendSupportTicketToOwnerEmail(data: {
+    to: string;
+    ticketNumber: string;
+    subject: string;
+    category: string;
+    priority: string;
+    message: string;
+    userName: string;
+    userEmail: string;
+    companyName: string;
+    tenantId: number;
+  }) {
+    try {
+      const htmlBody = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <div style="background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+            <h1 style="color: white; margin: 0; font-size: 24px;">New Support Ticket Received</h1>
+          </div>
+          <div style="background-color: #ffffff; padding: 40px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 10px 10px;">
+            <div style="background-color: #fef2f2; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+              <p style="margin: 0 0 8px 0; font-weight: bold; color: #991b1b;">Ticket #${data.ticketNumber}</p>
+              <p style="margin: 0; color: #475569;"><strong>From:</strong> ${data.userName} &lt;${data.userEmail}&gt;</p>
+              <p style="margin: 8px 0 0 0; color: #475569;"><strong>Company:</strong> ${data.companyName} (Tenant ID: ${data.tenantId})</p>
+            </div>
+            <p style="margin: 0 0 8px 0; font-weight: bold; color: #333;">Subject</p>
+            <p style="margin: 0 0 20px 0; color: #666;">${data.subject}</p>
+            <p style="margin: 0 0 8px 0; font-weight: bold; color: #333;">Category</p>
+            <p style="margin: 0 0 20px 0; color: #666;">${data.category} | Priority: ${data.priority}</p>
+            <p style="margin: 0 0 8px 0; font-weight: bold; color: #333;">Message</p>
+            <div style="background-color: #f8fafc; padding: 15px; border-radius: 6px; margin: 0 0 20px 0; white-space: pre-wrap;">${(data.message || "").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>
+            <p style="color: #666; font-size: 12px;">Log in to the SaaS panel to view and respond to this ticket.</p>
+          </div>
+        </div>
+      `;
+
+      await this.sendCustomerEmail({
+        to: data.to,
+        subject: `[Support] New Ticket #${data.ticketNumber}: ${data.subject}`,
+        body: `New support ticket from ${data.userName} (${data.companyName}).\n\nSubject: ${data.subject}\nCategory: ${data.category}\nPriority: ${data.priority}\n\nMessage:\n${data.message}`,
+        htmlBody,
+        tenantId: data.tenantId,
+        fromName: "Support System",
+        useSaasOwnerForSending: true,
+      });
+      console.log(`✅ Support ticket notification sent to ${data.to}`);
+    } catch (error: any) {
+      console.error(`❌ Error sending support ticket to owner:`, error);
     }
   }
 }
