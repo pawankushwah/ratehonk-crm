@@ -23212,10 +23212,11 @@ ${args.tenantName}`;
   });
 
   // Subscription management endpoints - moved to higher priority
+  // Public/tenant: only SaaS owner plans (partner_id IS NULL) - not shown on landing, tenant subscription page
   app.get("/api/subscription/plans", async (req, res) => {
     try {
-      console.log("API: Fetching subscription plans");
-      const plans = await simpleStorage.getAllSubscriptionPlans();
+      console.log("API: Fetching subscription plans (public only)");
+      const plans = await simpleStorage.getPublicSubscriptionPlans();
       res.setHeader("Content-Type", "application/json");
       
       // Group plans by country
@@ -31975,6 +31976,59 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
     }
   };
 
+  // Partner Login
+  app.post("/api/partner/auth/login", async (req, res) => {
+    try {
+      const { email, password } = req.body;
+      if (!email || !password) {
+        return res.status(400).json({ message: "Email and password are required" });
+      }
+      const user = await simpleStorage.getUserByEmail(email);
+      if (!user) return res.status(401).json({ message: "Invalid credentials" });
+      if (user.role !== "partner") {
+        return res.status(403).json({ message: "Access denied. This login is for partners only." });
+      }
+      if (!user.password) return res.status(401).json({ message: "Invalid credentials" });
+      const passwordValid = await bcrypt.compare(String(password), String(user.password));
+      if (!passwordValid) return res.status(401).json({ message: "Invalid credentials" });
+      const token = jwt.sign({ userId: user.id, role: "partner", partnerId: user.partner_id }, JWT_SECRET);
+      res.json({
+        user: {
+          id: user.id,
+          email: user.email,
+          role: user.role,
+          partnerId: user.partner_id,
+          firstName: user.first_name || "",
+          lastName: user.last_name || "",
+          isActive: user.is_active,
+        },
+        token,
+      });
+    } catch (error: any) {
+      console.error("Partner login error:", error);
+      res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+  });
+
+  const authenticatePartnerToken = async (req: any, res: any, next: any) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return res.status(401).json({ message: "No token provided" });
+      }
+      const token = authHeader.substring(7);
+      const decoded = jwt.verify(token, JWT_SECRET) as any;
+      const user = await simpleStorage.getUser(decoded.userId);
+      if (!user || user.role !== "partner") {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      req.user = user;
+      next();
+    } catch (error) {
+      return res.status(401).json({ message: "Invalid token" });
+    }
+  };
+
   // SaaS Dashboard Analytics API
   app.get("/api/saas/dashboard", authenticateSaasToken, async (req: any, res) => {
     try {
@@ -32318,10 +32372,10 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
     }
   });
 
-  // Update SaaS tenants endpoint to use SaaS auth
+  // Update SaaS tenants endpoint to use SaaS auth (includes partner info)
   app.get("/api/saas/tenants", authenticateSaasToken, async (req: any, res) => {
     try {
-      const tenants = await simpleStorage.getAllTenants();
+      const tenants = await simpleStorage.getAllTenants({ includePartner: true });
       res.json(tenants);
     } catch (error: any) {
       console.error("Get tenants error:", error);
@@ -32339,6 +32393,7 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
         contactPhone: req.body.contactPhone,
         address: req.body.address,
         isActive: req.body.isActive !== false,
+        partnerId: req.body.partnerId || null,
       });
 
       // Auto-assign free trial plan if available
@@ -32405,6 +32460,7 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
         contact_phone: req.body.contactPhone,
         address: req.body.address,
         is_active: req.body.isActive,
+        partner_id: req.body.partnerId ?? undefined,
       });
 
       res.json(tenant);
@@ -32434,6 +32490,337 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
       res.json({ message: "Tenant and all related records deleted successfully" });
     } catch (error: any) {
       console.error("Delete tenant error:", error);
+      res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+  });
+
+  // SaaS Partners CRUD
+  app.get("/api/saas/partners", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const partners = await simpleStorage.getAllPartners();
+      res.json(partners);
+    } catch (error: any) {
+      console.error("Get partners error:", error);
+      res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+  });
+
+  app.post("/api/saas/partners", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const { companyName, contactEmail, contactPhone, address, commissionType, commissionValue, minimumSubscriptionPrice, isActive, loginEmail, loginPassword, firstName, lastName } = req.body;
+      if (!companyName || !contactEmail) {
+        return res.status(400).json({ message: "Company name and contact email are required" });
+      }
+      const partner = await simpleStorage.createPartner({
+        companyName,
+        contactEmail,
+        contactPhone: contactPhone || null,
+        address: address || null,
+        commissionType: commissionType || "percentage",
+        commissionValue: commissionValue ?? 0,
+        minimumSubscriptionPrice: minimumSubscriptionPrice ? parseFloat(minimumSubscriptionPrice) : null,
+        isActive: isActive !== false,
+      });
+      if (loginEmail && loginPassword) {
+        const hashedPassword = await bcrypt.hash(String(loginPassword), 10);
+        await simpleStorage.createUser({
+          email: loginEmail,
+          password: hashedPassword,
+          role: "partner",
+          tenantId: null,
+          firstName: firstName || "",
+          lastName: lastName || "",
+          partnerId: partner.id,
+          isActive: true,
+        });
+      }
+      res.status(201).json(partner);
+    } catch (error: any) {
+      console.error("Create partner error:", error);
+      res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+  });
+
+  app.put("/api/saas/partners/:partnerId", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const partnerId = parseInt(req.params.partnerId);
+      const partner = await simpleStorage.updatePartner(partnerId, req.body);
+      if (!partner) return res.status(404).json({ message: "Partner not found" });
+      res.json(partner);
+    } catch (error: any) {
+      console.error("Update partner error:", error);
+      res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+  });
+
+  app.delete("/api/saas/partners/:partnerId", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const partnerId = parseInt(req.params.partnerId);
+      await simpleStorage.deletePartner(partnerId);
+      res.json({ message: "Partner deleted successfully" });
+    } catch (error: any) {
+      console.error("Delete partner error:", error);
+      res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+  });
+
+  // Partner APIs - scoped to partner's tenants only
+  app.get("/api/partner/dashboard", authenticatePartnerToken, async (req: any, res) => {
+    try {
+      const partnerId = req.user.partner_id;
+      if (!partnerId) return res.status(403).json({ message: "Partner not linked" });
+      const tenants = await simpleStorage.getTenantsByPartnerId(partnerId);
+      const activeTenants = tenants.filter((t: any) => t.is_active);
+      const subscriptions = await sql`
+        SELECT ts.*, t.company_name as tenant_name, sp.name as plan_name
+        FROM tenant_subscriptions ts
+        LEFT JOIN tenants t ON ts.tenant_id = t.id
+        LEFT JOIN subscription_plans sp ON ts.plan_id = sp.id
+        WHERE t.partner_id = ${partnerId}
+        ORDER BY ts.created_at DESC
+      `;
+      res.json({
+        metrics: {
+          totalTenants: tenants.length,
+          activeTenants: activeTenants.length,
+          totalSubscriptions: subscriptions.length,
+        },
+        recentTenants: tenants.slice(0, 5),
+      });
+    } catch (error: any) {
+      console.error("Partner dashboard error:", error);
+      res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+  });
+
+  app.get("/api/partner/tenants", authenticatePartnerToken, async (req: any, res) => {
+    try {
+      const partnerId = req.user.partner_id;
+      if (!partnerId) return res.status(403).json({ message: "Partner not linked" });
+      const tenants = await simpleStorage.getTenantsByPartnerId(partnerId);
+      res.json(tenants);
+    } catch (error: any) {
+      console.error("Partner tenants error:", error);
+      res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+  });
+
+  app.post("/api/partner/tenants", authenticatePartnerToken, async (req: any, res) => {
+    try {
+      const crypto = await import("crypto");
+      const partnerId = req.user.partner_id;
+      if (!partnerId) return res.status(403).json({ message: "Partner not linked" });
+      const { firstName, lastName, email, companyName, contactPhone, address } = req.body;
+      if (!firstName || !lastName || !email || !companyName) {
+        return res.status(400).json({ message: "First name, last name, email, and company name are required" });
+      }
+      const existingUser = await simpleStorage.getUserByEmail(email);
+      if (existingUser) {
+        return res.status(400).json({ message: "User with this email already exists" });
+      }
+      let baseSubdomain = companyName.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+      let subdomain = baseSubdomain;
+      let counter = 1;
+      while (true) {
+        const [existing] = await sql`SELECT id FROM tenants WHERE subdomain = ${subdomain}`;
+        if (!existing) break;
+        subdomain = `${baseSubdomain}-${counter}`;
+        counter++;
+        if (counter > 100) return res.status(400).json({ message: "Unable to generate unique subdomain" });
+      }
+      const tenant = await simpleStorage.createTenant({
+        companyName,
+        subdomain,
+        contactEmail: email,
+        contactPhone: contactPhone || null,
+        address: address || null,
+        isActive: true,
+        partnerId,
+      });
+      const generatedPassword = crypto.randomBytes(8).toString("base64").replace(/[+/=]/g, "").slice(0, 10) || "TempPass1!";
+      const hashedPassword = await bcrypt.hash(generatedPassword, 10);
+      await simpleStorage.createUser({
+        email,
+        password: hashedPassword,
+        role: "tenant_admin",
+        tenantId: tenant.id,
+        firstName,
+        lastName,
+        phone: contactPhone || null,
+        isActive: true,
+        isEmailVerified: false,
+      });
+      const [partner] = await sql`SELECT company_name FROM partners WHERE id = ${partnerId}`;
+      const partnerName = partner?.company_name || null;
+      try {
+        await emailService.sendWelcomeEmail({
+          to: email,
+          firstName,
+          lastName,
+          companyName,
+          email,
+          temporaryPassword: generatedPassword,
+          partnerName,
+        });
+      } catch (emailErr: any) {
+        console.error("Partner welcome email failed (non-critical):", emailErr);
+      }
+      try {
+        const [freePlan] = await sql`
+          SELECT * FROM subscription_plans WHERE is_free_plan = true AND is_active = true ORDER BY free_trial_days DESC LIMIT 1
+        `;
+        if (freePlan) {
+          const [trialUsage] = await sql`SELECT * FROM tenant_free_trial_usage WHERE tenant_id = ${tenant.id}`;
+          if (!trialUsage || !trialUsage.has_used_free_trial) {
+            const trialEndDate = new Date();
+            trialEndDate.setDate(trialEndDate.getDate() + (freePlan.free_trial_days || 7));
+            await simpleStorage.createTenantSubscription({
+              tenantId: tenant.id,
+              planId: freePlan.id,
+              status: "free_trial",
+              billingCycle: "monthly",
+              paymentGateway: "none",
+              trialEndsAt: trialEndDate,
+              currentPeriodStart: new Date(),
+              currentPeriodEnd: trialEndDate,
+              nextBillingDate: trialEndDate,
+            });
+            await sql`
+              INSERT INTO tenant_free_trial_usage (tenant_id, has_used_free_trial, free_trial_plan_id, used_at)
+              VALUES (${tenant.id}, true, ${freePlan.id}, NOW())
+              ON CONFLICT (tenant_id) DO UPDATE SET has_used_free_trial = true, free_trial_plan_id = ${freePlan.id}, used_at = NOW()
+            `;
+          }
+        }
+      } catch (e) { /* non-critical */ }
+      res.status(201).json(tenant);
+    } catch (error: any) {
+      console.error("Partner create tenant error:", error);
+      res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+  });
+
+  app.get("/api/partner/subscriptions", authenticatePartnerToken, async (req: any, res) => {
+    try {
+      const partnerId = req.user.partner_id;
+      if (!partnerId) return res.status(403).json({ message: "Partner not linked" });
+      const subscriptions = await sql`
+        SELECT ts.*, t.company_name as tenant_name, sp.name as plan_name, sp.monthly_price, sp.yearly_price
+        FROM tenant_subscriptions ts
+        LEFT JOIN tenants t ON ts.tenant_id = t.id
+        LEFT JOIN subscription_plans sp ON ts.plan_id = sp.id
+        WHERE t.partner_id = ${partnerId}
+        ORDER BY ts.created_at DESC
+      `;
+      const result = (Array.isArray(subscriptions) ? subscriptions : []).map((sub: any) => ({
+        id: sub.id,
+        tenantId: sub.tenant_id,
+        tenantName: sub.tenant_name,
+        planId: sub.plan_id,
+        planName: sub.plan_name,
+        status: sub.status,
+        billingCycle: sub.billing_cycle,
+        currentPeriodStart: sub.current_period_start,
+        currentPeriodEnd: sub.current_period_end,
+        nextBillingDate: sub.next_billing_date,
+      }));
+      res.json(result);
+    } catch (error: any) {
+      console.error("Partner subscriptions error:", error);
+      res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+  });
+
+  app.post("/api/partner/subscriptions", authenticatePartnerToken, async (req: any, res) => {
+    try {
+      const partnerId = req.user.partner_id;
+      if (!partnerId) return res.status(403).json({ message: "Partner not linked" });
+      const tenantId = parseInt(req.body.tenantId);
+      const planId = parseInt(req.body.planId);
+      if (!tenantId || !planId) return res.status(400).json({ message: "Tenant and plan are required" });
+      const { status, billingCycle } = req.body;
+      const [tenant] = await sql`SELECT id FROM tenants WHERE id = ${tenantId} AND partner_id = ${partnerId}`;
+      if (!tenant) return res.status(403).json({ message: "Tenant not found or not yours" });
+      const [partner] = await sql`SELECT minimum_subscription_price FROM partners WHERE id = ${partnerId}`;
+      if (partner?.minimum_subscription_price != null && parseFloat(partner.minimum_subscription_price) > 0) {
+        const [plan] = await sql`SELECT monthly_price, yearly_price FROM subscription_plans WHERE id = ${planId}`;
+        if (plan) {
+          const minPrice = parseFloat(partner.minimum_subscription_price);
+          const planMonthly = billingCycle === "yearly" ? parseFloat(plan.yearly_price || 0) / 12 : parseFloat(plan.monthly_price || 0);
+          if (planMonthly < minPrice) {
+            return res.status(400).json({ message: `Subscription price (${planMonthly}) is below your minimum (${minPrice}). Please choose a higher-tier plan.` });
+          }
+        }
+      }
+      const currentPeriodStart = new Date();
+      const currentPeriodEnd = new Date();
+      if (billingCycle === "yearly") currentPeriodEnd.setFullYear(currentPeriodEnd.getFullYear() + 1);
+      else currentPeriodEnd.setMonth(currentPeriodEnd.getMonth() + 1);
+      const subscription = await simpleStorage.createTenantSubscription({
+        tenantId,
+        planId,
+        status: status || "trial",
+        billingCycle: billingCycle || "monthly",
+        paymentGateway: "stripe",
+        currentPeriodStart,
+        currentPeriodEnd,
+        nextBillingDate: currentPeriodEnd,
+        trialEndsAt: status === "trial" ? currentPeriodEnd : null,
+      });
+      res.status(201).json(subscription);
+    } catch (error: any) {
+      console.error("Partner create subscription error:", error);
+      res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+  });
+
+  app.post("/api/partner/plans", authenticatePartnerToken, async (req: any, res) => {
+    try {
+      const partnerId = req.user.partner_id;
+      if (!partnerId) return res.status(403).json({ message: "Partner not linked" });
+      const [plan] = await sql`
+        INSERT INTO subscription_plans (
+          name, description, country, currency, monthly_price, yearly_price,
+          max_users, max_customers, features, allowed_menu_items, allowed_pages,
+          allowed_dashboard_widgets, allowed_page_permissions,
+          free_trial_days, is_free_plan, is_active, partner_id
+        )
+        VALUES (
+          ${req.body.name},
+          ${req.body.description || null},
+          ${req.body.country || "US"},
+          ${req.body.currency || "USD"},
+          ${req.body.monthlyPrice || 0},
+          ${req.body.yearlyPrice || 0},
+          ${req.body.maxUsers ?? 10},
+          ${req.body.maxCustomers ?? 100},
+          ${JSON.stringify(req.body.allowedMenuItems || req.body.features || [])},
+          ${JSON.stringify(req.body.allowedMenuItems || [])},
+          ${JSON.stringify(req.body.allowedPages || [])},
+          ${JSON.stringify(req.body.allowedDashboardWidgets || [])},
+          ${JSON.stringify(req.body.allowedPagePermissions || {})},
+          ${req.body.freeTrialDays || 0},
+          ${req.body.isFreePlan || false},
+          ${req.body.isActive !== false},
+          ${partnerId}
+        )
+        RETURNING *
+      `;
+      res.status(201).json(plan);
+    } catch (error: any) {
+      console.error("Partner create plan error:", error);
+      res.status(500).json({ message: "Internal server error", error: error.message });
+    }
+  });
+
+  app.get("/api/partner/plans", authenticatePartnerToken, async (req: any, res) => {
+    try {
+      const partnerId = req.user.partner_id;
+      if (!partnerId) return res.status(403).json({ message: "Partner not linked" });
+      const plans = await simpleStorage.getSubscriptionPlansForPartnerTenants(partnerId);
+      res.json(plans);
+    } catch (error: any) {
+      console.error("Partner plans error:", error);
       res.status(500).json({ message: "Internal server error", error: error.message });
     }
   });
@@ -32546,15 +32933,60 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
     }
   });
 
-  // Update SaaS plans endpoints to use SaaS auth
+  // SaaS plans - get all (including partner plans)
+  app.get("/api/saas/plans", authenticateSaasToken, async (req: any, res) => {
+    try {
+      const plans = await simpleStorage.getAllSubscriptionPlans();
+      const plansByCountry: Record<string, any[]> = {};
+      plans.forEach((plan: any) => {
+        const country = plan.country || "US";
+        if (!plansByCountry[country]) plansByCountry[country] = [];
+        plansByCountry[country].push(plan);
+      });
+      const result = Object.keys(plansByCountry).map((country) => {
+        const countryPlans = plansByCountry[country];
+        const firstPlan = countryPlans[0];
+        return {
+          country,
+          currency: firstPlan.currency || "USD",
+          plans: countryPlans.map((plan: any) => ({
+            id: plan.id,
+            name: plan.name,
+            description: plan.description,
+            monthly_price: plan.monthly_price,
+            yearly_price: plan.yearly_price,
+            max_users: plan.max_users,
+            max_customers: plan.max_customers,
+            features: plan.features,
+            is_active: plan.is_active,
+            country: plan.country,
+            currency: plan.currency,
+            allowed_menu_items: plan.allowed_menu_items || [],
+            allowed_pages: plan.allowed_pages || [],
+            free_trial_days: plan.free_trial_days || 0,
+            is_free_plan: plan.is_free_plan || false,
+            allowed_dashboard_widgets: plan.allowed_dashboard_widgets || [],
+            allowed_page_permissions: plan.allowed_page_permissions || {},
+            partner_id: plan.partner_id,
+          })),
+        };
+      });
+      res.json(result);
+    } catch (error: any) {
+      console.error("Get SaaS plans error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   app.post("/api/saas/plans", authenticateSaasToken, async (req: any, res) => {
     try {
+      const partnerId = req.body.partnerId ? parseInt(req.body.partnerId) : null;
       const [plan] = await sql`
         INSERT INTO subscription_plans (
           name, description, country, currency, monthly_price, yearly_price, 
           max_users, max_customers, features, allowed_menu_items, allowed_pages,
           allowed_dashboard_widgets, allowed_page_permissions,
-          free_trial_days, is_free_plan, is_active
+          free_trial_days, is_free_plan, is_active, partner_id
         )
         VALUES (
           ${req.body.name}, 
@@ -32572,7 +33004,8 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
           ${JSON.stringify(req.body.allowedPagePermissions || {})}, 
           ${req.body.freeTrialDays || 0}, 
           ${req.body.isFreePlan || false}, 
-          ${req.body.isActive !== false}
+          ${req.body.isActive !== false},
+          ${partnerId}
         )
         RETURNING *
       `;
@@ -32703,6 +33136,7 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
   app.put("/api/saas/plans/:planId", authenticateSaasToken, async (req: any, res) => {
     try {
       const planId = parseInt(req.params.planId);
+      const partnerId = req.body.partnerId !== undefined ? (req.body.partnerId ? parseInt(req.body.partnerId) : null) : undefined;
       const [plan] = await sql`
         UPDATE subscription_plans
         SET name = ${req.body.name},
@@ -32720,7 +33154,8 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
             allowed_page_permissions = ${JSON.stringify(req.body.allowedPagePermissions || {})},
             free_trial_days = ${req.body.freeTrialDays || 0},
             is_free_plan = ${req.body.isFreePlan || false},
-            is_active = ${req.body.isActive !== false}
+            is_active = ${req.body.isActive !== false},
+            partner_id = COALESCE(${partnerId !== undefined ? partnerId : null}, partner_id)
         WHERE id = ${planId}
         RETURNING *
       `;

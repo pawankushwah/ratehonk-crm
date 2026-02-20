@@ -55,6 +55,12 @@ const saasMenuItems = [
     group: null,
   },
   {
+    name: "Partners",
+    href: "/saas/partners",
+    icon: Users,
+    group: null,
+  },
+  {
     name: "Subscription Plans",
     href: "/saas/plans",
     icon: Package,

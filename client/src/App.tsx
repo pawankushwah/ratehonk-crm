@@ -77,6 +77,14 @@ import SaasAnalytics from "@/pages/saas/analytics";
 import SaasReports from "@/pages/saas/reports";
 import SaasSettings from "@/pages/saas/settings";
 import SaasSupportTickets from "@/pages/saas/support-tickets";
+import SaasPartners from "@/pages/saas/partners";
+import PartnerLogin from "@/pages/partner/login";
+import PartnerDashboard from "@/pages/partner/dashboard";
+import PartnerTenants from "@/pages/partner/tenants";
+import PartnerSubscriptions from "@/pages/partner/subscriptions";
+import PartnerPlans from "@/pages/partner/plans";
+import PartnerPlanForm from "@/pages/partner/plan-form";
+import { PartnerAuthProvider, usePartnerAuth } from "@/components/auth/partner-auth-provider";
 import LeadAnalytics from "@/pages/tenant/lead-analytics";
 import AutomationWorkflows from "@/pages/tenant/automation-workflows";
 import BookingRecommendations from "@/pages/tenant/booking-recommendations";
@@ -209,6 +217,33 @@ function SaasPublicRoute({ children }: { children: React.ReactNode }) {
     return <Redirect to="/saas/dashboard" />;
   }
 
+  return <>{children}</>;
+}
+
+function PartnerProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, loading } = usePartnerAuth();
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+  if (!isAuthenticated) return <Redirect to="/partner/login" />;
+  return <>{children}</>;
+}
+
+function PartnerPublicRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, loading } = usePartnerAuth();
+  const [location] = useLocation();
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+  if (isAuthenticated && location === "/partner/login") return <Redirect to="/partner/dashboard" />;
   return <>{children}</>;
 }
 
@@ -791,6 +826,12 @@ function Router() {
           </SaasProtectedRoute>
         </Route>
 
+        <Route path="/saas/partners">
+          <SaasProtectedRoute>
+            <SaasPartners />
+          </SaasProtectedRoute>
+        </Route>
+
         <Route path="/saas/plans">
           <SaasProtectedRoute>
             <SaasPlans />
@@ -845,6 +886,42 @@ function Router() {
           </SaasProtectedRoute>
         </Route>
 
+        {/* Partner Panel routes */}
+        <Route path="/partner/login">
+          <PartnerPublicRoute>
+            <PartnerLogin />
+          </PartnerPublicRoute>
+        </Route>
+
+        <Route path="/partner/dashboard">
+          <PartnerProtectedRoute>
+            <PartnerDashboard />
+          </PartnerProtectedRoute>
+        </Route>
+
+        <Route path="/partner/tenants">
+          <PartnerProtectedRoute>
+            <PartnerTenants />
+          </PartnerProtectedRoute>
+        </Route>
+
+        <Route path="/partner/subscriptions">
+          <PartnerProtectedRoute>
+            <PartnerSubscriptions />
+          </PartnerProtectedRoute>
+        </Route>
+
+        <Route path="/partner/plans/new">
+          <PartnerProtectedRoute>
+            <PartnerPlanForm />
+          </PartnerProtectedRoute>
+        </Route>
+        <Route path="/partner/plans">
+          <PartnerProtectedRoute>
+            <PartnerPlans />
+          </PartnerProtectedRoute>
+        </Route>
+
         {/* Fallback routes */}
         <Route component={NotFound} />
       </Switch>
@@ -875,9 +952,11 @@ function App() {
       <TooltipProvider>
         <AuthProvider>
           <SaasAuthProvider>
-            <Toaster />
-            <AuthenticatedFloatingButtons />
-            <Router />
+            <PartnerAuthProvider>
+              <Toaster />
+              <AuthenticatedFloatingButtons />
+              <Router />
+            </PartnerAuthProvider>
           </SaasAuthProvider>
         </AuthProvider>
       </TooltipProvider>

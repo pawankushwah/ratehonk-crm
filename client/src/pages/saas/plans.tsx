@@ -43,7 +43,7 @@ export default function SaasPlans() {
   const { data: plansByCountry, isLoading, refetch } = useQuery({
     queryKey: ["/api/saas/plans"],
     queryFn: async () => {
-      const response = await saasApiRequest("GET", "/api/subscription/plans", {});
+      const response = await saasApiRequest("GET", "/api/saas/plans", {});
       return response.json();
     },
   });

@@ -78,8 +78,27 @@ export class SimpleStorage {
     }
   }
 
-  async getAllTenants() {
+  async getAllTenants(options?: { partnerId?: number; includePartner?: boolean }) {
     try {
+      if (options?.partnerId) {
+        const tenants = await sql`
+          SELECT t.*, p.company_name as partner_company_name, p.contact_email as partner_email
+          FROM tenants t
+          LEFT JOIN partners p ON t.partner_id = p.id
+          WHERE t.partner_id = ${options.partnerId}
+          ORDER BY t.created_at DESC
+        `;
+        return tenants;
+      }
+      if (options?.includePartner) {
+        const tenants = await sql`
+          SELECT t.*, p.company_name as partner_company_name, p.contact_email as partner_email
+          FROM tenants t
+          LEFT JOIN partners p ON t.partner_id = p.id
+          ORDER BY t.created_at DESC
+        `;
+        return tenants;
+      }
       const tenants = await sql`SELECT * FROM tenants ORDER BY created_at DESC`;
       return tenants;
     } catch (error) {
@@ -88,17 +107,103 @@ export class SimpleStorage {
     }
   }
 
+  async getTenantsByPartnerId(partnerId: number) {
+    try {
+      const tenants = await sql`
+        SELECT t.*, p.company_name as partner_company_name
+        FROM tenants t
+        LEFT JOIN partners p ON t.partner_id = p.id
+        WHERE t.partner_id = ${partnerId}
+        ORDER BY t.created_at DESC
+      `;
+      return tenants;
+    } catch (error) {
+      console.error("Error getting tenants by partner:", error);
+      throw error;
+    }
+  }
+
   async createTenant(tenant: any) {
     try {
       const [newTenant] = await sql`
-        INSERT INTO tenants (company_name, subdomain, contact_email, contact_phone, address, is_active)
+        INSERT INTO tenants (company_name, subdomain, contact_email, contact_phone, address, is_active, partner_id)
         VALUES (${tenant.companyName}, ${tenant.subdomain}, ${tenant.contactEmail}, 
-                ${tenant.contactPhone || null}, ${tenant.address || null}, ${tenant.isActive})
+                ${tenant.contactPhone || null}, ${tenant.address || null}, ${tenant.isActive ?? true}, ${tenant.partnerId ?? null})
         RETURNING *
       `;
       return newTenant;
     } catch (error) {
       console.error("Error creating tenant:", error);
+      throw error;
+    }
+  }
+
+  // Partner CRUD
+  async getAllPartners() {
+    try {
+      const partners = await sql`SELECT * FROM partners ORDER BY created_at DESC`;
+      return partners;
+    } catch (error) {
+      console.error("Error getting all partners:", error);
+      throw error;
+    }
+  }
+
+  async getPartner(id: number) {
+    try {
+      const [partner] = await sql`SELECT * FROM partners WHERE id = ${id}`;
+      return partner;
+    } catch (error) {
+      console.error("Error getting partner:", error);
+      throw error;
+    }
+  }
+
+  async createPartner(partner: any) {
+    try {
+      const [newPartner] = await sql`
+        INSERT INTO partners (company_name, contact_email, contact_phone, address, commission_type, commission_value, minimum_subscription_price, is_active)
+        VALUES (${partner.companyName}, ${partner.contactEmail}, ${partner.contactPhone || null}, 
+                ${partner.address || null}, ${partner.commissionType || 'percentage'}, 
+                ${partner.commissionValue ?? 0}, ${partner.minimumSubscriptionPrice ?? null}, ${partner.isActive !== false})
+        RETURNING *
+      `;
+      return newPartner;
+    } catch (error) {
+      console.error("Error creating partner:", error);
+      throw error;
+    }
+  }
+
+  async updatePartner(id: number, data: any) {
+    try {
+      const [updated] = await sql`
+        UPDATE partners SET
+          company_name = COALESCE(${data.companyName ?? data.company_name}, company_name),
+          contact_email = COALESCE(${data.contactEmail ?? data.contact_email}, contact_email),
+          contact_phone = COALESCE(${data.contactPhone ?? data.contact_phone}, contact_phone),
+          address = COALESCE(${data.address}, address),
+          commission_type = COALESCE(${data.commissionType ?? data.commission_type}, commission_type),
+          commission_value = COALESCE(${data.commissionValue ?? data.commission_value}, commission_value),
+          minimum_subscription_price = COALESCE(${data.minimumSubscriptionPrice ?? data.minimum_subscription_price}, minimum_subscription_price),
+          is_active = COALESCE(${data.isActive ?? data.is_active}, is_active),
+          updated_at = NOW()
+        WHERE id = ${id}
+        RETURNING *
+      `;
+      return updated;
+    } catch (error) {
+      console.error("Error updating partner:", error);
+      throw error;
+    }
+  }
+
+  async deletePartner(id: number) {
+    try {
+      await sql`DELETE FROM partners WHERE id = ${id}`;
+      return true;
+    } catch (error) {
+      console.error("Error deleting partner:", error);
       throw error;
     }
   }
@@ -113,10 +218,10 @@ export class SimpleStorage {
 
       // First create the user
       const [newUser] = await sql`
-        INSERT INTO users (email, password, role, tenant_id, role_id, first_name, last_name, phone, is_active, is_email_verified, password_reset_required)
+        INSERT INTO users (email, password, role, tenant_id, role_id, first_name, last_name, phone, is_active, is_email_verified, password_reset_required, partner_id)
         VALUES (${user.email}, ${user.password}, ${user.role || "tenant_admin"}, ${user.tenantId || null}, 
                 ${user.roleId || null}, ${user.firstName}, ${user.lastName}, ${user.phone || null}, 
-                ${user.isActive !== false}, ${user.isEmailVerified || false}, ${user.passwordResetRequired || false})
+                ${user.isActive !== false}, ${user.isEmailVerified || false}, ${user.passwordResetRequired || false}, ${user.partnerId ?? null})
         RETURNING *
       `;
 
@@ -191,15 +296,35 @@ export class SimpleStorage {
     }
   }
 
-  async getAllSubscriptionPlans() {
+  async getAllSubscriptionPlans(options?: { partnerId?: number; publicOnly?: boolean }) {
     try {
-      const plans =
-        await sql`SELECT * FROM subscription_plans WHERE is_active = true`;
+      if (options?.publicOnly) {
+        const plans = await sql`SELECT * FROM subscription_plans WHERE is_active = true AND partner_id IS NULL`;
+        return plans;
+      }
+      if (options?.partnerId !== undefined) {
+        const plans = await sql`SELECT * FROM subscription_plans WHERE is_active = true AND (partner_id IS NULL OR partner_id = ${options.partnerId})`;
+        return plans;
+      }
+      const plans = await sql`SELECT * FROM subscription_plans WHERE is_active = true`;
       return plans;
     } catch (error) {
       console.error("Error getting subscription plans:", error);
       throw error;
     }
+  }
+
+  async getSubscriptionPlansByPartnerId(partnerId: number) {
+    const plans = await sql`SELECT * FROM subscription_plans WHERE is_active = true AND partner_id = ${partnerId}`;
+    return plans;
+  }
+
+  async getSubscriptionPlansForPartnerTenants(partnerId: number) {
+    return this.getAllSubscriptionPlans({ partnerId });
+  }
+
+  async getPublicSubscriptionPlans() {
+    return this.getAllSubscriptionPlans({ publicOnly: true });
   }
 
   async getSubscriptionPlanById(planId: number) {
@@ -5595,6 +5720,11 @@ async getAllLeadsByTenant(
       if (tenantData.zoom_client_secret !== undefined) {
         setClauses.push(`zoom_client_secret = $${paramIndex}`);
         values.push(tenantData.zoom_client_secret ?? null);
+        paramIndex++;
+      }
+      if (tenantData.partner_id !== undefined) {
+        setClauses.push(`partner_id = $${paramIndex}`);
+        values.push(tenantData.partner_id ?? null);
         paramIndex++;
       }
 

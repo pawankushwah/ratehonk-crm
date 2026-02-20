@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Plus, Edit, Trash2, Loader2, AlertTriangle } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useSaasAuth } from "@/components/auth/saas-auth-provider";
 import { useToast } from "@/hooks/use-toast";
 import { saasApiRequest } from "@/lib/saas-queryClient";
@@ -30,6 +31,14 @@ export default function SaasTenants() {
     queryFn: async () => {
       const response = await saasApiRequest("GET", "/api/saas/tenants", {});
       return response.json();
+    },
+  });
+
+  const { data: partners } = useQuery({
+    queryKey: ["/api/saas/partners"],
+    queryFn: async () => {
+      const res = await saasApiRequest("GET", "/api/saas/partners", {});
+      return res.json();
     },
   });
 
@@ -132,6 +141,7 @@ export default function SaasTenants() {
                     <TableHead>Company Name</TableHead>
                     <TableHead>Contact Email</TableHead>
                     <TableHead>Subdomain</TableHead>
+                    <TableHead>Partner</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Created</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
@@ -146,6 +156,9 @@ export default function SaasTenants() {
                         </TableCell>
                         <TableCell>{tenant.contactEmail || tenant.contact_email}</TableCell>
                         <TableCell>{tenant.subdomain || "-"}</TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {tenant.partnerCompanyName || tenant.partner_company_name || "-"}
+                        </TableCell>
                         <TableCell>
                           <Badge variant={tenant.isActive || tenant.is_active ? "default" : "secondary"}>
                             {tenant.isActive || tenant.is_active ? "Active" : "Inactive"}
@@ -179,7 +192,7 @@ export default function SaasTenants() {
                     ))
                   ) : (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                         No tenants found
                       </TableCell>
                     </TableRow>
@@ -194,6 +207,7 @@ export default function SaasTenants() {
           open={tenantDialogOpen}
           onOpenChange={setTenantDialogOpen}
           tenant={editingTenant}
+          partners={partners || []}
           onSave={(data) => tenantMutation.mutate(data)}
           isLoading={tenantMutation.isPending}
         />
@@ -253,7 +267,7 @@ export default function SaasTenants() {
   );
 }
 
-function TenantDialog({ open, onOpenChange, tenant, onSave, isLoading }: any) {
+function TenantDialog({ open, onOpenChange, tenant, partners = [], onSave, isLoading }: any) {
   const [formData, setFormData] = useState({
     companyName: tenant?.companyName || tenant?.company_name || "",
     contactEmail: tenant?.contactEmail || tenant?.contact_email || "",
@@ -261,6 +275,7 @@ function TenantDialog({ open, onOpenChange, tenant, onSave, isLoading }: any) {
     address: tenant?.address || "",
     subdomain: tenant?.subdomain || "",
     isActive: tenant?.isActive !== undefined ? tenant.isActive : (tenant?.is_active !== undefined ? tenant.is_active : true),
+    partnerId: tenant?.partner_id ?? tenant?.partnerId ?? "",
   });
 
   React.useEffect(() => {
@@ -272,6 +287,7 @@ function TenantDialog({ open, onOpenChange, tenant, onSave, isLoading }: any) {
         address: tenant.address || "",
         subdomain: tenant.subdomain || "",
         isActive: tenant.isActive !== undefined ? tenant.isActive : (tenant.is_active !== undefined ? tenant.is_active : true),
+        partnerId: tenant.partner_id ?? tenant.partnerId ?? "",
       });
     } else {
       setFormData({
@@ -281,13 +297,15 @@ function TenantDialog({ open, onOpenChange, tenant, onSave, isLoading }: any) {
         address: "",
         subdomain: "",
         isActive: true,
+        partnerId: "",
       });
     }
   }, [tenant, open]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSave(formData);
+    const payload = { ...formData, partnerId: formData.partnerId || null };
+    onSave(payload);
   };
 
   return (
@@ -348,6 +366,27 @@ function TenantDialog({ open, onOpenChange, tenant, onSave, isLoading }: any) {
                 onChange={(e) => setFormData({ ...formData, address: e.target.value })}
               />
             </div>
+            {partners && partners.length > 0 && (
+              <div className="space-y-2">
+                <Label>Partner (optional)</Label>
+                <Select
+                  value={formData.partnerId ? String(formData.partnerId) : "none"}
+                  onValueChange={(v) => setFormData({ ...formData, partnerId: v === "none" ? "" : parseInt(v) })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="No partner" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No partner</SelectItem>
+                    {partners.map((p: any) => (
+                      <SelectItem key={p.id} value={String(p.id)}>
+                        {p.company_name || p.companyName}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="flex items-center space-x-2">
               <input
                 type="checkbox"

@@ -117,34 +117,38 @@ class EmailService {
     companyName: string;
     email: string;
     temporaryPassword: string;
+    partnerName?: string;
   }) {
+    const loginUrl = process.env.APP_URL || process.env.FRONTEND_URL || "https://crm.ratehonk.com";
+    const loginLink = loginUrl.replace(/\/$/, "") + "/login";
     const mailOptions = {
       from: process.env.EMAIL_FROM || "noreply@ratehonk.com",
       to: data.to,
-      subject: `Welcome to ${data.companyName} - Your Account Details`,
+      subject: `Welcome to RateHonk CRM - Your Account Details`,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #333;">Welcome to ${data.companyName}!</h2>
+          <h2 style="color: #333;">Welcome to RateHonk CRM!</h2>
           
           <p>Hello ${data.firstName} ${data.lastName},</p>
           
-          <p>Your account has been created in our RateHonk CRM system.</p>
-          <p>You can access the system at: <a href="${process.env.APP_URL || "https://your-app-url.com"}">Login Here</a></p>
+          <p>Your account has been created for <strong>${data.companyName}</strong> in our RateHonk CRM system.${data.partnerName ? ` Your account was set up by ${data.partnerName}.` : ""}</p>
+          
+          <p>Here are your login details:</p>
+          <div style="background-color: #f5f5f5; padding: 20px; border-radius: 5px; margin: 20px 0;">
+            <p><strong>Email:</strong> ${data.email}</p>
+            <p><strong>Password:</strong> ${data.temporaryPassword}</p>
+          </div>
+          
+          <p>You can access the system at: <a href="${loginLink}">${loginLink}</a></p>
+          
+          <p><strong>Important:</strong> Please change your password after your first login for security purposes.</p>
           
           <p>If you have any questions, please contact your system administrator.</p>
           
-          <p>Best regards,<br>The Ratehonk Team</p>
+          <p>Best regards,<br>The RateHonk Team</p>
         </div>
       `,
     };
-    // <p>Your account has been created in our RateHonk CRM system. Here are your login details:</p>
-    // <div style="background-color: #f5f5f5; padding: 20px; border-radius: 5px; margin: 20px 0;">
-    //   <p><strong>Email:</strong> ${data.email}</p>
-    //   <p><strong>Temporary Password:</strong> ${data.temporaryPassword}</p>
-    // </div>
-
-    // <p><strong>Important:</strong> Please change your password after your first login for security purposes.</p>
-    console.log("mailOptions:", mailOptions);
     try {
       await this.transporter.sendMail(mailOptions);
       console.log(`Welcome email sent to ${data.to}`);
