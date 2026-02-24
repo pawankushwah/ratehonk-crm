@@ -11,6 +11,9 @@ const WHATSAPP_API_BASE = "https://whatsappbusiness.ratehonk.com";
 // New WhatsApp CRM Provider API base URL (from .env)
 const WHATSAPP_PROVIDER_API_BASE =
   process.env.WHATSAPP_PROVIDER_API_BASE || "";
+// Register endpoint path - override if provider uses different path (e.g. /api/register)
+const WHATSAPP_PROVIDER_REGISTER_PATH =
+  process.env.WHATSAPP_PROVIDER_REGISTER_PATH || "/api/crm/register";
 
 // Helper function to send WhatsApp welcome messages
 export async function sendWhatsAppWelcomeMessage(
@@ -453,13 +456,21 @@ export function registerWhatsAppRoutes(app: Express) {
         phone: phone || "0000000000",
       };
 
+     
+      const base = WHATSAPP_PROVIDER_API_BASE.replace(/\/$/, "");
+      const registerPath = WHATSAPP_PROVIDER_REGISTER_PATH.startsWith("/")
+        ? WHATSAPP_PROVIDER_REGISTER_PATH
+        : `/${WHATSAPP_PROVIDER_REGISTER_PATH}`;
+      const registerUrl = `${base}${registerPath}`;
       console.log(
-        "Calling new WhatsApp provider API to register for email:",
+        "Calling WhatsApp provider API to register for email:",
         email,
+        "URL:",
+        registerUrl,
       );
 
       const response = await fetch(
-        `${WHATSAPP_PROVIDER_API_BASE}/api/crm/register`,
+        registerUrl,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
