@@ -44,55 +44,8 @@ export function FloatingWhatsAppButton() {
         return;
       }
 
-      if (!data.hasDefaultDevice) {
-        // If provider panel URL is available, open it instead of redirecting
-        if (data.panelUrl) {
-          const popupWindow = window.open(
-            data.panelUrl,
-            "WhatsApp Panel",
-            "width=1000,height=700,scrollbars=yes,resizable=yes"
-          );
-          if (!popupWindow || popupWindow.closed || typeof popupWindow.closed === "undefined") {
-            window.open(data.panelUrl, "_blank");
-            toast({
-              title: "Popup Blocked",
-              description: "Opening WhatsApp panel in new tab instead.",
-            });
-          } else {
-            toast({
-              title: "WhatsApp Panel",
-              description: "Opening WhatsApp panel. Add a phone number in Settings if needed.",
-            });
-          }
-          return;
-        }
-        // No panel URL - redirect to devices page without showing the toast
-        setLocation("/whatsapp-devices");
-        return;
-      }
-
-      const defaultDevice = data.defaultDevice;
-      const apiKey = data.apiKey;
-
-      const liveChatUrl = `https://whatsappbusiness.ratehonk.com/en/auto-login?api_key=${apiKey}&redirect_url=chat&device_number=${defaultDevice.number}`;
-      const popupWindow = window.open(
-        liveChatUrl,
-        "WhatsApp Live Chat",
-        "width=1000,height=700,scrollbars=yes,resizable=yes"
-      );
-
-      if (!popupWindow || popupWindow.closed || typeof popupWindow.closed === "undefined") {
-        window.open(liveChatUrl, "_blank");
-        toast({
-          title: "Popup Blocked",
-          description: "Opening WhatsApp chat in new tab instead.",
-        });
-      } else {
-        toast({
-          title: "WhatsApp Live Chat",
-          description: `Opening chat for device ${defaultDevice.number}`,
-        });
-      }
+      // Open WhatsApp in iframe within our panel (/whatsapp page)
+      setLocation("/whatsapp");
     } catch (error) {
       console.error("Error checking WhatsApp integration:", error);
       toast({

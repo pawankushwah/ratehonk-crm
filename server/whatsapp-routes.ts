@@ -737,7 +737,9 @@ export function registerWhatsAppRoutes(app: Express) {
       }
       const base = WHATSAPP_PROVIDER_API_BASE.replace(/\/$/, "");
       const redirect = (req.query.redirect as string) || "/dashboard";
-      const panelUrl = `${base}/crm-login?apiKey=${encodeURIComponent(config.apiKey)}&redirect=${encodeURIComponent(redirect)}`;
+      // Support both redirect and redirect_url; use path without leading slash for redirect_url (e.g. chat not /chat)
+      const redirectVal = redirect.startsWith("/") ? redirect.slice(1) : redirect;
+      const panelUrl = `${base}/crm-login?apiKey=${encodeURIComponent(config.apiKey)}&redirect=${encodeURIComponent(redirect)}&redirect_url=${encodeURIComponent(redirectVal)}`;
       res.json({ url: panelUrl });
     } catch (error: any) {
       console.error("Error building WhatsApp panel login URL:", error);
@@ -2862,10 +2864,14 @@ export function registerWhatsAppRoutes(app: Express) {
         );
 
         // When no default device, provide panel URL so floating button can open it
+        // crm-login: apiKey + redirect only (no tenant) - opens in new tab, not iframe
         let panelUrl: string | undefined;
         if (!defaultDevice && WHATSAPP_PROVIDER_API_BASE) {
           const base = WHATSAPP_PROVIDER_API_BASE.replace(/\/$/, "");
-          panelUrl = `${base}/crm-login?apiKey=${encodeURIComponent(config.apiKey)}&redirect=${encodeURIComponent("/chat")}`;
+          const redirectPath = process.env.WHATSAPP_PANEL_REDIRECT_PATH || "/chat";
+          // Support both redirect and redirect_url for provider compatibility
+          const redirectVal = redirectPath.startsWith("/") ? redirectPath.slice(1) : redirectPath;
+          panelUrl = `${base}/crm-login?apiKey=${encodeURIComponent(config.apiKey)}&redirect=${encodeURIComponent(redirectPath)}&redirect_url=${encodeURIComponent(redirectVal)}`;
         }
 
         res.json({

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Layout } from "@/components/layout/layout";
 import {
   ExternalLink,
@@ -16,15 +16,55 @@ import {
 } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useAuth } from "@/components/auth/auth-provider";
+import { useLocation } from "wouter";
 
 const WhatsApp = () => {
   const { tenant } = useAuth();
+  const [, setLocation] = useLocation();
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
   const [timeoutId, setTimeoutId] = useState<number | null>(null);
+  const [iframeUrl, setIframeUrl] = useState<string | null>(null);
+  const [isRedirecting, setIsRedirecting] = useState(false);
 
-  // Construct WhatsApp URL with tenant email, phone, and tenantId
-  const whatsappUrl = `https://whatsappbusiness.ratehonk.com/en/home?email=${encodeURIComponent(tenant?.contactEmail || "")}&phone=${encodeURIComponent(tenant?.contactPhone || "")}&tenantId=${tenant?.id || ""}`;
+  // Legacy URL for whatsappbusiness.ratehonk.com (when provider not configured)
+  const legacyWhatsappUrl = `https://whatsappbusiness.ratehonk.com/en/home?email=${encodeURIComponent(tenant?.contactEmail || "")}&phone=${encodeURIComponent(tenant?.contactPhone || "")}&tenantId=${tenant?.id || ""}`;
+
+  // Fetch iframe URL from API - uses crm-login (provider) or live chat URL
+  useEffect(() => {
+    let cancelled = false;
+    const token = localStorage.getItem("auth_token");
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
+    fetch("/api/whatsapp/check-integration", { headers, credentials: "include" })
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        if (!data.hasIntegration) {
+          setIsRedirecting(true);
+          setLocation("/whatsapp-setup");
+          return;
+        }
+        if (data.panelUrl) {
+          setIframeUrl(data.panelUrl);
+          return;
+        }
+        if (data.hasDefaultDevice && data.apiKey && data.defaultDevice) {
+          const liveUrl = `https://whatsappbusiness.ratehonk.com/en/auto-login?api_key=${data.apiKey}&redirect_url=chat&device_number=${data.defaultDevice.number}`;
+          setIframeUrl(liveUrl);
+          return;
+        }
+        setIsRedirecting(true);
+        setLocation("/whatsapp-devices");
+      })
+      .catch(() => {
+        if (!cancelled) setIframeUrl(legacyWhatsappUrl);
+      });
+    return () => { cancelled = true; };
+  }, [setLocation]);
+
+  const whatsappUrl = iframeUrl || legacyWhatsappUrl;
 
   const handleIframeLoad = () => {
     if (timeoutId) {
@@ -178,7 +218,7 @@ const WhatsApp = () => {
         {/* Main Content - Iframe */}
         <div
           className="flex-1 relative bg-white"
-          style={{ display: hasError ? "none" : "block" }}
+          style={{ display: hasError || isRedirecting || !iframeUrl ? "none" : "block" }}
         >
           <iframe
             id="ratehonk-whatsapp-iframe"
