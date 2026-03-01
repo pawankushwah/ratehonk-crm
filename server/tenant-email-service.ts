@@ -465,6 +465,8 @@ class TenantEmailService {
     htmlBody?: string;
     tenantId: number;
     fromName?: string; // Optional: Override the "from" name with tenant company name
+    fromEmail?: string; // Optional: Override the "from" email (e.g. from campaign settings)
+    replyTo?: string; // Optional: Override reply-to address (e.g. from campaign settings)
     useSaasOwnerForSending?: boolean; // When true, use SaaS owner SMTP (for platform emails)
     attachments?: Array<{
       filename: string;
@@ -487,10 +489,12 @@ class TenantEmailService {
       }
       if (tenantConfig) {
         transporter = this.createTenantTransporter(tenantConfig);
-        // Use sender_email from database if it exists and is valid
-        // Otherwise fall back to .env default (SMTP_FROM_EMAIL)
-        // IMPORTANT: The "from" email should match or be related to the SMTP username to avoid delivery issues
-        if (tenantConfig.sender_email && 
+        // Campaign/override: if fromEmail is explicitly provided, use it with fromName
+        if (data.fromEmail && data.fromEmail.trim() !== "" && data.fromEmail.includes("@")) {
+          const displayName = (data.fromName && data.fromName.trim() !== "") ? data.fromName : "";
+          fromEmail = displayName ? `"${displayName}" <${data.fromEmail}>` : data.fromEmail;
+          console.log(`📧 Using campaign/override from: ${fromEmail}`);
+        } else if (tenantConfig.sender_email && 
             tenantConfig.sender_email.trim() !== "" && 
             tenantConfig.sender_email !== data.to &&
             tenantConfig.sender_email.includes("@")) {
@@ -571,9 +575,12 @@ class TenantEmailService {
         const saasOwnerConfig = await this.getSaasOwnerEmailConfig();
         if (saasOwnerConfig) {
           transporter = this.createTenantTransporter(saasOwnerConfig);
-          // Use sender_email from database if it exists and is valid
-          // Otherwise fall back to .env default (SMTP_FROM_EMAIL)
-          if (saasOwnerConfig.sender_email && 
+          // Campaign/override: if fromEmail is explicitly provided, use it with fromName
+          if (data.fromEmail && data.fromEmail.trim() !== "" && data.fromEmail.includes("@")) {
+            const displayName = (data.fromName && data.fromName.trim() !== "") ? data.fromName : "";
+            fromEmail = displayName ? `"${displayName}" <${data.fromEmail}>` : data.fromEmail;
+            console.log(`📧 Using campaign/override from (SaaS owner): ${fromEmail}`);
+          } else if (saasOwnerConfig.sender_email && 
               saasOwnerConfig.sender_email.trim() !== "" && 
               saasOwnerConfig.sender_email !== data.to &&
               saasOwnerConfig.sender_email.includes("@")) {
@@ -642,12 +649,16 @@ class TenantEmailService {
                 rejectUnauthorized: process.env.SMTP_REJECT_UNAUTHORIZED !== 'false',
               },
             });
+            // Campaign/override: if fromEmail is explicitly provided, use it with fromName
+            if (data.fromEmail && data.fromEmail.trim() !== "" && data.fromEmail.includes("@")) {
+              const displayName = (data.fromName && data.fromName.trim() !== "") ? data.fromName : "";
+              fromEmail = displayName ? `"${displayName}" <${data.fromEmail}>` : data.fromEmail;
+              console.log(`📧 Using campaign/override from (env): ${fromEmail}`);
+            } else {
             // IMPORTANT: Always use SMTP username as "from" email to avoid SPF/DKIM issues
-            // The "from" email must match the authenticated SMTP user for proper delivery
             const smtpUser = smtpConfig.user || "";
             if (smtpUser && smtpUser.includes("@")) {
               // Use SMTP user as from email (required for SPF/DKIM to pass)
-              // Prioritize fromName parameter - if explicitly provided (even if empty), use it over .env
               const displayName = data.fromName !== undefined ? data.fromName : (smtpConfig.fromName || "");
               if (displayName && displayName.trim() !== "") {
                 fromEmail = `"${displayName}" <${smtpUser}>`;
@@ -669,6 +680,7 @@ class TenantEmailService {
               console.log(`📧 fromName parameter: ${data.fromName}, smtpConfig.fromName: ${smtpConfig.fromName}, displayName used: ${displayName}`);
             } else {
               throw new Error("No valid email address available for 'from' field. Please configure SMTP_USER or EMAIL_FROM.");
+            }
             }
             emailSource = "environment variables (config)";
             console.log(`📧 Using environment SMTP from config for customer email (no configured SMTP found)`);
@@ -751,18 +763,21 @@ class TenantEmailService {
         throw new Error("Failed to create email transporter");
       }
 
-      // Determine reply-to email: use from database if available, otherwise use fromEmail
+      // Determine reply-to email: campaign override > tenant config > from email
       let replyToEmail = fromEmail;
-      // Use tenantConfig if we have it, otherwise try to get it
-      const configForReply = tenantConfig || await this.getTenantEmailConfig(data.tenantId);
-      if (configForReply?.reply_to_email && 
-          configForReply.reply_to_email.trim() !== "" &&
-          configForReply.reply_to_email.includes("@")) {
-        replyToEmail = configForReply.reply_to_email;
-        console.log(`📧 Using reply-to email from database: ${replyToEmail}`);
+      if (data.replyTo && data.replyTo.trim() !== "" && data.replyTo.includes("@")) {
+        replyToEmail = data.replyTo;
+        console.log(`📧 Using reply-to from campaign/override: ${replyToEmail}`);
       } else {
-        // Check if we have a reply-to in .env (could add SMTP_REPLY_TO_EMAIL in future)
-        console.log(`📧 No reply-to email in database, using from email as reply-to: ${replyToEmail}`);
+        const configForReply = tenantConfig || await this.getTenantEmailConfig(data.tenantId);
+        if (configForReply?.reply_to_email && 
+            configForReply.reply_to_email.trim() !== "" &&
+            configForReply.reply_to_email.includes("@")) {
+          replyToEmail = configForReply.reply_to_email;
+          console.log(`📧 Using reply-to email from database: ${replyToEmail}`);
+        } else {
+          console.log(`📧 No reply-to email in database, using from email as reply-to: ${replyToEmail}`);
+        }
       }
 
       const mailOptions: any = {

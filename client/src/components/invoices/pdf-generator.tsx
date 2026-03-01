@@ -214,10 +214,12 @@ const renderModernTemplate = (data: InvoiceData): string => {
             <p>${data.customerEmail}</p>
             <p>${data.customerAddress || ''}</p>
           </div>
+          ${data.paymentTerms && data.paymentTerms !== "0" && data.paymentStatus?.toLowerCase() !== "paid" ? `
           <div class="billing-info">
             <h3>Payment Terms</h3>
             <p>${data.paymentTerms || 'Net 30'}</p>
           </div>
+          ` : ''}
         </div>
         
         <table class="items-table">
@@ -444,10 +446,12 @@ const renderCorporateTemplate = (data: InvoiceData): string => {
               <p>${data.customerEmail}</p>
               <p>${data.customerAddress || ''}</p>
             </div>
+            ${data.paymentTerms && data.paymentTerms !== "0" && data.paymentStatus?.toLowerCase() !== "paid" ? `
             <div class="billing-info">
               <div class="section-title">Payment Terms</div>
               <p>${data.paymentTerms || 'Net 30'}</p>
             </div>
+            ` : ''}
           </div>
           
           <table class="corporate-table">
@@ -662,7 +666,7 @@ const renderCreativeTemplate = (data: InvoiceData): string => {
               <h3>Invoice Details</h3>
               <p><strong>Date:</strong> ${data.issueDate}</p>
               <p><strong>Due Date:</strong> ${data.dueDate}</p>
-              <p><strong>Terms:</strong> ${data.paymentTerms || 'Net 30'}</p>
+              ${data.paymentTerms && data.paymentTerms !== "0" && data.paymentStatus?.toLowerCase() !== "paid" ? `<p><strong>Terms:</strong> ${data.paymentTerms || 'Net 30'}</p>` : ''}
             </div>
           </div>
           
@@ -871,7 +875,7 @@ const renderClassicTemplate = (data: InvoiceData): string => {
             <h3>Invoice Details</h3>
             <p><strong>Date:</strong> ${data.issueDate}</p>
             <p><strong>Due Date:</strong> ${data.dueDate}</p>
-            <p><strong>Terms:</strong> ${data.paymentTerms || 'Net 30'}</p>
+            ${data.paymentTerms && data.paymentTerms !== "0" && data.paymentStatus?.toLowerCase() !== "paid" ? `<p><strong>Terms:</strong> ${data.paymentTerms || 'Net 30'}</p>` : ''}
           </div>
         </div>
         

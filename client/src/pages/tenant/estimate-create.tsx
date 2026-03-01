@@ -32,6 +32,7 @@ interface LineItem {
   tax?: number;
   taxRateId?: string;
   discount?: number;
+  itineraryId?: string;
 }
 
 interface EstimateFormData {
@@ -190,6 +191,21 @@ export default function EstimateCreate() {
   const { data: leadTypes = [] } = useQuery<any[]>({
     queryKey: ["/api/lead-types"],
     enabled: !!tenant?.id,
+  });
+
+  // Fetch itineraries
+  const { data: itineraries = [] } = useQuery<any[]>({
+    queryKey: [`/api/tenants/${tenant?.id}/itineraries`],
+    enabled: !!tenant?.id,
+    queryFn: async () => {
+      const token = auth.getToken();
+      const response = await fetch(`/api/tenants/${tenant?.id}/itineraries`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) return [];
+      const result = await response.json();
+      return Array.isArray(result) ? result : result.data || [];
+    },
   });
 
   // Fetch existing estimates for title suggestions
@@ -870,6 +886,28 @@ export default function EstimateCreate() {
         customerPhone: "",
       }));
     }
+  };
+
+  const addLineItemFromItinerary = (itinerary: any) => {
+    const price = parseFloat(itinerary.clientPrice || itinerary.client_price || "0") || 0;
+    setFormData((prev) => ({
+      ...prev,
+      lineItems: [
+        ...prev.lineItems,
+        {
+          itemName: itinerary.title || "Itinerary",
+          description: `Itinerary: ${itinerary.title || "Travel plan"}`,
+          quantity: 1,
+          unitPrice: price,
+          totalPrice: price,
+          leadCategory: "",
+          tax: 0,
+          discount: 0,
+          itineraryId: String(itinerary.id),
+        },
+      ],
+    }));
+    setShowLineItems(true);
   };
 
   const addLineItem = () => {
@@ -1678,6 +1716,20 @@ export default function EstimateCreate() {
                     >
                       <Plus className="w-3.5 h-3.5" /> Add Line Item
                     </Button>
+                    {itineraries.length > 0 && (
+                      <Select value="" onValueChange={(v) => { const it = itineraries.find((i: any) => String(i.id) === v); if (it) addLineItemFromItinerary(it); }}>
+                        <SelectTrigger className="w-[180px] h-8 text-xs">
+                          <SelectValue placeholder="Add from Itinerary" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {itineraries.map((it: any) => (
+                            <SelectItem key={it.id} value={String(it.id)}>
+                              {it.title || `Itinerary ${it.id}`} ({(it.clientPrice ?? it.client_price ?? 0).toFixed(0)})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
                     {formData.lineItems.length > 0 && (
                       <Button
                         type="button"

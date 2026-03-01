@@ -57,6 +57,9 @@ import PackageCreate from "@/pages/tenant/package-create";
 import PackageEdit from "@/pages/tenant/package-edit";
 import PackagePreview from "@/pages/tenant/package-preview";
 import PackageTypes from "@/pages/tenant/package-types";
+import Itineraries from "@/pages/tenant/itineraries";
+import ItineraryBuilder from "@/pages/tenant/itinerary-builder";
+import ItineraryPreview from "@/pages/tenant/itinerary-preview";
 import Invoices from "@/pages/tenant/invoices";
 import InvoiceCreate from "@/pages/tenant/invoice-create";
 import InvoiceEdit from "@/pages/tenant/invoice-edit";
@@ -123,6 +126,7 @@ import GstSettings from "@/pages/tenant/gst-settings";
 import ConsulationForm from "@/pages/consulation-form";
 import PaymentForm from "@/pages/payment-form";
 import PublicPackageView from "@/pages/public/package-view";
+import PublicItineraryView from "@/pages/public/itinerary-view";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, loading } = useAuth();
@@ -309,6 +313,10 @@ function Router() {
         {/* Public Package View - No authentication required */}
         <Route path="/public/package/:packageId">
           <PublicPackageView />
+        </Route>
+        {/* Public Itinerary View - No authentication required */}
+        <Route path="/public/itinerary/:token">
+          <PublicItineraryView />
         </Route>
 
         {/* Protected routes */}
@@ -594,6 +602,27 @@ function Router() {
         <Route path="/packages">
           <ProtectedRoute>
             <TravelPackages />
+          </ProtectedRoute>
+        </Route>
+
+        <Route path="/itineraries/new">
+          <ProtectedRoute>
+            <ItineraryBuilder />
+          </ProtectedRoute>
+        </Route>
+        <Route path="/itineraries/preview/:id">
+          <ProtectedRoute>
+            <ItineraryPreview />
+          </ProtectedRoute>
+        </Route>
+        <Route path="/itineraries/:id">
+          <ProtectedRoute>
+            <ItineraryBuilder />
+          </ProtectedRoute>
+        </Route>
+        <Route path="/itineraries">
+          <ProtectedRoute>
+            <Itineraries />
           </ProtectedRoute>
         </Route>
 

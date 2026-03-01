@@ -91,6 +91,7 @@ export default function InvoiceCreate() {
       vendor: "",
       serviceProviderId: "",
       packageId: "",
+      itineraryId: "",
       itemTitle: "",
       invoiceNumber: "",
       voucherNumber: "",
@@ -538,6 +539,21 @@ export default function InvoiceCreate() {
     },
   });
 
+  // Fetch itineraries
+  const { data: itineraries = [] } = useQuery<any[]>({
+    queryKey: [`/api/tenants/${tenant?.id}/itineraries`],
+    enabled: !!tenant?.id,
+    queryFn: async () => {
+      const token = auth.getToken();
+      const response = await fetch(`/api/tenants/${tenant?.id}/itineraries`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) return [];
+      const result = await response.json();
+      return Array.isArray(result) ? result : result.data || [];
+    },
+  });
+
   // Fetch packages
   const { data: packages = [] } = useQuery<any[]>({
     queryKey: [`/api/tenants/${tenant?.id}/packages`],
@@ -889,6 +905,7 @@ export default function InvoiceCreate() {
           vendor: item.vendor?.toString() || item.vendorId?.toString() || "",
           serviceProviderId: item.serviceProviderId?.toString() || "",
           packageId: item.packageId?.toString() || "",
+          itineraryId: item.itineraryId?.toString() || "",
           itemTitle: item.itemTitle || item.description || "",
           invoiceNumber: item.invoiceNumber || "",
           voucherNumber: item.voucherNumber || "",
@@ -1233,6 +1250,7 @@ export default function InvoiceCreate() {
           { value: "Hotel", label: "Hotel" },
           { value: "Transport", label: "Transport" },
           { value: "Tour Package", label: "Tour Package" },
+          { value: "Itinerary", label: "Itinerary" },
           { value: "Visa Services", label: "Visa Services" },
           { value: "Insurance", label: "Insurance" },
           { value: "Meals", label: "Meals" },
@@ -1498,6 +1516,33 @@ export default function InvoiceCreate() {
     }
   }, [paymentStatus, lineItems, discountAmount, isTaxInclusive, gstRates, isEditMode, existingPaidAmount]);
 
+  // Add line item from itinerary
+  const addLineItemFromItinerary = (itinerary: any) => {
+    const price = parseFloat(itinerary.clientPrice || itinerary.client_price || "0") || 0;
+    setLineItems([
+      ...lineItems,
+      {
+        travelCategory: "Itinerary",
+        vendor: "",
+        serviceProviderId: "",
+        packageId: "",
+        itineraryId: String(itinerary.id),
+        itemTitle: itinerary.title || "Itinerary",
+        invoiceNumber: "",
+        voucherNumber: "",
+        quantity: "1",
+        unitPrice: String(price),
+        sellingPrice: String(price),
+        purchasePrice: String(parseFloat(itinerary.agentProfit || itinerary.agent_profit || "0") || 0),
+        tax: "",
+        taxRateId: "",
+        additionalCommissionPercentage: "",
+        additionalCommission: "",
+        totalAmount: price,
+      },
+    ]);
+  };
+
   // Add line item
   const addLineItem = () => {
     setLineItems([
@@ -1507,6 +1552,7 @@ export default function InvoiceCreate() {
         vendor: "",
         serviceProviderId: "",
         packageId: "",
+        itineraryId: "",
         itemTitle: "",
         invoiceNumber: "",
         voucherNumber: "",
@@ -3043,7 +3089,7 @@ export default function InvoiceCreate() {
                 </div>
               </div>
 
-              <div className="flex justify-center">
+              <div className="flex justify-center gap-2 flex-wrap">
                 <Button
                   type="button"
                   variant="outline"
@@ -3053,6 +3099,20 @@ export default function InvoiceCreate() {
                   <Plus className="h-4 w-4 mr-2" />
                   Add Line Item
                 </Button>
+                {itineraries.length > 0 && (
+                  <Select value="" onValueChange={(v) => { const it = itineraries.find((i: any) => String(i.id) === v); if (it) { addLineItemFromItinerary(it); } }}>
+                    <SelectTrigger className="w-[200px]">
+                      <SelectValue placeholder="Add from Itinerary" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {itineraries.map((it: any) => (
+                        <SelectItem key={it.id} value={String(it.id)}>
+                          {it.title || `Itinerary ${it.id}`} ({(it.clientPrice ?? it.client_price ?? 0).toFixed(0)})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
               </div>
               {/* Auto-Generated Expenses Preview */}
 

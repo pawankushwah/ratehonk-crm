@@ -58,6 +58,7 @@ import {
   Users as UsersIcon,
   Bell,
   Receipt,
+  MapPin,
 } from "lucide-react";
 // import Logo from "../../assets/Logo-sidebar.svg";
 import Logo from "../../assets/RATEHONKLOGO.png";
@@ -183,6 +184,14 @@ const allMenuItems = {
     group: null,
     badge: null,
     order: 3.9,
+  },
+  itineraries: {
+    name: "Itinerary Builder",
+    href: "/itineraries",
+    icon: MapPin,
+    group: null,
+    badge: null,
+    order: 3.95,
   },
   invoices: {
     name: "Invoices",

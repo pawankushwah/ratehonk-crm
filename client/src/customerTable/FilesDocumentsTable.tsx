@@ -225,7 +225,7 @@ export default function FilesDocumentsTable({ customerId }: FilesDocumentsTableP
       }
       
       // Check if response.body has valid data (check for publicUrl OR objectPath)
-      const hasValidPath = responseBody && (
+      let hasValidPath = responseBody && (
         responseBody.publicUrl || 
         responseBody.objectPath || 
         responseBody.location || 

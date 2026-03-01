@@ -85,7 +85,63 @@ import nodemailer from "nodemailer";
 import * as XLSX from "xlsx";
 // import pdfParse from "pdf-parse"; // Temporarily disabled
 import Tesseract from "tesseract.js";
-import { c } from "node_modules/vite/dist/node/types.d-aGj9QkWt.js";
+
+// Itinerary file parsing helpers (supports multer memoryStorage - file.buffer, or disk - file.path)
+async function extractTextFromFile(file: Express.Multer.File): Promise<string> {
+  const buf = file.buffer ?? (file.path ? fs.readFileSync(file.path) : Buffer.from([]));
+  const ext = (path.extname(file.originalname || "") || "").toLowerCase();
+  if ([".txt", ".csv", ".html", ".htm", ".eml", ".json"].includes(ext)) {
+    return buf.toString("utf8");
+  }
+  if (ext === ".pdf") {
+    try {
+      const pdfParse = (await import("pdf-parse")).default;
+      const data = await pdfParse(buf);
+      return data.text || "";
+    } catch {
+      return "";
+    }
+  }
+  return buf.toString("utf8");
+}
+
+function parseItineraryFromText(
+  text: string,
+  filename: string
+): { sectionName: string; sectionDate?: string; items: { itemType: string; title: string; description?: string; details?: object }[] } {
+  const items: { itemType: string; title: string; description?: string; details?: object }[] = [];
+  let sectionName = "Imported";
+  let sectionDate: string | undefined;
+  const lower = text.toLowerCase();
+  const fname = filename.toLowerCase();
+  if (fname.includes("flight") || lower.includes("flight") || lower.includes("airline") || lower.includes("departure") || lower.includes("arrival")) {
+    sectionName = "Flights";
+  } else if (fname.includes("hotel") || lower.includes("hotel") || lower.includes("accommodation") || lower.includes("check-in")) {
+    sectionName = "Hotels";
+  } else if (fname.includes("cruise") || lower.includes("cruise") || lower.includes("ship")) {
+    sectionName = "Cruise";
+  } else if (fname.includes("activity") || lower.includes("activity") || lower.includes("tour")) {
+    sectionName = "Activities";
+  } else if (fname.includes("car") || lower.includes("rental") || lower.includes("transfer")) {
+    sectionName = "Transfers";
+  }
+  const lines = text.split(/\r?\n/).filter((l) => l.trim());
+  const dateMatch = text.match(/\b(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})\b/);
+  if (dateMatch) sectionDate = dateMatch[1];
+  for (const line of lines) {
+    const t = line.trim();
+    if (t.length < 5) continue;
+    if (t.length > 20 && (t.includes("confirmation") || t.includes("booking") || t.includes("reservation") || t.includes("itinerary"))) {
+      items.push({ itemType: sectionName.toLowerCase().replace(/\s/g, "_"), title: t.slice(0, 120), description: t.length > 120 ? t : undefined, details: { raw: t } });
+    } else if (t.length > 15) {
+      items.push({ itemType: sectionName.toLowerCase().replace(/\s/g, "_"), title: t.slice(0, 100), details: { raw: t } });
+    }
+  }
+  if (items.length === 0 && text.trim().length > 20) {
+    items.push({ itemType: "activity", title: filename.replace(/\.[^.]+$/, ""), description: text.slice(0, 500), details: { raw: text } });
+  }
+  return { sectionName, sectionDate, items };
+}
 
 // Gmail OAuth handling function - COMPLETELY REWRITTEN to avoid googleapis imports
 async function handleGmailCallback(
@@ -5968,7 +6024,7 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
     </div>
   ` : ''}
 
-  ${invoiceData.paymentTerms ? `
+  ${invoiceData.paymentTerms && invoiceData.paymentTerms !== "0" && invoiceData.status?.toLowerCase() !== "paid" ? `
     <div class="footer">
       <h3>Payment Terms:</h3>
       <p>${invoiceData.paymentTerms}</p>
@@ -6160,6 +6216,7 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
               <p>${data.customerEmail}</p>
               <p>${data.customerAddress || ''}</p>
             </div>
+            ${data.paymentTerms && data.paymentTerms !== "0" && data.paymentStatus?.toLowerCase() !== "paid" ? `
             <div class="billing-info">
               <h3>Payment Terms</h3>
               <p>${data.paymentTerms || 'Net 30'}</p>
@@ -6169,6 +6226,7 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
                 ${data.arrivalDate ? `<p><strong>Arrival:</strong> ${data.arrivalDate}</p>` : ''}
               ` : ''}
             </div>
+            ` : ''}
           </div>
           
           <table class="items-table">
@@ -15613,6 +15671,325 @@ David,Brown,david.brown@example.com,555-0127,email_campaign,contacted,Prefers lu
     },
   );
 
+  // Customer Itinerary Builder routes (new module - no changes to travel packages)
+  app.get("/api/tenants/:tenantId/itineraries", authenticateToken, async (req, res) => {
+    try {
+      const { tenantId } = req.params;
+      const customerId = req.query.customerId ? parseInt(req.query.customerId as string) : undefined;
+      const itineraries = await simpleStorage.getItinerariesByTenant(parseInt(tenantId), customerId);
+      res.json(itineraries);
+    } catch (error) {
+      console.error("Get itineraries error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.get("/api/tenants/:tenantId/itineraries/:id", authenticateToken, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const itinerary = await simpleStorage.getItinerary(parseInt(id));
+      if (!itinerary) return res.status(404).json({ message: "Itinerary not found" });
+      res.json(itinerary);
+    } catch (error) {
+      console.error("Get itinerary error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post("/api/tenants/:tenantId/itineraries", authenticateToken, async (req, res) => {
+    try {
+      const { tenantId } = req.params;
+      const userId = (req as any).user?.id;
+      const { initialSectionName, ...body } = req.body;
+      const itinerary = await simpleStorage.createItinerary({
+        ...body,
+        tenantId: parseInt(tenantId),
+        createdBy: userId,
+      });
+      if (initialSectionName && itinerary?.id) {
+        await simpleStorage.createItinerarySection({
+          itineraryId: itinerary.id,
+          sectionName: String(initialSectionName).trim() || "New Section",
+          displayOrder: 0,
+        });
+        return res.status(201).json(await simpleStorage.getItinerary(itinerary.id));
+      }
+      res.status(201).json(itinerary);
+    } catch (error) {
+      console.error("Create itinerary error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.put("/api/tenants/:tenantId/itineraries/:id", authenticateToken, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const userId = (req as any).user?.id;
+      const itinerary = await simpleStorage.updateItinerary(parseInt(id), { ...req.body, updatedBy: userId });
+      res.json(itinerary);
+    } catch (error) {
+      console.error("Update itinerary error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.delete("/api/tenants/:tenantId/itineraries/:id", authenticateToken, async (req, res) => {
+    try {
+      const { id } = req.params;
+      await simpleStorage.deleteItinerary(parseInt(id));
+      res.json({ message: "Itinerary deleted" });
+    } catch (error) {
+      console.error("Delete itinerary error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post("/api/tenants/:tenantId/itineraries/:id/sections", authenticateToken, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const section = await simpleStorage.createItinerarySection({
+        ...req.body,
+        itineraryId: parseInt(id),
+      });
+      res.status(201).json(section);
+    } catch (error) {
+      console.error("Create section error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.put("/api/tenants/:tenantId/itineraries/sections/:sectionId", authenticateToken, async (req, res) => {
+    try {
+      const { sectionId } = req.params;
+      await simpleStorage.updateItinerarySection(parseInt(sectionId), req.body);
+      res.json({ message: "Section updated" });
+    } catch (error) {
+      console.error("Update section error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.delete("/api/tenants/:tenantId/itineraries/sections/:sectionId", authenticateToken, async (req, res) => {
+    try {
+      const { sectionId } = req.params;
+      await simpleStorage.deleteItinerarySection(parseInt(sectionId));
+      res.json({ message: "Section deleted" });
+    } catch (error) {
+      console.error("Delete section error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post("/api/tenants/:tenantId/itineraries/sections/:sectionId/items", authenticateToken, async (req, res) => {
+    try {
+      const { sectionId } = req.params;
+      const item = await simpleStorage.createItineraryItem({
+        ...req.body,
+        sectionId: parseInt(sectionId),
+      });
+      res.status(201).json(item);
+    } catch (error) {
+      console.error("Create item error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.put("/api/tenants/:tenantId/itineraries/items/:itemId", authenticateToken, async (req, res) => {
+    try {
+      const { itemId } = req.params;
+      await simpleStorage.updateItineraryItem(parseInt(itemId), req.body);
+      res.json({ message: "Item updated" });
+    } catch (error) {
+      console.error("Update item error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.delete("/api/tenants/:tenantId/itineraries/items/:itemId", authenticateToken, async (req, res) => {
+    try {
+      const { itemId } = req.params;
+      await simpleStorage.deleteItineraryItem(parseInt(itemId));
+      res.json({ message: "Item deleted" });
+    } catch (error) {
+      console.error("Delete item error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Upload itinerary cover photo or section images
+  const itineraryImageUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 },
+    fileFilter: (_, file, cb) => {
+      const allowed = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"];
+      cb(null, allowed.includes(file.mimetype));
+    },
+  });
+  app.get("/api/tenants/:tenantId/itineraries/:id/share-url", authenticateToken, async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId);
+      const id = parseInt(req.params.id);
+      if ((req as any).user?.tenantId !== tenantId) return res.status(403).json({ error: "Access denied" });
+      const token = await simpleStorage.ensureItineraryShareToken(id);
+      if (!token) return res.status(404).json({ error: "Itinerary not found" });
+      const baseUrl = process.env.APP_URL || process.env.FRONTEND_URL || `${req.protocol}://${req.get("host")}`;
+      res.json({ publicUrl: `${baseUrl.replace(/\/$/, "")}/public/itinerary/${token}` });
+    } catch (e) {
+      res.status(500).json({ error: "Failed to get share URL" });
+    }
+  });
+
+  app.post("/api/tenants/:tenantId/itineraries/:id/upload-cover", authenticateToken, itineraryImageUpload.single("file"), async (req, res) => {
+    try {
+      const { tenantId, id } = req.params;
+      if (!req.file) return res.status(400).json({ message: "No file" });
+      const { ObjectStorageService } = await import("./objectStorage.js");
+      const os = new ObjectStorageService();
+      const url = await os.uploadFile(`itineraries/${tenantId}/${id}/cover-${Date.now()}.${req.file.originalname.split(".").pop() || "jpg"}`, req.file.buffer, req.file.mimetype);
+      await simpleStorage.updateItinerary(parseInt(id), { coverPhoto: url });
+      res.json({ publicUrl: url });
+    } catch (e) {
+      console.error("Upload cover error:", e);
+      res.status(500).json({ message: "Upload failed" });
+    }
+  });
+  app.post("/api/tenants/:tenantId/itineraries/sections/:sectionId/upload-images", authenticateToken, itineraryImageUpload.array("files", 5), async (req, res) => {
+    try {
+      const { tenantId, sectionId } = req.params;
+      const files = req.files as Express.Multer.File[];
+      if (!files?.length) return res.status(400).json({ message: "No files" });
+      const { ObjectStorageService } = await import("./objectStorage.js");
+      const os = new ObjectStorageService();
+      const urls: string[] = [];
+      for (let i = 0; i < files.length; i++) {
+        const ext = files[i].originalname.split(".").pop() || "jpg";
+        const url = await os.uploadFile(`itineraries/${tenantId}/sections/${sectionId}/img-${Date.now()}-${i}.${ext}`, files[i].buffer, files[i].mimetype);
+        urls.push(url);
+      }
+      try {
+        const sections = await sql`SELECT images FROM customer_itinerary_sections WHERE id = ${parseInt(sectionId)}`;
+        const existing = (sections[0] as any)?.images || [];
+        const merged = Array.isArray(existing) ? [...existing, ...urls] : urls;
+        await sql.unsafe(`UPDATE customer_itinerary_sections SET images = $1::jsonb, updated_at = NOW() WHERE id = $2`, [JSON.stringify(merged), parseInt(sectionId)]);
+      } catch (colErr) {
+        console.warn("Section images column may not exist, run migration add_itinerary_section_images.sql");
+      }
+      res.json({ publicUrls: urls });
+    } catch (e) {
+      console.error("Upload section images error:", e);
+      res.status(500).json({ message: "Upload failed" });
+    }
+  });
+
+  app.post("/api/tenants/:tenantId/itineraries/items/:itemId/upload-images", authenticateToken, itineraryImageUpload.array("files", 5), async (req, res) => {
+    try {
+      const { tenantId, itemId } = req.params;
+      const files = req.files as Express.Multer.File[];
+      if (!files?.length) return res.status(400).json({ message: "No files" });
+      const { ObjectStorageService } = await import("./objectStorage.js");
+      const os = new ObjectStorageService();
+      const urls: string[] = [];
+      for (let i = 0; i < files.length; i++) {
+        const ext = files[i].originalname.split(".").pop() || "jpg";
+        const url = await os.uploadFile(`itineraries/${tenantId}/items/${itemId}/img-${Date.now()}-${i}.${ext}`, files[i].buffer, files[i].mimetype);
+        urls.push(url);
+      }
+      const items = await sql`SELECT images FROM customer_itinerary_items WHERE id = ${parseInt(itemId)}`;
+      const existing = (items[0] as any)?.images || [];
+      const merged = Array.isArray(existing) ? [...existing, ...urls] : urls;
+      await sql.unsafe(`UPDATE customer_itinerary_items SET images = $1::jsonb, updated_at = NOW() WHERE id = $2`, [JSON.stringify(merged), parseInt(itemId)]);
+      res.json({ publicUrls: urls });
+    } catch (e) {
+      console.error("Upload item images error:", e);
+      res.status(500).json({ message: "Upload failed" });
+    }
+  });
+
+  // Public itinerary view (no auth - for sharing)
+  app.get("/api/public/itineraries/:token", async (req, res) => {
+    try {
+      const { token } = req.params;
+      const itinerary = await simpleStorage.getItineraryByShareToken(token);
+      if (!itinerary) return res.status(404).json({ message: "Itinerary not found" });
+      res.json(itinerary);
+    } catch (e) {
+      console.error("Public itinerary error:", e);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Send itinerary to customer email
+  app.post("/api/tenants/:tenantId/itineraries/:id/send-email", authenticateToken, async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId);
+      const id = parseInt(req.params.id);
+      if ((req as any).user?.tenantId !== tenantId) return res.status(403).json({ error: "Access denied" });
+      const itinerary = await simpleStorage.getItinerary(id);
+      if (!itinerary) return res.status(404).json({ error: "Itinerary not found" });
+      const email = (itinerary as any).customerEmail || (req.body as any).email;
+      if (!email) return res.status(400).json({ error: "Customer email not found. Please select a customer with an email." });
+      const shareToken = await simpleStorage.ensureItineraryShareToken(id);
+      if (!shareToken) return res.status(500).json({ error: "Failed to generate share link" });
+      const baseUrl = process.env.APP_URL || process.env.FRONTEND_URL || `${req.protocol}://${req.get("host")}`;
+      const publicUrl = `${baseUrl.replace(/\/$/, "")}/public/itinerary/${shareToken}`;
+      const [tenantRow] = await sql`SELECT company_name, name FROM tenants WHERE id = ${tenantId}`;
+      const companyName = (tenantRow as any)?.company_name || (tenantRow as any)?.name || "Travel Agent";
+      const htmlBody = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <h2 style="color: #333;">Your Travel Itinerary</h2>
+          <p>Hi,</p>
+          <p>Please find your itinerary <strong>${(itinerary as any).title}</strong> from ${companyName}.</p>
+          <p><a href="${publicUrl}" style="display: inline-block; background: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px;">View Itinerary</a></p>
+          <p style="color: #666; font-size: 14px;">Or copy this link: ${publicUrl}</p>
+        </div>`;
+      await tenantEmailService.sendCustomerEmail({
+        to: email,
+        subject: `Your itinerary: ${(itinerary as any).title}`,
+        body: `View your itinerary from ${companyName}: ${publicUrl}`,
+        htmlBody,
+        tenantId,
+        fromName: companyName,
+      });
+      res.json({ success: true, message: "Itinerary sent to customer email" });
+    } catch (e: any) {
+      console.error("Send itinerary email error:", e);
+      res.status(500).json({ error: e.message || "Failed to send email" });
+    }
+  });
+
+  // Parse uploaded files (quotes, confirmations) - create new sections OR add items to existing sectionId
+  app.post("/api/tenants/:tenantId/itineraries/parse-files", upload.array("files", 10), authenticateToken, async (req, res) => {
+    try {
+      const files = req.files as Express.Multer.File[];
+      if (!files || files.length === 0) return res.status(400).json({ message: "No files uploaded" });
+      const sectionId = req.body.sectionId ? parseInt(req.body.sectionId as string) : null;
+      const sections: { sectionName: string; sectionDate?: string; items: { itemType: string; title: string; description?: string; details?: object }[] }[] = [];
+      for (const file of files) {
+        const text = await extractTextFromFile(file);
+        const parsed = parseItineraryFromText(text, file.originalname || "file");
+        if (parsed.sectionName || (parsed.items && parsed.items.length > 0)) sections.push(parsed);
+      }
+      if (sectionId && sections.length > 0) {
+        for (const ps of sections) {
+          for (const it of ps.items || []) {
+            await simpleStorage.createItineraryItem({
+              sectionId,
+              itemType: it.itemType || "activity",
+              title: it.title,
+              description: it.description,
+              details: it.details || {},
+            });
+          }
+        }
+        return res.json({ sections, addedToSection: sectionId });
+      }
+      res.json({ sections });
+    } catch (error) {
+      console.error("Parse files error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   // Social media integration routes
   app.get("/api/tenants/:tenantId/social-integrations", async (req, res) => {
     try {
@@ -18736,11 +19113,15 @@ Please improve this email.`;
 
   app.post(
     "/api/tenants/:tenantId/email-campaigns/:campaignId/send",
+    authenticateToken,
     async (req, res) => {
       try {
         const { tenantId, campaignId } = req.params;
+        if ((req as any).user?.tenantId !== parseInt(tenantId)) {
+          return res.status(403).json({ message: "Access denied" });
+        }
         const { campaignTracker } = await import("./campaign-tracker");
-        const { emailService } = await import("./email-service");
+        const { tenantEmailService } = await import("./tenant-email-service");
 
         // Get campaign details
         const [campaign] = await sql`
@@ -18759,7 +19140,9 @@ Please improve this email.`;
 
         if (campaign.target_audience === "manual_selection") {
           // Get manually selected recipients from campaign metadata
-          const metadata = campaign.metadata ? JSON.parse(campaign.metadata) : {};
+          const metadata = campaign.metadata
+            ? (typeof campaign.metadata === "object" ? campaign.metadata : JSON.parse(String(campaign.metadata)))
+            : {};
           const selectedRecipients = metadata.selectedRecipients || [];
 
           // Fetch actual customer/lead data
@@ -18786,12 +19169,26 @@ Please improve this email.`;
           `;
           recipients = segmentRecipients;
         } else {
-          // All customers with email
+          // All customers with email, plus leads with email
           const allCustomers = await sql`
             SELECT *, 'customer' as type FROM customers 
-            WHERE tenant_id = ${parseInt(tenantId)} AND email IS NOT NULL
+            WHERE tenant_id = ${parseInt(tenantId)} AND email IS NOT NULL AND email != ''
           `;
-          recipients = allCustomers;
+          const allLeads = await sql`
+            SELECT *, 'lead' as type FROM leads 
+            WHERE tenant_id = ${parseInt(tenantId)} AND email IS NOT NULL AND email != ''
+          `;
+          const customerIds = new Set(allCustomers.map((c: any) => `${c.type}-${c.id}`));
+          recipients = [...allCustomers];
+          for (const lead of allLeads) {
+            if (!customerIds.has(`lead-${lead.id}`)) recipients.push(lead);
+          }
+        }
+
+        if (recipients.length === 0) {
+          return res.status(400).json({
+            message: "No recipients found. Add customers or leads with email addresses, or use manual selection to pick recipients.",
+          });
         }
 
         let successCount = 0;
@@ -18823,13 +19220,23 @@ Please improve this email.`;
               .replace(/\{\{FirstName\}\}/g, firstName)
               .replace(/\{\{LastName\}\}/g, lastName);
 
-            // Send email
-            const sent = await emailService.sendEmail({
-              to: email,
-              subject: personalizedSubject,
-              html: personalizedContent,
-              tenantId: parseInt(tenantId),
-            });
+            // Send email using tenant SMTP config (use campaign from/reply-to if set)
+            let sent = false;
+            try {
+              await tenantEmailService.sendCustomerEmail({
+                to: email,
+                subject: personalizedSubject,
+                body: personalizedContent.replace(/<[^>]*>/g, ""),
+                htmlBody: personalizedContent,
+                tenantId: parseInt(tenantId),
+                fromName: campaign.from_name || undefined,
+                fromEmail: campaign.from_email || undefined,
+                replyTo: campaign.reply_to || undefined,
+              });
+              sent = true;
+            } catch (e) {
+              console.error(`Campaign send to ${email} failed:`, e);
+            }
 
             if (sent) {
               successCount++;
@@ -18875,7 +19282,7 @@ Please improve this email.`;
             openRate: stats.openRate.toFixed(2),
             clickRate: stats.clickRate.toFixed(2),
             sentAt: new Date().toISOString(),
-            deliveredCount: stats.totalDelivered,
+            deliveredCount: successCount,
             failedCount: failureCount,
           },
         );
@@ -21369,6 +21776,7 @@ Happy travels! 🌍✈️`,
               <p>${data.customerEmail}</p>
               <p>${data.customerAddress || ''}</p>
             </div>
+            ${data.paymentTerms && data.paymentTerms !== "0" && data.paymentStatus?.toLowerCase() !== "paid" ? `
             <div class="billing-info">
               <h3>Payment Terms</h3>
               <p>${data.paymentTerms || 'Net 30'}</p>
@@ -21378,6 +21786,7 @@ Happy travels! 🌍✈️`,
                 ${data.arrivalDate ? `<p><strong>Arrival:</strong> ${data.arrivalDate}</p>` : ''}
               ` : ''}
             </div>
+            ` : ''}
           </div>
           
           <table class="items-table">

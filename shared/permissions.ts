@@ -3,7 +3,7 @@ import {
   BarChart3, Users, MessageSquare, CheckSquare, Filter, RefreshCw, Share2, 
   Calendar, Package, FileText, Mail, Zap, Target, Settings, Crown, Palette,
   Building2, CreditCard, MessageCircle, Smartphone, Plane, Globe, Wrench,
-  Receipt, UserCircle, Headphones, Workflow
+  Receipt, UserCircle, Headphones, Workflow, MapPin
 } from "lucide-react";
 
 // Core menu structure that auto-syncs with sidebar
@@ -128,6 +128,11 @@ export const MENU_ITEMS = {
   packages: { 
     name: "Travel Packages", 
     icon: Package, 
+    actions: ["view", "edit", "delete", "create"] 
+  },
+  itineraries: { 
+    name: "Itinerary Builder", 
+    icon: MapPin, 
     actions: ["view", "edit", "delete", "create"] 
   },
   invoices: { 

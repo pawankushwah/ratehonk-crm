@@ -22,6 +22,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useSaasAuth } from "@/components/auth/saas-auth-provider";
 import { cn } from "@/lib/utils";
+import { playNotificationRing } from "./notification-sound";
 
 interface SaasNotification {
   id: number;
@@ -78,19 +79,7 @@ export function SaasNotificationBell() {
       return;
     }
     if (unreadCount > prevUnreadRef.current) {
-      try {
-        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.frequency.value = 800;
-        osc.type = "sine";
-        gain.gain.setValueAtTime(0.2, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
-        osc.start(ctx.currentTime);
-        osc.stop(ctx.currentTime + 0.15);
-      } catch (_) {}
+      playNotificationRing();
       prevUnreadRef.current = unreadCount;
     } else {
       prevUnreadRef.current = unreadCount;

@@ -10,7 +10,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Plus, Edit, Trash2, Loader2, AlertTriangle } from "lucide-react";
+import { Plus, Edit, Trash2, Loader2, AlertTriangle, Search } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useSaasAuth } from "@/components/auth/saas-auth-provider";
 import { useToast } from "@/hooks/use-toast";
@@ -24,6 +24,7 @@ export default function SaasTenants() {
   const [tenantDialogOpen, setTenantDialogOpen] = useState(false);
   const [editingTenant, setEditingTenant] = useState<any>(null);
   const [deletingTenant, setDeletingTenant] = useState<any>(null);
+  const [searchTerm, setSearchTerm] = useState("");
 
   // Fetch tenants
   const { data: tenants, isLoading, refetch } = useQuery({
@@ -130,6 +131,15 @@ export default function SaasTenants() {
 
         <Card>
           <CardContent className="pt-6">
+            <div className="relative mb-4 max-w-sm">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search by company, email, subdomain..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-9"
+              />
+            </div>
             {isLoading ? (
               <div className="text-center py-8">
                 <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
@@ -148,8 +158,18 @@ export default function SaasTenants() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {tenants && tenants.length > 0 ? (
-                    tenants.map((tenant: any) => (
+                  {(() => {
+                    const filtered = tenants?.filter((tenant: any) => {
+                      if (!searchTerm.trim()) return true;
+                      const q = searchTerm.toLowerCase().trim();
+                      const company = (tenant.companyName || tenant.company_name || "").toLowerCase();
+                      const email = (tenant.contactEmail || tenant.contact_email || "").toLowerCase();
+                      const subdomain = (tenant.subdomain || "").toLowerCase();
+                      const partner = (tenant.partnerCompanyName || tenant.partner_company_name || "").toLowerCase();
+                      return company.includes(q) || email.includes(q) || subdomain.includes(q) || partner.includes(q);
+                    }) ?? [];
+                    return filtered.length > 0 ? (
+                    filtered.map((tenant: any) => (
                       <TableRow key={tenant.id}>
                         <TableCell className="font-medium">
                           {tenant.companyName || tenant.company_name}
@@ -193,10 +213,11 @@ export default function SaasTenants() {
                   ) : (
                     <TableRow>
                       <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                        No tenants found
+                        {searchTerm.trim() ? "No tenants match your search" : "No tenants found"}
                       </TableCell>
                     </TableRow>
-                  )}
+                  );
+                  })()}
                 </TableBody>
               </Table>
             )}

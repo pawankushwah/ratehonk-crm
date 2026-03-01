@@ -227,9 +227,9 @@ export const ModernTemplate: React.FC<InvoiceTemplateProps> = ({ data }) => (
     )}
 
     {/* Footer */}
-    {(data.notes || (data.paymentTerms && data.paymentStatus?.toLowerCase() !== "paid") || data.cancellationChargeNotes) && (
+    {(data.notes || (data.paymentTerms && data.paymentTerms !== "0" && data.paymentStatus?.toLowerCase() !== "paid") || data.cancellationChargeNotes) && (
       <div className="border-t pt-6">
-        {data.paymentTerms && data.paymentStatus?.toLowerCase() !== "paid" && (
+        {data.paymentTerms && data.paymentTerms !== "0" && data.paymentStatus?.toLowerCase() !== "paid" && (
           <div className="mb-4">
             <h4 className="font-semibold mb-2">Payment Terms:</h4>
             <p className="text-gray-600">{data.paymentTerms}</p>
@@ -300,7 +300,7 @@ export const CorporateTemplate: React.FC<InvoiceTemplateProps> = ({ data }) => (
               <span>{format(new Date(data.dueDate), 'MMMM dd, yyyy')}</span>
             </div>
           )}
-          {data.paymentStatus?.toLowerCase() !== "paid" && (
+          {data.paymentStatus?.toLowerCase() !== "paid" && data.paymentTerms && data.paymentTerms !== "0" && (
             <div className="flex">
               <span className="w-24 font-medium">Terms:</span>
               <span>{data.paymentTerms || 'Net 30'}</span>
@@ -601,10 +601,10 @@ export const ClassicTemplate: React.FC<InvoiceTemplateProps> = ({ data }) => (
     </div>
 
     {/* Terms and Notes */}
-    {(data.notes || (data.paymentTerms && data.paymentStatus?.toLowerCase() !== "paid")) && (
+    {(data.notes || (data.paymentTerms && data.paymentTerms !== "0" && data.paymentStatus?.toLowerCase() !== "paid")) && (
       <div className="border-t-2 border-gray-800 pt-6">
         <div className="grid grid-cols-2 gap-8">
-          {data.paymentTerms && data.paymentStatus?.toLowerCase() !== "paid" && (
+          {data.paymentTerms && data.paymentTerms !== "0" && data.paymentStatus?.toLowerCase() !== "paid" && (
             <div>
               <h4 className="font-bold text-lg mb-2 underline">PAYMENT TERMS:</h4>
               <p>{data.paymentTerms}</p>

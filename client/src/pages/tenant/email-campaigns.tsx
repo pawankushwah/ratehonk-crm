@@ -19,7 +19,7 @@ import { Link } from "wouter";
 import { 
   Plus, Search, Mail, Users, TrendingUp, Clock, 
   Send, Edit, Copy, Trash2, Eye, BarChart3,
-  Calendar, Target, Zap, MoreHorizontal, ExternalLink
+  Calendar, Target, Zap, MoreHorizontal, ExternalLink, RefreshCw
 } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -118,9 +118,36 @@ export default function EmailCampaigns() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [`/api/tenants/${tenant?.id}/email-campaigns`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/tenants/${tenant?.id}/email-campaigns/stats`] });
       toast({
         title: "Campaign Sent! 📧",
         description: "Your email campaign is being sent to subscribers."
+      });
+    }
+  });
+
+  const createAndSendCampaignMutation = useMutation({
+    mutationFn: async (data: Record<string, unknown>) => {
+      const createResponse = await apiRequest("POST", `/api/tenants/${tenant?.id}/email-campaigns`, data);
+      const campaign = await createResponse.json();
+      await apiRequest("POST", `/api/tenants/${tenant?.id}/email-campaigns/${campaign.id}/send`);
+      return campaign;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/tenants/${tenant?.id}/email-campaigns`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/tenants/${tenant?.id}/email-campaigns/stats`] });
+      setIsCreateDialogOpen(false);
+      form.reset();
+      toast({
+        title: "Campaign Sent! 📧",
+        description: "Your email campaign has been sent to all recipients."
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Send Failed",
+        description: error.message || "Failed to send email campaign",
+        variant: "destructive"
       });
     }
   });
@@ -316,6 +343,9 @@ export default function EmailCampaigns() {
                       templateId: data.templateId,
                       channel: data.channel,
                       objective: data.objective,
+                      fromName: data.fromName || undefined,
+                      fromEmail: data.fromEmail || undefined,
+                      replyTo: data.replyTo || undefined,
                       selectedRecipients: data.selectedRecipients || [],
                       recipientCount: data.recipientCount ?? (data.audienceType === "manual"
                         ? (data.selectedRecipients?.length || 0)
@@ -332,7 +362,7 @@ export default function EmailCampaigns() {
                       type: data.objective === "lead_generation" ? "welcome" : 
                             data.objective === "package_promotion" ? "newsletter" :
                             data.objective === "abandoned_inquiry" ? "follow_up" : "newsletter",
-                      status: "sent",
+                      status: "draft",
                       targetAudience: data.audienceType === "segment" && data.segmentId 
                         ? `segment_${data.segmentId}` 
                         : data.audienceType === "manual" && data.selectedRecipients?.length
@@ -342,14 +372,17 @@ export default function EmailCampaigns() {
                       templateId: data.templateId,
                       channel: data.channel,
                       objective: data.objective,
+                      fromName: data.fromName || undefined,
+                      fromEmail: data.fromEmail || undefined,
+                      replyTo: data.replyTo || undefined,
                       selectedRecipients: data.selectedRecipients || [],
                       recipientCount: data.recipientCount ?? (data.audienceType === "manual"
                         ? (data.selectedRecipients?.length || 0)
                         : 0),
                     };
-                    createCampaignMutation.mutate(campaignData);
+                    createAndSendCampaignMutation.mutate(campaignData);
                   }}
-                  isLoading={createCampaignMutation.isPending}
+                  isLoading={createCampaignMutation.isPending || createAndSendCampaignMutation.isPending}
                 />
               </div>
             </DialogContent>
@@ -483,6 +516,7 @@ export default function EmailCampaigns() {
                 <TableHead>Type</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Recipients</TableHead>
+                <TableHead>Sent</TableHead>
                 <TableHead>Open Rate</TableHead>
                 <TableHead>Click Rate</TableHead>
                 <TableHead>Created</TableHead>
@@ -492,7 +526,7 @@ export default function EmailCampaigns() {
             <TableBody>
               {filteredCampaigns.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-8">
+                  <TableCell colSpan={10} className="text-center py-8">
                     <div className="text-gray-500 dark:text-gray-400">
                       <Mail className="h-8 w-8 mx-auto mb-2 opacity-50" />
                       <p className="text-lg font-medium mb-1">No campaigns found</p>
@@ -524,7 +558,21 @@ export default function EmailCampaigns() {
                         {campaign.status}
                       </Badge>
                     </TableCell>
-                    <TableCell>{campaign.recipientCount || 0}</TableCell>
+                    <TableCell>
+                      {campaign.status === "sent" ? (
+                        <span title={`${campaign.recipientCount || 0} total recipients`}>
+                          {(campaign as any).deliveredCount ?? campaign.recipientCount ?? 0} sent
+                          {((campaign as any).failedCount ?? 0) > 0 && (
+                            <span className="text-muted-foreground"> ({(campaign as any).failedCount} failed)</span>
+                          )}
+                        </span>
+                      ) : (
+                        campaign.recipientCount || 0
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {campaign.sentAt ? format(new Date(campaign.sentAt), "MMM d, yyyy") : '-'}
+                    </TableCell>
                     <TableCell>
                       {campaign.openRate ? `${campaign.openRate}%` : '-'}
                     </TableCell>
@@ -567,6 +615,15 @@ export default function EmailCampaigns() {
                             >
                               <Send className="mr-2 h-4 w-4" />
                               Send Now
+                            </DropdownMenuItem>
+                          )}
+                          {campaign.status === "sent" && (
+                            <DropdownMenuItem
+                              onClick={() => sendCampaignMutation.mutate(campaign.id)}
+                              disabled={sendCampaignMutation.isPending}
+                            >
+                              <RefreshCw className="mr-2 h-4 w-4" />
+                              Resend
                             </DropdownMenuItem>
                           )}
                           <DropdownMenuItem
@@ -676,6 +733,9 @@ export default function EmailCampaigns() {
                       scheduledAt: data.scheduledAt,
                       selectedRecipients: data.selectedRecipients,
                       recipientCount,
+                      fromName: data.fromName || undefined,
+                      fromEmail: data.fromEmail || undefined,
+                      replyTo: data.replyTo || undefined,
                     },
                   });
                 }}
@@ -741,8 +801,17 @@ export default function EmailCampaigns() {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <Card>
                   <CardContent className="p-4">
-                    <div className="text-sm text-muted-foreground mb-1">Recipients</div>
-                    <div className="text-2xl font-bold">{selectedCampaign.recipientCount || 0}</div>
+                    <div className="text-sm text-muted-foreground mb-1">
+                      {selectedCampaign.status === "sent" ? "Emails Sent" : "Recipients"}
+                    </div>
+                    <div className="text-2xl font-bold">
+                      {(selectedCampaign as any).deliveredCount ?? selectedCampaign.recipientCount ?? 0}
+                      {selectedCampaign.status === "sent" && ((selectedCampaign as any).failedCount ?? 0) > 0 && (
+                        <span className="text-sm font-normal text-muted-foreground ml-1">
+                          / {selectedCampaign.recipientCount} ({(selectedCampaign as any).failedCount} failed)
+                        </span>
+                      )}
+                    </div>
                   </CardContent>
                 </Card>
                 <Card>

@@ -5,7 +5,7 @@
 
 import { sql } from "./db";
 import { campaignTracker } from "./campaign-tracker";
-import { emailService } from "./email-service";
+import { tenantEmailService } from "./tenant-email-service";
 import { simpleStorage } from "./simple-storage";
 
 export class CampaignScheduler {
@@ -51,7 +51,9 @@ export class CampaignScheduler {
 
       if (campaign.target_audience === "manual_selection") {
         // Get manually selected recipients
-        const metadata = campaign.metadata ? JSON.parse(campaign.metadata) : {};
+        const metadata = campaign.metadata
+          ? (typeof campaign.metadata === "object" ? campaign.metadata : JSON.parse(String(campaign.metadata)))
+          : {};
         const selectedRecipients = metadata.selectedRecipients || [];
 
         for (const recipient of selectedRecipients) {
@@ -69,7 +71,6 @@ export class CampaignScheduler {
         }
       } else if (campaign.target_audience?.startsWith("segment_")) {
         // Get segment recipients
-        const segmentId = parseInt(campaign.target_audience.replace("segment_", ""));
         const segmentRecipients = await sql`
           SELECT DISTINCT c.*, 'customer' as type
           FROM customers c
@@ -78,12 +79,20 @@ export class CampaignScheduler {
         `;
         recipients = segmentRecipients;
       } else {
-        // All customers
+        // All customers + leads with email
         const allCustomers = await sql`
           SELECT *, 'customer' as type FROM customers 
-          WHERE tenant_id = ${campaign.tenant_id} AND email IS NOT NULL
+          WHERE tenant_id = ${campaign.tenant_id} AND email IS NOT NULL AND email != ''
         `;
-        recipients = allCustomers;
+        const allLeads = await sql`
+          SELECT *, 'lead' as type FROM leads 
+          WHERE tenant_id = ${campaign.tenant_id} AND email IS NOT NULL AND email != ''
+        `;
+        const customerIds = new Set(allCustomers.map((c: any) => `customer-${c.id}`));
+        recipients = [...allCustomers];
+        for (const lead of allLeads) {
+          if (!customerIds.has(`lead-${lead.id}`)) recipients.push(lead);
+        }
       }
 
       let successCount = 0;
@@ -114,13 +123,23 @@ export class CampaignScheduler {
             .replace(/\{\{FirstName\}\}/g, firstName)
             .replace(/\{\{LastName\}\}/g, lastName);
 
-          // Send email
-          const sent = await emailService.sendEmail({
-            to: email,
-            subject: personalizedSubject,
-            html: personalizedContent,
-            tenantId: campaign.tenant_id,
-          });
+          // Send email using tenant SMTP (with campaign from/reply-to if set)
+          let sent = false;
+          try {
+            await tenantEmailService.sendCustomerEmail({
+              to: email,
+              subject: personalizedSubject,
+              body: personalizedContent.replace(/<[^>]*>/g, ""),
+              htmlBody: personalizedContent,
+              tenantId: campaign.tenant_id,
+              fromName: campaign.from_name || undefined,
+              fromEmail: campaign.from_email || undefined,
+              replyTo: campaign.reply_to || undefined,
+            });
+            sent = true;
+          } catch (e) {
+            console.error(`Campaign scheduler send to ${email} failed:`, e);
+          }
 
           if (sent) {
             successCount++;
@@ -161,7 +180,7 @@ export class CampaignScheduler {
         openRate: stats.openRate.toFixed(2),
         clickRate: stats.clickRate.toFixed(2),
         sentAt: new Date().toISOString(),
-        deliveredCount: stats.totalDelivered,
+        deliveredCount: successCount,
         failedCount: failureCount,
       });
 

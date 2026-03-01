@@ -4932,22 +4932,33 @@ async getAllLeadsByTenant(
       `Found ${campaigns.length} campaigns in database:`,
       campaigns.map((c) => ({ id: c.id, name: c.name })),
     );
-    return campaigns.map((campaign) => ({
-      id: campaign.id,
-      tenantId: campaign.tenant_id,
-      name: campaign.name,
-      subject: campaign.subject,
-      content: campaign.content,
-      type: campaign.type,
-      status: campaign.status,
-      targetAudience: campaign.target_audience,
-      scheduledAt: campaign.scheduled_at,
-      sentAt: campaign.sent_at,
-      recipientCount: campaign.recipient_count,
-      openRate: campaign.open_rate,
-      clickRate: campaign.click_rate,
-      createdAt: campaign.created_at,
-    }));
+    return campaigns.map((campaign) => {
+      const metadata = campaign.metadata
+        ? (typeof campaign.metadata === "object" ? campaign.metadata : (() => { try { return JSON.parse(String(campaign.metadata)); } catch { return {}; } })())
+        : {};
+      return {
+        id: campaign.id,
+        tenantId: campaign.tenant_id,
+        name: campaign.name,
+        subject: campaign.subject,
+        content: campaign.content,
+        type: campaign.type,
+        status: campaign.status,
+        targetAudience: campaign.target_audience,
+        scheduledAt: campaign.scheduled_at,
+        sentAt: campaign.sent_at,
+        recipientCount: campaign.recipient_count,
+        deliveredCount: campaign.delivered_count ?? null,
+        failedCount: campaign.failed_count ?? null,
+        fromName: campaign.from_name ?? null,
+        fromEmail: campaign.from_email ?? null,
+        replyTo: campaign.reply_to ?? null,
+        selectedRecipients: metadata.selectedRecipients || [],
+        openRate: campaign.open_rate,
+        clickRate: campaign.click_rate,
+        createdAt: campaign.created_at,
+      };
+    });
   }
 
   async createEmailCampaign(campaignData: any) {
@@ -4972,7 +4983,10 @@ async getAllLeadsByTenant(
           objective,
           template_id,
           scheduled_at,
-          metadata
+          metadata,
+          from_name,
+          from_email,
+          reply_to
         ) VALUES (
           ${campaignData.tenantId || 1},
           ${campaignData.name || "Untitled Campaign"},
@@ -4986,7 +5000,10 @@ async getAllLeadsByTenant(
           ${campaignData.objective || null},
           ${campaignData.templateId || null},
           ${campaignData.scheduledAt ? new Date(campaignData.scheduledAt).toISOString() : null},
-          ${Object.keys(metadata).length > 0 ? JSON.stringify(metadata) : null}
+          ${Object.keys(metadata).length > 0 ? JSON.stringify(metadata) : null},
+          ${campaignData.fromName ?? null},
+          ${campaignData.fromEmail ?? null},
+          ${campaignData.replyTo ?? null}
         )
         RETURNING *
       `;
@@ -5015,6 +5032,16 @@ async getAllLeadsByTenant(
   }
 
   async updateEmailCampaign(campaignId: number, campaignData: any) {
+    let metadataJson: string | null = null;
+    if (campaignData.selectedRecipients && Array.isArray(campaignData.selectedRecipients)) {
+      const [existing] = await sql`SELECT metadata FROM email_campaigns WHERE id = ${campaignId}`;
+      const existingMeta = existing?.metadata
+        ? (typeof existing.metadata === "object" ? existing.metadata : (() => { try { return JSON.parse(String(existing.metadata)); } catch { return {}; } })())
+        : {};
+      const merged = { ...existingMeta, selectedRecipients: campaignData.selectedRecipients };
+      metadataJson = JSON.stringify(merged);
+    }
+
     const campaign = await sql`
       UPDATE email_campaigns 
       SET 
@@ -5027,6 +5054,12 @@ async getAllLeadsByTenant(
         scheduled_at = COALESCE(${campaignData.scheduledAt}, scheduled_at),
         sent_at = COALESCE(${campaignData.sentAt}, sent_at),
         recipient_count = COALESCE(${campaignData.recipientCount}, recipient_count),
+        delivered_count = COALESCE(${campaignData.deliveredCount}, delivered_count),
+        failed_count = COALESCE(${campaignData.failedCount}, failed_count),
+        from_name = COALESCE(${campaignData.fromName}, from_name),
+        from_email = COALESCE(${campaignData.fromEmail}, from_email),
+        reply_to = COALESCE(${campaignData.replyTo}, reply_to),
+        metadata = CASE WHEN ${metadataJson} IS NOT NULL THEN ${metadataJson}::jsonb ELSE metadata END,
         open_rate = COALESCE(${campaignData.openRate}, open_rate),
         click_rate = COALESCE(${campaignData.clickRate}, click_rate)
       WHERE id = ${campaignId}
@@ -11813,6 +11846,7 @@ RateHonk CRM Team`,
         { menuItemId: "social-integrations", isVisible: true, customOrder: 7 },
         { menuItemId: "bookings", isVisible: true, customOrder: 8 },
         { menuItemId: "packages", isVisible: true, customOrder: 9 },
+        { menuItemId: "itineraries", isVisible: true, customOrder: 9.5 },
         { menuItemId: "invoices", isVisible: true, customOrder: 10 },
         { menuItemId: "vendors", isVisible: true, customOrder: 11 },
         { menuItemId: "expenses", isVisible: true, customOrder: 12 },
@@ -18159,6 +18193,208 @@ async getDashboardMetrics(
 
   async deleteAllReadSaasNotifications(userId: number) {
     await sql`DELETE FROM saas_notifications WHERE user_id = ${userId} AND is_read = true`;
+  }
+
+  // Customer Itinerary Builder (new module - no changes to travel_packages)
+  async getItinerariesByTenant(tenantId: number, customerId?: number) {
+    const tableExists = await sql`SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'customer_itineraries')`;
+    if (!tableExists[0]?.exists) return [];
+    let q = sql`SELECT ci.*, c.name as customer_name, c.email as customer_email
+      FROM customer_itineraries ci
+      LEFT JOIN customers c ON ci.customer_id = c.id
+      WHERE ci.tenant_id = ${tenantId}`;
+    if (customerId) q = sql`${q} AND ci.customer_id = ${customerId}`;
+    const rows = await sql`${q} ORDER BY ci.updated_at DESC`;
+    return rows.map((r: any) => ({
+      id: r.id,
+      tenantId: r.tenant_id,
+      customerId: r.customer_id,
+      leadId: r.lead_id,
+      title: r.title,
+      intro: r.intro,
+      coverPhoto: r.cover_photo,
+      signature: r.signature,
+      signatureStyle: r.signature_style,
+      clientPrice: parseFloat(r.client_price || 0),
+      agentProfit: parseFloat(r.agent_profit || 0),
+      currency: r.currency,
+      status: r.status,
+      customerName: r.customer_name,
+      customerEmail: r.customer_email,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    }));
+  }
+
+  async getItinerary(id: number) {
+    const tableExists = await sql`SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'customer_itineraries')`;
+    if (!tableExists[0]?.exists) return null;
+    const [r] = await sql`SELECT ci.*, c.name as customer_name, c.email as customer_email
+      FROM customer_itineraries ci
+      LEFT JOIN customers c ON ci.customer_id = c.id
+      WHERE ci.id = ${id}`;
+    if (!r) return null;
+    const sections = await this.getItinerarySections(id);
+    return {
+      id: (r as any).id,
+      tenantId: (r as any).tenant_id,
+      customerId: (r as any).customer_id,
+      leadId: (r as any).lead_id,
+      title: (r as any).title,
+      intro: (r as any).intro,
+      coverPhoto: (r as any).cover_photo,
+      signature: (r as any).signature,
+      signatureStyle: (r as any).signature_style,
+      clientPrice: parseFloat((r as any).client_price || 0),
+      agentProfit: parseFloat((r as any).agent_profit || 0),
+      currency: (r as any).currency,
+      status: (r as any).status,
+      shareToken: (r as any).share_token,
+      customerName: (r as any).customer_name,
+      customerEmail: (r as any).customer_email,
+      sections,
+      createdAt: (r as any).created_at,
+      updatedAt: (r as any).updated_at,
+    };
+  }
+
+  async getItineraryByShareToken(shareToken: string) {
+    const tableExists = await sql`SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'customer_itineraries')`;
+    if (!tableExists[0]?.exists) return null;
+    const [r] = await sql`SELECT id FROM customer_itineraries WHERE share_token = ${shareToken}`;
+    if (!r) return null;
+    return this.getItinerary((r as any).id);
+  }
+
+  async ensureItineraryShareToken(id: number): Promise<string> {
+    const it = await this.getItinerary(id);
+    if (!it) return "";
+    const token = (it as any).shareToken;
+    if (token) return token;
+    const crypto = await import("crypto");
+    const newToken = crypto.randomUUID();
+    await sql.unsafe(`UPDATE customer_itineraries SET share_token = $1, updated_at = NOW() WHERE id = $2`, [newToken, id]);
+    return newToken;
+  }
+
+  async getItinerarySections(itineraryId: number) {
+    const tableExists = await sql`SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'customer_itinerary_sections')`;
+    if (!tableExists[0]?.exists) return [];
+    const rows = await sql`SELECT * FROM customer_itinerary_sections WHERE itinerary_id = ${itineraryId} ORDER BY display_order, id`;
+    const sections = [];
+    for (const r of rows) {
+      const items = await this.getItineraryItems((r as any).id);
+      sections.push({
+        id: (r as any).id,
+        itineraryId: (r as any).itinerary_id,
+        sectionName: (r as any).section_name,
+        sectionDate: (r as any).section_date,
+        displayOrder: (r as any).display_order,
+        images: (r as any).images || [],
+        items,
+        createdAt: (r as any).created_at,
+        updatedAt: (r as any).updated_at,
+      });
+    }
+    return sections;
+  }
+
+  async getItineraryItems(sectionId: number) {
+    const tableExists = await sql`SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'customer_itinerary_items')`;
+    if (!tableExists[0]?.exists) return [];
+    const rows = await sql`SELECT * FROM customer_itinerary_items WHERE section_id = ${sectionId} ORDER BY display_order, id`;
+    return rows.map((r: any) => ({
+      id: r.id,
+      sectionId: r.section_id,
+      itemType: r.item_type,
+      title: r.title,
+      description: r.description,
+      details: r.details || {},
+      images: r.images || [],
+      displayOrder: r.display_order,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    }));
+  }
+
+  async createItinerary(data: any) {
+    const tableExists = await sql`SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'customer_itineraries')`;
+    if (!tableExists[0]?.exists) throw new Error("customer_itineraries table does not exist");
+    const [r] = await sql`INSERT INTO customer_itineraries (tenant_id, customer_id, lead_id, title, intro, cover_photo, signature, signature_style, client_price, agent_profit, currency, status, created_by)
+      VALUES (${data.tenantId}, ${data.customerId ?? null}, ${data.leadId ?? null}, ${data.title || "Untitled Itinerary"}, ${data.intro ?? null}, ${data.coverPhoto ?? null}, ${data.signature ?? null}, ${data.signatureStyle ?? "cursive"}, ${data.clientPrice ?? 0}, ${data.agentProfit ?? 0}, ${data.currency ?? "INR"}, ${data.status ?? "draft"}, ${data.createdBy ?? null})
+      RETURNING *`;
+    return this.getItinerary((r as any).id);
+  }
+
+  async updateItinerary(id: number, data: any) {
+    const tableExists = await sql`SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'customer_itineraries')`;
+    if (!tableExists[0]?.exists) throw new Error("customer_itineraries table does not exist");
+    const updates: string[] = [];
+    const values: any[] = [];
+    const fields = ["customer_id", "lead_id", "title", "intro", "cover_photo", "signature", "signature_style", "client_price", "agent_profit", "currency", "status", "updated_by"];
+    const map: Record<string, string> = { customerId: "customer_id", leadId: "lead_id", title: "title", intro: "intro", coverPhoto: "cover_photo", signature: "signature", signatureStyle: "signature_style", clientPrice: "client_price", agentProfit: "agent_profit", currency: "currency", status: "status", updatedBy: "updated_by" };
+    for (const [k, v] of Object.entries(data)) {
+      const col = map[k] || k;
+      if (fields.includes(col) && v !== undefined) {
+        updates.push(`${col} = $${values.length + 1}`);
+        values.push(v);
+      }
+    }
+    if (updates.length === 0) return this.getItinerary(id);
+    values.push(id);
+    await sql.unsafe(`UPDATE customer_itineraries SET ${updates.join(", ")}, updated_at = NOW() WHERE id = $${values.length}`, values);
+    return this.getItinerary(id);
+  }
+
+  async deleteItinerary(id: number) {
+    await sql`DELETE FROM customer_itineraries WHERE id = ${id}`;
+  }
+
+  async createItinerarySection(data: { itineraryId: number; sectionName: string; sectionDate?: string; displayOrder?: number }) {
+    const tableExists = await sql`SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'customer_itinerary_sections')`;
+    if (!tableExists[0]?.exists) throw new Error("customer_itinerary_sections table does not exist");
+    const [r] = await sql`INSERT INTO customer_itinerary_sections (itinerary_id, section_name, section_date, display_order)
+      VALUES (${data.itineraryId}, ${data.sectionName}, ${data.sectionDate ?? null}, ${data.displayOrder ?? 0})
+      RETURNING *`;
+    return { id: (r as any).id, ...data };
+  }
+
+  async updateItinerarySection(id: number, data: { sectionName?: string; sectionDate?: string; displayOrder?: number; images?: string[] }) {
+    const updates: string[] = [];
+    const values: any[] = [];
+    let i = 1;
+    if (data.sectionName !== undefined) { updates.push(`section_name = $${i++}`); values.push(data.sectionName); }
+    if (data.sectionDate !== undefined) { updates.push(`section_date = $${i++}`); values.push(data.sectionDate); }
+    if (data.displayOrder !== undefined) { updates.push(`display_order = $${i++}`); values.push(data.displayOrder); }
+    if (data.images !== undefined) { updates.push(`images = $${i++}::jsonb`); values.push(JSON.stringify(data.images)); }
+    if (updates.length === 0) return;
+    values.push(id);
+    await sql.unsafe(`UPDATE customer_itinerary_sections SET ${updates.join(", ")}, updated_at = NOW() WHERE id = $${i}`, values);
+  }
+
+  async deleteItinerarySection(id: number) {
+    await sql`DELETE FROM customer_itinerary_sections WHERE id = ${id}`;
+  }
+
+  async createItineraryItem(data: { sectionId: number; itemType: string; title: string; description?: string; details?: object; displayOrder?: number }) {
+    const tableExists = await sql`SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'customer_itinerary_items')`;
+    if (!tableExists[0]?.exists) throw new Error("customer_itinerary_items table does not exist");
+    const [r] = await sql`INSERT INTO customer_itinerary_items (section_id, item_type, title, description, details, display_order)
+      VALUES (${data.sectionId}, ${data.itemType || "activity"}, ${data.title}, ${data.description ?? null}, ${JSON.stringify(data.details || {})}::jsonb, ${data.displayOrder ?? 0})
+      RETURNING *`;
+    return { id: (r as any).id, ...data };
+  }
+
+  async updateItineraryItem(id: number, data: { title?: string; description?: string; details?: object; displayOrder?: number; images?: string[] }) {
+    if (data.title !== undefined) await sql.unsafe(`UPDATE customer_itinerary_items SET title = '${String(data.title).replace(/'/g, "''")}', updated_at = NOW() WHERE id = ${id}`);
+    if (data.description !== undefined) await sql.unsafe(`UPDATE customer_itinerary_items SET description = '${String(data.description).replace(/'/g, "''")}', updated_at = NOW() WHERE id = ${id}`);
+    if (data.details !== undefined) await sql.unsafe(`UPDATE customer_itinerary_items SET details = '${JSON.stringify(data.details).replace(/'/g, "''")}'::jsonb, updated_at = NOW() WHERE id = ${id}`);
+    if (data.displayOrder !== undefined) await sql.unsafe(`UPDATE customer_itinerary_items SET display_order = ${data.displayOrder}, updated_at = NOW() WHERE id = ${id}`);
+    if (data.images !== undefined) await sql.unsafe(`UPDATE customer_itinerary_items SET images = $1::jsonb, updated_at = NOW() WHERE id = $2`, [JSON.stringify(data.images), id]);
+  }
+
+  async deleteItineraryItem(id: number) {
+    await sql`DELETE FROM customer_itinerary_items WHERE id = ${id}`;
   }
 }
 

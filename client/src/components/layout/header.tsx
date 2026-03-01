@@ -17,6 +17,7 @@ import {
   Bell,
   HelpCircle,
   Building2,
+  Headphones,
 } from "lucide-react";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 
@@ -48,6 +49,17 @@ export function Header() {
 
         {/* Right side - User menu */}
         <div className="flex items-center gap-4">
+          {/* Support icon */}
+          <a
+            href="http://localhost:5000/support"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center justify-center h-9 w-9 rounded-md text-gray-600 hover:bg-gray-100 hover:text-gray-900 transition-colors"
+            title="Support"
+          >
+            <Headphones className="h-5 w-5" />
+          </a>
+
           {/* Notifications bell */}
           <NotificationBell />
 

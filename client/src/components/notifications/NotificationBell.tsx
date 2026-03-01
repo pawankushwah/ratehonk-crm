@@ -23,6 +23,7 @@ import {
   Zap,
 } from "lucide-react";
 import { NotificationPreferencesPanel } from "./NotificationPreferences";
+import { playNotificationRing } from "./notification-sound";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -106,7 +107,7 @@ export function NotificationBell() {
   const prevUnreadRef = useRef<number>(unreadCount);
   const isInitialMount = useRef(true);
 
-  // Play sound when new notification arrives (unread count increases)
+  // Play notification ring when new notification arrives (unread count increases)
   useEffect(() => {
     if (isInitialMount.current) {
       isInitialMount.current = false;
@@ -114,19 +115,7 @@ export function NotificationBell() {
       return;
     }
     if (unreadCount > prevUnreadRef.current) {
-      try {
-        const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-        const oscillator = audioContext.createOscillator();
-        const gainNode = audioContext.createGain();
-        oscillator.connect(gainNode);
-        gainNode.connect(audioContext.destination);
-        oscillator.frequency.value = 800;
-        oscillator.type = "sine";
-        gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.15);
-        oscillator.start(audioContext.currentTime);
-        oscillator.stop(audioContext.currentTime + 0.15);
-      } catch (_) {}
+      playNotificationRing();
       prevUnreadRef.current = unreadCount;
     } else {
       prevUnreadRef.current = unreadCount;

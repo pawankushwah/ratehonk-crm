@@ -32,6 +32,7 @@ import {
   Globe,
   Video,
   Phone,
+  MapPin,
 } from "lucide-react";
 import { FaGoogle, FaWhatsapp } from "react-icons/fa";
 import { MENU_ITEMS } from "@shared/permissions";
@@ -67,6 +68,11 @@ const menuItemsMap: Record<string, { name: string; href: string; icon: any }> = 
     name: "Travel Packages",
     href: "/packages",
     icon: Package,
+  },
+  itineraries: {
+    name: "Itinerary Builder",
+    href: "/itineraries",
+    icon: MapPin,
   },
   invoices: {
     name: "Invoices",
