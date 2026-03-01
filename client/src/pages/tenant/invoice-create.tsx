@@ -172,6 +172,9 @@ export default function InvoiceCreate() {
   // Notes attachments state - store File objects until invoice is created
   const [invoiceAttachments, setInvoiceAttachments] = useState<Array<{ id: string; file: File; name: string; type?: string }>>([]);
   const [uploadedAttachments, setUploadedAttachments] = useState<Array<{ id: string; name: string; url: string; type?: string }>>([]);
+  // Internal attachments - for internal use only, NOT sent with invoice emails
+  const [internalAttachments, setInternalAttachments] = useState<Array<{ id: string; file: File; name: string; type?: string }>>([]);
+  const [uploadedInternalAttachments, setUploadedInternalAttachments] = useState<Array<{ id: string; name: string; url: string; type?: string }>>([]);
 
   // Preview state
   const [showPreview, setShowPreview] = useState(false);
@@ -825,8 +828,21 @@ export default function InvoiceCreate() {
       // Store uploaded attachments separately (for display - these are already uploaded)
       setUploadedAttachments([...notesAttachmentsFound, ...additionalNotesAttachmentsFound, ...invoiceAttachmentsParsed]);
       
+      // Load internal attachments from invoice data (if exists)
+      const internalAttachmentsData = (invoice as any).internalAttachments || (invoice as any).internal_attachments || [];
+      const internalAttachmentsParsed = Array.isArray(internalAttachmentsData)
+        ? internalAttachmentsData.map((att: any, index: number) => ({
+            id: att.id || `internal-${index}`,
+            name: att.name || 'Unknown file',
+            url: att.url || '',
+            type: att.type || 'application/octet-stream',
+          }))
+        : [];
+      setUploadedInternalAttachments(internalAttachmentsParsed);
+      
       // Clear file attachments (these are for new files to be uploaded when invoice is saved)
       setInvoiceAttachments([]);
+      setInternalAttachments([]);
       
       setEnableReminder(invoice.enableReminder || false);
       setReminderFrequency(invoice.reminderFrequency || "weekly");
@@ -1996,6 +2012,7 @@ export default function InvoiceCreate() {
       companyEmail: companyEmail,
       companyPhone: companyPhone,
       companyAddress: tenant?.address || "",
+      companyLogo: (tenant as any)?.logo && typeof (tenant as any).logo === "string" && (tenant as any).logo.trim() !== "" ? (tenant as any).logo : undefined,
       items: lineItems
         .map((item, originalIndex) => {
           const sellingPrice = parseFloat(item.sellingPrice || "0");
@@ -2306,6 +2323,61 @@ export default function InvoiceCreate() {
         });
         // Continue with invoice creation even if file upload fails
       }
+    }
+
+    // Upload internal attachments (for internal use only - not sent with emails)
+    if (internalAttachments.length > 0) {
+      try {
+        const uploadedInternalUrls: Array<{ name: string; url: string; type?: string }> = [];
+        
+        for (const attachment of internalAttachments) {
+          const token = auth.getToken();
+          const encodedFilename = encodeURIComponent(attachment.name);
+          
+          const uploadResponse = await fetch('/api/objects/store', {
+            method: 'PUT',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'X-Filename': encodedFilename,
+              'Content-Type': attachment.type || 'application/octet-stream',
+            },
+            body: attachment.file,
+          });
+          
+          if (!uploadResponse.ok) {
+            const errorText = await uploadResponse.text();
+            throw new Error(`Failed to upload ${attachment.name}: ${errorText}`);
+          }
+          
+          const uploadResult = await uploadResponse.json();
+          const fileUrl = uploadResult.publicUrl || uploadResult.objectPath || uploadResult.url || uploadResult.location;
+          
+          if (fileUrl) {
+            uploadedInternalUrls.push({
+              name: attachment.name,
+              url: fileUrl.startsWith('http') ? fileUrl : fileUrl.startsWith('/') ? fileUrl : `/${fileUrl}`,
+              type: attachment.type,
+            });
+          }
+        }
+        
+        const existingInternal = uploadedInternalAttachments.map(a => ({ name: a.name, url: a.url, type: a.type }));
+        const allInternalAttachments = [...existingInternal, ...uploadedInternalUrls];
+        
+        if (allInternalAttachments.length > 0) {
+          (invoiceData as any).internalAttachments = allInternalAttachments;
+        }
+      } catch (error: any) {
+        console.error("Error uploading internal files:", error);
+        toast({
+          title: "Upload Error",
+          description: `Failed to upload some internal files: ${error.message}`,
+          variant: "destructive",
+        });
+      }
+    } else if (uploadedInternalAttachments.length > 0) {
+      // Use existing internal attachments when no new files to upload
+      (invoiceData as any).internalAttachments = uploadedInternalAttachments.map(a => ({ name: a.name, url: a.url, type: a.type }));
     }
 
     if (isEditMode && invoiceId) {
@@ -3082,9 +3154,14 @@ export default function InvoiceCreate() {
                       <div className="flex items-center justify-between mb-4">
                         <div className="flex items-center gap-2">
                           <Bell className="h-5 w-5 text-gray-900 dark:text-white" />
-                          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                            Payment Reminder
-                          </h3>
+                          <div>
+                            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                              Payment Reminder
+                            </h3>
+                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                              Automatic reminders will be sent until the payment status is paid. When installments are enabled, reminders apply to each installment.
+                            </p>
+                          </div>
                         </div>
                         <div className="flex items-center gap-2">
                           <Label htmlFor="enableReminder" className="text-sm">
@@ -3135,10 +3212,10 @@ export default function InvoiceCreate() {
 
                           <div className="col-span-full">
                             <p className="text-sm text-gray-600 dark:text-gray-400">
-                              {reminderFrequency === "daily" && "Customer will receive payment reminders every day until the invoice is paid."}
-                              {reminderFrequency === "weekly" && "Customer will receive payment reminders every week until the invoice is paid."}
-                              {reminderFrequency === "monthly" && "Customer will receive payment reminders every month until the invoice is paid."}
-                              {reminderFrequency === "specific_date" && "Customer will receive a payment reminder on the selected date."}
+                              {reminderFrequency === "daily" && "Automatic payment reminders will be sent every day until the payment status is paid."}
+                              {reminderFrequency === "weekly" && "Automatic payment reminders will be sent every week until the payment status is paid."}
+                              {reminderFrequency === "monthly" && "Automatic payment reminders will be sent every month until the payment status is paid."}
+                              {reminderFrequency === "specific_date" && "A payment reminder will be sent on the selected date."}
                             </p>
                           </div>
                         </div>
@@ -3228,9 +3305,14 @@ export default function InvoiceCreate() {
                     {/* Payment Installments Section */}
                     <div className="pt-4 border-t mt-4">
                       <div className="flex items-center justify-between mb-3">
-                        <Label htmlFor="enableInstallments" className="text-sm font-semibold">
-                          Enable Payment Installments
-                        </Label>
+                        <div>
+                          <Label htmlFor="enableInstallments" className="text-sm font-semibold">
+                            Enable Payment Installments
+                          </Label>
+                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                            Split the invoice into multiple payments. Payment reminders will be sent for each installment until the payment status is paid.
+                          </p>
+                        </div>
                         <Switch
                           id="enableInstallments"
                           checked={enableInstallments}
@@ -3384,8 +3466,9 @@ export default function InvoiceCreate() {
                     </div>
                   </div>
                   
-                  {/* Single Attachments Section - Below Notes */}
-                  <div className="mt-6 pt-6 border-t">
+                  {/* Attachments and Internal Attachments - Same Row */}
+                  <div className="mt-6 pt-6 border-t grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <div>
                     <Label className="text-base sm:text-lg font-semibold mb-3 block">
                       Attachments
                     </Label>
@@ -3500,6 +3583,132 @@ export default function InvoiceCreate() {
                         </p>
                       )}
                     </div>
+                  </div>
+
+                  {/* Internal Attachments - Same row */}
+                  <div>
+                    <Label className="text-base sm:text-lg font-semibold mb-3 block">
+                      Internal Attachments
+                    </Label>
+                    <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-4">
+                      Upload files for internal reference only. These are not sent with invoice emails.
+                    </p>
+                    
+                    {uploadedInternalAttachments.length > 0 && (
+                      <div className="mb-4">
+                        <Label className="text-sm font-medium mb-2 block">Previously Uploaded</Label>
+                        <div className="flex flex-wrap gap-2">
+                          {uploadedInternalAttachments.map((attachment) => (
+                            <a
+                              key={attachment.id}
+                              href={attachment.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-2 px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-sm"
+                            >
+                              <File className="h-4 w-4" />
+                              <span className="truncate max-w-[200px]">{attachment.name}</span>
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {internalAttachments.length > 0 && (
+                      <div className="mb-4">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                          {internalAttachments.map((attachment) => {
+                            const fileUrl = URL.createObjectURL(attachment.file);
+                            return (
+                              <div
+                                key={attachment.id}
+                                className="relative group border rounded-lg overflow-hidden bg-gray-50 dark:bg-gray-800"
+                              >
+                                {attachment.type?.startsWith('image/') ? (
+                                  <div className="aspect-square">
+                                    <img
+                                      src={fileUrl}
+                                      alt={attachment.name}
+                                      className="w-full h-full object-cover"
+                                      onLoad={() => URL.revokeObjectURL(fileUrl)}
+                                    />
+                                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-50 transition-opacity flex items-center justify-center">
+                                      <button
+                                        type="button"
+                                        onClick={() => setInternalAttachments(internalAttachments.filter(a => a.id !== attachment.id))}
+                                        className="opacity-0 group-hover:opacity-100 text-white bg-red-600 hover:bg-red-700 rounded-full p-2 transition-opacity"
+                                        title="Remove"
+                                      >
+                                        <X className="h-4 w-4" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="p-4 flex flex-col items-center justify-center min-h-[100px]">
+                                    {attachment.name.toLowerCase().endsWith('.pdf') ? (
+                                      <FileText className="h-8 w-8 text-red-600 mb-2" />
+                                    ) : (
+                                      <File className="h-8 w-8 text-gray-600 mb-2" />
+                                    )}
+                                    <p className="text-xs text-center text-gray-700 dark:text-gray-300 truncate w-full px-2" title={attachment.name}>
+                                      {attachment.name}
+                                    </p>
+                                    <p className="text-xs text-gray-500 mt-1">
+                                      {(attachment.file.size / 1024).toFixed(1)} KB
+                                    </p>
+                                    <button
+                                      type="button"
+                                      onClick={() => setInternalAttachments(internalAttachments.filter(a => a.id !== attachment.id))}
+                                      className="mt-2 text-red-600 hover:text-red-800"
+                                      title="Remove"
+                                    >
+                                      <X className="h-4 w-4" />
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    
+                    <div>
+                      <input
+                        type="file"
+                        id="internal-file-upload"
+                        multiple
+                        accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"
+                        className="hidden"
+                        onChange={(e) => {
+                          const files = Array.from(e.target.files || []);
+                          if (files.length > 0) {
+                            const newAttachments = files.map((file) => ({
+                              id: `internal-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                              file: file,
+                              name: file.name,
+                              type: file.type,
+                            }));
+                            setInternalAttachments((prev) => [...prev, ...newAttachments]);
+                            e.target.value = '';
+                          }
+                        }}
+                      />
+                      <Button
+                        type="button"
+                        onClick={() => document.getElementById('internal-file-upload')?.click()}
+                        className="bg-cyan-600 hover:bg-cyan-700 text-white text-sm"
+                      >
+                        <Paperclip className="h-4 w-4 mr-2" />
+                        Select Internal Files ({internalAttachments.length})
+                      </Button>
+                      {internalAttachments.length > 0 && (
+                        <p className="text-xs text-gray-500 mt-2">
+                          {internalAttachments.length} file(s) selected. Internal files are not sent with invoice emails.
+                        </p>
+                      )}
+                    </div>
+                  </div>
                   </div>
                 </div>
               )}

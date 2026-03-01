@@ -68,6 +68,11 @@ const tenantSettingsSchema = z.object({
   contactEmail: z.string().email("Invalid email address"),
   contactPhone: z.string().optional(),
   address: z.string().optional(),
+  streetAddress: z.string().optional(),
+  city: z.string().optional(),
+  state: z.string().optional(),
+  zipCode: z.string().optional(),
+  country: z.string().optional(),
   subdomain: z.string().min(3, "Subdomain must be at least 3 characters"),
   timezone: z.string(),
   currency: z.string(),
@@ -244,6 +249,11 @@ export default function Settings() {
       contactEmail: "",
       contactPhone: "",
       address: "",
+      streetAddress: "",
+      city: "",
+      state: "",
+      zipCode: "",
+      country: "",
       subdomain: "",
       timezone: "UTC",
       currency: "USD",
@@ -260,11 +270,16 @@ export default function Settings() {
         contactEmail: (tenantData as any).contactEmail || "",
         contactPhone: (tenantData as any).contactPhone || "",
         address: (tenantData as any).address || "",
+        streetAddress: (tenantData as any).streetAddress || "",
+        city: (tenantData as any).city || "",
+        state: (tenantData as any).state || "",
+        zipCode: (tenantData as any).zipCode || "",
+        country: (tenantData as any).country || "",
         subdomain: (tenantData as any).subdomain || "",
         timezone: (tenantData as any).timezone || "UTC",
         currency: (tenantData as any).currency || "USD",
         dateFormat: (tenantData as any).dateFormat || "MM/DD/YYYY",
-        companyLogo: (tenantData as any).companyLogo || "",
+        companyLogo: (tenantData as any).logo || (tenantData as any).companyLogo || "",
       });
     }
   }, [tenantData, tenantForm]);
@@ -344,13 +359,19 @@ export default function Settings() {
   const updateTenantMutation = useMutation({
     mutationFn: async (data: TenantSettings) => {
       const token = localStorage.getItem("auth_token");
+      // Map companyLogo to logo for API (backend expects logo)
+      const payload = {
+        ...data,
+        logo: data.companyLogo || null,
+      };
+      delete (payload as any).companyLogo;
       const response = await fetch("/api/tenant/settings", {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(data),
+        body: JSON.stringify(payload),
       });
       if (!response.ok) {
         const errorData = await response.text();
@@ -531,7 +552,7 @@ export default function Settings() {
       const result = await response.json();
       const logoUrl = result.logoUrl;
 
-      // Update form with new logo URL
+      // Update form with new logo path (backend now saves file and stores path)
       tenantForm.setValue("companyLogo", logoUrl);
       setLogoPreview(logoUrl);
 
@@ -540,7 +561,7 @@ export default function Settings() {
 
       toast({
         title: "Logo uploaded successfully",
-        description: "Your company logo has been updated",
+        description: "Your company logo has been saved",
       });
     } catch (error) {
       console.error("Logo upload error:", error);
@@ -554,13 +575,14 @@ export default function Settings() {
     }
   };
 
-  // Set logo preview from form data
+  // Set logo preview from form data or tenant data
   React.useEffect(() => {
-    const currentLogo = tenantForm.watch("companyLogo");
-    if (currentLogo) {
-      setLogoPreview(currentLogo);
+    const logo = (tenantData as any)?.logo || (tenantData as any)?.companyLogo || tenantForm.watch("companyLogo");
+    const hasLogo = logo && typeof logo === "string" && logo.trim() !== "";
+    if (hasLogo) {
+      setLogoPreview(logo);
     }
-  }, [tenantForm]);
+  }, [tenantData, tenantForm]);
 
   if (tenantLoading || userLoading || systemLoading) {
     return (
@@ -781,22 +803,80 @@ export default function Settings() {
                       />
                     </div>
 
-                    <FormField
-                      control={tenantForm.control}
-                      name="address"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Business Address</FormLabel>
-                          <FormControl>
-                            <Textarea
-                              placeholder="123 Main Street, City, State, ZIP Code"
-                              {...field}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
+                    <div className="space-y-4">
+                      <Label className="text-base font-semibold">Business Address</Label>
+                      <p className="text-xs text-muted-foreground">Complete address shown on invoices, estimates, and other documents</p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormField
+                          control={tenantForm.control}
+                          name="streetAddress"
+                          render={({ field }) => (
+                            <FormItem className="md:col-span-2">
+                              <FormLabel>Street Address</FormLabel>
+                              <FormControl>
+                                <Input
+                                  placeholder="123 Main Street, Suite 100"
+                                  {...field}
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={tenantForm.control}
+                          name="city"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>City</FormLabel>
+                              <FormControl>
+                                <Input placeholder="New York" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={tenantForm.control}
+                          name="state"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>State / Province</FormLabel>
+                              <FormControl>
+                                <Input placeholder="NY" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={tenantForm.control}
+                          name="zipCode"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>ZIP / Postal Code</FormLabel>
+                              <FormControl>
+                                <Input placeholder="10001" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={tenantForm.control}
+                          name="country"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Country</FormLabel>
+                              <FormControl>
+                                <Input placeholder="United States" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                    </div>
                   </CardContent>
                 </Card>
 

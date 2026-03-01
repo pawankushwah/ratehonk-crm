@@ -6139,10 +6139,11 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
         <div class="invoice-container">
           <div class="header">
             <div class="company-info">
+              ${data.companyLogo ? `<img src="${data.companyLogo}" alt="Company Logo" style="height: 48px; width: auto; margin-bottom: 8px;" />` : ''}
               <h1>${data.companyName}</h1>
               <p>${data.companyEmail}</p>
               <p>${data.companyPhone || ''}</p>
-              <p>${data.companyAddress || ''}</p>
+              ${data.companyAddress ? `<p style="white-space: pre-line;">${(data.companyAddress || '').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>` : ''}
             </div>
             <div class="invoice-info">
               <h2>INVOICE</h2>
@@ -6294,6 +6295,12 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
       })();
 
       // Prepare invoice data for PDF generation
+      const logoPath = (tenant as any)?.logo;
+      const companyLogoForPdf = logoPath && typeof logoPath === 'string' && logoPath.trim() !== ''
+        ? (logoPath.startsWith('http') ? logoPath : `${process.env.APP_URL || process.env.FRONTEND_URL || 'http://localhost:5000'}${logoPath.startsWith('/') ? '' : '/'}${logoPath}`)
+        : undefined;
+      const t = tenant as any;
+      const companyAddressFormatted = [t?.street_address, [t?.city, t?.state, t?.zip_code].filter(Boolean).join(', '), t?.country].filter(Boolean).join('\n') || tenant?.address || '';
       const invoiceDataForPDF = {
         invoiceNumber: invoice.invoiceNumber || `INV-${invoice.id}`,
         issueDate: invoice.issueDate ? new Date(invoice.issueDate).toLocaleDateString() : new Date().toLocaleDateString(),
@@ -6305,7 +6312,8 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
         companyName: tenant?.company_name || tenant?.name || 'Company',
         companyEmail: tenant?.contact_email || '',
         companyPhone: tenant?.contact_phone || '',
-        companyAddress: tenant?.address || '',
+        companyAddress: companyAddressFormatted,
+        companyLogo: companyLogoForPdf,
         items: (lineItems || []).map((item: any) => ({
           description: item.itemTitle || item.description || 'N/A',
           quantity: item.quantity || 1,
@@ -9479,18 +9487,20 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
 
   app.post(
     "/api/tenant/upload-logo",
+    authenticateToken,
     uploadLogo.single("logo"),
     async (req: any, res) => {
       try {
-        console.log("🔧 Logo upload endpoint hit");
-        const file = req.file;
+        const user = req.user;
+        if (!user?.tenantId) {
+          return res.status(401).json({ message: "Unauthorized" });
+        }
 
+        const file = req.file;
         if (!file) {
           return res.status(400).json({ message: "Logo file is required" });
         }
 
-        // Compress and convert file buffer to base64 for storage
-        // For now, we'll use the file as-is but limit size strictly to 2MB
         if (file.size > 2 * 1024 * 1024) {
           return res.status(400).json({
             success: false,
@@ -9499,25 +9509,23 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
           });
         }
 
-        const base64Logo = `data:${file.mimetype};base64,${file.buffer.toString("base64")}`;
+        // Save file to storage and get public path
+        const { ObjectStorageService } = await import("./objectStorage.js");
+        const objectStorage = new ObjectStorageService();
+        const ext = (file.originalname.split(".").pop() || "png").toLowerCase().replace(/[^a-z]/g, "png");
+        const safeExt = ["png", "jpg", "jpeg", "gif"].includes(ext) ? ext : "png";
+        const objectPath = `tenant-logos/${user.tenantId}-${Date.now()}-${Math.random().toString(36).substring(2, 8)}.${safeExt}`;
+        const publicUrl = await objectStorage.uploadFile(objectPath, file.buffer, file.mimetype);
 
-        console.log(
-          "🔧 Logo uploaded successfully, base64 length:",
-          base64Logo.length,
-        );
+        // Save logo path to tenants table
+        await simpleStorage.updateTenant(user.tenantId, { logo: publicUrl });
 
-        // Warn if the base64 is getting large (over 1MB encoded)
-        if (base64Logo.length > 1024 * 1024) {
-          console.warn(
-            "⚠️ Large logo detected, consider image compression for better performance",
-          );
-        }
+        console.log("🔧 Logo saved to:", publicUrl);
 
-        // Return the base64 logo URL
         res.json({
           success: true,
           message: "Logo uploaded successfully",
-          logoUrl: base64Logo,
+          logoUrl: publicUrl,
         });
       } catch (error) {
         console.error("❌ Logo upload error:", error);
@@ -12014,6 +12022,13 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
         );
       }
 
+      // Build formatted address for tenant
+      const tenantAddr = tenant ? (() => {
+        const t = tenant as any;
+        const parts = [t.street_address, [t.city, t.state, t.zip_code].filter(Boolean).join(', '), t.country].filter(Boolean);
+        return parts.length > 0 ? parts.join('\n') : (tenant.address || '');
+      })() : '';
+
       console.log("Login successful for user:", user.email);
       res.json({
         user: {
@@ -12035,7 +12050,7 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
               subdomain: tenant.subdomain,
               contactEmail: tenant.contact_email,
               contactPhone: tenant.contact_phone,
-              address: tenant.address,
+              address: tenantAddr,
               isActive: tenant.is_active,
               logo: tenant.logo,
             }
@@ -12068,6 +12083,12 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
         tenant = await simpleStorage.getTenant(user.tenantId);
       }
 
+      const tenantAddr = tenant ? (() => {
+        const t = tenant as any;
+        const parts = [t.street_address, [t.city, t.state, t.zip_code].filter(Boolean).join(', '), t.country].filter(Boolean);
+        return parts.length > 0 ? parts.join('\n') : (tenant.address || '');
+      })() : '';
+
       res.json({
         user: {
           id: user.id,
@@ -12085,7 +12106,7 @@ app.get("/api/tenants/:tenantId/All-invoices", authenticateToken, async (req, re
               subdomain: tenant.subdomain,
               contactEmail: tenant.contact_email,
               contactPhone: tenant.contact_phone,
-              address: tenant.address,
+              address: tenantAddr,
               isActive: tenant.is_active,
               logo: tenant.logo,
             }
@@ -19150,12 +19171,24 @@ Please improve this email.`;
       // Get tenant settings for currency, timezone, and date_format (stored in tenant_settings table)
       const tenantSettings = await simpleStorage.getInvoiceSettings(user.tenantId);
       
+      // Build formatted address from components or fall back to legacy address
+      const formattedAddress = (() => {
+        const t = tenant as any;
+        const parts = [t.street_address, [t.city, t.state, t.zip_code].filter(Boolean).join(', '), t.country].filter(Boolean);
+        return parts.length > 0 ? parts.join('\n') : (tenant.address || '');
+      })();
+
       // Return tenant settings with additional configuration
       res.json({
         companyName: tenant.company_name,
         contactEmail: tenant.contact_email,
         contactPhone: tenant.contact_phone,
-        address: tenant.address,
+        address: formattedAddress,
+        streetAddress: (tenant as any).street_address || '',
+        city: (tenant as any).city || '',
+        state: (tenant as any).state || '',
+        zipCode: (tenant as any).zip_code || '',
+        country: (tenant as any).country || '',
         subdomain: tenant.subdomain,
         timezone: tenantSettings?.timezone || "UTC",
         currency: tenantSettings?.defaultCurrency || "USD",
@@ -19180,14 +19213,20 @@ Please improve this email.`;
 
       // Map frontend camelCase to database snake_case
       // Note: timezone, currency, and date_format are not in tenants table
-      const updateData = {
+      const updateData: any = {
         company_name: req.body.companyName,
         contact_email: req.body.contactEmail,
         contact_phone: req.body.contactPhone,
-        address: req.body.address,
         subdomain: req.body.subdomain,
         logo: req.body.logo,
       };
+      // Address: use new fields if provided, otherwise keep legacy address
+      if (req.body.streetAddress !== undefined) updateData.street_address = req.body.streetAddress;
+      if (req.body.city !== undefined) updateData.city = req.body.city;
+      if (req.body.state !== undefined) updateData.state = req.body.state;
+      if (req.body.zipCode !== undefined) updateData.zip_code = req.body.zipCode;
+      if (req.body.country !== undefined) updateData.country = req.body.country;
+      if (req.body.address !== undefined) updateData.address = req.body.address;
 
       const updatedTenant = await simpleStorage.updateTenant(
         user.tenantId,
@@ -19216,12 +19255,21 @@ Please improve this email.`;
       // Get updated tenant settings for response
       const tenantSettings = await simpleStorage.getInvoiceSettings(user.tenantId);
 
+      // Build formatted address for response
+      const t = updatedTenant as any;
+      const formattedAddr = [t.street_address, [t.city, t.state, t.zip_code].filter(Boolean).join(', '), t.country].filter(Boolean).join('\n') || updatedTenant.address || '';
+
       // Return updated data in camelCase format
       res.json({
         companyName: updatedTenant.company_name,
         contactEmail: updatedTenant.contact_email,
         contactPhone: updatedTenant.contact_phone,
-        address: updatedTenant.address,
+        address: formattedAddr,
+        streetAddress: t.street_address || '',
+        city: t.city || '',
+        state: t.state || '',
+        zipCode: t.zip_code || '',
+        country: t.country || '',
         subdomain: updatedTenant.subdomain,
         timezone: tenantSettings?.timezone || "UTC",
         currency: tenantSettings?.defaultCurrency || "USD",
@@ -21300,10 +21348,11 @@ Happy travels! 🌍✈️`,
         <div class="invoice-container">
           <div class="header">
             <div class="company-info">
+              ${data.companyLogo ? `<img src="${data.companyLogo}" alt="Company Logo" style="height: 48px; width: auto; margin-bottom: 8px;" />` : ''}
               <h1>${data.companyName}</h1>
               <p>${data.companyEmail}</p>
               <p>${data.companyPhone || ''}</p>
-              <p>${data.companyAddress || ''}</p>
+              ${data.companyAddress ? `<p style="white-space: pre-line;">${(data.companyAddress || '').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>` : ''}
             </div>
             <div class="invoice-info">
               <h2>INVOICE</h2>
@@ -21584,6 +21633,12 @@ ${args.tenantName}`;
       const invoiceNumber = invoice.invoiceNumber || `INV-${invoice.id}`;
 
       // Prepare invoice data for email/PDF
+      const logoPathForEmail = (tenant as any)?.logo;
+      const companyLogoForEmail = logoPathForEmail && typeof logoPathForEmail === 'string' && logoPathForEmail.trim() !== ''
+        ? (logoPathForEmail.startsWith('http') ? logoPathForEmail : `${process.env.APP_URL || process.env.FRONTEND_URL || 'http://localhost:5000'}${logoPathForEmail.startsWith('/') ? '' : '/'}${logoPathForEmail}`)
+        : undefined;
+      const tEmail = tenant as any;
+      const companyAddressForEmail = [tEmail?.street_address, [tEmail?.city, tEmail?.state, tEmail?.zip_code].filter(Boolean).join(', '), tEmail?.country].filter(Boolean).join('\n') || tenant?.address || '';
       const invoiceDataForEmail = {
         invoiceNumber,
         issueDate: invoice.issueDate ? new Date(invoice.issueDate).toLocaleDateString() : new Date().toLocaleDateString(),
@@ -21595,7 +21650,8 @@ ${args.tenantName}`;
         companyName: tenant?.company_name || tenant?.name || 'Company',
         companyEmail: tenant?.contact_email || '',
         companyPhone: tenant?.contact_phone || '',
-        companyAddress: tenant?.address || '',
+        companyAddress: companyAddressForEmail,
+        companyLogo: companyLogoForEmail,
         items: (invoice.lineItems || []).map((item: any) => ({
           description: item.itemTitle || item.description || item.travelCategory || 'N/A',
           quantity: item.quantity || 1,

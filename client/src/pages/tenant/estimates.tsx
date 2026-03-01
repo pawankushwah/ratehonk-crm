@@ -1032,10 +1032,11 @@ export default function Estimates() {
               (tenantSettings as any)?.companyName ||
               (tenant as any)?.name ||
               "",
-            address: (tenantSettings as any)?.companyAddress || "",
+            address: (tenantSettings as any)?.address || (tenantSettings as any)?.companyAddress || "",
             phone: (tenantSettings as any)?.companyPhone || "",
             email: (tenantSettings as any)?.companyEmail || "",
             logo:
+              (tenantSettings as any)?.logo ||
               (tenantSettings as any)?.companyLogo ||
               (fullEstimate as any)?.logoUrl,
           }
@@ -2356,9 +2357,10 @@ export default function Estimates() {
                         (tenant as any)?.name ||
                         "Your Company Name",
                       logo:
+                        (tenantSettings as any)?.logo ||
                         (tenantSettings as any)?.companyLogo ||
                         (previewEstimate as any)?.logoUrl,
-                      address: (tenantSettings as any)?.companyAddress,
+                      address: (tenantSettings as any)?.address || (tenantSettings as any)?.companyAddress,
                       phone: (tenantSettings as any)?.companyPhone,
                       email: (tenantSettings as any)?.companyEmail,
                     }}

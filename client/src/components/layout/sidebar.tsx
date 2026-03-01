@@ -1444,22 +1444,21 @@ export function AppSidebar({
       >
         {/* Enhanced Company Logo/Branding */}
         <div className="text-center py-4">
-          {(tenantSettings as any)?.companyLogo ||
-          (tenantSettings as any)?.logo ? (
-            <img
-              src={
-                (tenantSettings as any)?.companyLogo ||
-                (tenantSettings as any)?.logo
-              }
-              alt="Company Logo"
-              className={cn(
-                "object-contain mx-auto",
-                sidebarState === "collapsed"
-                  ? "h-8 w-8"
-                  : "h-16 w-auto max-w-48"
-              )}
-            />
-          ) : (
+          {(() => {
+            const logo = (tenantSettings as any)?.logo || (tenantSettings as any)?.companyLogo;
+            const hasLogo = logo && typeof logo === "string" && logo.trim() !== "";
+            return hasLogo ? (
+              <img
+                src={logo}
+                alt="Company Logo"
+                className={cn(
+                  "object-contain mx-auto",
+                  sidebarState === "collapsed"
+                    ? "h-8 w-8"
+                    : "h-16 w-auto max-w-48"
+                )}
+              />
+            ) : (
             <div className="flex flex-col items-center gap-2">
               <div
                 className={
@@ -1480,7 +1479,8 @@ export function AppSidebar({
                 </span>
               )}
             </div>
-          )}
+            );
+          })()}
         </div>
 
         {/* Enhanced Header Actions - Hide when collapsed */}

@@ -60,6 +60,7 @@ export const ModernTemplate: React.FC<InvoiceTemplateProps> = ({ data }) => (
           <h1 className="text-3xl font-bold text-gray-900">{data.companyName}</h1>
           <p className="text-gray-600">{data.companyEmail}</p>
           {data.companyPhone && <p className="text-gray-600">{data.companyPhone}</p>}
+          {data.companyAddress && <p className="text-gray-600 whitespace-pre-line">{data.companyAddress}</p>}
         </div>
       </div>
       <div className="text-right">
@@ -267,6 +268,7 @@ export const CorporateTemplate: React.FC<InvoiceTemplateProps> = ({ data }) => (
           <div>
             <h1 className="text-2xl font-bold">{data.companyName}</h1>
             <p className="opacity-90">{data.companyEmail}</p>
+            {data.companyAddress && <p className="opacity-90 whitespace-pre-line text-sm mt-1">{data.companyAddress}</p>}
           </div>
         </div>
         <div className="text-right">
@@ -392,6 +394,7 @@ export const CreativeTemplate: React.FC<InvoiceTemplateProps> = ({ data }) => (
           <h1 className="text-3xl font-bold mb-2">{data.companyName}</h1>
           <p className="opacity-90">{data.companyEmail}</p>
           {data.companyPhone && <p className="opacity-90">{data.companyPhone}</p>}
+          {data.companyAddress && <p className="opacity-90 whitespace-pre-line text-sm mt-1">{data.companyAddress}</p>}
         </div>
         <div className="text-right">
           <div className="bg-white bg-opacity-20 p-4 rounded-2xl">
@@ -504,7 +507,7 @@ export const ClassicTemplate: React.FC<InvoiceTemplateProps> = ({ data }) => (
       )}
       <h1 className="text-4xl font-bold text-gray-800 mb-2">{data.companyName}</h1>
       <p className="text-gray-600">{data.companyEmail} | {data.companyPhone}</p>
-      {data.companyAddress && <p className="text-gray-600">{data.companyAddress}</p>}
+      {data.companyAddress && <p className="text-gray-600 whitespace-pre-line">{data.companyAddress}</p>}
     </div>
 
     {/* Invoice Title and Number */}

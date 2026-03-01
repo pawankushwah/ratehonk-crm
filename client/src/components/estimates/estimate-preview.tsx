@@ -196,7 +196,7 @@ export const EstimatePreview = forwardRef<HTMLDivElement, EstimatePreviewProps>(
                   {companyInfo?.name || "Your Company Name"}
                 </h1>
                 {companyInfo?.address && (
-                  <p className="text-gray-600" style={{ fontSize: '12px' }}>{companyInfo.address}</p>
+                  <p className="text-gray-600 whitespace-pre-line" style={{ fontSize: '12px' }}>{companyInfo.address}</p>
                 )}
                 {companyInfo?.phone && (
                   <p className="text-gray-600" style={{ fontSize: '12px' }}>{companyInfo.phone}</p>

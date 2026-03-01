@@ -906,6 +906,7 @@ export default function Invoices() {
       const currencySymbol = getCurrencySymbol(currency);
 
       // Prepare invoice data for template
+      const companyLogo = (tenant as any)?.logo && typeof (tenant as any).logo === "string" && (tenant as any).logo.trim() !== "" ? (tenant as any).logo : undefined;
       const pdfData: any = {
         invoiceNumber: invoice.invoiceNumber || `INV-${invoice.id}`,
         issueDate: invoice.issueDate || new Date().toISOString().split("T")[0],
@@ -918,6 +919,7 @@ export default function Invoices() {
         companyEmail: companyEmail,
         companyPhone: companyPhone,
         companyAddress: tenant?.address || "",
+        companyLogo: companyLogo,
         items:
           lineItems.length > 0
             ? lineItems
@@ -995,6 +997,7 @@ export default function Invoices() {
         <div style="font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 40px; background: white;">
           <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 40px; padding-bottom: 20px; border-bottom: 2px solid #e5e7eb;">
             <div>
+              ${pdfData.companyLogo ? `<img src="${pdfData.companyLogo}" alt="Company Logo" style="height: 48px; width: auto; margin-bottom: 8px;" />` : ""}
               <h1 style="font-size: 28px; font-weight: 700; color: #1f2937; margin-bottom: 8px;">${pdfData.companyName}</h1>
               <p style="color: #6b7280; margin-bottom: 4px;">${pdfData.companyEmail}</p>
               ${pdfData.companyPhone ? `<p style="color: #6b7280; margin-bottom: 4px;">${pdfData.companyPhone}</p>` : ""}
@@ -3991,6 +3994,7 @@ export default function Invoices() {
               const currencySymbol = getCurrencySymbol(currency);
 
               // Prepare invoice data for template
+              const previewCompanyLogo = (tenant as any)?.logo && typeof (tenant as any).logo === "string" && (tenant as any).logo.trim() !== "" ? (tenant as any).logo : undefined;
               const previewData: InvoiceData = {
                 invoiceNumber:
                   selectedInvoice.invoiceNumber || `INV-${selectedInvoice.id}`,
@@ -4010,6 +4014,7 @@ export default function Invoices() {
                 companyEmail: companyEmail,
                 companyPhone: companyPhone,
                 companyAddress: tenant?.address || "",
+                companyLogo: previewCompanyLogo,
                 items:
                   lineItems.length > 0
                     ? (lineItems

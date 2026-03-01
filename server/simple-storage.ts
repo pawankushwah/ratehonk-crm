@@ -5695,6 +5695,31 @@ async getAllLeadsByTenant(
         values.push(tenantData.address ?? null);
         paramIndex++;
       }
+      if (tenantData.street_address !== undefined) {
+        setClauses.push(`street_address = $${paramIndex}`);
+        values.push(tenantData.street_address ?? null);
+        paramIndex++;
+      }
+      if (tenantData.city !== undefined) {
+        setClauses.push(`city = $${paramIndex}`);
+        values.push(tenantData.city ?? null);
+        paramIndex++;
+      }
+      if (tenantData.state !== undefined) {
+        setClauses.push(`state = $${paramIndex}`);
+        values.push(tenantData.state ?? null);
+        paramIndex++;
+      }
+      if (tenantData.zip_code !== undefined) {
+        setClauses.push(`zip_code = $${paramIndex}`);
+        values.push(tenantData.zip_code ?? null);
+        paramIndex++;
+      }
+      if (tenantData.country !== undefined) {
+        setClauses.push(`country = $${paramIndex}`);
+        values.push(tenantData.country ?? null);
+        paramIndex++;
+      }
       if (tenantData.subdomain !== undefined) {
         setClauses.push(`subdomain = $${paramIndex}`);
         values.push(tenantData.subdomain ?? null);
@@ -6068,6 +6093,14 @@ async getAllLeadsByTenant(
             return typeof invoice.attachments === 'string' 
               ? JSON.parse(invoice.attachments) 
               : invoice.attachments;
+          } catch {
+            return [];
+          }
+        })() : [],
+        internalAttachments: (invoice as any).internal_attachments ? (() => {
+          try {
+            const raw = (invoice as any).internal_attachments;
+            return typeof raw === 'string' ? JSON.parse(raw) : raw;
           } catch {
             return [];
           }
@@ -7026,6 +7059,11 @@ async getAllLeadsByTenant(
         ? JSON.stringify(invoiceData.attachments)
         : null;
 
+      // Prepare internal attachments JSON (for internal use only - not sent with emails)
+      const internalAttachmentsJson = (invoiceData.internalAttachments || invoiceData.internal_attachments) && Array.isArray(invoiceData.internalAttachments || invoiceData.internal_attachments) && (invoiceData.internalAttachments || invoiceData.internal_attachments).length > 0
+        ? JSON.stringify(invoiceData.internalAttachments || invoiceData.internal_attachments)
+        : null;
+
       // Build the INSERT query with all available fields
       // Note: Some columns may not exist in the database yet - they should be added via migration
       const invoice = await sql`
@@ -7034,7 +7072,7 @@ async getAllLeadsByTenant(
           invoice_date, issue_date, due_date, subtotal, tax_amount, discount_amount, total_amount, 
           paid_amount, currency, payment_method, payment_terms, is_tax_inclusive,
           notes, additional_notes, enable_reminder, reminder_frequency, reminder_specific_date, line_items,
-          travel_date, departure_date, arrival_date, attachments
+          travel_date, departure_date, arrival_date, attachments, internal_attachments
         ) VALUES (
           ${invoiceData.tenantId},
           ${invoiceData.customerId},
@@ -7063,7 +7101,8 @@ async getAllLeadsByTenant(
           ${travelDate},
           ${departureDate},
           ${arrivalDate},
-          ${attachmentsJson}
+          ${attachmentsJson},
+          ${internalAttachmentsJson}
         )
         RETURNING *
       `;
@@ -8256,6 +8295,9 @@ async getAllLeadsByTenant(
         attachments: invoiceData.attachments && Array.isArray(invoiceData.attachments) && invoiceData.attachments.length > 0
           ? JSON.stringify(invoiceData.attachments)
           : null,
+        internalAttachments: (invoiceData.internalAttachments || invoiceData.internal_attachments) && Array.isArray(invoiceData.internalAttachments || invoiceData.internal_attachments) && (invoiceData.internalAttachments || invoiceData.internal_attachments).length > 0
+          ? JSON.stringify(invoiceData.internalAttachments || invoiceData.internal_attachments)
+          : null,
       };
 
       console.log("Clean update data:", cleanData);
@@ -8293,6 +8335,7 @@ async getAllLeadsByTenant(
           departure_date = COALESCE(${cleanData.departureDate}, departure_date),
           arrival_date = COALESCE(${cleanData.arrivalDate}, arrival_date),
           attachments = COALESCE(${cleanData.attachments}, attachments),
+          internal_attachments = COALESCE(${cleanData.internalAttachments}, internal_attachments),
           updated_at = NOW()
         WHERE id = ${invoiceId}
         RETURNING *

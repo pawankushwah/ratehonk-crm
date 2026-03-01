@@ -193,6 +193,7 @@ const renderModernTemplate = (data: InvoiceData): string => {
       <div class="invoice-container">
         <div class="header">
           <div class="company-info">
+            ${data.companyLogo ? `<img src="${data.companyLogo}" alt="Company Logo" style="height: 48px; width: auto; margin-bottom: 8px;" />` : ''}
             <h1>${data.companyName}</h1>
             <p>${data.companyEmail}</p>
             <p>${data.companyPhone || ''}</p>
@@ -420,6 +421,7 @@ const renderCorporateTemplate = (data: InvoiceData): string => {
         <div class="corporate-header">
           <div class="header-grid">
             <div class="company-section">
+              ${data.companyLogo ? `<img src="${data.companyLogo}" alt="Company Logo" style="height: 48px; width: auto; margin-bottom: 8px;" />` : ''}
               <h1>${data.companyName}</h1>
               <p>${data.companyEmail}</p>
               <p>${data.companyPhone || ''}</p>
@@ -641,7 +643,7 @@ const renderCreativeTemplate = (data: InvoiceData): string => {
       <div class="invoice-container">
         <div class="creative-header">
           <div class="header-content">
-            <div class="company-logo">${data.companyName.charAt(0)}</div>
+            ${data.companyLogo ? `<img src="${data.companyLogo}" alt="Company Logo" style="height: 48px; width: auto; margin-right: 12px;" />` : `<div class="company-logo">${data.companyName.charAt(0)}</div>`}
             <div class="company-name">${data.companyName}</div>
             <div class="invoice-title">Invoice #${data.invoiceNumber}</div>
           </div>
@@ -848,6 +850,7 @@ const renderClassicTemplate = (data: InvoiceData): string => {
     <body>
       <div class="invoice-container">
         <div class="classic-header">
+          ${data.companyLogo ? `<img src="${data.companyLogo}" alt="Company Logo" style="height: 48px; width: auto; margin-bottom: 8px;" />` : ''}
           <div class="company-name">${data.companyName}</div>
           <div class="company-details">
             ${data.companyEmail} | ${data.companyPhone || ''}<br>

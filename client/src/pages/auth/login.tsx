@@ -505,7 +505,7 @@ export default function Login() {
                 )}
 
                 {/* Form */}
-                <form onSubmit={handleSubmit} className="space-y-5" autoComplete="off" data-form-type="other">
+                <form onSubmit={handleSubmit} className="space-y-5" autoComplete="on">
                   <div className="space-y-2">
                     <Label htmlFor="email" className="text-sm font-semibold text-gray-700">
                       Email Address
@@ -513,13 +513,13 @@ export default function Login() {
                     <Input
                       id="email"
                       type="email"
+                      name="email"
                       value={email}
                       onChange={(e) => handleInputChange("email", e.target.value)}
                       placeholder="you@example.com"
                       className="h-12 border-gray-300 focus:border-blue-500 focus:ring-blue-500"
                       disabled={isBlocked}
-                      autoComplete="off"
-                      data-form-type="other"
+                      autoComplete="email"
                       required
                     />
                   </div>
@@ -539,14 +539,14 @@ export default function Login() {
                     <div className="relative">
                       <Input
                         id="password"
+                        name="password"
                         type={showPassword ? "text" : "password"}
                         value={password}
                         onChange={(e) => handleInputChange("password", e.target.value)}
                         placeholder="Enter your password"
                         className="h-12 border-gray-300 focus:border-blue-500 focus:ring-blue-500 pr-10"
                         disabled={isBlocked}
-                        autoComplete="new-password"
-                        data-form-type="other"
+                        autoComplete="current-password"
                         required
                       />
                       <Button

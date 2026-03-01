@@ -20,10 +20,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Settings, Save, Plus } from "lucide-react";
+import { Settings, Save, Plus, Settings2 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import type { GstSetting } from "@shared/schema";
 import { GstSettingCreateForm } from "@/components/forms/gst-setting-create-form";
+import { TaxRatesManageDialog } from "@/components/tax-rates-manage-dialog";
 
 interface InvoiceSettings {
   invoiceNumberStart: number;
@@ -51,6 +52,7 @@ export function InvoiceSettingsPanel({ tenantId }: InvoiceSettingsPanelProps) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [isTaxCreatePanelOpen, setIsTaxCreatePanelOpen] = useState(false);
+  const [isManageRatesOpen, setIsManageRatesOpen] = useState(false);
   const [settings, setSettings] = useState<InvoiceSettings>({
     invoiceNumberStart: 1,
     invoiceNumberPrefix: "INV",
@@ -224,39 +226,57 @@ export function InvoiceSettingsPanel({ tenantId }: InvoiceSettingsPanelProps) {
           {/* Default Tax Setting */}
           <div className="space-y-2">
             <Label htmlFor="defaultGstSetting">Default Tax Setting</Label>
-            <Select
-              value={settings.defaultGstSettingId?.toString() || "none"}
-              onValueChange={(value) => {
-                if (value === "create_new") {
-                  setIsTaxCreatePanelOpen(true);
-                  return;
-                }
-                setSettings({
-                  ...settings,
-                  defaultGstSettingId: value === "none" ? null : parseInt(value),
-                });
-              }}
-            >
-              <SelectTrigger data-testid="select-tax-setting">
-                <SelectValue placeholder="Select tax setting" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">None</SelectItem>
-                {gstSettings
-                  .filter((setting) => setting.isActive)
-                  .map((setting) => (
-                    <SelectItem key={setting.id} value={setting.id.toString()}>
-                      {setting.taxName} {setting.country && `(${setting.country})`}
-                    </SelectItem>
-                  ))}
-                <SelectItem value="create_new" className="text-primary font-medium">
-                  <Plus className="h-4 w-4 mr-2 inline" />
-                  Create new tax setting
-                </SelectItem>
-              </SelectContent>
-            </Select>
+            <div className="flex gap-2">
+              <Select
+                value={settings.defaultGstSettingId?.toString() || "none"}
+                onValueChange={(value) => {
+                  if (value === "create_new") {
+                    setIsTaxCreatePanelOpen(true);
+                    return;
+                  }
+                  setSettings({
+                    ...settings,
+                    defaultGstSettingId: value === "none" ? null : parseInt(value),
+                  });
+                }}
+              >
+                <SelectTrigger data-testid="select-tax-setting" className="flex-1">
+                  <SelectValue placeholder="Select tax setting" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  {gstSettings
+                    .filter((setting) => setting.isActive)
+                    .map((setting) => (
+                      <SelectItem key={setting.id} value={setting.id.toString()}>
+                        {setting.taxName} {setting.country && `(${setting.country})`}
+                      </SelectItem>
+                    ))}
+                  <SelectItem value="create_new" className="text-primary font-medium">
+                    <Plus className="h-4 w-4 mr-2 inline" />
+                    Create new tax setting
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                disabled={!settings.defaultGstSettingId}
+                onClick={() => setIsManageRatesOpen(true)}
+                data-testid="button-manage-rates"
+                title="Manage tax rates"
+              >
+                <Settings2 className="h-4 w-4" />
+              </Button>
+              <TaxRatesManageDialog
+                setting={settings.defaultGstSettingId ? gstSettings.find((s) => s.id === settings.defaultGstSettingId) ?? null : null}
+                open={isManageRatesOpen}
+                onOpenChange={setIsManageRatesOpen}
+              />
+            </div>
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              Default tax setting to use when creating invoices
+              Default tax setting to use when creating invoices. Use the gear icon to manage rates.
             </p>
           </div>
 
