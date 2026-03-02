@@ -5084,7 +5084,7 @@ async getAllLeadsByTenant(
         from_name = COALESCE(${campaignData.fromName}, from_name),
         from_email = COALESCE(${campaignData.fromEmail}, from_email),
         reply_to = COALESCE(${campaignData.replyTo}, reply_to),
-        metadata = CASE WHEN ${metadataJson} IS NOT NULL THEN ${metadataJson}::jsonb ELSE metadata END,
+        metadata = COALESCE((${metadataJson})::jsonb, metadata),
         open_rate = COALESCE(${campaignData.openRate}, open_rate),
         click_rate = COALESCE(${campaignData.clickRate}, click_rate)
       WHERE id = ${campaignId}
