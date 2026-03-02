@@ -1018,6 +1018,26 @@ export function registerWhatsAppRoutes(app: Express) {
     }
   });
 
+  // POST /api/whatsapp/sync-contacts - Manually sync all leads & customers to WhatsApp contacts
+  app.post("/api/whatsapp/sync-contacts", authenticate, async (req: any, res) => {
+    try {
+      const tenantId = req.user.tenantId;
+      const { syncAllContactsToWhatsApp } = await import("./whatsapp-contact-sync");
+      const result = await syncAllContactsToWhatsApp(tenantId);
+      res.json({
+        success: result.errors.length === 0,
+        synced: result.synced,
+        failed: result.failed,
+        errors: result.errors,
+      });
+    } catch (error: any) {
+      console.error("Error syncing WhatsApp contacts:", error);
+      res.status(500).json({
+        error: error.message || "Failed to sync contacts",
+      });
+    }
+  });
+
   // GET /api/whatsapp/contacts - List contacts (filter by tags using tag names)
   app.get("/api/whatsapp/contacts", authenticate, async (req: any, res) => {
     try {

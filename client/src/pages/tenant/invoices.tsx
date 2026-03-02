@@ -1693,7 +1693,7 @@ export default function Invoices() {
 
   // Handle delete confirmation
   const handleDeleteInvoice = (invoiceId: number) => {
-    if (window.confirm("Are you sure you want to delete this invoice? This will also delete all related expenses.")) {
+    if (window.confirm("Are you sure you want to permanently delete this invoice? This will also permanently delete all related expenses. This action cannot be undone.")) {
       deleteInvoiceMutation.mutate(invoiceId);
     }
   };

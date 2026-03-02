@@ -584,5 +584,13 @@ app.use((req, res, next) => {
     console.error("Failed to start invoice reminder scheduler:", error);
   }
 
+  // Start WhatsApp contact sync scheduler (syncs leads/customers to WhatsApp in background)
+  try {
+    const { startWhatsAppContactSyncScheduler } = await import("./whatsapp-contact-sync-scheduler");
+    startWhatsAppContactSyncScheduler();
+  } catch (error) {
+    console.error("Failed to start WhatsApp contact sync scheduler:", error);
+  }
+
   // Server already started above before Vite setup
 })();

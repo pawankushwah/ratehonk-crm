@@ -28758,35 +28758,15 @@ ${args.tenantName}`;
     }
   });
 
-  // Delete expense
+  // Delete expense (permanent delete - expense_line_items cascade automatically)
   app.delete("/api/expenses/:id", authenticateVendor, async (req: any, res) => {
     try {
       const expenseId = parseInt(req.params.id);
 
-      // Check if deleted_at column exists
-      const [columnExists] = await sql`
-        SELECT EXISTS (
-          SELECT 1 
-          FROM information_schema.columns 
-          WHERE table_name = 'expenses' 
-          AND column_name = 'deleted_at'
-        ) as exists
+      await sql`
+        DELETE FROM expenses 
+        WHERE id = ${expenseId} AND tenant_id = ${req.user.tenantId}
       `;
-
-      if (columnExists?.exists) {
-        // Soft delete: set deleted_at timestamp
-        await sql`
-          UPDATE expenses 
-          SET deleted_at = NOW()
-          WHERE id = ${expenseId} AND tenant_id = ${req.user.tenantId} AND deleted_at IS NULL
-        `;
-      } else {
-        // Hard delete if column doesn't exist (backward compatibility)
-        await sql`
-          DELETE FROM expenses 
-          WHERE id = ${expenseId} AND tenant_id = ${req.user.tenantId}
-        `;
-      }
 
       res.status(200).json({ message: "Expense deleted successfully" });
     } catch (error: unknown) {

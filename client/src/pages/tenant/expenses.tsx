@@ -995,7 +995,7 @@ export default function Expenses() {
   };
 
   const handleDelete = (id: number) => {
-    if (window.confirm("Are you sure you want to delete this expense?")) {
+    if (window.confirm("Are you sure you want to permanently delete this expense? This action cannot be undone.")) {
       deleteMutation.mutate(id);
     }
   };

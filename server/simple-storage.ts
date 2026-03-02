@@ -817,6 +817,18 @@ export class SimpleStorage {
         });
       }
 
+      // Sync to WhatsApp contacts when configured (fire and forget)
+      if (customer.phone && String(customer.phone).trim()) {
+        import("./whatsapp-contact-sync").then(({ syncContactToWhatsApp }) =>
+          syncContactToWhatsApp(tenantId, {
+            type: "customer",
+            name: customer.name || fullName || "Customer",
+            phone: String(customer.phone),
+            email: customer.email,
+          }).catch((err) => console.error("❌ WhatsApp customer sync (non-blocking):", err))
+        );
+      }
+
       return transformedCustomer;
     } catch (error: any) {
       console.error("🔍 Backend - createCustomer error:", error);
@@ -2364,6 +2376,19 @@ async getAllLeadsByTenant(
         }).catch((error) => {
           console.error("❌ Failed to send lead welcome email (non-blocking):", error);
         });
+      }
+
+      // Sync to WhatsApp contacts when configured (fire and forget)
+      if (lead.phone && String(lead.phone).trim()) {
+        import("./whatsapp-contact-sync").then(({ syncContactToWhatsApp }) =>
+          syncContactToWhatsApp(lead.tenantId, {
+            type: "lead",
+            name: lead.name || `${lead.firstName || ""} ${lead.lastName || ""}`.trim() || "Lead",
+            phone: String(lead.phone),
+            email: lead.email,
+            source: lead.source,
+          }).catch((err) => console.error("❌ WhatsApp lead sync (non-blocking):", err))
+        );
       }
 
       return {
@@ -13215,57 +13240,49 @@ RateHonk CRM Team`,
   async deleteInvoice(invoiceId: number, tenantId: number) {
     try {
       console.log(
-        "🗑️ DELETEINVOICE: Soft deleting invoice",
+        "🗑️ DELETEINVOICE: Permanently deleting invoice",
         invoiceId,
         "for tenant",
         tenantId,
       );
 
-      // Check if deleted_at column exists
-      const [columnExists] = await sql`
-        SELECT EXISTS (
-          SELECT 1 
-          FROM information_schema.columns 
-          WHERE table_name = 'invoices' 
-          AND column_name = 'deleted_at'
-        ) as exists
+      // Verify invoice exists and belongs to tenant
+      const [invoice] = await sql`
+        SELECT id FROM invoices 
+        WHERE id = ${invoiceId} AND tenant_id = ${tenantId}
       `;
 
-      if (columnExists?.exists) {
-        // Soft delete: set deleted_at timestamp
-        const [deletedInvoice] = await sql`
-          UPDATE invoices 
-          SET deleted_at = NOW()
-          WHERE id = ${invoiceId} AND tenant_id = ${tenantId} AND deleted_at IS NULL
-          RETURNING id
-        `;
-
-        if (!deletedInvoice) {
-          throw new Error("Invoice not found or already deleted");
-        }
-
-        // Also soft delete related expenses
-        await sql`
-          UPDATE expenses
-          SET deleted_at = NOW()
-          WHERE invoice_id = ${invoiceId} AND tenant_id = ${tenantId} AND deleted_at IS NULL
-        `;
-
-        console.log("✅ DELETEINVOICE: Invoice and related expenses soft deleted successfully");
-      } else {
-        // Hard delete if column doesn't exist (backward compatibility)
-        const [deletedInvoice] = await sql`
-          DELETE FROM invoices 
-          WHERE id = ${invoiceId} AND tenant_id = ${tenantId}
-          RETURNING id
-        `;
-
-        if (!deletedInvoice) {
-          throw new Error("Invoice not found or unauthorized");
-        }
-
-        console.log("✅ DELETEINVOICE: Invoice deleted successfully (hard delete)");
+      if (!invoice) {
+        throw new Error("Invoice not found or unauthorized");
       }
+
+      // 1. Delete expense_line_items for expenses linked to this invoice (CASCADE would do this, but explicit for clarity)
+      await sql`
+        DELETE FROM expense_line_items 
+        WHERE expense_id IN (
+          SELECT id FROM expenses WHERE invoice_id = ${invoiceId} AND tenant_id = ${tenantId}
+        )
+      `;
+
+      // 2. Permanently delete linked expenses
+      await sql`
+        DELETE FROM expenses 
+        WHERE invoice_id = ${invoiceId} AND tenant_id = ${tenantId}
+      `;
+
+      // 3. Delete invoice items
+      await sql`DELETE FROM invoice_items WHERE invoice_id = ${invoiceId}`;
+
+      // 4. Delete payment installments
+      await sql`DELETE FROM payment_installments WHERE invoice_id = ${invoiceId} AND tenant_id = ${tenantId}`;
+
+      // 5. Delete the invoice
+      await sql`
+        DELETE FROM invoices 
+        WHERE id = ${invoiceId} AND tenant_id = ${tenantId}
+      `;
+
+      console.log("✅ DELETEINVOICE: Invoice and linked expenses permanently deleted successfully");
 
       return { success: true };
     } catch (error) {

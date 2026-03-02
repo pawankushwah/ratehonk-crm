@@ -81,6 +81,7 @@ import {
   FileText,
   FileSpreadsheet,
   ChevronDown,
+  RefreshCw,
 } from "lucide-react";
 import {
   FaGoogle,
@@ -92,6 +93,7 @@ import {
 } from "react-icons/fa";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
 import { FlexibleLeadForm } from "@/components/lead/flexible-lead-form";
 import { directLeadsApi } from "@/lib/direct-leads-api";
 import { CreateFollowUpDialog } from "@/components/follow-ups/CreateFollowUpDialog";
@@ -450,6 +452,29 @@ export default function Leads() {
   const [leadToDelete, setLeadToDelete] = useState<Lead | null>(null);
   const [isZoomDialogOpen, setIsZoomDialogOpen] = useState(false);
   const [leadToCall, setLeadToCall] = useState<Lead | null>(null);
+
+  const syncWhatsAppMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/whatsapp/sync-contacts", {});
+      return res.json();
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "WhatsApp Sync Complete",
+        description: data.success
+          ? `${data.synced} contacts synced to WhatsApp${data.failed ? `, ${data.failed} failed` : ""}`
+          : data.errors?.[0] || "Sync failed",
+        variant: data.success ? "default" : "destructive",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "WhatsApp Sync Failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
 
   // Import/Export state
   const [importDialogOpen, setImportDialogOpen] = useState(false);
@@ -1506,6 +1531,20 @@ export default function Leads() {
               >
                 <Upload className="h-4 w-4 mr-2" />
                 Import
+              </Button>
+              <Button
+                variant="outline"
+                className="bg-white"
+                onClick={() => syncWhatsAppMutation.mutate()}
+                disabled={syncWhatsAppMutation.isPending}
+                title="Sync contacts to WhatsApp"
+              >
+                {syncWhatsAppMutation.isPending ? (
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <FaWhatsapp className="h-4 w-4 mr-2 text-green-600" />
+                )}
+                Sync to WhatsApp
               </Button>
               <Link href="/leads/create">
                 <Button

@@ -59,9 +59,12 @@ import {
   FileSpreadsheet,
   Upload,
   FileDown,
+  RefreshCw,
 } from "lucide-react";
+import { FaWhatsapp } from "react-icons/fa";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
 import { EnhancedCustomerForm } from "@/components/customer/enhanced-customer-form";
 import { directCustomersApi } from "@/lib/direct-customers-api";
 import type { Customer } from "@shared/schema";
@@ -231,6 +234,29 @@ export default function Customers() {
   const [selectedCustomerForFollowUp, setSelectedCustomerForFollowUp] = useState<Customer | null>(null);
   const queryClient = useQueryClient();
   const { toast } = useToast();
+
+  const syncWhatsAppMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/whatsapp/sync-contacts", {});
+      return res.json();
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "WhatsApp Sync Complete",
+        description: data.success
+          ? `${data.synced} contacts synced to WhatsApp${data.failed ? `, ${data.failed} failed` : ""}`
+          : data.errors?.[0] || "Sync failed",
+        variant: data.success ? "default" : "destructive",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Sync Failed",
+        description: error?.message || "Failed to sync contacts to WhatsApp",
+        variant: "destructive",
+      });
+    },
+  });
 
   // Export customers handler - CSV
   const handleExportCustomersCSV = async () => {
@@ -894,6 +920,20 @@ export default function Customers() {
               >
                 <BarChart3 className="h-4 w-4 mr-2" />
                 Analytics
+              </Button>
+              <Button
+                variant="outline"
+                className="bg-white"
+                onClick={() => syncWhatsAppMutation.mutate()}
+                disabled={syncWhatsAppMutation.isPending}
+                title="Sync contacts to WhatsApp"
+              >
+                {syncWhatsAppMutation.isPending ? (
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <FaWhatsapp className="h-4 w-4 mr-2 text-green-600" />
+                )}
+                Sync to WhatsApp
               </Button>
               <Button
                 className="
