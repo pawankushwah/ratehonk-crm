@@ -37,6 +37,7 @@ export default function EmailCampaigns() {
   const [isAnalyticsDialogOpen, setIsAnalyticsDialogOpen] = useState(false);
   const [selectedCampaign, setSelectedCampaign] = useState<EmailCampaign | null>(null);
   const [isEmailSettingsPanelOpen, setIsEmailSettingsPanelOpen] = useState(false);
+  const [sendingCampaignId, setSendingCampaignId] = useState<number | null>(null);
   
   const { tenant } = useAuth();
   const { toast } = useToast();
@@ -116,6 +117,9 @@ export default function EmailCampaigns() {
       const response = await apiRequest("POST", `/api/tenants/${tenant?.id}/email-campaigns/${campaignId}/send`);
       return response.json();
     },
+    onMutate: (campaignId) => {
+      setSendingCampaignId(campaignId);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [`/api/tenants/${tenant?.id}/email-campaigns`] });
       queryClient.invalidateQueries({ queryKey: [`/api/tenants/${tenant?.id}/email-campaigns/stats`] });
@@ -123,7 +127,17 @@ export default function EmailCampaigns() {
         title: "Campaign Sent! 📧",
         description: "Your email campaign is being sent to subscribers."
       });
-    }
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Send Failed",
+        description: error?.message || "Failed to send campaign",
+        variant: "destructive",
+      });
+    },
+    onSettled: () => {
+      setSendingCampaignId(null);
+    },
   });
 
   const createAndSendCampaignMutation = useMutation({
@@ -542,6 +556,15 @@ export default function EmailCampaigns() {
               ) : (
                 filteredCampaigns.map((campaign: EmailCampaign) => (
                   <TableRow key={campaign.id}>
+                    {sendingCampaignId === campaign.id ? (
+                      <TableCell colSpan={10} className="py-6">
+                        <div className="flex items-center justify-center gap-2 text-muted-foreground">
+                          <div className="animate-spin rounded-full h-4 w-4 border-2 border-primary border-t-transparent" />
+                          <span className="text-sm font-medium">Sending campaign...</span>
+                        </div>
+                      </TableCell>
+                    ) : (
+                      <>
                     <TableCell>
                       <div className="font-medium">{campaign.name}</div>
                     </TableCell>
@@ -611,19 +634,19 @@ export default function EmailCampaigns() {
                           {campaign.status === "draft" && (
                             <DropdownMenuItem
                               onClick={() => sendCampaignMutation.mutate(campaign.id)}
-                              disabled={sendCampaignMutation.isPending}
+                              disabled={sendingCampaignId === campaign.id}
                             >
                               <Send className="mr-2 h-4 w-4" />
-                              Send Now
+                              {sendingCampaignId === campaign.id ? "Sending..." : "Send Now"}
                             </DropdownMenuItem>
                           )}
                           {campaign.status === "sent" && (
                             <DropdownMenuItem
                               onClick={() => sendCampaignMutation.mutate(campaign.id)}
-                              disabled={sendCampaignMutation.isPending}
+                              disabled={sendingCampaignId === campaign.id}
                             >
                               <RefreshCw className="mr-2 h-4 w-4" />
-                              Resend
+                              {sendingCampaignId === campaign.id ? "Sending..." : "Resend"}
                             </DropdownMenuItem>
                           )}
                           <DropdownMenuItem
@@ -653,6 +676,8 @@ export default function EmailCampaigns() {
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>
+                      </>
+                    )}
                   </TableRow>
                 ))
               )}
