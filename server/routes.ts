@@ -25,6 +25,8 @@ import { registerPackageTypesRoutes } from "./package-types-routes";
 import { registerZoomRoutes } from "./zoom-routes";
 import { tenantEmailService } from "./tenant-email-service";
 import { emailService } from "./email-service";
+import { registerProductInventoryRoutes } from "./product-inventory-routes";
+import { registerProductRoutes } from "./product/product-routes";
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 
@@ -119,7 +121,7 @@ const authenticate = async (req: any, res: any, next: any) => {
 };
 
 // Middleware to check if user belongs to tenant (for tenant-specific operations)
-const checkTenantAccess = (req: any, res: any, next: any) => {
+export const checkTenantAccess = (req: any, res: any, next: any) => {
   const { tenantId } = req.params;
   if (
     req.user.role === "saas_owner" ||
@@ -6345,6 +6347,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  
+  // Register Product and Inventory routes
+  registerProductRoutes(app, authenticate, checkTenantAccess);
+
   const httpServer = createServer(app);
+  
+
   return httpServer;
 }

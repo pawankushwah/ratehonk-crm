@@ -1,6 +1,21 @@
-import { pgTable, text, varchar, serial, integer, boolean, timestamp, decimal, json } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, serial, integer, boolean, timestamp, decimal, json, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+
+// Partners table (CRM selling partners)
+export const partners = pgTable("partners", {
+  id: serial("id").primaryKey(),
+  companyName: text("company_name").notNull(),
+  contactEmail: text("contact_email").notNull(),
+  contactPhone: text("contact_phone"),
+  address: text("address"),
+  commissionType: text("commission_type").default("percentage"), // 'percentage' or 'fixed'
+  commissionValue: decimal("commission_value", { precision: 10, scale: 2 }).default("0"),
+  minimumSubscriptionPrice: decimal("minimum_subscription_price", { precision: 10, scale: 2 }),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
 
 // Users table for authentication (supports both tenant admins and users)
 export const users = pgTable("users", {
@@ -18,6 +33,7 @@ export const users = pgTable("users", {
   isEmailVerified: boolean("is_email_verified").notNull().default(false),
   lastLoginAt: timestamp("last_login_at"),
   passwordResetRequired: boolean("password_reset_required").notNull().default(false),
+  partnerId: integer("partner_id").references(() => partners.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -67,6 +83,7 @@ export const tenants = pgTable("tenants", {
   address: text("address"),
   logo: text("logo"), // URL or base64 string for company logo
   isActive: boolean("is_active").notNull().default(true),
+  partnerId: integer("partner_id").references(() => partners.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -171,8 +188,9 @@ export const subscriptionPlans = pgTable("subscription_plans", {
   features: json("features").$type<string[]>().notNull(), // Array of menu item IDs (e.g., ["dashboard", "customers", "leads"])
   allowedMenuItems: json("allowed_menu_items").$type<string[]>().notNull().default([]), // Explicit menu items allowed
   allowedPages: json("allowed_pages").$type<string[]>().notNull().default([]), // Explicit pages allowed
-  allowedDashboardWidgets: json("allowed_dashboard_widgets").$type<string[]>().notNull().default([]), // Dashboard widgets allowed
-  allowedPagePermissions: json("allowed_page_permissions").$type<Record<string, string[]>>().notNull().default({}), // Page permissions: { "customers": ["view", "edit"], "leads": ["view"] }
+  allowedDashboardWidgets: json("allowed_dashboard_widgets").$type<string[]>().default([]),
+  allowedPagePermissions: json("allowed_page_permissions").$type<Record<string, string[]>>().default({}),
+  partnerId: integer("partner_id").references(() => partners.id, { onDelete: "set null" }),
   freeTrialDays: integer("free_trial_days").default(0), // Number of free trial days (0 = no trial)
   isFreePlan: boolean("is_free_plan").notNull().default(false), // True for free trial plan
   isActive: boolean("is_active").notNull().default(true),
@@ -298,6 +316,16 @@ export const serviceProviders = pgTable("service_providers", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+// Payment Methods table
+export const paymentMethods = pgTable("payment_methods", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull(),
+  name: text("name").notNull(),
+  type: text("type").notNull(),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 // Package Types table
 export const packageTypes = pgTable("package_types", {
   id: serial("id").primaryKey(),
@@ -313,7 +341,6 @@ export const packageTypes = pgTable("package_types", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
-
 // Travel Packages table
 export const travelPackages = pgTable("travel_packages", {
   id: serial("id").primaryKey(),
@@ -327,16 +354,6 @@ export const travelPackages = pgTable("travel_packages", {
   maxCapacity: integer("max_capacity").notNull(),
   inclusions: json("inclusions").$type<string[]>(),
   exclusions: json("exclusions").$type<string[]>(),
-  isActive: boolean("is_active").default(true),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
-
-// Payment Methods table
-export const paymentMethods = pgTable("payment_methods", {
-  id: serial("id").primaryKey(),
-  tenantId: integer("tenant_id").notNull(),
-  name: text("name").notNull(),
-  type: text("type").notNull(),
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
@@ -1213,6 +1230,12 @@ export const insertTravelPackageSchema = createInsertSchema(travelPackages).omit
   createdAt: true,
 });
 
+export const insertPackageTypeSchema = createInsertSchema(packageTypes).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 export const insertBookingSchema = createInsertSchema(bookings).omit({
   id: true,
   createdAt: true,
@@ -1327,6 +1350,159 @@ export const insertServiceProviderSchema = createInsertSchema(serviceProviders).
   updatedAt: true,
 });
 
+// --- Dynamic Form Builder & Product Module Tables ---
+
+export const frontendForms = pgTable("frontend_forms", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  formKey: text("form_key").notNull().unique(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const formTemplates = pgTable("form_templates", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  schema: jsonb("schema").notNull(), // JSONB: Sections, Groups, Fields, Logic
+  design: jsonb("design"), // JSONB: Studio Pro multi-page layout
+  userId: integer("user_id").notNull().references(() => users.id),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+  mappedTo: integer("mapped_to").notNull().references(() => frontendForms.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const dynamicData = pgTable("dynamic_data", {
+  id: serial("id").primaryKey(),
+  templateId: integer("template_id").notNull().references(() => formTemplates.id),
+  ownerId: text("owner_id").notNull(), // External Resource ID (e.g. string representation of product id)
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+  userId: integer("user_id").references(() => users.id),
+  data: jsonb("data").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const imageLogs = pgTable("image_logs", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+  url: text("url").notNull(),
+  filename: text("filename"),
+  data: text("data"), // Base64 cropped data
+  originalData: text("original_data"), // Base64 original data
+  mimeType: text("mime_type"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const dropdownSets = pgTable("dropdown_sets", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+  name: text("name").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const dropdownOptions = pgTable("dropdown_options", {
+  id: serial("id").primaryKey(),
+  setId: integer("set_id").notNull().references(() => dropdownSets.id, { onDelete: "cascade" }),
+  label: text("label").notNull(),
+  value: text("value").notNull(),
+  order: integer("order").default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const skuCounters = pgTable("sku_counters", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+  prefix: text("prefix").notNull(),
+  counter: integer("counter").notNull().default(0),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// --- End of schema.ts ---
+
+// Dynamic Form Builder & Product Module insert schemas
+export const insertFrontendFormSchema = createInsertSchema(frontendForms).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertFormTemplateSchema = createInsertSchema(formTemplates).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertDynamicDataSchema = createInsertSchema(dynamicData).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertImageLogSchema = createInsertSchema(imageLogs).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertDropdownSetSchema = createInsertSchema(dropdownSets).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertDropdownOptionSchema = createInsertSchema(dropdownOptions).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertSkuCounterSchema = createInsertSchema(skuCounters).omit({
+  id: true,
+  updatedAt: true,
+});
+
+// Support tickets
+export const supportTickets = pgTable("support_tickets", {
+  id: serial("id").primaryKey(),
+  ticketNumber: text("ticket_number").notNull().unique(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  userId: integer("user_id").references(() => users.id, { onDelete: "set null" }),
+  subject: text("subject").notNull(),
+  category: text("category").notNull(),
+  priority: text("priority").notNull().default("medium"),
+  status: text("status").notNull().default("open"),
+  userEmail: text("user_email").notNull(),
+  userName: text("user_name").notNull(),
+  companyName: text("company_name"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Support ticket messages (conversation thread)
+export const supportTicketMessages = pgTable("support_ticket_messages", {
+  id: serial("id").primaryKey(),
+  ticketId: integer("ticket_id").notNull().references(() => supportTickets.id, { onDelete: "cascade" }),
+  senderType: text("sender_type").notNull(), // 'tenant' | 'saas_owner'
+  senderUserId: integer("sender_user_id").references(() => users.id, { onDelete: "set null" }),
+  senderEmail: text("sender_email"),
+  senderName: text("sender_name"),
+  message: text("message").notNull(),
+  attachments: jsonb("attachments"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Support Ticket insert schemas
+export const insertSupportTicketSchema = createInsertSchema(supportTickets).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertSupportTicketMessageSchema = createInsertSchema(supportTicketMessages).omit({
+  id: true,
+  createdAt: true,
+});
+
 
 // Types - Main type definitions
 export type User = typeof users.$inferSelect;
@@ -1356,8 +1532,21 @@ export type InsertCustomer = z.infer<typeof insertCustomerSchema>;
 export type Lead = typeof leads.$inferSelect;
 export type InsertLead = z.infer<typeof insertLeadSchema>;
 
-export type TravelPackage = typeof travelPackages.$inferSelect;
-export type InsertTravelPackage = z.infer<typeof insertTravelPackageSchema>;
+// Dynamic Form Builder & Product Module types
+export type FrontendForm = typeof frontendForms.$inferSelect;
+export type InsertFrontendForm = z.infer<typeof insertFrontendFormSchema>;
+export type FormTemplate = typeof formTemplates.$inferSelect;
+export type InsertFormTemplate = z.infer<typeof insertFormTemplateSchema>;
+export type DynamicData = typeof dynamicData.$inferSelect;
+export type InsertDynamicData = z.infer<typeof insertDynamicDataSchema>;
+export type ImageLog = typeof imageLogs.$inferSelect;
+export type InsertImageLog = z.infer<typeof insertImageLogSchema>;
+export type DropdownSet = typeof dropdownSets.$inferSelect;
+export type InsertDropdownSet = z.infer<typeof insertDropdownSetSchema>;
+export type DropdownOption = typeof dropdownOptions.$inferSelect;
+export type InsertDropdownOption = z.infer<typeof insertDropdownOptionSchema>;
+export type SkuCounter = typeof skuCounters.$inferSelect;
+export type InsertSkuCounter = z.infer<typeof insertSkuCounterSchema>;
 
 export type Booking = typeof bookings.$inferSelect;
 export type InsertBooking = z.infer<typeof insertBookingSchema>;
@@ -1425,11 +1614,17 @@ export type InsertGmailEmail = z.infer<typeof insertEmailLogSchema>;
 
 export type CustomerColumn = typeof customers.$inferSelect;
 export type InsertCustomerColumn = z.infer<typeof insertCustomerSchema>;
-export type InsertLeadType = z.infer<typeof insertLeadTypeSchema>;
+// export type InsertLeadType = z.infer<typeof insertLeadTypeSchema>;
 
 
 export type CallLog = typeof callLogs.$inferSelect;
 export type InsertCallLog = z.infer<typeof insertCallLogSchema>;
+
+// Support Ticket types
+export type SupportTicket = typeof supportTickets.$inferSelect;
+export type InsertSupportTicket = z.infer<typeof insertSupportTicketSchema>;
+export type SupportTicketMessage = typeof supportTicketMessages.$inferSelect;
+export type InsertSupportTicketMessage = z.infer<typeof insertSupportTicketMessageSchema>;
 
 // Facebook Business Suite schema definitions
 export const insertFacebookIntegrationSchema = createInsertSchema(facebookIntegrations).omit({
@@ -1700,20 +1895,14 @@ export const leadNoteInsertSchema = createInsertSchema(leadNotes).omit({
 
 export type LeadNote = typeof leadNotes.$inferSelect;
 export type InsertLeadNote = z.infer<typeof leadNoteInsertSchema>;
+export type TravelPackage = typeof travelPackages.$inferSelect;
+export type InsertTravelPackage = z.infer<typeof insertTravelPackageSchema>;
 
 // Package Types types (missing from exports)
 export type PackageType = typeof packageTypes.$inferSelect;
 export type InsertPackageType = z.infer<typeof insertPackageTypeSchema>;
 
-// Package Types schema (missing from exports)
-export const insertPackageTypeSchema = createInsertSchema(packageTypes).omit({
-  id: true,
-  createdAt: true,
-});
-
-// Travel Packages types (missing from exports)
-export type TravelPackage = typeof travelPackages.$inferSelect;
-export type InsertTravelPackage = z.infer<typeof insertTravelPackageSchema>;
+// Customer Activities - Track all activities related to customers
 
 // Customer Activities - Track all activities related to customers  
 export const customerActivities = pgTable("customer_activities", {
@@ -1924,35 +2113,3 @@ export const saasSettings = pgTable("saas_settings", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
-
-// Support tickets
-export const supportTickets = pgTable("support_tickets", {
-  id: serial("id").primaryKey(),
-  ticketNumber: text("ticket_number").notNull().unique(),
-  tenantId: integer("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
-  userId: integer("user_id").references(() => users.id, { onDelete: "set null" }),
-  subject: text("subject").notNull(),
-  category: text("category").notNull(),
-  priority: text("priority").notNull().default("medium"),
-  status: text("status").notNull().default("open"),
-  userEmail: text("user_email").notNull(),
-  userName: text("user_name").notNull(),
-  companyName: text("company_name"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
-
-// Support ticket messages (conversation thread)
-export const supportTicketMessages = pgTable("support_ticket_messages", {
-  id: serial("id").primaryKey(),
-  ticketId: integer("ticket_id").notNull().references(() => supportTickets.id, { onDelete: "cascade" }),
-  senderType: text("sender_type").notNull(), // 'tenant' | 'saas_owner'
-  senderUserId: integer("sender_user_id").references(() => users.id, { onDelete: "set null" }),
-  senderEmail: text("sender_email"),
-  senderName: text("sender_name"),
-  message: text("message").notNull(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
-
-export type SupportTicket = typeof supportTickets.$inferSelect;
-export type SupportTicketMessage = typeof supportTicketMessages.$inferSelect;

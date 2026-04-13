@@ -36,7 +36,7 @@ export async function apiRequest(
   console.log("🔍 API Request - Data:", data);
   console.log("🔍 API Request - Token:", token ? "Present" : "Missing");
   
-  if (data) {
+  if (data && !(data instanceof FormData)) {
     headers["Content-Type"] = "application/json";
   }
   
@@ -64,7 +64,7 @@ export async function apiRequest(
   
   // Only add body for non-GET/HEAD requests and when data is provided
   if (!isGetOrHead && data) {
-    fetchOptions.body = JSON.stringify(data);
+    fetchOptions.body = data instanceof FormData ? data : JSON.stringify(data);
   }
 
   const res = await fetch(fullUrl, fetchOptions);

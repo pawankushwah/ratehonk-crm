@@ -59,6 +59,7 @@ import {
   Bell,
   Receipt,
   MapPin,
+  Layers,
 } from "lucide-react";
 // import Logo from "../../assets/Logo-sidebar.svg";
 import Logo from "../../assets/RATEHONKLOGO.png";
@@ -89,6 +90,55 @@ const allMenuItems = {
     badge: null,
     order: 3,
   },
+  "all-products": {
+    name: "All Products",
+    href: "/products",
+    icon: Package,
+    group: "Products",
+    badge: null,
+    order: 3.1,
+  },
+  forms: {
+    name: "Form Builder",
+    href: "/forms",
+    icon: Layers,
+    group: "Products",
+    badge: null,
+    order: 3,
+  },
+  inventory: {
+    name: "Inventory",
+    href: "/inventory",
+    icon: Layers,
+    group: "Products",
+    badge: null,
+    order: 3.2,
+  },
+  "non-inventory": {
+    name: "Non-Inventory",
+    href: "/non-inventory",
+    icon: Package,
+    group: "Products",
+    badge: null,
+    order: 3.3,
+  },
+  service: {
+    name: "Service",
+    href: "/service",
+    icon: Zap,
+    group: "Products",
+    badge: null,
+    order: 3.4,
+  },
+  bundle: {
+    name: "Bundle",
+    href: "/bundle",
+    icon: Sparkles,
+    group: "Products",
+    badge: null,
+    order: 3.5,
+  },
+  
   calendar: {
     name: "Calendar",
     href: "/calendar",

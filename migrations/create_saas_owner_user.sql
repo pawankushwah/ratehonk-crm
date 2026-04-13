@@ -10,7 +10,7 @@ DECLARE
     hashed_password text;
 BEGIN
     -- Check if user already exists
-    SELECT EXISTS(SELECT 1 FROM users WHERE email = 'admin@travelcrm.com') INTO user_exists;
+    SELECT EXISTS(SELECT 1 FROM users WHERE email = 'admin@ratehonk.com') INTO user_exists;
     
     IF NOT user_exists THEN
         -- Hash the password 'admin123' using bcrypt

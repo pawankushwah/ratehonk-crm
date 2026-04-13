@@ -12,6 +12,8 @@ import { registerSimpleRoutes } from "./simple-routes";
 import { registerSubscriptionRoutes } from "./subscription-routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { config, validateConfig } from "./config";
+import { registerProductRoutes } from "./product/product-routes";
+import { checkTenantAccess } from "./routes"
 
 // Validate configuration and display status
 console.log("🔧 Initializing RateHonk CRM Server...");
@@ -52,6 +54,9 @@ app.use(express.urlencoded({ extended: false, limit: '10mb' }));
 // CRITICAL: Register invoice import routes EARLY to avoid routing conflicts
 import multer from "multer";
 import * as XLSX from "xlsx";
+import { authenticate } from "./estimates-routes";
+registerProductRoutes(app, authenticate, checkTenantAccess);
+
 
 // Configure multer for file uploads
 const upload = multer({

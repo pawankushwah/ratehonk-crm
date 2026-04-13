@@ -8,6 +8,7 @@ import { AuthProvider, useAuth } from "@/components/auth/auth-provider";
 import { SaasAuthProvider, useSaasAuth } from "@/components/auth/saas-auth-provider";
 import { FloatingWhatsAppButton } from "@/components/whatsapp/floating-whatsapp-button";
 import { FloatingZoomButton } from "@/components/zoom/floating-zoom-button";
+import { ThemeProvider } from "@/context/ThemeContext";
 // Basic page imports
 import NotFound from "@/pages/not-found";
 // Temporarily using a simple login component
@@ -127,6 +128,19 @@ import ConsulationForm from "@/pages/consulation-form";
 import PaymentForm from "@/pages/payment-form";
 import PublicPackageView from "@/pages/public/package-view";
 import PublicItineraryView from "@/pages/public/itinerary-view";
+import Retail from "./pages/retail";
+import PublicProductListing from "./pages/public/ProductListing";
+import PublicProductView from "./pages/public/ProductView";
+import ViewProductPage from './pages/(product)/products/ViewProductPage';
+import FormsListPage from './pages/(product)/forms';
+import FormBuilderPage from './pages/(product)/forms/builder';
+import DropdownsPage from './pages/(product)/forms/dropdowns';
+import NonInventoryPage from './pages/(product)/products/NonInventoryPage';
+import ServicePage from './pages/(product)/products/ServicePage';
+import InventoryPage from './pages/(product)/products/InventoryPage';
+import BundlePage from './pages/(product)/products/BundlePage';
+import AllProductsPage from './pages/(product)/products/AllProductsPage';
+import { SnackbarProvider } from "./components/products/SnackbarContext";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, loading } = useAuth();
@@ -278,6 +292,12 @@ function Router() {
           </PublicRoute>
         </Route>
 
+         <Route path="/retail">
+          <PublicRoute>
+            <Retail />
+          </PublicRoute>
+        </Route>
+
         <Route path="/verify-otp">
           <PublicRoute>
             <VerifyOtp />
@@ -363,6 +383,50 @@ function Router() {
           <EnhancedCRMDashboard />
         </ProtectedRoute>
       </Route> */}
+
+      {/* Products Routes */}
+      <Route path="/p/:userId">
+        <PublicProductListing />
+      </Route>
+      <Route path="/p/:userId/:productId">
+        <PublicProductView />
+      </Route>
+
+      {/* Private Routes */}
+      
+        <Route path="/products/view/:id">
+          <ProtectedRoute><ViewProductPage /></ProtectedRoute>
+        </Route>
+        <Route path="/forms">
+          <ProtectedRoute><FormsListPage /></ProtectedRoute>
+        </Route>
+        <Route path="/forms/builder">
+          <ProtectedRoute><FormBuilderPage /></ProtectedRoute>
+        </Route>
+        <Route path="/forms/dropdowns">
+          <ProtectedRoute><DropdownsPage /></ProtectedRoute>
+        </Route>
+        <Route path="/forms/builder/:id">
+          <ProtectedRoute><FormBuilderPage /></ProtectedRoute>
+        </Route>
+        <Route path="/forms/dropdowns">
+          <ProtectedRoute><DropdownsPage /></ProtectedRoute>
+        </Route>
+        <Route path="/inventory">
+          <ProtectedRoute><InventoryPage /></ProtectedRoute>
+        </Route>
+        <Route path="/non-inventory">
+          <ProtectedRoute><NonInventoryPage /></ProtectedRoute>
+        </Route>
+        <Route path="/service">
+          <ProtectedRoute><ServicePage /></ProtectedRoute>
+        </Route>
+        <Route path="/bundle">
+          <ProtectedRoute><BundlePage /></ProtectedRoute>
+        </Route>
+        <Route path="/products">
+          <ProtectedRoute><AllProductsPage /></ProtectedRoute>
+        </Route>
 
         {/* Temporarily disabled for debugging */}
         <Route path="/leads/create">
@@ -977,19 +1041,21 @@ function AuthenticatedFloatingButtons() {
 
 function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <AuthProvider>
-          <SaasAuthProvider>
-            <PartnerAuthProvider>
-              <Toaster />
-              <AuthenticatedFloatingButtons />
-              <Router />
-            </PartnerAuthProvider>
-          </SaasAuthProvider>
-        </AuthProvider>
-      </TooltipProvider>
-    </QueryClientProvider>
+    <SnackbarProvider>  
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <AuthProvider>
+            <SaasAuthProvider>
+              <PartnerAuthProvider>
+                <Toaster />
+                <AuthenticatedFloatingButtons />
+                <Router />
+              </PartnerAuthProvider>
+            </SaasAuthProvider>
+          </AuthProvider>
+        </TooltipProvider>
+      </QueryClientProvider>
+    </SnackbarProvider>
   );
 }
 

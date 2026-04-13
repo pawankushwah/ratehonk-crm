@@ -14,6 +14,7 @@ try {
   const isNeon = connectionString.includes('neon.tech');
   
   sql = postgres(connectionString, {
+    prepare: false,
     ssl: isLocalhost ? false : (isNeon ? { rejectUnauthorized: false } : 'require'),
     max: 20,
     idle_timeout: 20,

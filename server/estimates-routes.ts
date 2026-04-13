@@ -27,7 +27,7 @@ const estimateAttachmentUpload = multer({
 });
 
 // Proper JWT authentication middleware
-const authenticate = async (req: any, res: any, next: any) => {
+export const authenticate = async (req: any, res: any, next: any) => {
   try {
     const token = req.headers.authorization?.replace("Bearer ", "");
     if (!token) {

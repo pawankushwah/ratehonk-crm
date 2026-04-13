@@ -12,6 +12,13 @@ import {
   roles,
   users,
   customerFiles,
+  formTemplates,
+  dynamicData,
+  frontendForms,
+  dropdownSets,
+  dropdownOptions,
+  imageLogs,
+  skuCounters,
 } from "../shared/schema";
 import type { CustomerFile, InsertCustomerFile } from "../shared/schema";
 import { eq, desc, and } from "drizzle-orm";
@@ -21,7 +28,7 @@ export class SimpleStorage {
     try {
       console.log("🔍 Querying database for user with email:", email);
       const users =
-        await sql`SELECT * FROM users WHERE email = ${email} AND is_active = true`;
+        await sql`/* refresh_plan_v2 */ SELECT * FROM users WHERE email = ${email} AND is_active = true`;
       console.log("🔍 Database query completed, found users:", users.length);
       const user = users[0];
       if (user) {
@@ -39,7 +46,7 @@ export class SimpleStorage {
   async getUser(id: number) {
     try {
       console.log(`👤 Looking up user with ID: ${id}`);
-      const [user] = await sql`SELECT * FROM users WHERE id = ${id}`;
+      const [user] = await sql`/* refresh_plan_v2 */ SELECT * FROM users WHERE id = ${id}`;
       console.log(
         `👤 User lookup result:`,
         user
@@ -99,7 +106,7 @@ export class SimpleStorage {
         `;
         return tenants;
       }
-      const tenants = await sql`SELECT * FROM tenants ORDER BY created_at DESC`;
+      const tenants = await sql`/* refresh_plan_v2 */ SELECT * FROM tenants ORDER BY created_at DESC`;
       return tenants;
     } catch (error) {
       console.error("Error getting all tenants:", error);
@@ -129,7 +136,7 @@ export class SimpleStorage {
         INSERT INTO tenants (company_name, subdomain, contact_email, contact_phone, address, is_active, partner_id)
         VALUES (${tenant.companyName}, ${tenant.subdomain}, ${tenant.contactEmail}, 
                 ${tenant.contactPhone || null}, ${tenant.address || null}, ${tenant.isActive ?? true}, ${tenant.partnerId ?? null})
-        RETURNING *
+        RETURNING /* refresh_plan_v2 */ *
       `;
       return newTenant;
     } catch (error) {
@@ -141,7 +148,7 @@ export class SimpleStorage {
   // Partner CRUD
   async getAllPartners() {
     try {
-      const partners = await sql`SELECT * FROM partners ORDER BY created_at DESC`;
+      const partners = await sql`/* refresh_plan_v2 */ SELECT * FROM partners ORDER BY created_at DESC`;
       return partners;
     } catch (error) {
       console.error("Error getting all partners:", error);
@@ -151,7 +158,7 @@ export class SimpleStorage {
 
   async getPartner(id: number) {
     try {
-      const [partner] = await sql`SELECT * FROM partners WHERE id = ${id}`;
+      const [partner] = await sql`/* refresh_plan_v2 */ SELECT * FROM partners WHERE id = ${id}`;
       return partner;
     } catch (error) {
       console.error("Error getting partner:", error);
@@ -222,7 +229,7 @@ export class SimpleStorage {
         VALUES (${user.email}, ${user.password}, ${user.role || "tenant_admin"}, ${user.tenantId || null}, 
                 ${user.roleId || null}, ${user.firstName}, ${user.lastName}, ${user.phone || null}, 
                 ${user.isActive !== false}, ${user.isEmailVerified || false}, ${user.passwordResetRequired || false}, ${user.partnerId ?? null})
-        RETURNING *
+        RETURNING /* refresh_plan_v2 */ *
       `;
 
       // If this is a tenant_admin, automatically assign Owner role
@@ -18412,6 +18419,235 @@ async getDashboardMetrics(
 
   async deleteItineraryItem(id: number) {
     await sql`DELETE FROM customer_itinerary_items WHERE id = ${id}`;
+  }
+
+  // --- Dynamic Form Builder & Product Module Operations ---
+
+  async getFrontendForms() {
+    return await sql`SELECT * FROM frontend_forms ORDER BY name ASC`;
+  }
+
+  async createFrontendForms(data: { name: string; formKey: string }) {
+    const [form] = await sql`
+      INSERT INTO frontend_forms (name, form_key, updated_at)
+      VALUES (${data.name}, ${data.formKey}, NOW())
+      RETURNING *`;
+    return form;
+  }
+
+  async getFormTemplates(tenantId: number, resourceType?: string) {
+    if (resourceType) {
+      return await sql`SELECT * FROM form_templates WHERE tenant_id = ${tenantId} ORDER BY name ASC`;
+    }
+    return await sql`SELECT * FROM form_templates WHERE tenant_id = ${tenantId} ORDER BY name ASC`;
+  }
+
+  async createFormTemplate(data: any) {
+    const [template] = await sql`
+      INSERT INTO form_templates (name, resource_type, schema, design, user_id, tenant_id, mapped_to, updated_at)
+      VALUES (${data.name}, ${data.resourceType || 'product'}, ${JSON.stringify(data.schema)}::jsonb, 
+              ${data.design ? JSON.stringify(data.design) : null}::jsonb, ${data.userId}, ${data.tenantId}, 
+              ${data.mappedTo}, NOW())
+      RETURNING *`;
+    return template;
+  }
+
+  async updateFormTemplate(id: number, tenantId: number, data: any) {
+    const [template] = await sql`
+      UPDATE form_templates SET
+        name = COALESCE(${data.name}, name),
+        schema = COALESCE(${data.schema ? JSON.stringify(data.schema) : null}::jsonb, schema),
+        design = COALESCE(${data.design ? JSON.stringify(data.design) : null}::jsonb, design),
+        mapped_to = COALESCE(${data.mappedTo}, mapped_to),
+        updated_at = NOW()
+      WHERE id = ${id} AND tenant_id = ${tenantId}
+      RETURNING *`;
+    return template;
+  }
+
+  async deleteFormTemplate(id: number, tenantId: number) {
+    await sql`DELETE FROM form_templates WHERE id = ${id} AND tenant_id = ${tenantId}`;
+  }
+
+  async submitDynamicData(data: any) {
+    const [entry] = await sql`
+      INSERT INTO dynamic_data (template_id, owner_id, tenant_id, user_id, data, updated_at)
+      VALUES (${data.templateId}, ${data.ownerId}, ${data.tenantId}, ${data.userId || null}, 
+              ${JSON.stringify(data.data)}::jsonb, NOW())
+      RETURNING *`;
+    return entry;
+  }
+
+  async getDynamicDataEntries(tenantId: number, filters: any) {
+    let query = sql`
+      SELECT dd.*, ft.name as template_name, ft.resource_type
+      FROM dynamic_data dd
+      JOIN form_templates ft ON dd.template_id = ft.id
+      WHERE dd.tenant_id = ${tenantId}
+    `;
+
+    if (filters.templateId) {
+      query = sql`${query} AND dd.template_id = ${filters.templateId}`;
+    }
+    if (filters.resourceType) {
+      query = sql`${query} AND ft.resource_type = ${filters.resourceType}`;
+    }
+    if (filters.search) {
+      const searchTerm = `%${filters.search.toLowerCase()}%`;
+      query = sql`${query} AND LOWER(dd.data::text) LIKE ${searchTerm}`;
+    }
+
+    const limit = filters.limit ? parseInt(filters.limit) : 50;
+    const offset = filters.offset ? parseInt(filters.offset) : 0;
+
+    const results = await sql`${query} ORDER BY dd.created_at DESC LIMIT ${limit} OFFSET ${offset}`;
+    
+    // Get total count for pagination
+    const countResult = await sql`
+      SELECT COUNT(*) as total
+      FROM dynamic_data dd
+      JOIN form_templates ft ON dd.template_id = ft.id
+      WHERE dd.tenant_id = ${tenantId}
+      ${filters.templateId ? sql`AND dd.template_id = ${filters.templateId}` : sql``}
+      ${filters.resourceType ? sql`AND ft.resource_type = ${filters.resourceType}` : sql``}
+    `;
+
+    return {
+      data: results,
+      total: parseInt(countResult[0]?.total || "0")
+    };
+  }
+
+  async updateDynamicData(id: number, tenantId: number, data: any) {
+    const [entry] = await sql`
+      UPDATE dynamic_data SET
+        data = ${JSON.stringify(data)}::jsonb,
+        updated_at = NOW()
+      WHERE id = ${id} AND tenant_id = ${tenantId}
+      RETURNING *`;
+    return entry;
+  }
+
+  async deleteDynamicData(id: number, tenantId: number) {
+    await sql`DELETE FROM dynamic_data WHERE id = ${id} AND tenant_id = ${tenantId}`;
+  }
+
+  async generateNextSku(tenantId: number, prefix: string) {
+    // Check if counter exists for this prefix/tenant
+    let [counter] = await sql`
+      SELECT * FROM sku_counters WHERE tenant_id = ${tenantId} AND prefix = ${prefix}
+    `;
+
+    if (!counter) {
+      [counter] = await sql`
+        INSERT INTO sku_counters (tenant_id, prefix, counter)
+        VALUES (${tenantId}, ${prefix}, 1)
+        RETURNING *
+      `;
+    } else {
+      [counter] = await sql`
+        UPDATE sku_counters SET counter = counter + 1, updated_at = NOW()
+        WHERE id = ${counter.id}
+        RETURNING *
+      `;
+    }
+
+    const paddedCounter = String(counter.counter).padStart(5, '0');
+    return `${prefix}-${paddedCounter}`;
+  }
+
+  // --- Dropdown Operations ---
+
+  async getDropdownSets(tenantId: number) {
+    return await sql`SELECT * FROM dropdown_sets WHERE tenant_id = ${tenantId} ORDER BY name ASC`;
+  }
+
+  async createDropdownSet(tenantId: number, name: string) {
+    const [set] = await sql`
+      INSERT INTO dropdown_sets (tenant_id, name, updated_at)
+      VALUES (${tenantId}, ${name}, NOW())
+      RETURNING *`;
+    return set;
+  }
+
+  async getDropdownOptions(setId: number) {
+    return await sql`SELECT * FROM dropdown_options WHERE set_id = ${setId} ORDER BY label ASC`;
+  }
+
+  async createDropdownOption(setId: number, label: string, value: string) {
+    const [option] = await sql`
+      INSERT INTO dropdown_options (set_id, label, value)
+      VALUES (${setId}, ${label}, ${value})
+      RETURNING *`;
+    return option;
+  }
+
+  async deleteDropdownOption(id: number) {
+    await sql`DELETE FROM dropdown_options WHERE id = ${id}`;
+  }
+
+  async getDropdownSetWithOptions(id: number, tenantId: number) {
+    const [set] = await sql`SELECT * FROM dropdown_sets WHERE id = ${id} AND tenant_id = ${tenantId}`;
+    if (!set) return null;
+    const options = await sql`SELECT * FROM dropdown_options WHERE set_id = ${id} ORDER BY "order" ASC, label ASC`;
+    return { ...set, options };
+  }
+
+  async updateDropdownSet(id: number, tenantId: number, name: string, options: any[]) {
+    return await db.transaction(async (tx) => {
+      // Update set name
+      const [updatedSet] = await sql`
+        UPDATE dropdown_sets SET name = ${name}, updated_at = NOW()
+        WHERE id = ${id} AND tenant_id = ${tenantId}
+        RETURNING *`;
+      
+      if (!updatedSet) return null;
+
+      // Delete existing options
+      await sql`DELETE FROM dropdown_options WHERE set_id = ${id}`;
+
+      // Insert new options
+      if (options && options.length > 0) {
+        for (const [index, opt] of options.entries()) {
+          await sql`
+            INSERT INTO dropdown_options (set_id, label, value, "order")
+            VALUES (${id}, ${opt.label}, ${opt.value}, ${opt.order ?? index})`;
+        }
+      }
+
+      const finalOptions = await sql`SELECT * FROM dropdown_options WHERE set_id = ${id} ORDER BY "order" ASC, label ASC`;
+      return { ...updatedSet, options: finalOptions };
+    });
+  }
+
+  async deleteDropdownSet(id: number, tenantId: number) {
+    return await db.transaction(async (tx) => {
+      await sql`DELETE FROM dropdown_options WHERE set_id = ${id}`;
+      const [deleted] = await sql`DELETE FROM dropdown_sets WHERE id = ${id} AND tenant_id = ${tenantId} RETURNING *`;
+      return deleted;
+    });
+  }
+
+  async getDynamicData(id: number, tenantId: number) {
+    const [entry] = await sql`
+      SELECT dd.*, ft.name as template_name, ft.schema as template_schema
+      FROM dynamic_data dd
+      JOIN form_templates ft ON dd.template_id = ft.id
+      WHERE dd.id = ${id} AND dd.tenant_id = ${tenantId}`;
+    return entry;
+  }
+
+  async createImageLog(data: { tenantId: number; url: string; filename?: string; data?: string; originalData?: string; mimeType?: string }) {
+    const [log] = await sql`
+      INSERT INTO image_logs (tenant_id, url, filename, data, original_data, mime_type, created_at)
+      VALUES (${data.tenantId}, ${data.url}, ${data.filename || null}, ${data.data || null}, ${data.originalData || null}, ${data.mimeType || null}, NOW())
+      RETURNING *`;
+    return log;
+  }
+
+  async getImageLog(id: number, tenantId: number) {
+    const [log] = await sql`SELECT * FROM image_logs WHERE id = ${id} AND tenant_id = ${tenantId}`;
+    return log;
   }
 }
 
