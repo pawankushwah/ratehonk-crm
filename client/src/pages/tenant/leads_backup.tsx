@@ -149,6 +149,8 @@ export default function Leads() {
   // ... all the state variables and functions remain the same ...
   
   // ALL EXISTING CODE REMAINS THE SAME UNTIL THE SEARCH AND VIEW OPTIONS SECTION
+
+  console.log("leads", image1);
   
   return (
     <Layout>

@@ -28,15 +28,15 @@ const ROLES: FieldRole[] = [
   { role: 'title', keywords: ['name', 'title', 'product', 'item'] },
   { role: 'price', keywords: ['price', 'cost', 'msrp', 'rate'] },
   { role: 'description', keywords: ['description', 'about', 'details', 'summary'] },
-  { role: 'image', keywords: ['image', 'photo', 'picture', 'gallery', 'media'] },
+  { role: 'image', keywords: ['image', 'photo', 'picture', 'gallery', 'media', 'imageurl', 'thumbnail'] },
   { role: 'category', keywords: ['category', 'type', 'group', 'tag'] },
-  { role: 'sku', keywords: ['sku', 'id', 'code'] },
-  { role: 'stock', keywords: ['stock', 'quantity', 'qty', 'count', 'inventory'] },
+  { role: 'sku', keywords: ['sku', 'id', 'code', 'productid'] },
+  { role: 'stock', keywords: ['stock', 'quantity', 'qty', 'count', 'inventory', 'available'] },
   { role: 'badge', keywords: ['badge', 'status', 'label', 'condition'] },
   { role: 'grid', keywords: ['grid', 'features', 'highlights', 'list'] },
   { role: 'table', keywords: ['table', 'specification', 'details', 'specs', 'properties'] },
-  { role: 'colors', keywords: ['color', 'choice', 'shade', 'tint', 'variant'] },
-  { role: 'sizes', keywords: ['size', 'dimension', 'fit', 'option', 'checkbox'] },
+  { role: 'colors', keywords: ['color', 'choice', 'shade', 'tint', 'variant', 'availablecolors'] },
+  { role: 'sizes', keywords: ['size', 'dimension', 'fit', 'option', 'checkbox', 'availablesizes'] },
   { role: 'barcode', keywords: ['barcode', 'upc', 'ean', 'code'] },
   { role: 'carousel', keywords: ['carousel', 'gallery', 'slideshow', 'media'] },
 ];
@@ -117,7 +117,18 @@ export const getRoleValue = (role: FieldRoleType, product: any, template: any): 
   const fieldId = findFieldByRole(role, template);
   const data = product?.data || product || {};
   
-  if (!fieldId) return '—';
+  if (!fieldId) {
+    // Falls back to direct property access if role matches key in data
+    // This is useful for templates using mock data without a full schema
+    if (!isEmptyValue(data[role])) return data[role];
+    
+    // Check for common naming variations in mock data
+    if (role === 'image' && !isEmptyValue(data.imageUrl)) return data.imageUrl;
+    if (role === 'colors' && !isEmptyValue(data.availableColors)) return data.availableColors;
+    if (role === 'sizes' && !isEmptyValue(data.availableSizes)) return data.availableSizes;
+    
+    return '—';
+  }
 
   // 1. Try Top-Level Match (Skip if empty to allow deeper search)
   if (!isEmptyValue(data[fieldId])) {

@@ -141,6 +141,7 @@ import InventoryPage from './pages/(product)/products/InventoryPage';
 import BundlePage from './pages/(product)/products/BundlePage';
 import AllProductsPage from './pages/(product)/products/AllProductsPage';
 import { SnackbarProvider } from "./components/products/SnackbarContext";
+import TemplatesListPage from "./pages/(product)/forms/builder/template";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, loading } = useAuth();
@@ -411,6 +412,9 @@ function Router() {
         </Route>
         <Route path="/forms/dropdowns">
           <ProtectedRoute><DropdownsPage /></ProtectedRoute>
+        </Route>
+        <Route path="/forms/templates">
+          <ProtectedRoute><TemplatesListPage /></ProtectedRoute>
         </Route>
         <Route path="/inventory">
           <ProtectedRoute><InventoryPage /></ProtectedRoute>

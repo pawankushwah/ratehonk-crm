@@ -273,6 +273,9 @@ export default function Leads() {
   const [openItemId, setOpenItemId] = useState(null);
 
   const [draggedIndex, setDraggedIndex] = useState(null);
+
+    console.log("leads", image1);
+  
   
   // Follow-up dialog state
   const [followUpDialogOpen, setFollowUpDialogOpen] = useState(false);

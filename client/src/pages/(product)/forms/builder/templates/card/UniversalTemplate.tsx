@@ -1,6 +1,7 @@
 import React from 'react';
 import type { TemplateProps } from './common';
 import { SlotWrapper } from './common';
+import image1 from "@/assets/images/default-product-1.png"
 import { formatDisplayValue, resolveImageUrl } from '@/utils/dynamicRenderer';
 import { Tag, Box, Package, ChevronDown, Info, Heart, ShoppingCart, Star } from 'lucide-react';
 
@@ -131,9 +132,10 @@ const UniversalTemplate: React.FC<TemplateProps> = ({
   const displayStock = activeVariant?.stock || stock;
   const displayImages = (activeVariant?.images && activeVariant.images.length > 0) 
     ? activeVariant.images 
-    : (allImages.length > 0 ? allImages : [imageUrl || "/assets/images/default-product-2.png"]);
+    : (allImages.length > 0 ? allImages : [imageUrl || "../../../../../assets/images/default-product-1.png"]);
 
   const images = displayImages;
+  console.log("images",images);
 
   // const toggleAccordion = (id: string | number) => {
   //   setExpandedAccordions(prev => ({ ...prev, [id]: !prev[id] }));
@@ -956,7 +958,7 @@ export const mockData = {
   reviewCount: 1240,
   promo: 'Best Seller',
   description: 'Experience the ultimate desktop performance with the new iMac. Featuring a stunning 5K Retina display and the powerful M3 Max chip for professionals.',
-  imageUrl: '/assets/images/default-product-2.png',
+  imageUrl: [image1],
   availableColors: ['#F5276C', '#F54927', '#F59E27', '#F5D127', '#F5F5F5'],
   availableSizes: ['XS', 'S', 'M', 'L', 'XL'],
   highlights: [
