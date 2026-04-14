@@ -16,6 +16,8 @@ const UniversalTemplate: React.FC<TemplateProps> = ({
   borderBase,
   activeSlot,
   onSlotClick,
+  onVariantSelect,
+  activeVariantIndex = 0,
   isDark,
   style
 }) => {
@@ -73,22 +75,10 @@ const UniversalTemplate: React.FC<TemplateProps> = ({
   const rawVariants = variantSectionId ? (data as any)[variantSectionId] : (Array.isArray(variants) ? variants : []);
 
   // Process variants into a standard format using mapping
-  const processedVariants = React.useMemo(() => {
-    if (!variantSectionId || !Array.isArray(rawVariants)) return variants;
-    
-    return rawVariants.map((rv: any, idx: number) => ({
-      id: rv.id || `variant-${idx}`,
-      color: rv[mapping.colors] || rv.color,
-      sizes: Array.isArray(rv[mapping.sizes]) ? rv[mapping.sizes] : (rv[mapping.sizes] ? [rv[mapping.sizes]] : (rv.sizes || [])),
-      price: rv[mapping.price] || rv.price,
-      stock: rv[mapping.stock] || rv.stock,
-      images: rv[mapping.image] 
-        ? (Array.isArray(rv[mapping.image]) ? rv[mapping.image] : [rv[mapping.image]]).map(resolveImageUrl).filter(Boolean) 
-        : (Array.isArray(rv.images) ? rv.images : (rv.images ? [rv.images] : [])).map(resolveImageUrl).filter(Boolean)
-    }));
-  }, [rawVariants, mapping, variants, variantSectionId]);
-
-  const [selectedVariantIdx, setSelectedVariantIdx] = React.useState(0);
+  const processedVariants = variants.length > 0 ? variants : [];
+  const selectedVariantIdx = activeVariantIndex;
+  const setSelectedVariantIdx = (idx: number) => onVariantSelect?.(idx);
+  
   const [selectedSizeIdx, setSelectedSizeIdx] = React.useState(0);
   // const [selectedImage, setSelectedImage] = React.useState(0);
 

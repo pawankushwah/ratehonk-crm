@@ -15,9 +15,12 @@ const HorizontalFlowbiteTemplate: React.FC<TemplateProps> = ({
   shadowClass, 
   fontClass,
   activeSlot,
-  onSlotClick
+  onSlotClick,
+  onVariantSelect,
+  activeVariantIndex = 0
 }) => {
   const { title, price, imageUrl, reviewCount = 455, rating = 5.0 } = data;
+  const isSelected = (i: number) => activeVariantIndex === i;
 
   return (
     <div className={`flex flex-row rounded-3xl border transition-all duration-300 m-auto w-full h-[220px] overflow-hidden ${bgBase} ${borderBase} ${shadowClass} ${fontClass}`}>
@@ -90,12 +93,18 @@ const HorizontalFlowbiteTemplate: React.FC<TemplateProps> = ({
                   <div className="flex gap-1.5">
                     {(data.availableColors || ['#000', '#2563eb', '#ef4444']).slice(0, 3).map((color: any, i: number) => {
                       const colorValue = typeof color === 'object' ? color.value || color.hex : color;
+                      const selected = isSelected(i);
                       return (
                         <div 
-                          key={i} 
-                          className="w-3 h-3 rounded-full border border-gray-200 shadow-sm"
-                          style={{ backgroundColor: colorValue }}
-                        />
+                           key={i} 
+                           onClick={() => onVariantSelect?.(i)}
+                           className={`w-3 h-3 rounded-full border transition-all cursor-pointer ${selected ? 'ring-2 ring-primary ring-offset-1 ring-offset-white dark:ring-offset-gray-900' : 'opacity-40 hover:opacity-100'}`}
+                           style={{ 
+                             backgroundColor: colorValue,
+                             borderColor: selected ? accentColor : 'transparent',
+                             ['--tw-ring-color' as any]: selected ? accentColor : 'transparent'
+                           }}
+                         />
                       );
                     })}
                   </div>

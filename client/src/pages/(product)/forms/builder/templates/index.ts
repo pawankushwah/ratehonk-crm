@@ -2,7 +2,7 @@ import SimpleTemplate, { mockData as SimpleMock } from './card/SimpleTemplate';
 import FlowbiteTemplate, { mockData as ClassicMock } from './card/FlowbiteTemplate';
 import UniversalTemplate, { mockData as UniversalMock } from './card/UniversalTemplate';
 import AdvancedDetailTemplate, { mockData as AdvancedMock } from './card/AdvancedDetailTemplate';
-import CarouselTemplate from './card/CarouselTemplate';
+import CarouselTemplate, { mockData as CarousalMockData } from './card/CarouselTemplate';
 import HorizontalDetailTemplate, { mockData as HorizontalDetailMock } from './card/HorizontalDetailTemplate';
 import HorizontalFlowbiteTemplate from './card/HorizontalFlowbiteTemplate';
 import HorizontalUniversalTemplate, { mockData as HorizontalUniversalMock } from './card/HorizontalUniversalTemplate';
@@ -37,7 +37,7 @@ export const VERTICAL_TEMPLATES = [
     name: 'Universal Glass', 
     type: 'card', 
     description: 'Classic glassmorphic retail design.',
-    supportedSlots: ['image', 'title', 'price', 'rating', 'reviewCount', 'category', 'sku', 'stock', 'description', 'colors', 'sizes', 'highlights', 'promotions'],
+    supportedSlots: ['image', 'title', 'price', 'rating', 'reviewCount', 'category', 'sku', 'stock', 'description', 'variantsSection', 'colors', 'sizes', 'highlights', 'promotions'],
     mockData: UniversalMock
   },
   { 
@@ -55,6 +55,14 @@ export const VERTICAL_TEMPLATES = [
     description: 'Rich commerce options with top-aligned image.',
     supportedSlots: ['image', 'title', 'price', 'sku', 'colors', 'sizes', 'description', 'highlights', 'promotions'],
     mockData: AdvancedMock
+  },
+  { 
+    id: 'carousel', 
+    name: 'Carousel Card', 
+    type: 'card', 
+    description: 'Dynamic card with image slideshow navigation.',
+    supportedSlots: ['image', 'title', 'price', 'badge', 'description', 'colors', 'sizes', 'actions'],
+    mockData: CarousalMockData || {}
   },
 ];
 

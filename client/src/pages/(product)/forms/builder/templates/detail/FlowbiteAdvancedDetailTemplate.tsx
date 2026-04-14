@@ -14,11 +14,14 @@ const FlowbiteAdvancedDetailTemplate: React.FC<TemplateProps> = ({
   textMuted,
   activeSlot,
   onSlotClick,
+  onVariantSelect,
+  activeVariantIndex = 0,
   context
 }) => {
   const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
   const [selectedImage, setSelectedImage] = useState(0);
-  const [selectedColor, setSelectedColor] = useState(0);
+  const selectedColor = activeVariantIndex;
+  const setSelectedColor = (idx: number) => onVariantSelect?.(idx);
   const [selectedSize, setSelectedSize] = useState(0);
   const [quantity, setQuantity] = useState('1');
 

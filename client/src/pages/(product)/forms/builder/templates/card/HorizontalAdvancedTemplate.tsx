@@ -16,9 +16,12 @@ const HorizontalAdvancedTemplate: React.FC<TemplateProps> = ({
   shadowClass, 
   fontClass,
   activeSlot,
-  onSlotClick
+  onSlotClick,
+  onVariantSelect,
+  activeVariantIndex = 0
 }) => {
   const { title, price, imageUrl, category = 'PREMIUM', sku = 'RH-GEN5-2024', stock = 124, rating = 4.9 } = data;
+  const isSelected = (i: number) => activeVariantIndex === i;
 
   return (
     <div className={`group transition-all duration-500 m-auto w-full h-[220px] flex flex-row border hover:border-primary/50 relative overflow-hidden ${bgBase} ${borderBase} ${shadowClass} ${fontClass} rounded-4xl backdrop-blur-md`}>
@@ -139,11 +142,17 @@ const HorizontalAdvancedTemplate: React.FC<TemplateProps> = ({
                         <div className="flex gap-1.5">
                            {(data.availableColors || ['#000', '#2563eb', '#ef4444']).slice(0, 3).map((color: any, i: number) => {
                               const colorValue = typeof color === 'object' ? color.value || color.hex : color;
+                              const selected = isSelected(i);
                               return (
                                 <div 
                                   key={i} 
-                                  className="w-3 h-3 rounded-full border border-black/10 dark:border-white/10"
-                                  style={{ backgroundColor: colorValue }}
+                                  onClick={() => onVariantSelect?.(i)}
+                                  className={`w-3 h-3 rounded-full border cursor-pointer transition-all ${selected ? 'ring-2 ring-primary ring-offset-1 ring-offset-white dark:ring-offset-gray-900 scale-110' : 'opacity-40 hover:opacity-100'}`}
+                                  style={{ 
+                                    backgroundColor: colorValue,
+                                    borderColor: selected ? accentColor : 'transparent',
+                                    ['--tw-ring-color' as any]: selected ? accentColor : 'transparent'
+                                  }}
                                 />
                               );
                            })}

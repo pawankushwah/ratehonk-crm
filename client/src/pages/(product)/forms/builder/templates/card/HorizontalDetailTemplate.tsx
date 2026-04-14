@@ -15,10 +15,13 @@ const HorizontalDetailTemplate: React.FC<TemplateProps> = ({
   shadowClass, 
   fontClass,
   activeSlot,
-  onSlotClick
+  onSlotClick,
+  onVariantSelect,
+  activeVariantIndex = 0
 }) => {
   const { title, price, imageUrl, rating = 5.0, description = "Premium quality hardware designed for pro users. Features M3 chip technology." } = data;
-  const [selectedColor, setSelectedColor] = React.useState(0);
+  const selectedColor = activeVariantIndex;
+  const setSelectedColor = (idx: number) => onVariantSelect?.(idx);
 
   return (
     <div className={`transition-all duration-300 m-auto min-w-[350px] w-full h-[220px] ${bgBase} ${borderBase} ${shadowClass} ${fontClass} rounded-3xl overflow-hidden flex flex-row border`}>

@@ -12,11 +12,13 @@ const AdvancedDetailTemplate: React.FC<TemplateProps> = ({
   textMain,
   textMuted,
   activeSlot,
-  onSlotClick
+  onSlotClick,
+  onVariantSelect,
+  activeVariantIndex = 0
 }) => {
   const { title, price, imageUrl, reviewCount = 543, sku = '', barcode = '' } = data;
   const [quantity, setQuantity] = React.useState(1);
-  const [selectedColor, setSelectedColor] = React.useState(0);
+  // Remove local selectedColor state, use activeVariantIndex prop instead
 
   return (
     <div className={`transition-all duration-300 m-auto w-[300px] max-h-[500px] h-fit ${bgBase} border rounded-4xl overflow-hidden flex flex-col`}>
@@ -99,20 +101,21 @@ const AdvancedDetailTemplate: React.FC<TemplateProps> = ({
              {visibility.colors && (
                 <SlotWrapper slot="colors" activeSlot={activeSlot} onSlotClick={onSlotClick} accentColor={accentColor}>
                    <div className="flex gap-2.5">
-                      {(data.availableColors || ['#000', '#2563eb', '#ef4444']).map((color: any, i: number) => {
-                        const colorValue = typeof color === 'object' ? color.value || color.hex : color;
-                        return (
-                          <button 
-                            key={i} 
-                            onClick={() => setSelectedColor(i)}
-                            className={`w-6 h-6 rounded-full border-2 transition-all ${selectedColor === i ? 'border-primary ring-2 ring-primary/20 scale-110' : 'border-white dark:border-gray-800'}`}
-                            style={{ 
-                              backgroundColor: colorValue,
-                              borderColor: selectedColor === i ? accentColor : undefined 
-                            }}
-                          />
-                        );
-                      })}
+                       {(data.availableColors || ['#000', '#2563eb', '#ef4444']).map((color: any, i: number) => {
+                         const colorValue = typeof color === 'object' ? color.color || color.value || color.hex : color;
+                         const isSelected = activeVariantIndex === i;
+                         return (
+                           <button 
+                             key={i} 
+                             onClick={() => onVariantSelect?.(i)}
+                             className={`w-6 h-6 rounded-full border-2 transition-all ${isSelected ? 'border-primary ring-2 ring-primary/20 scale-110' : 'border-white dark:border-gray-800'}`}
+                             style={{ 
+                               backgroundColor: colorValue,
+                               borderColor: isSelected ? accentColor : undefined 
+                             }}
+                           />
+                         );
+                       })}
                    </div>
                 </SlotWrapper>
              )}

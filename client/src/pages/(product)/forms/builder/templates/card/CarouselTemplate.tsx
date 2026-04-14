@@ -11,7 +11,9 @@ const CarouselTemplate: React.FC<TemplateProps> = ({
   shadowClass, 
   fontClass,
   activeSlot,
-  onSlotClick
+  onSlotClick,
+  onVariantSelect,
+  activeVariantIndex
 }) => {
   const { title, price, imageUrl, description = "Apple M3 Octa Core, 23.8inch, RAM 8GB, SSD 256GB, Apple M3 8-Core, macOS Sonoma" } = data;
   const [currentSlide, setCurrentSlide] = React.useState(1);
@@ -124,15 +126,16 @@ const CarouselTemplate: React.FC<TemplateProps> = ({
                   <div className="flex gap-1.5">
                     {(data.availableColors || ['#000', '#2563eb', '#ef4444']).map((color: any, i: number) => {
                        const colorValue = typeof color === 'object' ? color.value || color.hex : color;
+                       const isSelected = activeVariantIndex === i;
                        return (
                          <div 
                            key={i} 
-                           onClick={() => setSelectedColor(i)}
-                           className={`w-4 h-4 rounded-full border border-white dark:border-gray-800 transition-all cursor-pointer ${selectedColor === i ? 'ring-2 ring-primary ring-offset-2 ring-offset-white dark:ring-offset-gray-800' : 'opacity-40'}`}
+                           onClick={() => onVariantSelect?.(i)}
+                           className={`w-4 h-4 rounded-full border border-white dark:border-gray-800 transition-all cursor-pointer ${isSelected ? 'ring-2 ring-primary ring-offset-2 ring-offset-white dark:ring-offset-gray-800' : 'opacity-40'}`}
                            style={{ 
                              backgroundColor: colorValue,
-                             borderColor: selectedColor === i ? accentColor : undefined,
-                             ['--tw-ring-color' as any]: selectedColor === i ? accentColor : 'transparent'
+                             borderColor: isSelected ? accentColor : undefined,
+                             ['--tw-ring-color' as any]: isSelected ? accentColor : 'transparent'
                            }}
                          />
                        );

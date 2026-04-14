@@ -13,6 +13,8 @@ const SimpleTemplate: React.FC<TemplateProps> = ({
   borderBase,
   activeSlot,
   onSlotClick,
+  onVariantSelect,
+  activeVariantIndex = 0,
   radiusClass = 'rounded-lg',
   shadowClass = 'shadow-md',
   paddingClass = 'p-6',
@@ -21,7 +23,9 @@ const SimpleTemplate: React.FC<TemplateProps> = ({
   const { 
     title, price, imageUrl, 
     category = '',
-    description
+    description,
+    availableColors = [],
+    variants = []
   } = data;
 
   return (
@@ -79,6 +83,29 @@ const SimpleTemplate: React.FC<TemplateProps> = ({
              >
                 <p className={`text-sm ${textMuted} line-clamp-2 leading-relaxed`}>{description}</p>
              </SlotWrapper>
+          )}
+
+          {visibility?.colors !== false && (availableColors.length > 0 || variants?.length > 0) && (
+            <div className="mb-4">
+               <div className="flex gap-1.5">
+                  {(availableColors.length > 0 ? availableColors : (variants || [])).map((c: any, i: number) => {
+                    const colorValue = typeof c === 'object' ? c.color || c.value || c.hex : c;
+                    const isSelected = activeVariantIndex === i;
+                    return (
+                      <div 
+                        key={i}
+                        onClick={() => onVariantSelect?.(i)}
+                        className={`w-3.5 h-3.5 rounded-full border cursor-pointer transition-all ${isSelected ? 'ring-2 ring-primary ring-offset-1 ring-offset-white' : 'opacity-40'}`}
+                        style={{ 
+                          backgroundColor: colorValue, 
+                          borderColor: isSelected ? accentColor : 'transparent',
+                          ['--tw-ring-color' as any]: isSelected ? accentColor : 'transparent'
+                        }}
+                      />
+                    );
+                  })}
+               </div>
+            </div>
           )}
 
           <div className="mt-auto pt-4 flex items-center justify-between border-t border-slate-100 dark:border-slate-800">

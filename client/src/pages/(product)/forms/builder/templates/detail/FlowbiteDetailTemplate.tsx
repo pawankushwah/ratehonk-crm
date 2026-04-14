@@ -14,10 +14,13 @@ const FlowbiteDetailTemplate: React.FC<TemplateProps> = ({
   borderBase,
   activeSlot,
   onSlotClick,
+  onVariantSelect,
+  activeVariantIndex = 0,
   context
 }) => {
   const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
-  const [selectedVariantIdx, setSelectedVariantIdx] = useState(0);
+  const selectedVariantIdx = activeVariantIndex;
+  const setSelectedVariantIdx = (idx: number) => onVariantSelect?.(idx);
   const [selectedSizeIdx, setSelectedSizeIdx] = useState(0);
   const [selectedImage, setSelectedImage] = useState(0);
 
@@ -61,20 +64,7 @@ const FlowbiteDetailTemplate: React.FC<TemplateProps> = ({
   const variantSectionId = mapping.variantsSection || Object.keys(data).find(key => Array.isArray((data as any)[key]) && typeof (data as any)[key][0] === 'object');
   const rawVariants = variantSectionId ? (data as any)[variantSectionId] : (Array.isArray(variants) ? variants : []);
 
-  const processedVariants = useMemo(() => {
-    if (!variantSectionId || !Array.isArray(rawVariants)) return variants;
-    return rawVariants.map((rv: any, idx: number) => ({
-      id: rv.id || `variant-${idx}`,
-      color: rv[mapping.colors] || rv.color,
-      sizes: Array.isArray(rv[mapping.sizes]) ? rv[mapping.sizes] : (rv[mapping.sizes] ? [rv[mapping.sizes]] : (rv.sizes || [])),
-      price: rv[mapping.price] || rv.price,
-      stock: rv[mapping.stock] || rv.stock,
-      images: rv[mapping.image]
-        ? (Array.isArray(rv[mapping.image]) ? rv[mapping.image] : [rv[mapping.image]]).map(resolveImageUrl).filter(Boolean)
-        : (Array.isArray(rv.images) ? rv.images : (rv.images ? [rv.images] : [])).map(resolveImageUrl).filter(Boolean)
-    }));
-  }, [rawVariants, mapping, variants, variantSectionId]);
-
+  const processedVariants = variants.length > 0 ? variants : [];
   const activeVariant = processedVariants[selectedVariantIdx] || processedVariants[0];
 
   const derivedSizes = useMemo(() => {

@@ -10,9 +10,12 @@ const FlowbiteTemplate: React.FC<TemplateProps> = ({
   accentColor, 
   bgBase,
   textMain, 
+  textMuted = 'text-gray-500',
   borderBase,
   activeSlot,
-  onSlotClick
+  onSlotClick,
+  onVariantSelect,
+  activeVariantIndex = 0
 }) => {
   const { 
     title, price, imageUrl, 
@@ -20,7 +23,9 @@ const FlowbiteTemplate: React.FC<TemplateProps> = ({
     reviewCount = 455, rating = 5.0,
     color: mappedColor,
     availableColors = [],
-    availableSizes = []
+    availableSizes = [],
+    description,
+    variants = []
   } = data;
 
   return (
@@ -138,7 +143,19 @@ const FlowbiteTemplate: React.FC<TemplateProps> = ({
             </div>
           )}
 
-          {visibility.colors && (
+          {visibility?.description !== false && description && (
+             <SlotWrapper 
+               slot="description"
+               activeSlot={activeSlot}
+               onSlotClick={onSlotClick}
+               accentColor={accentColor}
+               className="mb-4 mt-2"
+             >
+                <p className={`text-sm ${textMuted} line-clamp-2 leading-relaxed`}>{description}</p>
+             </SlotWrapper>
+          )}
+
+          {visibility?.colors !== false && (availableColors.length > 0 || variants.length > 0) && (
             <div className="mt-4">
               <SlotWrapper 
                 slot="colors"
@@ -146,14 +163,20 @@ const FlowbiteTemplate: React.FC<TemplateProps> = ({
                 onSlotClick={onSlotClick}
                 accentColor={accentColor}
               >
-                <div className="flex gap-2">
-                  {(availableColors.length > 0 ? availableColors : (mappedColor ? [mappedColor] : ['#000', '#2563eb', '#ef4444'])).map((color: any, i: number) => {
-                    const colorValue = typeof color === 'object' ? color.value || color.hex : color;
+                <div className="flex gap-1.5">
+                  {(availableColors.length > 0 ? availableColors : variants).map((c: any, i: number) => {
+                    const colorValue = typeof c === 'object' ? c.color || c.value || c.hex : c;
+                    const isSelected = activeVariantIndex === i;
                     return (
                       <div 
                         key={i} 
-                        className="w-4 h-4 rounded-full border border-gray-200 shadow-sm"
-                        style={{ backgroundColor: colorValue }}
+                        onClick={() => onVariantSelect?.(i)}
+                        className={`w-4 h-4 rounded-full border transition-all cursor-pointer ${isSelected ? 'ring-2 ring-primary ring-offset-2 ring-offset-white dark:ring-offset-gray-800' : 'opacity-40 hover:opacity-100'}`}
+                        style={{ 
+                          backgroundColor: colorValue,
+                          borderColor: isSelected ? accentColor : 'transparent',
+                          ['--tw-ring-color' as any]: isSelected ? accentColor : 'transparent'
+                         }}
                       />
                     );
                   })}
@@ -181,7 +204,7 @@ const FlowbiteTemplate: React.FC<TemplateProps> = ({
             </div>
           )}
 
-          <div className="flex items-center justify-between gap-4 border-t border-gray-100 dark:border-gray-700 pt-4">
+          <div className="flex items-center justify-between gap-4 border-t border-gray-100 dark:border-gray-700 pt-4 mt-4">
             {visibility.price && (
               <SlotWrapper 
                 slot="price"

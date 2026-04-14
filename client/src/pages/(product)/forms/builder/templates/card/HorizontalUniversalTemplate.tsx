@@ -16,7 +16,9 @@ const HorizontalUniversalTemplate: React.FC<TemplateProps> = ({
   shadowClass, 
   fontClass,
   activeSlot,
-  onSlotClick
+  onSlotClick,
+  onVariantSelect,
+  activeVariantIndex = 0
 }) => {
   const mapping = data?.mapping || (context?.form_schema?.design?.mapping) || context?.design?.mapping || {};
   const d = data as any;
@@ -32,7 +34,8 @@ const HorizontalUniversalTemplate: React.FC<TemplateProps> = ({
   const availableSizes = d.availableSizes || d[mapping.sizes] || [];
   const mappedColor = d.color || d[mapping.colors];
 
-  const [selectedColor, setSelectedColor] = React.useState(0);
+  const selectedColor = activeVariantIndex;
+  const setSelectedColor = (idx: number) => onVariantSelect?.(idx);
 
 
   return (

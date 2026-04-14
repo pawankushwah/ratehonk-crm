@@ -110,24 +110,24 @@ export default function DesignTab2({ builderItems, design, setDesign }: DesignTa
   }, [builderItems]);
 
   const mappableSlots = [
-    { id: 'image', label: 'Primary Image', icon: ImageIcon },
-    { id: 'gallery', label: 'Image Gallery', icon: GridIcon },
-    { id: 'title', label: 'Product Title', icon: FileText },
-    { id: 'price', label: 'Price Display', icon: Palette },
-    { id: 'description', label: 'Product Description', icon: FileText },
-    { id: 'category', label: 'Category/Tag', icon: Layers },
-    { id: 'sku', label: 'SKU Identifier', icon: Box },
-    { id: 'barcode', label: 'Barcode/EAN', icon: Scan },
-    { id: 'stock', label: 'Stock Status', icon: Layers },
-    { id: 'badge', label: 'Promotion Badge', icon: MousePointer2 },
-    { id: 'rating', label: 'Product Rating', icon: Star },
-    { id: 'reviewCount', label: 'Review Count', icon: FileText },
-    { id: 'colors', label: 'Available Colors', icon: Palette },
-    { id: 'sizes', label: 'Available Sizes', icon: Maximize },
-    { id: 'highlights', label: 'Feature Highlights', icon: GridIcon },
-    { id: 'promotions', label: 'Promotional Offers', icon: Gift },
-    { id: 'variantsSection', label: 'Variants Section', icon: Layers },
-    { id: 'actions', label: 'Actions', icon: MousePointer2 }
+    { id: 'image', label: 'Primary Image', icon: ImageIcon, allowedTypes: ['image', 'file'] },
+    { id: 'gallery', label: 'Image Gallery', icon: GridIcon, allowedTypes: ['image', 'file', 'array', 'gallery'] },
+    { id: 'title', label: 'Product Title', icon: FileText, allowedTypes: ['text', 'select', 'addable-select', 'radio', 'id', 'formula'] },
+    { id: 'price', label: 'Price Display', icon: Palette, allowedTypes: ['number', 'currency', 'formula', 'text'] },
+    { id: 'description', label: 'Product Description', icon: FileText, allowedTypes: ['text', 'textarea', 'richtext'] },
+    { id: 'category', label: 'Category/Tag', icon: Layers, allowedTypes: ['text', 'select', 'addable-select', 'radio', 'badge'] },
+    { id: 'sku', label: 'SKU Identifier', icon: Box, allowedTypes: ['sku'] },
+    { id: 'barcode', label: 'Barcode/EAN', icon: Scan, allowedTypes: ['barcode', 'text', 'number'] },
+    { id: 'stock', label: 'Stock Status', icon: Layers, noMapping: true },
+    { id: 'badge', label: 'Promotion Badge', icon: MousePointer2, noMapping: true },
+    { id: 'rating', label: 'Product Rating', icon: Star, noMapping: true },
+    { id: 'reviewCount', label: 'Review Count', icon: FileText, noMapping: true },
+    { id: 'colors', label: 'Available Colors', icon: Palette, allowedTypes: ['color'] },
+    { id: 'sizes', label: 'Available Sizes', icon: Maximize, allowedTypes: ['select', 'addable-select', 'radio', 'checkbox', 'text'] },
+    { id: 'highlights', label: 'Feature Highlights', icon: GridIcon, allowedTypes: ['text', 'textarea', 'list', 'richtext', 'array', 'key-value'] },
+    { id: 'promotions', label: 'Promotional Offers', icon: Gift, noMapping: true },
+    { id: 'variantsSection', label: 'Variants Section', icon: Layers, allowedTypes: ['section', 'array', 'group'] },
+    { id: 'actions', label: 'Actions', icon: MousePointer2, noMapping: true }
   ];
 
   const currentTemplate = useMemo(() => {
@@ -151,9 +151,9 @@ export default function DesignTab2({ builderItems, design, setDesign }: DesignTa
     return currentDesign.cardVisibility || currentDesign.visibility || {};
   }, [currentDesign, activeMode]);
 
-  const handleUpdateMapping = (slot: string, fieldId: string) => {
+  const handleUpdateMapping = (slotId: string, fieldId: string) => {
     const key = activeMode === 'view' ? 'viewMapping' : 'cardMapping';
-    const newMapping = { ...(activeMapping), [slot]: fieldId };
+    const newMapping = { ...(activeMapping), [slotId]: fieldId };
     setDesign({ ...currentDesign, [key]: newMapping });
   };
 
@@ -183,6 +183,10 @@ export default function DesignTab2({ builderItems, design, setDesign }: DesignTa
       promotions: ['offer', 'promo', 'discount', 'bank']
     };
     roles.forEach(role => {
+      // Skip static slots
+      const slotDef = mappableSlots.find(s => s.id === role);
+      if (slotDef?.noMapping) return;
+
       if (!newMapping[role]) {
         const match = allFields.find(f => {
           const label = f.label.toLowerCase();
@@ -318,6 +322,12 @@ export default function DesignTab2({ builderItems, design, setDesign }: DesignTa
             const mappedField = allFields.find(f => f.id === mappedFieldId);
             const isVisible = (activeVisibility || {})[slot.id] ?? true;
 
+            // Type filtering logic
+            const compatibleFields = allFields.filter(f => {
+              if (!slot.allowedTypes || slot.allowedTypes.length === 0) return true;
+              return slot.allowedTypes.includes(f.type?.toLowerCase());
+            });
+
             return (
               <div
                 key={slot.id}
@@ -330,12 +340,14 @@ export default function DesignTab2({ builderItems, design, setDesign }: DesignTa
                       <div className={`p-3 rounded-xl transition-all ${isSelected ? 'bg-primary text-white' : 'bg-black/5 text-text-muted'}`}>
                         <slot.icon size={20} />
                       </div>
-                      <div className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 ${isAppDark ? 'border-[#151B2B]' : 'border-white'} ${mappedFieldId ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                      <div className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 ${isAppDark ? 'border-[#151B2B]' : 'border-white'} ${slot.noMapping ? (isVisible ? 'bg-emerald-500' : 'bg-slate-400') : (mappedFieldId ? 'bg-emerald-500' : 'bg-slate-400')}`} />
                     </div>
                     <div>
                       <h4 className={`text-xs font-black uppercase tracking-widest ${isSelected ? 'text-primary' : textMain}`}>{slot.label}</h4>
                       <p className={`text-[10px] font-bold ${textMuted} truncate max-w-[200px]`}>
-                        {mappedField ? `Mapped to: ${mappedField.label}` : 'Click to map field'}
+                        {slot.noMapping 
+                          ? (isVisible ? 'Currently Visible' : 'Currently Hidden')
+                          : (mappedField ? `Mapped to: ${mappedField.label}` : 'Click to map field')}
                       </p>
                     </div>
                   </div>
@@ -349,15 +361,34 @@ export default function DesignTab2({ builderItems, design, setDesign }: DesignTa
 
                 {isSelected && (
                   <div className="mt-4 pt-4 border-t border-glass-border animate-in slide-in-from-top-2 duration-200">
-                    <CustomSelect
-                      options={[
-                        { label: 'Not Mapped', value: '' },
-                        ...allFields.map(f => ({ label: f.label, value: f.id }))
-                      ]}
-                      value={mappedFieldId || ''}
-                      onChange={(val: string) => handleUpdateMapping(slot.id, val)}
-                      className="border-primary/20"
-                    />
+                    {!slot.noMapping ? (
+                      <>
+                        <CustomSelect
+                          options={[
+                            { label: 'Not Mapped', value: '' },
+                            ...compatibleFields.map(f => ({ 
+                              label: `${f.label} (${f.type || 'unknown'})`, 
+                              value: f.id 
+                            }))
+                          ]}
+                          value={mappedFieldId || ''}
+                          onChange={(val: string) => handleUpdateMapping(slot.id, val)}
+                          className="border-primary/20"
+                        />
+                        {compatibleFields.length === 0 && (
+                          <p className="mt-2 text-[8px] font-black uppercase text-amber-500 animate-pulse">
+                            ⚠️ No compatible {slot.allowedTypes?.join('/')} fields found
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <div className="flex items-center gap-2 py-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                        <p className="text-[10px] font-black uppercase tracking-widest text-emerald-500">
+                          Standard Component — No mapping required
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

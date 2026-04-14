@@ -37,6 +37,8 @@ export interface TemplateProps {
   fontClass: string;
   activeSlot?: string | null;
   onSlotClick?: (slot: string, e: React.MouseEvent) => void;
+  onVariantSelect?: (index: number) => void;
+  activeVariantIndex?: number;
   context?: any;
   style?: React.CSSProperties;
 }

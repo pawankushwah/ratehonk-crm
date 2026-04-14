@@ -120,9 +120,18 @@ export const isEmptyValue = (val: any): boolean => {
  * Gets the display value for a field role from a data object.
  * Supports nested fields and repeatable sections (e.g. Variants).
  */
-export const getRoleValue = (role: FieldRoleType, product: any, template: any): any => {
+export const getRoleValue = (role: FieldRoleType, product: any, template: any, variantData?: any): any => {
   const fieldId = findFieldByRole(role, template);
   const data = product?.data || product || {};
+
+  // 0. Variant Override (Highest priority if variant is selected)
+  if (variantData) {
+    if (fieldId && !isEmptyValue(variantData[fieldId])) return variantData[fieldId];
+    if (!isEmptyValue(variantData[role])) return variantData[role];
+    // Special image/price fallbacks for variants
+    if (role === 'image' && !isEmptyValue(variantData.imageUrl)) return variantData.imageUrl;
+    if (role === 'price' && !isEmptyValue(variantData.price)) return variantData.price;
+  }
   
   if (!fieldId) {
     // Falls back to direct property access if role matches key in data
@@ -156,7 +165,7 @@ export const getRoleValue = (role: FieldRoleType, product: any, template: any): 
 
   // 2. Search deeper / collect from sections
   // For stock, we want all values to sum them up, not just UNIQUE ones
-  const values = getRoleValues(role, product, template, role !== 'stock');
+  const values = getRoleValues(role, product, template, role !== 'stock', variantData);
   
   // SPECIAL CASE: Stock Role (Aggregation across variants)
   if (role === 'stock' && values.length > 0) {
@@ -174,7 +183,7 @@ export const getRoleValue = (role: FieldRoleType, product: any, template: any): 
  * Gets ALL values for a field role from a data object.
  * Useful for collecting variants (e.g., all available colors, sizes).
  */
-export const getRoleValues = (role: FieldRoleType, product: any, template: any, unique: boolean = true): any[] => {
+export const getRoleValues = (role: FieldRoleType, product: any, template: any, unique: boolean = true, variantData?: any): any[] => {
   const fieldId = findFieldByRole(role, template);
   const data = product?.data || product || {};
   
