@@ -1365,6 +1365,7 @@ export const formTemplates = pgTable("form_templates", {
   name: text("name").notNull(),
   schema: jsonb("schema").notNull(), // JSONB: Sections, Groups, Fields, Logic
   design: jsonb("design"), // JSONB: Studio Pro multi-page layout
+  mapping: jsonb("mapping"), // JSONB: Field mappings to design slots
   userId: integer("user_id").notNull().references(() => users.id),
   tenantId: integer("tenant_id").notNull().references(() => tenants.id),
   mappedTo: integer("mapped_to").notNull().references(() => frontendForms.id),

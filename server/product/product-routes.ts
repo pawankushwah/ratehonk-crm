@@ -36,8 +36,8 @@ export const registerProductRoutes = (app: Express, authenticate: any, checkTena
 
   // Images
   app.post("/api/images/upload", authenticate, imageController.uploadImage);
-  app.get("/api/images/:id", authenticate, imageController.getImage);
+  app.get("/api/images/:id", imageController.getImage);
 
   // SKU
-  app.get("/api/sku/next", authenticate, skuController.getNextSku);
+  app.post("/api/sku/next", authenticate, skuController.getNextSku);
 };

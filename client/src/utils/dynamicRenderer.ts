@@ -52,7 +52,14 @@ export const findFieldByRole = (role: FieldRoleType, template: any): string | nu
   // 1. Check explicit mapping in design if available
   // Support mode-specific mappings if they were pre-resolved or direct check
   const design = template.design || template;
-  const mapping = design.mapping || {};
+  
+  // Try mapping candidates in order of specificity
+  const mapping = 
+    design.viewMapping && Object.keys(design.viewMapping).length > 0 ? design.viewMapping :
+    design.cardMapping && Object.keys(design.cardMapping).length > 0 ? design.cardMapping :
+    design.mapping && Object.keys(design.mapping).length > 0 ? design.mapping :
+    template.mapping && Object.keys(template.mapping).length > 0 ? template.mapping : 
+    {};
   
   if (mapping[role]) return mapping[role];
 
@@ -134,6 +141,18 @@ export const getRoleValue = (role: FieldRoleType, product: any, template: any): 
   if (!isEmptyValue(data[fieldId])) {
     return data[fieldId];
   }
+
+  // Fallback for previews: If fieldId is from a mapping but data[fieldId] is empty,
+  // try the role name itself as a key (e.g. data['title']). 
+  // This is essential for DesignTab previews where mock data uses role names.
+  if (!isEmptyValue(data[role])) {
+    return data[role];
+  }
+
+  // Check for common naming variations in mock data (even if fieldId exists)
+  if (role === 'image' && !isEmptyValue(data.imageUrl)) return data.imageUrl;
+  if (role === 'colors' && !isEmptyValue(data.availableColors)) return data.availableColors;
+  if (role === 'sizes' && !isEmptyValue(data.availableSizes)) return data.availableSizes;
 
   // 2. Search deeper / collect from sections
   // For stock, we want all values to sum them up, not just UNIQUE ones
@@ -248,13 +267,13 @@ export const resolveImageUrl = (val: any): string | null => {
   
   if (!url) return null;
 
-  if (url.startsWith('http') || url.startsWith('blob:') || url.startsWith('data:')) {
+  if (url.startsWith('http') || url.startsWith('blob:') || url.startsWith('data:') || url.startsWith('/')) {
     return url;
   }
 
   // Check if it's a UUID/ID for our internal API
-  const apiBase = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_URL) || 'http://localhost:5002';
-  return `${apiBase}/api/v1/images/${url}`;
+  const apiBase = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_URL) || 'http://localhost:5001';
+  return `${apiBase}/api/images/${url}`;
 };
 
 /**

@@ -28,20 +28,22 @@ export const uploadImage = async (req: any, res: Response) => {
 export const getImage = async (req: any, res: Response) => {
   try {
     const id = req.params.id;
-    const tenantId = req.user.tenantId;
+    const tenantId = req.user?.tenantId;
     const isOriginal = req.query.original === "true";
     
     const image = await simpleStorage.getImageLog(Number(id), tenantId);
+    console.log("Image:", image);
     if (!image) return res.status(404).json({ success: false, message: "Image not found" });
     
     // Choose between cropped data (default) and original data
-    const chosenData = (isOriginal && image.originalData) ? image.originalData : image.data;
-    
+    const chosenData = (isOriginal && image.original_data) ? image.original_data : image.data;
+    console.log("Chosen Data:", chosenData);
     if (!chosenData) return res.status(404).json({ success: false, message: "Image data not found" });
 
     // Extract base64 without prefix if it exists
     const base64Data = chosenData.split(",").pop() || "";
     const buffer = Buffer.from(base64Data, "base64");
+    console.log("Buffer:", buffer);
     
     res.set("Content-Type", image.mimeType || "image/jpeg");
     return res.send(buffer);

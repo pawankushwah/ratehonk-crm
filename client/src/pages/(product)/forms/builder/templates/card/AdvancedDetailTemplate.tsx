@@ -167,7 +167,7 @@ export const mockData = {
   rating: 5.0,
   reviewCount: 320,
   description: 'A 75% layout wireless mechanical keyboard with double-gasket mount design and full CNC aluminum body.',
-  imageUrl: '/assets/images/default-product-2.png',
+  imageUrl: '/src/assets/images/default-product-1.png',
   availableColors: ['#1f2937', '#6b7280', '#9ca3af'],
   availableSizes: ['Red Switch', 'Brown Switch', 'Blue Switch'],
 };

@@ -190,7 +190,7 @@ export const mockData = {
   rating: 4.8,
   reviewCount: 2400,
   description: 'Experience lightning fast loading with an ultra-high speed SSD, deeper immersion with support for haptic feedback and 3D Audio.',
-  imageUrl: '/assets/images/default-product-2.png',
+  imageUrl: '/src/assets/images/default-product-1.png',
   availableColors: ['#ffffff', '#000000', '#2563eb'],
   availableSizes: ['Disc Edition', 'Digital Edition'],
 };

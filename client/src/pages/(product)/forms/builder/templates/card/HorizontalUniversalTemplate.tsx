@@ -236,7 +236,7 @@ export const mockData = {
   reviewCount: 450,
   promo: 'New Arrival',
   description: 'The thinnest Apple product ever. Featuring the outrageous performance of the M4 chip and a breakthrough Ultra Retina XDR display.',
-  imageUrl: '/assets/images/default-product-2.png',
+  imageUrl: '/src/assets/images/default-product-1.png',
   availableColors: ['#1e293b', '#e2e8f0'],
   availableSizes: ['11-inch', '13-inch'],
 };

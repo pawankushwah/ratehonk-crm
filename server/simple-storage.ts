@@ -18480,7 +18480,7 @@ async getDashboardMetrics(
 
   async getDynamicDataEntries(tenantId: number, filters: any) {
     let query = sql`
-      SELECT dd.*, ft.name as template_name, ft.resource_type
+      SELECT dd.*, ft.name as template_name, ft.schema as template_schema, ft.design as template_design, ft.mapping as template_mapping
       FROM dynamic_data dd
       JOIN form_templates ft ON dd.template_id = ft.id
       WHERE dd.tenant_id = ${tenantId}
@@ -18488,9 +18488,6 @@ async getDashboardMetrics(
 
     if (filters.templateId) {
       query = sql`${query} AND dd.template_id = ${filters.templateId}`;
-    }
-    if (filters.resourceType) {
-      query = sql`${query} AND ft.resource_type = ${filters.resourceType}`;
     }
     if (filters.search) {
       const searchTerm = `%${filters.search.toLowerCase()}%`;
@@ -18645,8 +18642,12 @@ async getDashboardMetrics(
     return log;
   }
 
-  async getImageLog(id: number, tenantId: number) {
-    const [log] = await sql`SELECT * FROM image_logs WHERE id = ${id} AND tenant_id = ${tenantId}`;
+  async getImageLog(id: number, tenantId?: number) {
+    if (tenantId) {
+      const [log] = await sql`SELECT * FROM image_logs WHERE id = ${id}`;
+      return log;
+    }
+    const [log] = await sql`SELECT * FROM image_logs WHERE id = ${id}`;
     return log;
   }
 }

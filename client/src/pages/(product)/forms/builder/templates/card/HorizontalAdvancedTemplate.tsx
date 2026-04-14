@@ -212,7 +212,7 @@ export const mockData = {
   rating: 4.9,
   reviewCount: 890,
   description: 'World-class noise cancellation, quieter than ever before. Breakthrough spatial audio for immersive listening.',
-  imageUrl: '/assets/images/default-product-2.png',
+  imageUrl: '/src/assets/images/default-product-1.png',
   availableColors: ['#000000', '#f3f4f6'],
   availableSizes: ['Standard'],
 };

@@ -3,7 +3,7 @@ import { simpleStorage } from "../simple-storage";
 
 export const getNextSku = async (req: any, res: Response) => {
   try {
-    const { prefix = "SKU" } = req.query as any;
+    const { prefix = "SKU" } = req.body as any;
     const tenantId = req.user.tenantId;
     
     const sku = await simpleStorage.generateNextSku(tenantId, prefix);

@@ -8,8 +8,20 @@ import {
 import Button from '@/components/products/Button';
 import { getTemplates, getDynamicItemData } from '@/lib/forms';
 import { getRoleValue, findFieldByRole, resolveImageUrl } from '@/utils/dynamicRenderer';
-import CardRenderer from '@/components/products/CardRenderer';
+import CardRenderer, { type CardDesignConfig } from '@/components/products/CardRenderer';
 import { Layout } from '@/components/layout/layout';
+
+const DEFAULT_VIEW_DESIGN: CardDesignConfig = {
+  templateId: 'immersive_flowbite',
+  theme: 'light',
+  styles: {
+    primaryColor: '#ec4899',
+    borderRadius: 'lg',
+    shadow: 'lg',
+    padding: 'md',
+    fontFamily: 'plus-jakarta'
+  }
+};
 
 const ViewProductPage = () => {
   const { id } = useParams<{ id: string }>();
@@ -38,14 +50,20 @@ const ViewProductPage = () => {
           setProduct(productResponse);
 
           // 2. Resolve Embedded Template or fallback to generic discovery
-          let activeTemplate = productResponse.FormTemplate || productResponse.form_template || productResponse.formTemplate;
+          let activeTemplate = productResponse.FormTemplate || 
+            (productResponse.template_schema ? {
+              schema: productResponse.template_schema,
+              design: productResponse.template_design,
+              mapping: productResponse.template_design?.viewMapping || productResponse.template_design?.mapping || {},
+              name: productResponse.template_name
+            } : null);
           
           if (!activeTemplate) {
             console.log("No embedded template found, fetching inventory archetype...");
             const templatesRes = await getTemplates();
             const templates = templatesRes.data || [];
             activeTemplate = templates.find((t: any) => 
-               t.name.toLowerCase() === 'inventory' || t.resource_type === 'product'
+               t.name.toLowerCase() === 'inventory' || t.name.toLowerCase() === 'product'
             );
           }
           
@@ -110,7 +128,7 @@ const ViewProductPage = () => {
           </div>
           <h2 className="text-2xl font-bold text-text-main mb-2">Oops!</h2>
           <p className="text-text-muted max-w-md mb-8">{error || 'Something went wrong while loading this product.'}</p>
-          <Button onClick={() => setLocation('/dashboard/products')}>Back to {template?.name || "Products"}</Button>
+          <Button onClick={() => window.history.back()}>Back to {template?.name || "Products"}</Button>
         </div>
       </Layout>
     );
@@ -153,8 +171,8 @@ const ViewProductPage = () => {
       <div className="min-h-screen pb-20">
         <div className="mb-8 flex items-center justify-between">
           <button 
-            onClick={() => setLocation('/dashboard/all-products')}
-            className="flex items-center gap-2 text-sm font-bold text-text-muted hover:text-primary transition-colors group"
+            onClick={() => window.history.back()}
+            className="pl-10 pt-10 flex items-center gap-2 text-sm font-bold text-text-muted hover:text-primary transition-colors group"
           >
             <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center group-hover:bg-primary/10 group-hover:text-primary transition-all">
               <ArrowLeft size={18} />
@@ -164,42 +182,13 @@ const ViewProductPage = () => {
         </div>
 
       <div className="animate-in fade-in slide-in-from-bottom-4 duration-1000">
-        {template?.design ? (
-          <CardRenderer 
-            design={template.design}
-            data={productData}
-            template={template}
-            mode="view"
-            selectedVariant={selectedVariant}
-          />
-        ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-             <div className="lg:col-span-12 p-32 text-center bg-white/5 rounded-[3rem] border border-white/10 flex flex-col items-center justify-center overflow-hidden relative">
-                {imageUrl && (
-                  <div className="absolute inset-0 opacity-20 blur-3xl scale-150 -z-10">
-                    <img src={imageUrl} alt="" className="w-full h-full object-cover" />
-                  </div>
-                )}
-                <div className="w-48 h-48 rounded-[2rem] bg-primary/10 flex items-center justify-center text-primary mb-8 overflow-hidden border border-white/10 shadow-2xl">
-                   {imageUrl ? (
-                     <img src={imageUrl} alt={name} className="w-full h-full object-cover" />
-                   ) : (
-                     <Package size={64} />
-                   )}
-                </div>
-                <h2 className="text-4xl font-black mb-4 tracking-tighter">{name}</h2>
-                <p className="text-text-muted max-w-xl mx-auto leading-relaxed text-lg">
-                   {description !== '—' ? description : 'This product uses a dynamic architecture but has no defined immersive design.'}
-                </p>
-                <div className="mt-12 flex gap-4">
-                   <div className="px-6 py-3 rounded-2xl bg-white/5 border border-white/10 flex items-center gap-3">
-                      <Box size={18} className="text-primary" />
-                      <span className="text-xs font-black uppercase tracking-widest">Awaiting Studio Pro Design</span>
-                   </div>
-                </div>
-             </div>
-          </div>
-        )}
+        <CardRenderer 
+          design={template?.design || DEFAULT_VIEW_DESIGN}
+          data={productData}
+          template={template}
+          mode="view"
+          selectedVariant={selectedVariant}
+        />
       </div>
 
       {/* Supplemental Technical Specifications (Automatic Discovery) */}

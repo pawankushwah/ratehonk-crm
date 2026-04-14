@@ -158,7 +158,7 @@ export const mockData = {
   rating: 4.8,
   reviewCount: 3200,
   description: 'The most rugged and capable Apple Watch. Designed for outdoor adventures and supercharged workouts.',
-  imageUrl: '/assets/images/default-product-2.png',
+  imageUrl: '/src/assets/images/default-product-1.png',
   availableColors: ['#f97316', '#e2e8f0', '#0f172a'],
   availableSizes: ['49mm'],
 };

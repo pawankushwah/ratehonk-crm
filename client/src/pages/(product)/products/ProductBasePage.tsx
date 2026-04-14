@@ -87,12 +87,11 @@ const ProductBasePage: React.FC<ProductBasePageProps> = ({
     try {
       let invTemplate = inventoryTemplate;
       if (!invTemplate) {
-        const templatesRes = await getTemplates();
-        const templates = templatesRes.data || [];
+        const templates = await getTemplates();
+
+        console.log(templates);
         
-        if (templateId) {
-          invTemplate = templates.find((t: any) => t.id === templateId);
-        } else if (templateName) {
+        if (templateName) {
           invTemplate = templates.find((t: any) => t.name.toLowerCase() === templateName.toLowerCase());
         } else {
           // Default logic from original ProductsPage
@@ -102,6 +101,7 @@ const ProductBasePage: React.FC<ProductBasePageProps> = ({
         }
 
         if (invTemplate) {
+          console.log("settting the inventory Template", invTemplate);
           setInventoryTemplate(invTemplate);
         }
       }
@@ -332,7 +332,12 @@ const ProductBasePage: React.FC<ProductBasePageProps> = ({
                   </thead>
                   <tbody>
                     {products.map((product) => {
-                      const template = product.FormTemplate || inventoryTemplate;
+                      const template = product.FormTemplate || (product.template_schema ? { 
+                        schema: product.template_schema, 
+                        design: product.template_design, 
+                        mapping: product.template_design?.cardMapping || product.template_design?.mapping || product.template_mapping || {},
+                        name: product.template_name 
+                      } : inventoryTemplate);
                       const name = getRoleValue('title', product, template);
                       const category = getRoleValue('category', product, template);
                       const price = getRoleValue('price', product, template);
@@ -392,8 +397,13 @@ const ProductBasePage: React.FC<ProductBasePageProps> = ({
                 <UniversalCard 
                   key={product.id}
                   product={product}
-                  template={product.FormTemplate || inventoryTemplate}
-                  onView={() => setLocation(`/dashboard/products/view/${product.id}`)}
+                  template={product.FormTemplate || (product.template_schema ? { 
+                    schema: product.template_schema, 
+                    design: product.template_design, 
+                    mapping: product.template_design?.cardMapping || product.template_design?.mapping || product.template_mapping || {},
+                    name: product.template_name 
+                  } : inventoryTemplate)}
+                  onView={() => setLocation(`/products/view/${product.id}`)}
                   onEdit={() => { 
                     setDrawerMode('edit'); 
                     setSelectedProduct(product); 

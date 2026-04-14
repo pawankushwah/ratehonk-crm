@@ -182,9 +182,9 @@ const PublicProductView = () => {
     if (!img) return null;
     if (typeof img === 'string') {
       if (img.startsWith('http') || img.startsWith('blob:') || img.startsWith('data:')) return img;
-      return `${import.meta.env.VITE_API_URL || 'http://localhost:5002'}/api/v1/images/${img}`;
+      return `${import.meta.env.VITE_API_URL || 'http://localhost:5001'}/api/images/${img}`;
     }
-    return img.url || (typeof img[0] === 'string' ? `${import.meta.env.VITE_API_URL}/api/v1/images/${img[0]}` : img[0]?.url);
+    return img.url || (typeof img[0] === 'string' ? `${import.meta.env.VITE_API_URL}/api/images/${img[0]}` : img[0]?.url);
   };
 
   const shareImage = resolveImageUrl(uniqueImages[0]) || `https://picsum.photos/seed/${productId}/600/600`;

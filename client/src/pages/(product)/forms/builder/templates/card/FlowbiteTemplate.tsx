@@ -227,7 +227,7 @@ export const mockData = {
   rating: 4.9,
   reviewCount: 856,
   description: 'The ultimate Galaxy experience with Titanium frame and the new S Pen. Galaxy AI is here.',
-  imageUrl: '/assets/images/default-product-2.png',
+  imageUrl: '/src/assets/images/default-product-1.png',
   availableColors: ['#4b5563', '#f3f4f6', '#1e293b'],
   availableSizes: ['128GB', '256GB', '512GB'],
 };

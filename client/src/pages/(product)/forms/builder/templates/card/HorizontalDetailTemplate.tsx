@@ -151,7 +151,7 @@ export const mockData = {
   rating: 4.9,
   reviewCount: 156,
   description: 'The most advanced chips ever built for a personal computer. M3 Pro and M3 Max push performance even further.',
-  imageUrl: '/assets/images/default-product-2.png',
+  imageUrl: '/src/assets/images/default-product-1.png',
   availableColors: ['#94a3b8', '#1e293b'],
   availableSizes: ['14-inch', '16-inch'],
 };

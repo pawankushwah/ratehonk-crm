@@ -270,7 +270,7 @@ export const DynamicForm: React.FC<DynamicFormProps> = ({
     editingImageId: undefined
   });
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5002';
+  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001';
 
   useEffect(() => {
     const fetchAllDropdowns = async () => {
@@ -504,7 +504,7 @@ export const DynamicForm: React.FC<DynamicFormProps> = ({
   const handleEditImage = async (fieldId: string, uuid: string, aspectRatio: string, path: string[]) => {
     try {
       setUploadingImages(prev => ({ ...prev, [uuid]: 'fetching' }));
-      const response = await fetch(`${API_URL}/api/v1/images/${uuid}?original=true`);
+      const response = await fetch(`${API_URL}/api/images/${uuid}?original=true`);
       if (!response.ok) throw new Error('Failed to fetch original image');
       
       const blob = await response.blob();
@@ -704,7 +704,7 @@ export const DynamicForm: React.FC<DynamicFormProps> = ({
                     const uuid = isString ? item : (item.uuid || item.id || `img_${idx}`);
                     const isUploading = uploadingImages[uuid];
                     const previewUrl = previews[uuid];
-                    const finalUrl = previewUrl || (item.url ? item.url : `${API_URL}/api/v1/images/${uuid}`);
+                    const finalUrl = previewUrl || (item.url ? item.url : `${API_URL}/api/images/${uuid}`);
                     // const error = formErrors[it.id];
                     
                     return (

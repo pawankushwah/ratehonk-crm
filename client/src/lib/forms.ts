@@ -60,7 +60,7 @@ export const updateTemplate = async (id: string, data: Partial<FormTemplateData>
 };
 
 export const uploadImage = async (base64Data: string, name: string, mimeType: string, originalData?: string) => {
-  const response = await apiRequest('POST', '/api/images', {
+  const response = await apiRequest('POST', '/api/images/upload', {
     data: base64Data,
     original_data: originalData,
     name,
@@ -91,7 +91,7 @@ export const addDropdownOption = async (dropdownId: string, value: string) => {
 };
 
 export const submitFormData = async (resourceId: string, templateId: string, data: any) => {
-  const response = await apiRequest('POST', `/api/resources/${resourceId}/data`, {
+  const response = await apiRequest('POST', `/api/resources/data/${resourceId}`, {
     template_id: templateId,
     data
   });
@@ -100,13 +100,13 @@ export const submitFormData = async (resourceId: string, templateId: string, dat
 };
 
 export const getDynamicItemData = async (resourceId: string) => {
-  const response = await apiRequest('GET', `/api/resources/${resourceId}/data`);
+  const response = await apiRequest('GET', `/api/resources/data/${resourceId}`);
   const res = await response.json();
-  return res.data;
+  return res;
 };
 
 export const getDynamicItemDataPublic = async (resourceId: string) => {
-  const response = await apiRequest('GET', `/api/resources/${resourceId}/data/public`);
+  const response = await apiRequest('GET', `/api/resources/data/${resourceId}/public`);
   const res = await response.json();
   return res.data;
 };
@@ -129,7 +129,7 @@ export const getAllDynamicData = async (options: {
   const url = `/api/resources/data/all${searchParams ? `?${searchParams}` : ''}`;
   const response = await apiRequest('GET', url);
   const res = await response.json();
-  return res.data;
+  return res;
 };
 
 export const getInventoryData = async (options: { 
@@ -149,7 +149,7 @@ export const getInventoryData = async (options: {
   const url = `/api/resources/inventory/all${searchParams ? `?${searchParams}` : ''}`;
   const response = await apiRequest('GET', url);
   const res = await response.json();
-  return res.data;
+  return res;
 };
 
 export const getAllDynamicDataPublic = async (options: { 
@@ -170,7 +170,7 @@ export const getAllDynamicDataPublic = async (options: {
   const url = `/api/resources/data/all/public${searchParams ? `?${searchParams}` : ''}`;
   const response = await apiRequest('GET', url);
   const res = await response.json();
-  return res.data;
+  return res;
 };
 
 // Frontend Forms CRUD (Development)

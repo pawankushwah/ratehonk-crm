@@ -12,7 +12,7 @@ export const submitData = async (req: any, res: Response) => {
     if (!template) return res.status(404).json({ success: false, message: "Template not found" });
 
     // SKU Generation Logic
-    const groups = (template.schema as any).groups || [];
+    const groups = (template.schema as any)?.groups || [];
     for (const group of groups) {
       for (const field of group.fields) {
         if (field.type === "sku") {

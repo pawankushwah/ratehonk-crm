@@ -33,16 +33,26 @@ const FlowbiteAdvancedDetailTemplate: React.FC<TemplateProps> = ({
   );
 
   const {
-    title, price, images: propImages,
+    title: initialTitle,
+    price: initialPrice,
+    imageUrl: initialImageUrl,
     description: dataDescription,
-    rating = 5.0,
-    reviewCount = 345,
+    rating: dataRating,
+    reviewCount: dataReviewCount,
     availableColors = [],
     availableSizes = [],
-    stock = 15,
+    stock: initialStock,
+    allImages = [],
   } = (data || {}) as any;
 
-  const description = dataDescription || (data as any)[mapping.description] || (data as any).description || "Premium quality item for modern lifestyles.";
+  const d = data as any;
+  const title = initialTitle || d[mapping.title] || "Product Name";
+  const price = initialPrice !== undefined && initialPrice !== '—' ? initialPrice : (d[mapping.price] || 0);
+  const imageUrl = initialImageUrl || d.image || d[mapping.image];
+  const description = dataDescription || d[mapping.description] || (data as any).description || "Premium quality item for modern lifestyles.";
+  const stock = initialStock !== undefined && initialStock !== '—' ? initialStock : (d[mapping.stock] || 0);
+  const rating = dataRating !== undefined && dataRating !== '—' ? dataRating : (d[mapping.rating] || 5.0);
+  const reviewCount = dataReviewCount !== undefined && dataReviewCount !== '—' ? dataReviewCount : (d[mapping.reviewCount] || 0);
 
   // Final Highlights Resolution
   const resolvedHighlights = React.useMemo(() => {
@@ -62,7 +72,9 @@ const FlowbiteAdvancedDetailTemplate: React.FC<TemplateProps> = ({
     return [];
   }, [data, mappedHighlightsId, dynamicKeyValues]);
 
-  const images = (propImages && propImages.length > 0) ? propImages : [];
+  const images = (allImages && allImages.length > 0) 
+    ? allImages 
+    : [imageUrl || "/src/assets/images/default-product-1.png"].flat().filter(Boolean);
 
   return (
     <section className={`py-4 md:py-8 antialiased min-w-5xl w-full ${bgBase} ${textMain}`}>
@@ -94,7 +106,7 @@ const FlowbiteAdvancedDetailTemplate: React.FC<TemplateProps> = ({
                       key={idx}
                       onClick={() => setSelectedImage(idx)}
                       className={`w-15 h-15 rounded-xl border-2 transition-all p-2 shrink-0 bg-white/5 ${selectedImage === idx ? 'scale-105' : 'opacity-40 hover:opacity-100'}`}
-                      style={{ borderColor: selectedImage === idx ? accentColor : 'transparent' }}
+                      style={{ width: '60px', height: '60px', borderColor: selectedImage === idx ? accentColor : 'transparent' }}
                     >
                       <img src={img} className="w-full h-full object-contain" alt={`View ${idx + 1}`} />
                     </button>
@@ -371,10 +383,7 @@ export const mockData = {
   reviewCount: 128,
   quantity: 1,
   description: 'Mac Studio is a desktop powerhouse. It packs outrageous performance into an unbelievably compact form.',
-  images: ["https://flowbite.s3.amazonaws.com/blocks/e-commerce/imac-front.svg",
-    "https://flowbite.s3.amazonaws.com/blocks/e-commerce/imac-back.svg",
-    "https://flowbite.s3.amazonaws.com/blocks/e-commerce/imac-components.svg",
-    "https://flowbite.s3.amazonaws.com/blocks/e-commerce/imac-side.svg"],
+  imageUrl: ["/src/assets/images/default-product-1.png", "/src/assets/images/default-product-2.png", "/src/assets/images/default-product-3.png", "/src/assets/images/default-product-4.png"],
   availableColors: ['Silver', "red", "blue"],
   availableSizes: ['M2 Max', 'M2 Ultra'],
   highlights: [

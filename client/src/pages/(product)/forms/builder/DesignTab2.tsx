@@ -32,7 +32,7 @@ interface DesignTab2Props {
   setDesign: (design: any) => void;
 }
 
-const DEFAULT_PREVIEW_IMAGE = '/assets/images/default-product-2.png';
+const DEFAULT_PREVIEW_IMAGE = '/src/assets/images/default-product-1.png';
 
 const DebouncedColorPicker = ({ value, onChange, textMain, borderColor }: { value: string, onChange: (color: string) => void, textMain?: string, borderColor?: string }) => {
   const [tempColor, setTempColor] = useState(value);
@@ -83,7 +83,7 @@ export default function DesignTab2({ builderItems, design, setDesign }: DesignTa
     if (!design || Object.keys(design).length === 0) return {
       templateId: 'universal',
       viewTemplateId: 'immersive_flowbite',
-      theme: 'dark' as 'light' | 'dark',
+      theme: 'light' as 'light' | 'dark',
       mapping: {},
       visibility: {},
       styles: {
@@ -224,7 +224,7 @@ export default function DesignTab2({ builderItems, design, setDesign }: DesignTa
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          {/* <div className="flex items-center gap-2">
             <div className={`flex p-1 rounded-xl border ${borderColor} bg-black/5 dark:bg-black/20`}>
               {['dark', 'light'].map((t) => (
                 <button
@@ -236,7 +236,7 @@ export default function DesignTab2({ builderItems, design, setDesign }: DesignTa
                 </button>
               ))}
             </div>
-          </div>
+          </div> */}
 
           <div className="flex items-center gap-2">
             <DebouncedColorPicker 

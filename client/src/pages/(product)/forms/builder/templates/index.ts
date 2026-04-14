@@ -1,3 +1,4 @@
+import SimpleTemplate, { mockData as SimpleMock } from './card/SimpleTemplate';
 import FlowbiteTemplate, { mockData as ClassicMock } from './card/FlowbiteTemplate';
 import UniversalTemplate, { mockData as UniversalMock } from './card/UniversalTemplate';
 import AdvancedDetailTemplate, { mockData as AdvancedMock } from './card/AdvancedDetailTemplate';
@@ -10,6 +11,7 @@ import FlowbiteDetailTemplate, { mockData as FlowbitePDPMock } from './detail/Fl
 import FlowbiteAdvancedDetailTemplate, { mockData as AdvancedPDPMock } from './detail/FlowbiteAdvancedDetailTemplate';
 
 export type TemplateId = 
+  | 'simple'
   | 'classic' 
   | 'universal' 
   | 'advanced_detail' 
@@ -22,6 +24,14 @@ export type TemplateId =
   | 'immersive_advanced';
 
 export const VERTICAL_TEMPLATES = [
+  { 
+    id: 'simple', 
+    name: 'Simple Card', 
+    type: 'card', 
+    description: 'Clean, simple dynamic card layout.',
+    supportedSlots: ['image', 'title', 'price', 'category', 'description', 'actions'],
+    mockData: SimpleMock
+  },
   { 
     id: 'universal', 
     name: 'Universal Glass', 
@@ -46,14 +56,6 @@ export const VERTICAL_TEMPLATES = [
     supportedSlots: ['image', 'title', 'price', 'sku', 'colors', 'sizes', 'description', 'highlights', 'promotions'],
     mockData: AdvancedMock
   },
-  // { 
-  //   id: 'carousel', 
-  //   name: 'Carousel Card', 
-  //   type: 'card', 
-  //   description: 'Interactive multi-image carousel.',
-  //   supportedSlots: ['image', 'title', 'price', 'badge', 'actions', 'description', 'colors', 'sizes'],
-  //   mockData: CarouselMock
-  // },
 ];
 
 export const HORIZONTAL_TEMPLATES = [
@@ -65,14 +67,6 @@ export const HORIZONTAL_TEMPLATES = [
     supportedSlots: ['image', 'title', 'price', 'description', 'colors', 'sizes', 'highlights', 'promotions'],
     mockData: HorizontalDetailMock
   },
-  // { 
-  //   id: 'horizontal_classic', 
-  //   name: 'Classic Row', 
-  //   type: 'list', 
-  //   description: 'Clean, standard Flowbite row layout.',
-  //   supportedSlots: ['image', 'title', 'price', 'badge', 'colors', 'sizes'],
-  //   mockData: HorizontalFlowbiteMock
-  // },
   { 
     id: 'horizontal_universal', 
     name: 'Universal Row', 
@@ -111,9 +105,9 @@ export const DETAIL_TEMPLATES = [
 
 // Unified registry for the renderer
 export const TemplateRegistry: Record<TemplateId, React.FC<any>> = {
+  simple: SimpleTemplate,
   classic: FlowbiteTemplate,
   universal: UniversalTemplate,
-  // universal: UniversalTemplateView,
   advanced_detail: AdvancedDetailTemplate,
   carousel: CarouselTemplate,
   horizontal_detail: HorizontalDetailTemplate,

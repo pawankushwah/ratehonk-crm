@@ -21,8 +21,8 @@ const FlowbiteDetailTemplate: React.FC<TemplateProps> = ({
   const [selectedSizeIdx, setSelectedSizeIdx] = useState(0);
   const [selectedImage, setSelectedImage] = useState(0);
 
-  const mapping = context?.form_schema?.design?.mapping || context?.design?.mapping || context?.mapping || {};
-  const formSchema = context?.form_schema?.items || context?.items || context?.schema || (Array.isArray(context) ? context : []);
+  const mapping = context?.design?.viewMapping || context?.design?.mapping || context?.mapping || {};
+  const formSchema = context?.schema || context?.items || (Array.isArray(context) ? context : []);
 
   const mappedHighlightsId = mapping.highlights;
 
@@ -36,23 +36,26 @@ const FlowbiteDetailTemplate: React.FC<TemplateProps> = ({
     price: initialPrice,
     imageUrl: initialImageUrl,
     description: dataDescription,
-    rating = 4.8,
-    reviewCount = 124,
+    rating: dataRating,
+    reviewCount: dataReviewCount,
     availableColors = [],
     availableSizes = [],
-    stock: initialStock = 0,
-    sku: initialSku = "ID: 455-RH",
+    stock: initialStock,
+    sku: initialSku,
     allImages = [],
     variants = []
   } = (data || {}) as any;
 
+  // Final property Resolution
   const d = data as any;
-  const title = initialTitle || d[mapping.title];
-  const price = initialPrice !== undefined ? initialPrice : d[mapping.price];
+  const title = initialTitle || d[mapping.title] || "Product Name";
+  const price = initialPrice !== undefined && initialPrice !== '—' ? initialPrice : (d[mapping.price] || 0);
   const imageUrl = initialImageUrl || d.image || d[mapping.image];
   const description = dataDescription || d[mapping.description] || d.description || "Premium quality item for modern lifestyles.";
   const sku = initialSku || d[mapping.sku] || "ID: 455-RH";
-  const stock = initialStock !== undefined ? initialStock : (d[mapping.stock] || 0);
+  const stock = initialStock !== undefined && initialStock !== '—' ? initialStock : (d[mapping.stock] || 0);
+  const rating = dataRating !== undefined && dataRating !== '—' ? dataRating : (d[mapping.rating] || 4.5);
+  const reviewCount = dataReviewCount !== undefined && dataReviewCount !== '—' ? dataReviewCount : (d[mapping.reviewCount] || 0);
 
   // Variant resolution logic (Synced with UniversalTemplateView)
   const variantSectionId = mapping.variantsSection || Object.keys(data).find(key => Array.isArray((data as any)[key]) && typeof (data as any)[key][0] === 'object');
@@ -83,7 +86,7 @@ const FlowbiteDetailTemplate: React.FC<TemplateProps> = ({
   const displayStock = activeVariant?.stock || stock;
   const displayImages = (activeVariant?.images && activeVariant.images.length > 0)
     ? activeVariant.images
-    : (allImages.length > 0 ? allImages : [imageUrl || "/assets/images/default-product-2.png"]);
+    : (allImages.length > 0 ? allImages : [imageUrl || "/src/assets/images/default-product-1.png"].flat().filter(Boolean));
 
   const images = displayImages;
 
@@ -131,7 +134,7 @@ const FlowbiteDetailTemplate: React.FC<TemplateProps> = ({
                       key={idx}
                       onClick={() => setSelectedImage(idx)}
                       className={`w-15 h-15 rounded-xl border-2 transition-all p-2 shrink-0 bg-white/5 ${selectedImage === idx ? 'scale-105' : 'opacity-40 hover:opacity-100'}`}
-                      style={{ borderColor: selectedImage === idx ? accentColor : 'transparent' }}
+                      style={{width: '60px', height: '60px', borderColor: selectedImage === idx ? accentColor : 'transparent' }}
                     >
                       <img src={img} className="w-full h-full object-contain" alt={`View ${idx + 1}`} />
                     </button>
@@ -363,7 +366,7 @@ export const mockData = {
   rating: 4.8,
   reviewCount: 456,
   description: 'Enter the world of bean-to-cup coffee with De\'Longhi Magnifica Start, providing everything you need to get started with your favorite espresso-based drinks at home.',
-  imageUrl: ['/assets/images/default-product-1.png', '/assets/images/default-product-2.png', '/assets/images/default-product-3.png', '/assets/images/default-product-4.png'],
+  imageUrl: ['/src/assets/images/default-product-1.png', '/src/assets/images/default-product-2.png', '/src/assets/images/default-product-3.png', '/src/assets/images/default-product-4.png'],
   availableColors: ['#000000', '#94a3b8', '#ffffff'],
   availableSizes: ['Standard Edition', 'Plus Edition'],
   highlights: [{
