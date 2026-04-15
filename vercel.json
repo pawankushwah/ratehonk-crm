@@ -26,11 +26,5 @@
       "src": "/(.*)",
       "dest": "client/index.html"
     }
-  ],
-  "crons": [
-    {
-      "path": "/api/cron/process-all",
-      "schedule": "*/5 * * * *"
-    }
   ]
 }
