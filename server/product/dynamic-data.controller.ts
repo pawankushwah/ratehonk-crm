@@ -53,10 +53,52 @@ export const getData = async (req: any, res: Response) => {
   }
 };
 
+export const getDataPublic = async (req: any, res: Response) => {
+  try {
+    const { res_id } = req.params;
+    const { user: tenantId } = req.query;
+    const data = await simpleStorage.getDynamicData(Number(res_id), tenantId);
+    if (!data) return res.status(404).json({ success: false, message: "Data not found" });
+    return res.json({ success: true, data, message: "Data fetched successfully" });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: "Failed to fetch data", error });
+  }
+};
+
 export const getAllData = async (req: any, res: Response) => {
   try {
     const { template_id, page = 1, limit = 10, search } = req.query as any;
     const tenantId = req.user.tenantId;
+    
+    const filters = {
+      templateId: template_id ? Number(template_id) : undefined,
+      search,
+      limit: Number(limit),
+      offset: (Number(page) - 1) * Number(limit)
+    };
+
+    const { data: rows, total } = await simpleStorage.getDynamicDataEntries(tenantId, filters);
+
+    return res.json({
+      success: true,
+      data: rows,
+      meta: {
+        total,
+        page: Number(page),
+        limit: Number(limit),
+        totalPages: Math.ceil(total / Number(limit))
+      },
+      message: "Data fetched successfully"
+    });
+  } catch (error) {
+    console.error('Fetch all data error:', error);
+    return res.status(500).json({ success: false, message: "Failed to fetch data", error });
+  }
+};
+
+export const getAllDataPublic = async (req: any, res: Response) => {
+  try {
+    const { template_id, page = 1, limit = 10, search, user: tenantId } = req.query as any;
     
     const filters = {
       templateId: template_id ? Number(template_id) : undefined,

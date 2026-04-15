@@ -21,19 +21,42 @@ const HorizontalUniversalTemplate: React.FC<TemplateProps> = ({
   activeVariantIndex = 0
 }) => {
   const mapping = data?.mapping || (context?.form_schema?.design?.mapping) || context?.design?.mapping || {};
+  const { 
+    title: initialTitle, 
+    price: initialPrice, 
+    imageUrl: initialImageUrl, 
+    category: initialCategory,
+    rating: initialRating,
+    reviewCount: initialReviewCount,
+    promo: initialPromo,
+    description: initialDescription,
+    availableColors = [],
+    availableSizes = [],
+    variants = []
+  } = (data || {}) as any;
+
+  // Final property Resolution (Trusting parent props first)
   const d = data as any;
-  const title = d.title || d[mapping.title];
-  const price = d.price !== undefined ? d.price : d[mapping.price];
-  const imageUrl = d.imageUrl || d.image || d[mapping.image];
-  const category = d.category || d[mapping.category] || 'Featured';
-  const rating = d.rating !== undefined ? d.rating : (d[mapping.rating] || 4.8);
-  const reviewCount = d.reviewCount !== undefined ? d.reviewCount : (d[mapping.reviewCount] || 0);
-  const promo = d.promo || d[mapping.promo] || "SALE";
-  const description = d.description || d[mapping.description];
-  const availableColors = d.availableColors || d[mapping.colors] || [];
-  const availableSizes = d.availableSizes || d[mapping.sizes] || [];
+  const title = initialTitle || d.title || "Product Name";
+  const category = initialCategory || d.category || 'Featured';
+  const rating = initialRating !== undefined ? initialRating : (d.rating || 4.8);
+  const reviewCount = initialReviewCount !== undefined ? initialReviewCount : (d.reviewCount || 0);
+  const promo = initialPromo || d.promo || "SALE";
+  const description = initialDescription || d.description || "Premium quality item.";
+
+  // Variant resolution logic
+  const processedVariants = variants;
+  const activeVariant = processedVariants[activeVariantIndex] || processedVariants[0];
   const mappedColor = d.color || d[mapping.colors];
 
+  // Scoped values
+  const displayPrice = initialPrice !== undefined && initialPrice !== '—' ? initialPrice : (activeVariant?.price || 0);
+  const displayImages = (activeVariant?.images && activeVariant.images.length > 0)
+    ? activeVariant.images
+    : [initialImageUrl || d.imageUrl || d.image || "/src/assets/images/default-product-1.png"].flat().filter(Boolean);
+
+  const imageUrl = displayImages[0];
+  const price = displayPrice;
   const selectedColor = activeVariantIndex;
   const setSelectedColor = (idx: number) => onVariantSelect?.(idx);
 

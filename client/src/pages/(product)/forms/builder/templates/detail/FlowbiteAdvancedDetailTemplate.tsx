@@ -36,26 +36,47 @@ const FlowbiteAdvancedDetailTemplate: React.FC<TemplateProps> = ({
   );
 
   const {
-    title: initialTitle,
-    price: initialPrice,
-    imageUrl: initialImageUrl,
+    title: rawTitle,
+    price: rawPrice,
+    imageUrl: rawImageUrl,
     description: dataDescription,
     rating: dataRating,
     reviewCount: dataReviewCount,
     availableColors = [],
     availableSizes = [],
-    stock: initialStock,
+    stock: rawStock,
     allImages = [],
+    variants = []
   } = (data || {}) as any;
 
+  // Final property Resolution (Trusting parent props first)
   const d = data as any;
-  const title = initialTitle || d[mapping.title] || "Product Name";
-  const price = initialPrice !== undefined && initialPrice !== '—' ? initialPrice : (d[mapping.price] || 0);
-  const imageUrl = initialImageUrl || d.image || d[mapping.image];
-  const description = dataDescription || d[mapping.description] || (data as any).description || "Premium quality item for modern lifestyles.";
-  const stock = initialStock !== undefined && initialStock !== '—' ? initialStock : (d[mapping.stock] || 0);
-  const rating = dataRating !== undefined && dataRating !== '—' ? dataRating : (d[mapping.rating] || 5.0);
-  const reviewCount = dataReviewCount !== undefined && dataReviewCount !== '—' ? dataReviewCount : (d[mapping.reviewCount] || 0);
+  const title = rawTitle || d.title || "Product Name";
+  const price = rawPrice !== undefined && rawPrice !== '—' ? rawPrice : (d.price || 0);
+  const imageUrl = rawImageUrl || d.imageUrl || d.image;
+  const stock = rawStock !== undefined && rawStock !== '—' ? rawStock : (d.stock || 0);
+  const rating = dataRating !== undefined && dataRating !== '—' ? dataRating : (d.rating || 5.0);
+  const reviewCount = dataReviewCount !== undefined && dataReviewCount !== '—' ? dataReviewCount : (d.reviewCount || 0);
+  const description = dataDescription || d.description || (data as any).description || "Premium quality item for modern lifestyles.";
+
+  // Variant resolution logic (Centralized)
+  const processedVariants = variants;
+  const activeVariant = processedVariants[selectedColor] || processedVariants[0];
+
+  const derivedSizes = React.useMemo(() => {
+    const sizes = activeVariant?.size || [];
+    const sizesArray = Array.isArray(sizes) ? sizes : [sizes].filter(Boolean);
+    return sizesArray.length > 0 ? Array.from(new Set(sizesArray)) : (availableSizes || []);
+  }, [activeVariant, availableSizes]);
+
+  // Centralized values from props (already resolved by CardRenderer)
+  const displayPrice = price;
+  const displayStock = stock;
+  const displayImages = (activeVariant?.images && activeVariant.images.length > 0)
+    ? activeVariant.images
+    : (allImages.length > 0 ? allImages : [imageUrl || "/src/assets/images/default-product-1.png"].flat().filter(Boolean));
+
+  const images = displayImages;
 
   // Final Highlights Resolution
   const resolvedHighlights = React.useMemo(() => {
@@ -74,10 +95,6 @@ const FlowbiteAdvancedDetailTemplate: React.FC<TemplateProps> = ({
     }
     return [];
   }, [data, mappedHighlightsId, dynamicKeyValues]);
-
-  const images = (allImages && allImages.length > 0) 
-    ? allImages 
-    : [imageUrl || "/src/assets/images/default-product-1.png"].flat().filter(Boolean);
 
   return (
     <section className={`py-4 md:py-8 antialiased min-w-5xl w-full ${bgBase} ${textMain}`}>
@@ -124,7 +141,7 @@ const FlowbiteAdvancedDetailTemplate: React.FC<TemplateProps> = ({
               {visibility.stock && (
                 <SlotWrapper slot="stock" activeSlot={activeSlot} onSlotClick={onSlotClick} accentColor={accentColor}>
                   <span className="inline-flex items-center px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-500 text-[9px] font-black uppercase tracking-widest border border-emerald-500/20">
-                    {Number(stock) > 0 ? "In Stock" : "Out of Stock"}
+                    {Number(displayStock) > 0 ? "In Stock" : "Out of Stock"}
                   </span>
                 </SlotWrapper>
               )}
@@ -152,11 +169,6 @@ const FlowbiteAdvancedDetailTemplate: React.FC<TemplateProps> = ({
                       {reviewCount} Reviews
                     </span>
                   </SlotWrapper>
-                  {/* <span className="w-px h-4 bg-slate-200 dark:bg-white/10" />
-                   <div className="flex items-center gap-2 text-xs font-bold text-primary" style={{ color: accentColor }}>
-                      <MapPin size={14} />
-                      <span className="truncate">Deliver to Bonnie Green- Sacramento 23647</span>
-                   </div> */}
                 </div>
               )}
             </div>
@@ -166,7 +178,7 @@ const FlowbiteAdvancedDetailTemplate: React.FC<TemplateProps> = ({
               {visibility.price && (
                 <SlotWrapper slot="price" activeSlot={activeSlot} onSlotClick={onSlotClick} accentColor={accentColor}>
                   <p className="text-4xl font-extrabold tracking-tighter tabular-nums">
-                    {formatDisplayValue(price, 'price')}
+                    {formatDisplayValue(displayPrice, 'price')}
                   </p>
                 </SlotWrapper>
               )}
@@ -195,23 +207,6 @@ const FlowbiteAdvancedDetailTemplate: React.FC<TemplateProps> = ({
 
             </div>
 
-            {/* ACTIONS */}
-            {/* {visibility.actions && (
-              <div className="flex flex-col sm:flex-row gap-4">
-                <SlotWrapper slot="actions" activeSlot={activeSlot} onSlotClick={onSlotClick} accentColor={accentColor} className="flex-1 flex gap-4">
-                  <button className={`flex-1 h-14 rounded-2xl bg-white/5 border ${borderBase} text-[10px] font-black uppercase tracking-widest ${textMain} hover:bg-white/10 transition-all flex items-center justify-center gap-2 active:scale-95 shadow-lg`}>
-                    <Heart size={18} /> Add to favourites
-                  </button>
-                  <button 
-                    className="flex-2 h-14 rounded-2xl text-white text-[10px] font-black uppercase tracking-widest shadow-2xl shadow-primary/30 hover:brightness-110 transition-all flex items-center justify-center gap-2 active:scale-95 px-8"
-                    style={{ backgroundColor: accentColor }}
-                  >
-                    <ShoppingCart size={18} /> Direct Purchase
-                  </button>
-                </SlotWrapper>
-              </div>
-            )} */}
-
             {/* VARIANTS */}
             <div className="flex flex-col border-slate-200 dark:border-white/5">
               {visibility.colors && (
@@ -219,20 +214,21 @@ const FlowbiteAdvancedDetailTemplate: React.FC<TemplateProps> = ({
                   <div className="space-y-3">
                     <span className={`text-[10px] font-black uppercase tracking-widest ${textMuted}`}>Choice Colour</span>
                     <div className="flex gap-3">
-                      {availableColors.length > 0 && (
-                        availableColors.map((color: any, i: number) => (
+                      {(processedVariants.length > 0 ? processedVariants : availableColors).map((variant: any, i: number) => {
+                        const colorValue = typeof variant === 'object' ? variant.color || variant.value || variant.hex : variant;
+                        return (
                           <button
                             key={i}
                             onClick={() => setSelectedColor(i)}
                             className={`flex justify-center items-center w-10 h-10 rounded-full border-2 transition-all ${selectedColor === i ? 'scale-110' : 'border-black'}`}
                             style={{
-                              backgroundColor: typeof color === 'object' ? color.value || color.hex : color,
-                              // borderColor: selectedColor === i ? accentColor : 'black',
-                              ['--tw-ring-color' as any]: selectedColor === i ? accentColor : 'black'
+                              backgroundColor: colorValue || '#ccc',
+                              borderColor: selectedColor === i ? accentColor : 'transparent',
+                              ['--tw-ring-color' as any]: selectedColor === i ? accentColor : 'transparent'
                             }}
                           >{selectedColor === i && <Check size={14} className='text-white mix-blend-difference m-auto' />}</button>
-                        ))
-                      )}
+                        );
+                      })}
                     </div>
                   </div>
                   <hr className='my-4 text-slate-200 dark:text-white/5' />
@@ -244,73 +240,29 @@ const FlowbiteAdvancedDetailTemplate: React.FC<TemplateProps> = ({
                   <div className="space-y-3">
                     <span className={`text-[10px] font-black uppercase tracking-widest ${textMuted}`}>Configuration Selection</span>
                     <div className="flex flex-wrap gap-3">
-                      {availableSizes.length > 0 ? (
-                        availableSizes.map((size: any, i: number) => (
+                      {(derivedSizes.length > 0 ? derivedSizes : availableSizes).map((size: any, i: number) => {
+                        return (
                           <button
                             key={i}
                             onClick={() => setSelectedSize(i)}
                             className={`px-6 py-2.5 rounded-2xl border text-[10px] font-black uppercase tracking-widest transition-all ${selectedSize === i ? 'bg-primary text-white scale-105 shadow-xl' : `bg-white/5 hover:bg-white/10 ${textMain} border-slate-200 dark:border-white/10`}`}
                             style={{ backgroundColor: selectedSize === i ? accentColor : undefined, borderColor: selectedSize === i ? accentColor : undefined }}
                           >
-                            {typeof size === 'object' ? size.label : size}
+                            {typeof size === 'object' ? size.label : String(size)}
                           </button>
-                        ))
-                      ) : (
-                        ['256GB', '512GB', '1TB'].map((s, i) => (
-                          <button
-                            key={s}
-                            onClick={() => setSelectedSize(i)}
-                            className={`px-6 py-2.5 rounded-2xl border text-[10px] font-black uppercase tracking-widest transition-all ${selectedSize === i ? 'bg-primary text-white scale-105 shadow-xl' : `bg-white/5 hover:bg-white/10 ${textMain} border-slate-200 dark:border-white/10`}`}
-                            style={{ backgroundColor: selectedSize === i ? accentColor : undefined, borderColor: selectedSize === i ? accentColor : undefined }}
-                          >
-                            {s}
-                          </button>
-                        ))
-                      )}
+                        );
+                      })}
                     </div>
                   </div>
                   <hr className='my-4 text-slate-200 dark:text-white/5' />
                 </SlotWrapper>
               )}
             </div>
-
-            {/* PICKUP AND WARRANTY MOCKUPS (MATCH SCREENSHOT) */}
-            {/* <div className="grid grid-cols-1 gap-8 py-8 border-t border-slate-200 dark:border-white/5">
-                <div className="space-y-4">
-                   <label className={`text-[10px] font-black uppercase tracking-widest ${textMuted}`}>Logistics Method</label>
-                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {[
-                        { label: 'Direct Shipping', price: '$19', note: 'Arrives in 2-3 days' },
-                        { label: 'Cloud Gateway', price: 'Free', note: 'Pick up in 1 hour' }
-                      ].map((m, i) => (
-                        <button key={i} className={`p-4 rounded-2xl border ${i === 0 ? 'border-primary bg-primary/5' : 'border-slate-200 dark:border-white/10 bg-white/5'} text-left group transition-all`} style={{ borderColor: i === 0 ? accentColor : undefined }}>
-                           <div className="flex items-center justify-between mb-1">
-                              <span className="text-[10px] font-black uppercase tracking-widest">{m.label}</span>
-                              <span className="text-[10px] font-black tabular-nums">{m.price}</span>
-                           </div>
-                           <p className={`text-[9px] font-bold ${textMuted} opacity-60 group-hover:opacity-100`}>{m.note}</p>
-                        </button>
-                      ))}
-                   </div>
-                </div>
-
-                <div className="space-y-4">
-                   <label className={`text-[10px] font-black uppercase tracking-widest ${textMuted}`}>Extended Coverage</label>
-                   <div className="flex flex-wrap gap-2">
-                       {['1 Year - $49', '2 Years - $89', '3 Years - $129'].map((w, i) => (
-                         <button key={i} className={`px-4 py-2 rounded-xl border text-[9px] font-black uppercase tracking-widest transition-all ${i === -1 ? 'bg-primary border-primary text-white' : `bg-white/5 ${textMain} border-slate-200 dark:border-white/10`}`}>
-                            {w}
-                         </button>
-                       ))}
-                   </div>
-                </div>
-            </div> */}
           </div>
         </div>
 
-        {/* EXTENDED SECTIONS (ADVANCED PDP STYLE) */}
+        {/* EXTENDED SECTIONS */}
         <div className="mt-16 grid grid-cols-1 lg:grid-cols-12 gap-16 border-t border-slate-200 dark:border-white/5 pt-16">
-          {/* ABOUT THIS ITEM */}
           <div className="lg:col-span-12">
             {visibility.description && (
               <SlotWrapper slot="description" activeSlot={activeSlot} onSlotClick={onSlotClick} accentColor={accentColor}>
@@ -343,7 +295,6 @@ const FlowbiteAdvancedDetailTemplate: React.FC<TemplateProps> = ({
             )}
           </div>
 
-          {/* KEY SPECIFICATIONS */}
           <div className="lg:col-span-12">
             {visibility.highlights && (
               <div>

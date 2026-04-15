@@ -46,7 +46,7 @@ const ROLES: FieldRole[] = [
  * 1. Checks the design mapping first.
  * 2. Falls back to fuzzy matching labels against keywords.
  */
-export const findFieldByRole = (role: FieldRoleType, template: any): string | null => {
+export const findFieldByRole = (role: FieldRoleType, template: any, searchContainerId?: string): string | null => {
   if (!template) return null;
 
   // 1. Check explicit mapping in design if available
@@ -90,6 +90,12 @@ export const findFieldByRole = (role: FieldRoleType, template: any): string | nu
     for (const item of currentItems) {
       if (foundId) break;
 
+      // If we are looking in a specific container, skip other containers
+      if (searchContainerId && (item.kind === 'section' || item.kind === 'group') && item.id !== searchContainerId) {
+        // But do traverse into it if the target might be deeper inside the requested container
+        // Wait, if searchContainerId is provided, the parent of the traverse call should be that container
+      }
+
       if (item.kind === 'field') {
         const label = (item.label || '').toLowerCase();
         // Strict match or contains logic
@@ -102,7 +108,26 @@ export const findFieldByRole = (role: FieldRoleType, template: any): string | nu
     }
   };
 
-  traverse(items);
+  // If searchContainerId is provided, find that container first
+  if (searchContainerId) {
+    let targetSection: any = null;
+    const findContainer = (currentItems: any[]) => {
+      if (!Array.isArray(currentItems)) return;
+      for (const item of currentItems) {
+        if (targetSection) break;
+        if (item.id === searchContainerId) {
+          targetSection = item;
+          break;
+        }
+        if (item.items || item.fields) findContainer(item.items || item.fields);
+      }
+    };
+    findContainer(items);
+    if (targetSection) traverse(targetSection.items || targetSection.fields || []);
+  } else {
+    traverse(items);
+  }
+  
   return foundId;
 };
 
@@ -126,11 +151,22 @@ export const getRoleValue = (role: FieldRoleType, product: any, template: any, v
 
   // 0. Variant Override (Highest priority if variant is selected)
   if (variantData) {
+    // A. Check if the globally mapped fieldId exists in this variant object
     if (fieldId && !isEmptyValue(variantData[fieldId])) return variantData[fieldId];
+    
+    // B. Check for the role name directly (e.g. variantData.price)
     if (!isEmptyValue(variantData[role])) return variantData[role];
-    // Special image/price fallbacks for variants
+    
+    // C. Perform localized search if we can identify a parent container
+    // This is useful if 'Price' in a variant is a different field ID than global 'Price'
+    // but we can identify it by label/keyword within the variant's section.
+    // However, findFieldByRole is an expensive traversal. We already did this in getNormalizedVariants.
+    
+    // Special image/price fallbacks for common naming patterns in variants
     if (role === 'image' && !isEmptyValue(variantData.imageUrl)) return variantData.imageUrl;
+    if (role === 'image' && !isEmptyValue(variantData.image)) return variantData.image;
     if (role === 'price' && !isEmptyValue(variantData.price)) return variantData.price;
+    if (role === 'stock' && !isEmptyValue(variantData.variant_stock)) return variantData.variant_stock;
   }
   
   if (!fieldId) {
@@ -227,13 +263,20 @@ export const getRoleValues = (role: FieldRoleType, product: any, template: any, 
     traverseData(data);
   }
 
-  // 2. Return unique or all
-  if (unique) {
-    return Array.from(new Set(values.map(v => typeof v === 'object' ? JSON.stringify(v) : v)))
-      .map(v => typeof v === 'string' && (v.startsWith('{') || v.startsWith('[')) ? JSON.parse(v) : v);
+  // FALLBACK: If we found nothing for list-style roles (colors, sizes),
+  // extract them from the normalized variants list.
+  if (values.length === 0 && (role === 'colors' || role === 'sizes')) {
+    const variants = getNormalizedVariants(product, template);
+    variants.forEach(v => {
+      const val = role === 'colors' ? v.color : v.size;
+      if (!isEmptyValue(val)) {
+        if (Array.isArray(val)) values.push(...val);
+        else values.push(val);
+      }
+    });
   }
-
-  return values;
+  
+  return unique ? Array.from(new Set(values)) : values;
 };
 
 /**
@@ -293,10 +336,17 @@ export const getNormalizedVariants = (product: any, template: any): any[] => {
   const data = product?.data || product || {};
   const design = template?.design || template || {};
   const mapping = design.mapping || {};
-  
-  if (!template || Object.keys(mapping).length === 0) return [];
 
-  // Resolve schema items
+  // Resolve mapping for variants section specifically
+  const variantsSectionId = mapping.variantsSection;
+  let rawVariants: any[] = [];
+  let targetSectionId;
+  if (variantsSectionId && data[variantsSectionId] && Array.isArray(data[variantsSectionId])) {
+    rawVariants = data[variantsSectionId];
+    targetSectionId = variantsSectionId;
+  }
+
+  // Resolve schema items for fallback search
   let schemaItems: any[] = [];
   if (Array.isArray(template.schema)) schemaItems = template.schema;
   else if (template.schema?.items) schemaItems = template.schema.items;
@@ -305,56 +355,77 @@ export const getNormalizedVariants = (product: any, template: any): any[] => {
   else if (template.form_schema?.sections) schemaItems = template.form_schema.sections;
   else if (template.items) schemaItems = template.items;
 
-  // Find all repeatable sections
-  const repeatableSections: any[] = [];
-  const traverseSchema = (items: any[]) => {
-    if (!Array.isArray(items)) return;
-    for (const item of items) {
-      if ((item.kind === 'section' || item.kind === 'group') && item.isRepeatable) {
-        repeatableSections.push(item);
+  // Determine the raw variant data source and identified section
+  targetSectionId = variantsSectionId;
+  
+  if (rawVariants.length === 0) {
+    // Find all repeatable sections as fallback
+    const repeatableSections: any[] = [];
+    const traverseSchema = (items: any[]) => {
+      if (!Array.isArray(items)) return;
+      for (const item of items) {
+        if ((item.kind === 'section' || item.kind === 'group') && item.isRepeatable) {
+          repeatableSections.push(item);
+        }
+        if (item.items || item.fields) {
+          traverseSchema(item.items || item.fields);
+        }
       }
-      if (item.items || item.fields) {
-        traverseSchema(item.items || item.fields);
+    };
+    traverseSchema(schemaItems);
+
+    if (repeatableSections.length > 0) {
+      // Find a temporary mapping to pick the best section
+      const tempRoleFieldIds: Record<string, string> = {};
+      ['price', 'stock', 'colors', 'sizes', 'image'].forEach(r => {
+        const id = findFieldByRole(r as any, template);
+        if (id) tempRoleFieldIds[r] = id;
+      });
+
+      const sectionScores = repeatableSections.map(section => {
+        const sectionFieldIds = (section.items || section.fields || []).map((f: any) => f.id);
+        const score = Object.values(tempRoleFieldIds).filter(id => sectionFieldIds.includes(id)).length;
+        return { section, score };
+      });
+
+      const bestSectionMatch = sectionScores.sort((a, b) => b.score - a.score)[0];
+      if (bestSectionMatch && bestSectionMatch.score > 0) {
+        targetSectionId = bestSectionMatch.section.id;
+        rawVariants = data[targetSectionId] || [];
+      } else if (repeatableSections.length === 1) {
+        // Fallback: If only one repeatable section, assume it's variants
+        targetSectionId = repeatableSections[0].id;
+        rawVariants = data[targetSectionId] || [];
       }
     }
-  };
-  traverseSchema(schemaItems);
+  }
 
-  if (repeatableSections.length === 0) return [];
+  if (!Array.isArray(rawVariants) || rawVariants.length === 0) return [];
 
-  // Identify roles and their corresponding field IDs from the mapping
+  // Identify roles specifically within the target section
   const roleFieldIds: Record<string, string> = {};
   const roles: FieldRoleType[] = ['price', 'stock', 'colors', 'sizes', 'image'];
+  
   roles.forEach(r => {
-    const id = findFieldByRole(r, template);
-    if (id) roleFieldIds[r] = id;
+    // Try explicit mapping first
+    const globalId = findFieldByRole(r, template);
+    // Try localized search within the target section
+    const localId = findFieldByRole(r, template, targetSectionId);
+    
+    if (localId) roleFieldIds[r] = localId;
+    else if (globalId) roleFieldIds[r] = globalId;
   });
-
-  // Calculate which repeatable section contains the most mapped fields
-  const sectionScores = repeatableSections.map(section => {
-    const sectionFieldIds = (section.items || section.fields || []).map((f: any) => f.id);
-    const score = Object.values(roleFieldIds).filter(id => sectionFieldIds.includes(id)).length;
-    return { section, score };
-  });
-
-  // Sort and pick the best candidate (must have at least one mapped field)
-  const bestSectionMatch = sectionScores.sort((a, b) => b.score - a.score)[0];
-  if (!bestSectionMatch || bestSectionMatch.score === 0) return [];
-
-  const sectionId = bestSectionMatch.section.id;
-  const rawVariants = data[sectionId];
-  if (!Array.isArray(rawVariants)) return [];
 
   // Transform raw section items into standardized Variant objects
   return rawVariants.map((item, index) => ({
     id: item.id || `variant-${index}`,
-    price: item[roleFieldIds.price] || null,
-    stock: item[roleFieldIds.stock] || null,
-    color: item[roleFieldIds.colors] || null,
-    size: item[roleFieldIds.sizes] || null,
+    price: item[roleFieldIds.price] !== undefined ? item[roleFieldIds.price] : (item.price || null),
+    stock: item[roleFieldIds.stock] !== undefined ? item[roleFieldIds.stock] : (item.stock || null),
+    color: item[roleFieldIds.colors] || item.color || item.value || null,
+    size: item[roleFieldIds.sizes] || item.size || null,
     images: Array.isArray(item[roleFieldIds.image]) 
       ? item[roleFieldIds.image].map(resolveImageUrl).filter(Boolean)
-      : [resolveImageUrl(item[roleFieldIds.image])].filter(Boolean),
+      : [resolveImageUrl(item[roleFieldIds.image] || item.image || item.imageUrl)].filter(Boolean),
     rawData: item
   }));
 };

@@ -1,25 +1,31 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
 import {
   Search,
   Filter,
   Inbox,
-  ShoppingBag
+  ShoppingBag,
+  List,
+  LayoutGrid,
+  Package,
+  Eye,
+  Share2
 } from 'lucide-react';
-import { Helmet } from 'react-helmet-async';
 import PublicLayout from '@/components/products/PublicLayout';
-import { getAllDynamicDataPublic } from '@/lib/forms';
+import { getAllDynamicDataPublic, getPublicTemplates } from '@/lib/forms';
 import UniversalCard from '@/components/products/UniversalCard';
 import Drawer from '@/components/products/Drawer';
+import { useLocation, useParams } from 'wouter';
+import { getRoleValue, formatDisplayValue, resolveImageUrl } from '@/utils/dynamicRenderer';
 
 const PublicProductListing = () => {
   let { userId } = useParams<{ userId: string }>();
-  const navigate = useNavigate();
+    const [, setLocation] = useLocation();
   const [products, setProducts] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [inventoryTemplate, setInventoryTemplate] = useState<any>(null);
   
   // View & Filter States
+  const [viewMode, setViewMode] = useState<'table' | 'grid'>('grid');
   const [search, setSearch] = useState('');
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [isFilterDrawerOpen, setIsFilterDrawerOpen] = useState(false);
@@ -27,28 +33,26 @@ const PublicProductListing = () => {
   const fetchData = async (currentSearch = search, activeFilters = filters) => {
     setIsLoading(true);
     try {
-      // 1. Get Inventory Template once (Dedicated Public Endpoint)
-      if (!inventoryTemplate) {
-        try {
-          const templatesRes = await getAllDynamicDataPublic({ user_id: userId });
-          const templates = templatesRes.data || [];
-          const invTemplate = templates.find((t: any) => 
-            t.id === '019d2ecf-5291-7cce-b37c-50c6c5f27d1b' ||
-            t.name.toLowerCase() === 'inventory' || t.resource_type === 'product'
-          ) || templates[0];
-          if (invTemplate) setInventoryTemplate(invTemplate);
-        } catch (templateErr) {
-          console.warn('Could not fetch public templates, falling back to embedded data:', templateErr);
-        }
-      }
+      // Resolve Inventory Template for fallback
+      let invTemplate = inventoryTemplate;
+      // if (!invTemplate) {
+      //   const templates = await getPublicTemplates();
+      //   invTemplate = templates?.find((t: any) => 
+      //     t.name.toLowerCase() === 'inventory' || t.resource_type === 'product'
+      //   ) || templates?.[0];
+        
+      //   if (invTemplate) {
+      //     setInventoryTemplate(invTemplate);
+      //   }
+      // }
 
       const dataRes = await getAllDynamicDataPublic({ 
-        user_id: userId,
+        user: userId,
         search: currentSearch,
         ...activeFilters
       });
       
-      if (dataRes.success) {
+      if (dataRes?.success) {
         const results = Array.isArray(dataRes.data) ? dataRes.data : (dataRes.data?.data || []);
         setProducts(results);
       }
@@ -77,24 +81,22 @@ const PublicProductListing = () => {
 
   return (
     <PublicLayout username={userId}>
-      <Helmet>
+      {/* <Helmet>
         <title>{shareTitle}</title>
         <meta name="description" content={shareDescription} />
         
-        {/* Open Graph / Facebook */}
         <meta property="og:type" content="website" />
         <meta property="og:url" content={shareUrl} />
         <meta property="og:title" content={shareTitle} />
         <meta property="og:description" content={shareDescription} />
         <meta property="og:image" content={shareImage} />
 
-        {/* Twitter */}
         <meta property="twitter:card" content="summary_large_image" />
         <meta property="twitter:url" content={shareUrl} />
         <meta property="twitter:title" content={shareTitle} />
         <meta property="twitter:description" content={shareDescription} />
         <meta property="twitter:image" content={shareImage} />
-      </Helmet>
+      </Helmet> */}
 
       <div className="flex flex-col gap-10">
         {/* Hero Section */}
@@ -125,6 +127,21 @@ const PublicProductListing = () => {
                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted group-hover:text-primary transition-colors" size={20} />
                 </div>
                 
+                <div className="flex p-1 rounded-2xl bg-glass-bg border border-glass-border/50 h-12">
+                  <button 
+                    onClick={() => setViewMode('table')}
+                    className={`flex items-center justify-center w-12 h-full rounded-xl transition-all ${viewMode === 'table' ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'text-text-muted hover:bg-white/5'}`}
+                  >
+                    <List size={20} />
+                  </button>
+                  <button 
+                    onClick={() => setViewMode('grid')}
+                    className={`flex items-center justify-center w-12 h-full rounded-xl transition-all ${viewMode === 'grid' ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'text-text-muted hover:bg-white/5'}`}
+                  >
+                    <LayoutGrid size={20} />
+                  </button>
+                </div>
+
                 <button 
                   onClick={() => setIsFilterDrawerOpen(true)}
                   className={`h-12 px-6 rounded-2xl border flex items-center gap-2 text-sm font-bold transition-all ${Object.keys(filters).length > 0 ? 'bg-primary/10 border-primary text-primary' : 'border-glass-border/50 bg-glass-bg text-text-main hover:bg-glass-bg/80'}`}
@@ -152,6 +169,87 @@ const PublicProductListing = () => {
               <p className="text-sm text-text-muted italic">The vault is currently empty for this user.</p>
             </div>
           </div>
+        ) : viewMode === 'table' ? (
+          <div className="overflow-hidden rounded-[2.5rem] bg-glass-bg border border-glass-border/50 shadow-2xl">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse min-w-[800px]">
+                <thead>
+                  <tr className="border-b border-glass-border/30 bg-glass-bg/50">
+                     <th className="p-6 text-[10px] font-black uppercase tracking-widest text-text-muted">Discovery Item</th>
+                     <th className="p-6 text-[10px] font-black uppercase tracking-widest text-text-muted">Category</th>
+                     <th className="p-6 text-[10px] font-black uppercase tracking-widest text-text-muted">Price</th>
+                     <th className="p-6 text-[10px] font-black uppercase tracking-widest text-text-muted">Availability</th>
+                     <th className="p-6 text-right text-[10px] font-black uppercase tracking-widest text-text-muted">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {products.map((p) => {
+                    const template = p.FormTemplate || inventoryTemplate;
+                    const name = getRoleValue('title', p, template);
+                    const category = getRoleValue('category', p, template);
+                    const price = getRoleValue('price', p, template);
+                    const stock = getRoleValue('stock', p, template);
+                    const image = getRoleValue('image', p, template);
+                    const imageUrl = resolveImageUrl(image);
+
+                    return (
+                      <tr key={p.id} className="border-b border-glass-border/20 last:border-0 hover:bg-white/5 transition-colors group/row">
+                        <td className="p-6">
+                          <div className="flex items-center gap-4">
+                            <div className="w-14 h-14 rounded-2xl bg-white/5 flex items-center justify-center text-primary overflow-hidden border border-white/5 group-hover/row:scale-105 transition-transform duration-500">
+                              {imageUrl ? (
+                                <img src={imageUrl} alt={name} className="w-full h-full object-cover" />
+                              ) : (
+                                <Package size={24} strokeWidth={1.5} />
+                              )}
+                            </div>
+                            <div>
+                               <span className="text-sm font-black text-text-main block tracking-tight">{name}</span>
+                               <span className="text-[10px] text-text-muted uppercase tracking-wider font-bold opacity-60">ID: {p.id.slice(0, 12)}</span>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="p-6">
+                          <span className="px-3 py-1 rounded-full bg-primary/10 text-primary text-[10px] font-black uppercase tracking-widest border border-primary/20">{category}</span>
+                        </td>
+                        <td className="p-6">
+                           <span className="text-sm font-black text-text-main">{formatDisplayValue(price, 'price')}</span>
+                        </td>
+                        <td className="p-6">
+                          <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${Number(stock) > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+                            {Number(stock) > 0 ? `Stocked (${stock})` : 'Sold Out'}
+                          </span>
+                        </td>
+                        <td className="p-6 text-right">
+                          <div className="flex items-center justify-end gap-3">
+                            <button 
+                              onClick={() => setLocation(`/public/${userId}/${p.id}`)}
+                              className="w-10 h-10 rounded-xl bg-white/5 text-text-muted hover:bg-primary/10 hover:text-primary border border-white/5 transition-all flex items-center justify-center group/btn"
+                              title="Explore Vault"
+                            >
+                              <Eye size={18} className="group-hover/btn:scale-110 transition-transform" />
+                            </button>
+                            <button 
+                              className="w-10 h-10 rounded-xl bg-white/5 text-text-muted hover:bg-sky-500/10 hover:text-sky-500 border border-white/5 transition-all flex items-center justify-center group/btn"
+                              title="Share Discovery"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const url = `${window.location.origin}/public/${userId}/${p.id}`;
+                                navigator.clipboard.writeText(url);
+                                alert('Link copied to clipboard!');
+                              }}
+                            >
+                              <Share2 size={18} className="group-hover/btn:scale-110 transition-transform" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
             {products.map(p => (
@@ -159,7 +257,7 @@ const PublicProductListing = () => {
                 key={p.id} 
                 product={p} 
                 template={p.FormTemplate || inventoryTemplate} 
-                onView={() => navigate(`/p/${userId}/${p.id}`)}
+                onView={() => setLocation(`/public/${userId}/${p.id}`)}
               />
             ))}
           </div>

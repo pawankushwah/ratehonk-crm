@@ -194,7 +194,7 @@ const ProductBasePage: React.FC<ProductBasePageProps> = ({
   };
 
   const copyToClipboard = () => {
-    const url = `${window.location.origin}/p/${sharingProduct?.owner_id || 'guest'}/${sharingProduct?.id}`;
+    const url = `${window.location.origin}/public/${sharingProduct?.tenant_id || 'guest'}/${sharingProduct?.id}`;
     navigator.clipboard.writeText(url);
     setIsCopied(true);
     setTimeout(() => setIsCopied(false), 2000);
@@ -511,7 +511,7 @@ const ProductBasePage: React.FC<ProductBasePageProps> = ({
           <div className="space-y-3">
              <label className="text-[10px] font-black uppercase tracking-[0.2em] text-text-muted pl-1">Shareable Link</label>
              <div className="relative group">
-                <input type="text" readOnly value={`${window.location.origin}/p/${sharingProduct?.owner_id || 'guest'}/${sharingProduct?.id}`} className="w-full h-14 pl-4 pr-14 rounded-2xl bg-slate-50 border border-slate-200 text-sm text-text-main font-medium outline-none" />
+                <input type="text" readOnly value={`${window.location.origin}/public/${sharingProduct?.tenant_id || 'guest'}/${sharingProduct?.id}`} className="w-full h-14 pl-4 pr-14 rounded-2xl bg-slate-50 border border-slate-200 text-sm text-text-main font-medium outline-none" />
                 <button onClick={copyToClipboard} className={`absolute right-2 top-2 h-10 px-4 rounded-xl flex items-center gap-2 text-xs font-bold transition-all active:scale-95 ${isCopied ? 'bg-emerald-500 text-white shadow-lg' : 'bg-primary text-white shadow-lg'}`}>{isCopied ? <Check size={14} /> : <Copy size={14} />}{isCopied ? 'Copied' : 'Copy'}</button>
              </div>
           </div>
@@ -519,7 +519,7 @@ const ProductBasePage: React.FC<ProductBasePageProps> = ({
              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-text-muted pl-1">Social Sharing</p>
              <div className="grid grid-cols-3 gap-4">
                 {socialLinks.map(({ name, icon: Icon, color, url }) => (
-                  <button key={name} onClick={() => { const storeUrl = `${window.location.origin}/p/${sharingProduct?.owner_id || 'guest'}/${sharingProduct?.id}`; window.open(url(storeUrl), '_blank'); }} className={`flex flex-col items-center gap-2 p-4 rounded-2xl bg-white/5 border border-glass-border/30 transition-all group active:scale-95 ${color}`}><Icon size={24} className="group-hover:scale-110 transition-transform" /><span className="text-[10px] font-bold text-text-muted group-hover:text-text-main">{name}</span></button>
+                  <button key={name} onClick={() => { const storeUrl = `${window.location.origin}/public/${sharingProduct?.tenant_id || 'guest'}/${sharingProduct?.id}`; window.open(url(storeUrl), '_blank'); }} className={`flex flex-col items-center gap-2 p-4 rounded-2xl bg-white/5 border border-glass-border/30 transition-all group active:scale-95 ${color}`}><Icon size={24} className="group-hover:scale-110 transition-transform" /><span className="text-[10px] font-bold text-text-muted group-hover:text-text-main">{name}</span></button>
                 ))}
              </div>
           </div>

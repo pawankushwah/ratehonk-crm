@@ -18,15 +18,43 @@ const FlowbiteTemplate: React.FC<TemplateProps> = ({
   activeVariantIndex = 0
 }) => {
   const { 
-    title, price, imageUrl, 
-    sku = '', barcode = '', 
-    reviewCount = 455, rating = 5.0,
-    color: mappedColor,
+    title: initialTitle, 
+    price: initialPrice, 
+    imageUrl: initialImageUrl, 
+    sku: initialSku,
+    barcode: initialBarcode,
+    reviewCount: initialReviewCount,
+    rating: initialRating,
     availableColors = [],
     availableSizes = [],
-    description,
+    description: initialDescription,
+    stock: initialStock,
     variants = []
-  } = data;
+  } = (data || {}) as any;
+
+  // Final property Resolution (Trusting parent props first)
+  const d = data as any;
+  const title = initialTitle || d.title || "Product Name";
+  const sku = initialSku || d.sku || "";
+  const barcode = initialBarcode || d.barcode || "";
+  const rating = initialRating !== undefined ? initialRating : (d.rating || 5.0);
+  const reviewCount = initialReviewCount !== undefined ? initialReviewCount : (d.reviewCount || 455);
+  const description = initialDescription || d.description || "Premium quality item.";
+
+  // Variant resolution logic
+  const processedVariants = variants;
+  const activeVariant = processedVariants[activeVariantIndex] || processedVariants[0];
+
+  // Scoped values
+  const displayPrice = initialPrice !== undefined && initialPrice !== '—' ? initialPrice : (activeVariant?.price || 0);
+  const displayStock = initialStock !== undefined && initialStock !== '—' ? initialStock : (activeVariant?.stock || 0);
+  const displayImages = (activeVariant?.images && activeVariant.images.length > 0)
+    ? activeVariant.images
+    : [initialImageUrl || d.imageUrl || d.image || "/src/assets/images/default-product-1.png"].flat().filter(Boolean);
+
+  const imageUrl = displayImages[0];
+  const price = displayPrice;
+  const stock = displayStock;
 
   return (
     <div className={`flex flex-col rounded-4xl border transition-all duration-300 m-auto w-[300px] h-full overflow-hidden pb-5 ${bgBase} ${borderBase}`} style={{height: "100%"}}>

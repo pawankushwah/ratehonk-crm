@@ -18506,7 +18506,6 @@ async getDashboardMetrics(
       JOIN form_templates ft ON dd.template_id = ft.id
       WHERE dd.tenant_id = ${tenantId}
       ${filters.templateId ? sql`AND dd.template_id = ${filters.templateId}` : sql``}
-      ${filters.resourceType ? sql`AND ft.resource_type = ${filters.resourceType}` : sql``}
     `;
 
     return {
@@ -18627,7 +18626,7 @@ async getDashboardMetrics(
 
   async getDynamicData(id: number, tenantId: number) {
     const [entry] = await sql`
-      SELECT dd.*, ft.name as template_name, ft.schema as template_schema
+      SELECT dd.*, ft.name as template_name, ft.schema as template_schema, ft.design as template_design, ft.mapping as template_mapping
       FROM dynamic_data dd
       JOIN form_templates ft ON dd.template_id = ft.id
       WHERE dd.id = ${id} AND dd.tenant_id = ${tenantId}`;

@@ -15,18 +15,40 @@ const CarouselTemplate: React.FC<TemplateProps> = ({
   onVariantSelect,
   activeVariantIndex
 }) => {
-  const { title, price, imageUrl, description = "Apple M3 Octa Core, 23.8inch, RAM 8GB, SSD 256GB, Apple M3 8-Core, macOS Sonoma" } = data;
-  const [currentSlide, setCurrentSlide] = React.useState(1);
-  const totalSlides = 5;
-  const [selectedColor, setSelectedColor] = React.useState(0);
+  const { 
+    title: initialTitle, 
+    price: initialPrice, 
+    imageUrl: initialImageUrl, 
+    description: initialDescription,
+    availableColors = [],
+    availableSizes = [],
+    variants = []
+  } = (data || {}) as any;
 
-  const images = [
-    imageUrl || "https://placehold.co/600x600?text=Product+Main",
-    "https://placehold.co/600x600?text=View+2",
-    "https://placehold.co/600x600?text=View+3",
-    "https://placehold.co/600x600?text=View+4",
-    "https://placehold.co/600x600?text=View+5"
-  ];
+  // Final property Resolution (Trusting parent props first)
+  const d = data as any;
+  const title = initialTitle || d.title || "Product Name";
+  const description = initialDescription || d.description || "Premium quality item.";
+
+  // Variant resolution logic
+  const processedVariants = variants;
+  const activeVariant = processedVariants[activeVariantIndex] || processedVariants[0];
+
+  // Scoped values
+  const displayPrice = initialPrice !== undefined && initialPrice !== '—' ? initialPrice : (activeVariant?.price || 0);
+  const displayImages = (activeVariant?.images && activeVariant.images.length > 0)
+    ? activeVariant.images
+    : [initialImageUrl || d.imageUrl || d.image || "/src/assets/images/default-product-1.png"].flat().filter(Boolean);
+
+  const images = displayImages;
+  const totalSlides = images.length;
+  const [currentSlide, setCurrentSlide] = React.useState(1);
+  const price = displayPrice;
+
+  // Reset slide index if product/variant changes
+  React.useEffect(() => {
+    setCurrentSlide(1);
+  }, [activeVariantIndex, initialImageUrl]);
 
   const nextSlide = () => setCurrentSlide(prev => (prev % totalSlides) + 1);
   const prevSlide = () => setCurrentSlide(prev => (prev === 1 ? totalSlides : prev - 1));

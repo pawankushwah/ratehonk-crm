@@ -105,8 +105,8 @@ export const getDynamicItemData = async (resourceId: string) => {
   return res;
 };
 
-export const getDynamicItemDataPublic = async (resourceId: string) => {
-  const response = await apiRequest('GET', `/api/resources/data/${resourceId}/public`);
+export const getDynamicItemDataPublic = async (resourceId: string, userId: string) => {
+  const response = await apiRequest('GET', `/api/resources/data/${resourceId}/public?user=${userId}`);
   const res = await response.json();
   return res.data;
 };

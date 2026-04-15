@@ -19,7 +19,38 @@ const HorizontalFlowbiteTemplate: React.FC<TemplateProps> = ({
   onVariantSelect,
   activeVariantIndex = 0
 }) => {
-  const { title, price, imageUrl, reviewCount = 455, rating = 5.0 } = data;
+  const { 
+    title: initialTitle, 
+    price: initialPrice, 
+    imageUrl: initialImageUrl, 
+    sku: initialSku,
+    availableColors = [],
+    availableSizes = [],
+    description: initialDescription,
+    stock: initialStock,
+    reviewCount: initialReviewCount,
+    rating: initialRating,
+    variants = []
+  } = (data || {}) as any;
+
+  // Final property Resolution (Trusting parent props first)
+  const d = data as any;
+  const title = initialTitle || d.title || "Product Name";
+  const rating = initialRating !== undefined ? initialRating : (d.rating || 5.0);
+  const reviewCount = initialReviewCount !== undefined ? initialReviewCount : (d.reviewCount || 455);
+
+  // Variant resolution logic
+  const processedVariants = variants;
+  const activeVariant = processedVariants[activeVariantIndex] || processedVariants[0];
+
+  // Scoped values
+  const displayPrice = initialPrice !== undefined && initialPrice !== '—' ? initialPrice : (activeVariant?.price || 0);
+  const displayImages = (activeVariant?.images && activeVariant.images.length > 0)
+    ? activeVariant.images
+    : [initialImageUrl || d.imageUrl || d.image || "/src/assets/images/default-product-1.png"].flat().filter(Boolean);
+
+  const imageUrl = displayImages[0];
+  const price = displayPrice;
   const isSelected = (i: number) => activeVariantIndex === i;
 
   return (

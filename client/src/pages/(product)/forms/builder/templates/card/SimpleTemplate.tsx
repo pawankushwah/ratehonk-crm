@@ -21,12 +21,34 @@ const SimpleTemplate: React.FC<TemplateProps> = ({
   fontClass = 'font-sans'
 }) => {
   const { 
-    title, price, imageUrl, 
-    category = '',
-    description,
+    title: initialTitle, 
+    price: initialPrice, 
+    imageUrl: initialImageUrl, 
+    category: initialCategory,
+    description: initialDescription,
     availableColors = [],
+    availableSizes = [],
     variants = []
-  } = data;
+  } = (data || {}) as any;
+
+  // Final property Resolution (Trusting parent props first)
+  const d = data as any;
+  const title = initialTitle || d.title || "Product Name";
+  const category = initialCategory || d.category || "Retail Item";
+  const description = initialDescription || d.description || "Premium quality item.";
+
+  // Variant resolution logic
+  const processedVariants = variants;
+  const activeVariant = processedVariants[activeVariantIndex] || processedVariants[0];
+
+  // Scoped values
+  const displayPrice = initialPrice !== undefined && initialPrice !== '—' ? initialPrice : (activeVariant?.price || 0);
+  const displayImages = (activeVariant?.images && activeVariant.images.length > 0)
+    ? activeVariant.images
+    : [initialImageUrl || d.imageUrl || d.image || "/src/assets/images/default-product-1.png"].flat().filter(Boolean);
+
+  const imageUrl = displayImages[0];
+  const price = displayPrice;
 
   return (
     <div className={`flex flex-col m-auto w-[320px] transition-all duration-300 overflow-hidden border ${bgBase} ${borderBase} ${radiusClass} ${shadowClass} ${fontClass}`}>

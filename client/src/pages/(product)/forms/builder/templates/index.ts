@@ -98,7 +98,7 @@ export const DETAIL_TEMPLATES = [
     name: 'Flowbite PDP', 
     type: 'detail', 
     description: 'Standard Flowbite product detail layout.',
-    supportedSlots: ['image', 'title', 'price', 'rating', 'reviewCount', 'description', 'sku', 'colors', 'sizes', 'highlights', 'actions'],
+    supportedSlots: ['image', 'title', 'price', 'rating', 'reviewCount', 'description', 'sku', 'colors', 'variantsSection', 'sizes', 'highlights', 'actions'],
     mockData: FlowbitePDPMock
   },
   { 
@@ -106,7 +106,7 @@ export const DETAIL_TEMPLATES = [
     name: 'Advanced PDP', 
     type: 'detail', 
     description: 'High-density Product Detail Page with gallery.',
-    supportedSlots: ['image', 'title', 'price', 'rating', 'description', 'colors', 'sizes', 'stock', 'sku', 'highlights', 'promotions'],
+    supportedSlots: ['image', 'title', 'price', 'rating', 'description', 'colors', 'variantsSection','sizes', 'stock', 'sku', 'highlights', 'promotions'],
     mockData: AdvancedPDPMock
   },
 ];

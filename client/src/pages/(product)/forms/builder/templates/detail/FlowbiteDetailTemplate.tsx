@@ -35,52 +35,52 @@ const FlowbiteDetailTemplate: React.FC<TemplateProps> = ({
   );
 
   const {
-    title: initialTitle,
-    price: initialPrice,
-    imageUrl: initialImageUrl,
+    title: rawTitle,
+    price: rawPrice,
+    imageUrl: rawImageUrl,
     description: dataDescription,
     rating: dataRating,
     reviewCount: dataReviewCount,
     availableColors = [],
     availableSizes = [],
-    stock: initialStock,
+    stock: rawStock,
     sku: initialSku,
     allImages = [],
     variants = []
   } = (data || {}) as any;
+  console.log(data, "flowbite basic")
 
-  // Final property Resolution
+  // Final property Resolution (Trusting parent props first)
   const d = data as any;
-  const title = initialTitle || d[mapping.title] || "Product Name";
-  const price = initialPrice !== undefined && initialPrice !== '—' ? initialPrice : (d[mapping.price] || 0);
-  const imageUrl = initialImageUrl || d.image || d[mapping.image];
-  const description = dataDescription || d[mapping.description] || d.description || "Premium quality item for modern lifestyles.";
-  const sku = initialSku || d[mapping.sku] || "ID: 455-RH";
-  const stock = initialStock !== undefined && initialStock !== '—' ? initialStock : (d[mapping.stock] || 0);
-  const rating = dataRating !== undefined && dataRating !== '—' ? dataRating : (d[mapping.rating] || 4.5);
-  const reviewCount = dataReviewCount !== undefined && dataReviewCount !== '—' ? dataReviewCount : (d[mapping.reviewCount] || 0);
+  const title = rawTitle || d.title || "Product Name";
+  const price = rawPrice !== undefined && rawPrice !== '—' ? rawPrice : (d.price || 0);
+  const imageUrl = rawImageUrl || d.imageUrl || d.image;
+  const stock = rawStock !== undefined && rawStock !== '—' ? rawStock : (d.stock || 0);
+  const sku = initialSku || d.sku || "ID: 455-RH";
+  const rating = dataRating !== undefined && dataRating !== '—' ? dataRating : (d.rating || 4.5);
+  const reviewCount = dataReviewCount !== undefined && dataReviewCount !== '—' ? dataReviewCount : (d.reviewCount || 0);
+  const description = dataDescription || d.description || "Premium quality item for modern lifestyles.";
 
-  // Variant resolution logic (Synced with UniversalTemplateView)
-  const variantSectionId = mapping.variantsSection || Object.keys(data).find(key => Array.isArray((data as any)[key]) && typeof (data as any)[key][0] === 'object');
-  const rawVariants = variantSectionId ? (data as any)[variantSectionId] : (Array.isArray(variants) ? variants : []);
-
-  const processedVariants = variants.length > 0 ? variants : [];
+  // Variant resolution logic (Centralized)
+  const processedVariants = variants;
   const activeVariant = processedVariants[selectedVariantIdx] || processedVariants[0];
 
   const derivedSizes = useMemo(() => {
-    const sizes = activeVariant?.sizes || [];
-    return sizes.length > 0 ? Array.from(new Set(sizes)) : (availableSizes || []);
+    const sizes = activeVariant?.size || [];
+    const sizesArray = Array.isArray(sizes) ? sizes : [sizes].filter(Boolean);
+    return sizesArray.length > 0 ? Array.from(new Set(sizesArray)) : (availableSizes || []);
   }, [activeVariant, availableSizes]);
 
-  const displayPrice = activeVariant?.price || price;
-  const displayStock = activeVariant?.stock || stock;
+  // Centralized values from props (already resolved by CardRenderer)
+  const displayPrice = price;
+  const displayStock = stock;
   const displayImages = (activeVariant?.images && activeVariant.images.length > 0)
     ? activeVariant.images
     : (allImages.length > 0 ? allImages : [imageUrl || "/src/assets/images/default-product-1.png"].flat().filter(Boolean));
 
   const images = displayImages;
 
-  // Final Highlights Resolution
+  // Highlights Resolution
   const resolvedHighlights = useMemo(() => {
     if (mappedHighlightsId && (data as any)[mappedHighlightsId]) {
       return (data as any)[mappedHighlightsId];

@@ -63,7 +63,7 @@ const UniversalCard: React.FC<UniversalCardProps> = ({
              <Eye size={16} />
            </button>
          )}
-         {onEdit && (
+         {/* {onEdit && (
            <button 
              onClick={(e) => { e.stopPropagation(); onEdit(); }} 
              className="p-2.5 rounded-xl bg-slate-900 text-white border border-slate-800 hover:bg-emerald-500 hover:border-emerald-500 transition-all shadow-xl" 
@@ -71,7 +71,7 @@ const UniversalCard: React.FC<UniversalCardProps> = ({
            >
              <Edit3 size={16} />
            </button>
-         )}
+         )} */}
          {onShare && (
            <button 
              onClick={(e) => { e.stopPropagation(); onShare(e); }} 
@@ -81,7 +81,7 @@ const UniversalCard: React.FC<UniversalCardProps> = ({
              <Share2 size={16} />
            </button>
          )}
-         {onDelete && (
+         {/* {onDelete && (
            <button 
              onClick={(e) => { e.stopPropagation(); onDelete(e); }} 
              className="p-2.5 rounded-xl bg-slate-900 text-white border border-slate-800 hover:bg-red-500 hover:border-red-500 transition-all shadow-xl" 
@@ -89,7 +89,7 @@ const UniversalCard: React.FC<UniversalCardProps> = ({
            >
              <Trash2 size={16} />
            </button>
-         )}
+         )} */}
       </div>
     </div>
   );

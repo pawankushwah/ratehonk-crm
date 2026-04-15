@@ -70,75 +70,39 @@ const UniversalTemplate: React.FC<TemplateProps> = ({
   const allImages = d.allImages || [];
   const variants = d.variants || [];
 
-  // Find the repeatable section ID (Variants section)
-  const variantSectionId = mapping.variantsSection || Object.keys(data).find(key => Array.isArray((data as any)[key]) && typeof (data as any)[key][0] === 'object');
-  const rawVariants = variantSectionId ? (data as any)[variantSectionId] : (Array.isArray(variants) ? variants : []);
-
   // Process variants into a standard format using mapping
-  const processedVariants = variants.length > 0 ? variants : [];
+  const processedVariants = variants;
   const selectedVariantIdx = activeVariantIndex;
   const setSelectedVariantIdx = (idx: number) => onVariantSelect?.(idx);
   
   const [selectedSizeIdx, setSelectedSizeIdx] = React.useState(0);
-  // const [selectedImage, setSelectedImage] = React.useState(0);
 
   // Final Active Variant
   const activeVariant = processedVariants[selectedVariantIdx] || processedVariants[0];
 
   // Derived options scoped to the active variant
   const derivedSizes = React.useMemo(() => {
-    const sizes = activeVariant?.sizes || [];
-    return sizes.length > 0 ? Array.from(new Set(sizes)) : (availableSizes || []);
+    const sizes = activeVariant?.size || [];
+    const sizesArray = Array.isArray(sizes) ? sizes : [sizes].filter(Boolean);
+    return sizesArray.length > 0 ? Array.from(new Set(sizesArray)) : (availableSizes || []);
   }, [activeVariant, availableSizes]);
 
-  // Extract dynamic fields from form schema for other sections
-  // const dynamicAccordions = formSchema.filter((it: any) => it.kind === 'field' && it.type === 'accordion');
-  
-  // Prioritize mapped fields for specific slots
-  const mappedPromotionsId = mapping.promotions;
-
-  const dynamicKeyValues = formSchema.filter((it: any) => 
-    it.kind === 'field' && it.type === 'key-value' && 
-    ((mappedHighlightsId && it.id === mappedHighlightsId) || !mappedHighlightsId)
-  );
-
-  const dynamicOffers = formSchema.filter((it: any) => 
-    it.kind === 'field' && it.type === 'offers' && 
-    ((mappedPromotionsId && it.id === mappedPromotionsId) || !mappedPromotionsId)
-  );
-
-  // --- DESIGNER PREVIEW HACK ---
-  const isPreview = !!onSlotClick;
-  if (isPreview) {
-    if (dynamicKeyValues.length === 0 && mappedHighlightsId && d[mappedHighlightsId]) {
-      dynamicKeyValues.push({ id: mappedHighlightsId, label: 'Feature Highlights', type: 'key-value', kind: 'field' });
-    }
-    if (dynamicOffers.length === 0 && mappedPromotionsId && d[mappedPromotionsId]) {
-      dynamicOffers.push({ id: mappedPromotionsId, label: 'Promotions', type: 'offers', kind: 'field' });
-    }
-  }
-
-  const displayPrice = activeVariant?.price || price;
-  const displayStock = activeVariant?.stock || stock;
+  // Resolution using centralized logic (props passed from CardRenderer are already resolved)
+  const displayPrice = price;
+  const displayStock = stock;
   const displayImages = (activeVariant?.images && activeVariant.images.length > 0) 
     ? activeVariant.images 
-    : (allImages.length > 0 ? allImages : [imageUrl || "../../../../../assets/images/default-product-1.png"]);
+    : (allImages.length > 0 ? allImages : [imageUrl || "/src/assets/images/default-product-1.png"]);
 
   const images = displayImages;
-  console.log("images",images);
 
-  // const toggleAccordion = (id: string | number) => {
-  //   setExpandedAccordions(prev => ({ ...prev, [id]: !prev[id] }));
-  // };
-  
   // --- CARD MODE ---
-  // Detect if this is a bundle to show item summary
   const isBundle = d.itemType === 'bundle' || String(title).toLowerCase().includes('bundle');
   const bundleItems = d['bundle-items'] || d.bundle_items || [];
 
   return (
     <div 
-      className={`transition-all duration-300 m-auto w-[300px] h-full flex flex-col ${bgBase} border ${borderBase} backdrop-blur-3xl relative rounded-4xl overflow-hidden`}
+      className={`transition-all duration-300 m-auto w-[300px] flex flex-col ${bgBase} border ${borderBase} backdrop-blur-3xl relative rounded-4xl overflow-hidden`}
       style={style}
     >
       {/* Top Image Section */}

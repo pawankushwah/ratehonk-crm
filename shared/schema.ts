@@ -1376,7 +1376,7 @@ export const formTemplates = pgTable("form_templates", {
 export const dynamicData = pgTable("dynamic_data", {
   id: serial("id").primaryKey(),
   templateId: integer("template_id").notNull().references(() => formTemplates.id),
-  ownerId: text("owner_id").notNull(), // External Resource ID (e.g. string representation of product id)
+  // ownerId: text("owner_id").notNull(), // External Resource ID (e.g. string representation of product id)
   tenantId: integer("tenant_id").notNull().references(() => tenants.id),
   userId: integer("user_id").references(() => users.id),
   data: jsonb("data").notNull(),

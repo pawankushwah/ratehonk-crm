@@ -100,8 +100,10 @@ export default function DesignTab2({ builderItems, design, setDesign }: DesignTa
     let result: any[] = [];
     const traverse = (items: any[]) => {
       (items || []).forEach(it => {
-        if (it.kind === 'field') result.push(it);
-        else if (it.items) traverse(it.items);
+        if (it.kind === 'field' || it.kind === 'section' || it.kind === 'group') {
+          result.push(it);
+        }
+        if (it.items) traverse(it.items);
         else if (it.fields) traverse(it.fields);
       });
     };
@@ -325,7 +327,10 @@ export default function DesignTab2({ builderItems, design, setDesign }: DesignTa
             // Type filtering logic
             const compatibleFields = allFields.filter(f => {
               if (!slot.allowedTypes || slot.allowedTypes.length === 0) return true;
-              return slot.allowedTypes.includes(f.type?.toLowerCase());
+              // Check kind match or type match
+              const kind = f.kind?.toLowerCase();
+              const type = f.type?.toLowerCase();
+              return slot.allowedTypes.includes(kind) || (type && slot.allowedTypes.includes(type));
             });
 
             return (
@@ -337,10 +342,10 @@ export default function DesignTab2({ builderItems, design, setDesign }: DesignTa
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-4">
                     <div className="relative">
-                      <div className={`p-3 rounded-xl transition-all ${isSelected ? 'bg-primary text-white' : 'bg-black/5 text-text-muted'}`}>
+                      <div className={`p-3 rounded-xl transition-all ${isSelected ? 'bg-primary text-white' : 'bg-gray-500/10 text-gray-500'}`}>
                         <slot.icon size={20} />
                       </div>
-                      <div className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 ${isAppDark ? 'border-[#151B2B]' : 'border-white'} ${slot.noMapping ? (isVisible ? 'bg-emerald-500' : 'bg-slate-400') : (mappedFieldId ? 'bg-emerald-500' : 'bg-slate-400')}`} />
+                      <div className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 ${isAppDark ? 'border-[#151B2B]' : 'border-white'} ${slot.noMapping ? (isVisible ? 'bg-emerald-500' : 'bg-red-400') : (mappedFieldId ? 'bg-emerald-500' : 'bg-red-500')}`} />
                     </div>
                     <div>
                       <h4 className={`text-xs font-black uppercase tracking-widest ${isSelected ? 'text-primary' : textMain}`}>{slot.label}</h4>

@@ -361,7 +361,7 @@ export function PlanFormContent({
         <CardContent>
           <ScrollArea className="h-[400px] pr-4">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {ALL_MENU_ITEMS.map((menuItem) => (
+              {ALL_MENUun_ITEMS.map((menuItem) => (
                 <div key={menuItem} className="flex items-center space-x-2">
                   <Checkbox
                     id={`menu-${menuItem}`}

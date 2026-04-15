@@ -386,10 +386,10 @@ function Router() {
       </Route> */}
 
       {/* Products Routes */}
-      <Route path="/p/:userId">
+      <Route path="/public/:userId">
         <PublicProductListing />
       </Route>
-      <Route path="/p/:userId/:productId">
+      <Route path="/public/:userId/:productId">
         <PublicProductView />
       </Route>
 

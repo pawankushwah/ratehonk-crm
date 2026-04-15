@@ -86,34 +86,48 @@ const CardRenderer: React.FC<CardRendererProps> = ({
   const designWithContext = { ...design, mapping: currentMapping, visibility: currentVisibility };
 
   // Calculate variants early to support variant-aware resolution
-  const variants = getNormalizedVariants({ data }, designWithContext);
+  const variants = getNormalizedVariants(data, designWithContext);
   const activeVariant = variants[localVariantIndex];
   const activeVariantData = activeVariant?.rawData;
+  console.log(variants, "card renderre")
 
   const radiusClass = (registryRadiusMap as any)[design.styles?.borderRadius || 'lg'] || 'rounded-lg';
   const shadowClass = (registryShadowMap as any)[design.styles?.shadow || 'lg'] || 'shadow-lg';
   const paddingClass = (registryPaddingMap as any)[design.styles?.padding || 'md'] || 'p-6';
   const fontClass = (registryFontMap as any)[design.styles?.fontFamily || 'plus-jakarta'] || 'font-plus-jakarta';
 
-  const title = getRoleValue('title', { data }, designWithContext, activeVariantData);
-  const price = getRoleValue('price', { data }, designWithContext, activeVariantData);
-  const rawImage = getRoleValue('image', { data }, designWithContext, activeVariantData);
+  const title = getRoleValue('title', data, designWithContext, activeVariantData);
+  const price = getRoleValue('price', data, designWithContext, activeVariantData);
+  const rawImage = getRoleValue('image', data, designWithContext, activeVariantData);
   const imageUrl = resolveUrl(rawImage === '—' ? null : rawImage) || '/src/assets/images/default-product-1.png';
-  const category = getRoleValue('category', { data }, designWithContext, activeVariantData);
-  const sku = getRoleValue('sku', { data }, designWithContext, activeVariantData);
-  const stock = getRoleValue('stock', { data }, designWithContext, activeVariantData);
-  const barcode = getRoleValue('barcode', { data }, designWithContext, activeVariantData);
+  const category = getRoleValue('category', data, designWithContext, activeVariantData);
+  const sku = getRoleValue('sku', data, designWithContext, activeVariantData);
+  const stock = getRoleValue('stock', data, designWithContext, activeVariantData);
+  const barcode = getRoleValue('barcode', data, designWithContext, activeVariantData);
   const accentColor = design.styles?.primaryColor || '#ec4899';
 
   const RegistryComponent = (TemplateRegistry as any)[resolvedTemplateId as keyof typeof TemplateRegistry];
 
   if (RegistryComponent) {
-    const availableColors = getRoleValues('colors', { data }, designWithContext);
-    const availableSizes = getRoleValues('sizes', { data }, designWithContext);
-    const allImages = getRoleValues('image', { data }, designWithContext).map(resolveUrl).filter(Boolean);
+    const availableColors = getRoleValues('colors', data, designWithContext);
+    const availableSizes = getRoleValues('sizes', data, designWithContext);
+    const allImages = getRoleValues('image', data, designWithContext).map(resolveUrl).filter(Boolean);
   
     const cleanValue = (v: any) => v === '—' ? undefined : v;
-
+    console.log({ 
+            ...data, 
+            title: cleanValue(title), 
+            price: cleanValue(price), 
+            imageUrl: cleanValue(imageUrl), 
+            category: cleanValue(category), 
+            sku: cleanValue(sku), 
+            stock: cleanValue(stock), 
+            barcode: cleanValue(barcode),
+            availableColors,
+            availableSizes,
+            allImages,
+            variants
+          })
     return (
       <ProductDataProvider value={{ data, template, selectedVariant: activeVariant }}>
         <RegistryComponent 

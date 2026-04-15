@@ -20,7 +20,40 @@ const HorizontalAdvancedTemplate: React.FC<TemplateProps> = ({
   onVariantSelect,
   activeVariantIndex = 0
 }) => {
-  const { title, price, imageUrl, category = 'PREMIUM', sku = 'RH-GEN5-2024', stock = 124, rating = 4.9 } = data;
+  const { 
+    title: initialTitle, 
+    price: initialPrice, 
+    imageUrl: initialImageUrl, 
+    category: initialCategory,
+    sku: initialSku,
+    stock: initialStock,
+    rating: initialRating,
+    availableColors = [],
+    availableSizes = [],
+    variants = []
+  } = (data || {}) as any;
+
+  // Final property Resolution (Trusting parent props first)
+  const d = data as any;
+  const title = initialTitle || d.title || "Product Name";
+  const category = initialCategory || d.category || 'PREMIUM';
+  const sku = initialSku || d.sku || 'RH-GEN5-2024';
+  const rating = initialRating !== undefined ? initialRating : (d.rating || 4.9);
+
+  // Variant resolution logic
+  const processedVariants = variants;
+  const activeVariant = processedVariants[activeVariantIndex] || processedVariants[0];
+
+  // Scoped values
+  const displayPrice = initialPrice !== undefined && initialPrice !== '—' ? initialPrice : (activeVariant?.price || 0);
+  const displayStock = initialStock !== undefined && initialStock !== '—' ? initialStock : (activeVariant?.stock || 0);
+  const displayImages = (activeVariant?.images && activeVariant.images.length > 0)
+    ? activeVariant.images
+    : [initialImageUrl || d.imageUrl || d.image || "/src/assets/images/default-product-1.png"].flat().filter(Boolean);
+
+  const imageUrl = displayImages[0];
+  const price = displayPrice;
+  const stock = displayStock;
   const isSelected = (i: number) => activeVariantIndex === i;
 
   return (

@@ -29,7 +29,9 @@ export const registerProductRoutes = (app: Express, authenticate: any, checkTena
 
   // Dynamic Data
   app.get("/api/resources/data/all", authenticate, dynamicDataController.getAllData);
+  app.get("/api/resources/data/all/public", dynamicDataController.getAllDataPublic);
   app.get("/api/resources/data/:res_id", authenticate, dynamicDataController.getData);
+  app.get("/api/resources/data/:res_id/public", dynamicDataController.getDataPublic);
   app.post("/api/resources/data/:res_id", authenticate, dynamicDataController.submitData);
   app.put("/api/resources/data/:id", authenticate, dynamicDataController.updateData);
   app.delete("/api/resources/data/:id", authenticate, dynamicDataController.deleteData);
