@@ -22,9 +22,10 @@
       "src": "/health",
       "dest": "server/index.ts"
     },
+    { "handle": "filesystem" },
     {
       "src": "/(.*)",
-      "dest": "client/index.html"
+      "dest": "/index.html"
     }
   ]
 }
