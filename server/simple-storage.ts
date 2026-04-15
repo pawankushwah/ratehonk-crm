@@ -18458,8 +18458,8 @@ async getDashboardMetrics(
 
   async submitDynamicData(data: any) {
     const [entry] = await sql`
-      INSERT INTO dynamic_data (template_id, owner_id, tenant_id, user_id, data, updated_at)
-      VALUES (${data.templateId}, ${data.ownerId}, ${data.tenantId}, ${data.userId || null}, 
+      INSERT INTO dynamic_data (template_id, tenant_id, user_id, data, updated_at)
+      VALUES (${data.templateId}, ${data.tenantId}, ${data.userId || null}, 
               ${JSON.stringify(data.data)}::jsonb, NOW())
       RETURNING *`;
     return entry;
