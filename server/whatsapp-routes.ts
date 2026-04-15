@@ -1022,7 +1022,7 @@ export function registerWhatsAppRoutes(app: Express) {
   app.post("/api/whatsapp/sync-contacts", authenticate, async (req: any, res) => {
     try {
       const tenantId = req.user.tenantId;
-      const { syncAllContactsToWhatsApp } = await import("./whatsapp-contact-sync");
+      const { syncAllContactsToWhatsApp } = await import("./whatsapp-contact-sync.js");
       const result = await syncAllContactsToWhatsApp(tenantId);
       res.json({
         success: result.errors.length === 0,

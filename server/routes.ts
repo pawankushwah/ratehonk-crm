@@ -1332,7 +1332,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(404).json({ message: "Lead not found" });
         }
 
-        const { LeadScoringEngine } = await import("./leadScoring");
+        const { LeadScoringEngine } = await import("./leadScoring.js");
         const scoreBreakdown = LeadScoringEngine.getScoreBreakdown(lead);
 
         // Update the lead with new score and priority
@@ -1399,7 +1399,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const tenantId = parseInt(req.params.tenantId);
         const leads = await storage.getLeadsByTenant(tenantId);
 
-        const { LeadScoringEngine } = await import("./leadScoring");
+        const { LeadScoringEngine } = await import("./leadScoring.js");
         const updatedLeads = [];
 
         for (const lead of leads) {
@@ -1930,7 +1930,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // Try to send welcome email using tenant-specific SMTP
         try {
-          const { tenantEmailService } = await import("./tenant-email-service");
+          const { tenantEmailService } = await import("./tenant-email-service.js");
           const tenant = await storage.getTenantById(tenantId);
 
           await tenantEmailService.sendWelcomeEmail({
@@ -5121,7 +5121,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
 
       // Direct SQL query to debug
-      const { sql } = await import("./db");
+      const { sql } = await import("./db.js");
       const estimates =
         await sql`SELECT * FROM estimates WHERE id = ${estimateId} AND tenant_id = ${req.user.tenantId}`;
       console.log("Direct SQL result:", estimates);
@@ -5210,7 +5210,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log("Generating PDF for estimate ID:", estimateId);
 
       // Use direct SQL query to get estimate data
-      const { sql } = await import("./db");
+      const { sql } = await import("./db.js");
       const estimates =
         await sql`SELECT * FROM estimates WHERE id = ${estimateId} AND tenant_id = ${req.user.tenantId}`;
 
@@ -6026,7 +6026,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(400).json({ message: "No files uploaded" });
         }
 
-        const { ObjectStorage } = await import("./objectStorage");
+        const { ObjectStorage } = await import("./objectStorage.js");
         const objectStorage = new ObjectStorage();
 
         const uploadedFiles = [];

@@ -182,7 +182,7 @@ export async function exampleSystemNotification(
 ) {
   // This would require getting all user IDs in the tenant
   // For now, use the notificationService directly
-  const { notificationService } = await import("./notification-service");
+  const { notificationService } = await import("./notification-service.js");
   await notificationService.createTenantNotification("system", {
     tenantId,
     title,

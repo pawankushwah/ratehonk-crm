@@ -205,7 +205,7 @@ export function registerSubscriptionRoutes(app: Express) {
       }
 
       // Import subscription service
-      const { SubscriptionService } = await import("./subscription-service");
+      const { SubscriptionService } = await import("./subscription-service.js");
       const subscriptionService = new SubscriptionService();
 
       let result;

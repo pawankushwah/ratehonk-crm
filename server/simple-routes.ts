@@ -19120,8 +19120,8 @@ Please improve this email.`;
         if ((req as any).user?.tenantId !== parseInt(tenantId)) {
           return res.status(403).json({ message: "Access denied" });
         }
-        const { campaignTracker } = await import("./campaign-tracker");
-        const { tenantEmailService } = await import("./tenant-email-service");
+        const { campaignTracker } = await import("./campaign-tracker.js");
+        const { tenantEmailService } = await import("./tenant-email-service.js");
 
         // Get campaign details
         const [campaign] = await sql`
@@ -23982,7 +23982,7 @@ ${args.tenantName}`;
       console.log("Stripe webhook received:", event.type);
       
       // Import subscription service
-      const { SubscriptionService } = await import("./subscription-service");
+      const { SubscriptionService } = await import("./subscription-service.js");
       const subscriptionService = new SubscriptionService();
       
       // Handle the webhook event
@@ -24015,7 +24015,7 @@ ${args.tenantName}`;
       console.log("Razorpay webhook received:", req.body.event);
       
       // Import subscription service
-      const { SubscriptionService } = await import("./subscription-service");
+      const { SubscriptionService } = await import("./subscription-service.js");
       const subscriptionService = new SubscriptionService();
       
       // Handle the webhook event

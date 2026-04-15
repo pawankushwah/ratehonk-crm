@@ -826,7 +826,7 @@ export class SimpleStorage {
 
       // Sync to WhatsApp contacts when configured (fire and forget)
       if (customer.phone && String(customer.phone).trim()) {
-        import("./whatsapp-contact-sync").then(({ syncContactToWhatsApp }) =>
+        import("./whatsapp-contact-sync.js").then(({ syncContactToWhatsApp }) =>
           syncContactToWhatsApp(tenantId, {
             type: "customer",
             name: customer.name || fullName || "Customer",
@@ -2387,7 +2387,7 @@ async getAllLeadsByTenant(
 
       // Sync to WhatsApp contacts when configured (fire and forget)
       if (lead.phone && String(lead.phone).trim()) {
-        import("./whatsapp-contact-sync").then(({ syncContactToWhatsApp }) =>
+        import("./whatsapp-contact-sync.js").then(({ syncContactToWhatsApp }) =>
           syncContactToWhatsApp(lead.tenantId, {
             type: "lead",
             name: lead.name || `${lead.firstName || ""} ${lead.lastName || ""}`.trim() || "Lead",
@@ -10089,7 +10089,7 @@ async getAllLeadsByTenant(
             
             if (assignedUser?.email && lead) {
               const leadName = lead?.name || `${lead?.first_name || ''} ${lead?.last_name || ''}`.trim() || `Lead #${entityId}`;
-              const emailService = (await import("./email-service")).emailService;
+              const emailService = (await import("./email-service.js")).emailService;
               
               // Format created date
               const createdDate = lead.created_at 

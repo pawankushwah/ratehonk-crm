@@ -111,7 +111,7 @@ export function registerEstimatesRoutes(app: Express) {
           return res.status(400).json({ message: "No files uploaded" });
         }
 
-        const { ObjectStorageService } = await import("./objectStorage");
+        const { ObjectStorageService } = await import("./objectStorage.js");
         const objectStorage = new ObjectStorageService();
 
         const uploadedFiles = [];

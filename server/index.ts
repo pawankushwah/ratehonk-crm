@@ -462,11 +462,11 @@ app.use((req, res, next) => {
     console.log('📅 Cron: Processing all background tasks...');
     try {
       // Import schedulers dynamically to avoid startup overhead if not needed
-      const { campaignScheduler } = await import("./campaign-scheduler");
-      const { processLeadFollowUpAutomations } = await import("./lead-follow-up-scheduler");
-      const { processInvoicePaymentReminders } = await import("./invoice-reminder-scheduler");
-      const { processInvoiceStatusAutomations } = await import("./invoice-automation-scheduler");
-      const { processWhatsAppContactSync } = await import("./whatsapp-contact-sync-scheduler");
+      const { campaignScheduler } = await import("./campaign-scheduler.js");
+      const { processLeadFollowUpAutomations } = await import("./lead-follow-up-scheduler.js");
+      const { processInvoicePaymentReminders } = await import("./invoice-reminder-scheduler.js");
+      const { processInvoiceStatusAutomations } = await import("./invoice-automation-scheduler.js");
+      const { processWhatsAppContactSync } = await import("./whatsapp-contact-sync-scheduler.js");
 
       // Run all tasks (non-blocking or awaiting depends on desired behavior)
       // We await them here so the cron request stays open until finished (Vercel allows up to 10s-60s)
@@ -489,7 +489,7 @@ app.use((req, res, next) => {
     const authHeader = req.headers.authorization;
     if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) return res.status(401).send('Unauthorized');
     
-    const { campaignScheduler } = await import("./campaign-scheduler");
+    const { campaignScheduler } = await import("./campaign-scheduler.js");
     await campaignScheduler.processScheduledCampaigns();
     res.json({ success: true });
   });
@@ -498,7 +498,7 @@ app.use((req, res, next) => {
     const authHeader = req.headers.authorization;
     if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) return res.status(401).send('Unauthorized');
     
-    const { processLeadFollowUpAutomations } = await import("./lead-follow-up-scheduler");
+    const { processLeadFollowUpAutomations } = await import("./lead-follow-up-scheduler.js");
     await processLeadFollowUpAutomations();
     res.json({ success: true });
   });
@@ -523,13 +523,13 @@ app.use((req, res, next) => {
     
     // Register estimates routes
     console.log('🔧 Registering estimates routes...');
-    const { registerEstimatesRoutes } = await import("./estimates-routes");
+    const { registerEstimatesRoutes } = await import("./estimates-routes.js");
     registerEstimatesRoutes(app);
     console.log('✅ Estimates routes registered successfully');
 
     // Register WhatsApp routes (includes QR code generation)
     console.log('🔧 Registering WhatsApp routes...');
-    const { registerWhatsAppRoutes } = await import("./whatsapp-routes");
+    const { registerWhatsAppRoutes } = await import("./whatsapp-routes.js");
     registerWhatsAppRoutes(app);
     console.log('✅ WhatsApp routes registered successfully');
 
@@ -640,7 +640,7 @@ app.use((req, res, next) => {
   if (!process.env.VERCEL) {
     // Start campaign scheduler
     try {
-      const { campaignScheduler } = await import("./campaign-scheduler");
+      const { campaignScheduler } = await import("./campaign-scheduler.js");
       campaignScheduler.start();
     } catch (error) {
       console.error("Failed to start campaign scheduler:", error);
@@ -648,7 +648,7 @@ app.use((req, res, next) => {
 
     // Start lead follow-up automation scheduler
     try {
-      const { startLeadFollowUpScheduler } = await import("./lead-follow-up-scheduler");
+      const { startLeadFollowUpScheduler } = await import("./lead-follow-up-scheduler.js");
       startLeadFollowUpScheduler();
     } catch (error) {
       console.error("Failed to start lead follow-up scheduler:", error);
@@ -656,9 +656,9 @@ app.use((req, res, next) => {
 
     // Start invoice payment reminder scheduler
     try {
-      const { startInvoiceReminderScheduler } = await import("./invoice-reminder-scheduler");
+      const { startInvoiceReminderScheduler } = await import("./invoice-reminder-scheduler.js");
       startInvoiceReminderScheduler();
-      const { startInvoiceAutomationScheduler } = await import("./invoice-automation-scheduler");
+      const { startInvoiceAutomationScheduler } = await import("./invoice-automation-scheduler.js");
       startInvoiceAutomationScheduler();
     } catch (error) {
       console.error("Failed to start invoice reminder scheduler:", error);
@@ -666,7 +666,7 @@ app.use((req, res, next) => {
 
     // Start WhatsApp contact sync scheduler
     try {
-      const { startWhatsAppContactSyncScheduler } = await import("./whatsapp-contact-sync-scheduler");
+      const { startWhatsAppContactSyncScheduler } = await import("./whatsapp-contact-sync-scheduler.js");
       startWhatsAppContactSyncScheduler();
     } catch (error) {
       console.error("Failed to start WhatsApp contact sync scheduler:", error);
