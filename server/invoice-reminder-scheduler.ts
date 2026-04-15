@@ -5,8 +5,8 @@
  * (daily, weekly, monthly, or specific_date).
  */
 
-import { simpleStorage } from "./simple-storage";
-import { tenantEmailService } from "./tenant-email-service";
+import { simpleStorage } from "./simple-storage.js";
+import { tenantEmailService } from "./tenant-email-service.js";
 
 const RUN_INTERVAL_MS = 24 * 60 * 60 * 1000; // Once per day
 

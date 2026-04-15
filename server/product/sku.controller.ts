@@ -1,5 +1,5 @@
 import { Response } from "express";
-import { simpleStorage } from "../simple-storage";
+import { simpleStorage } from "../simple-storage.js";
 
 export const getNextSku = async (req: any, res: Response) => {
   try {

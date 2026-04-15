@@ -1,6 +1,6 @@
 import type { Express } from "express";
-import { simpleStorage as storage } from "./simple-storage";
-import { authenticate } from "./simple-routes";
+import { simpleStorage as storage } from "./simple-storage.js";
+import { authenticate } from "./simple-routes.js";
 import type { InsertWhatsappConfig } from "@shared/schema";
 import { spawn } from "child_process";
 import { z } from "zod";

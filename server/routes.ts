@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { simpleStorage as storage } from "./simple-storage";
+import { simpleStorage as storage } from "./simple-storage.js";
 import {
   insertUserSchema,
   insertTenantSchema,
@@ -14,19 +14,19 @@ import {
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import multer from "multer";
-import { FacebookService } from "./facebook-service";
-import { InstagramService } from "./instagram-service";
-import { LinkedInService } from "./linkedin-service";
-import { TwitterService } from "./twitter-service";
-import { TikTokService } from "./tiktok-service";
-import { SocialServiceFactory } from "./social-service-factory";
-import { registerLeadCreateEndpoint } from "./lead-create-endpoint";
-import { registerPackageTypesRoutes } from "./package-types-routes";
-import { registerZoomRoutes } from "./zoom-routes";
-import { tenantEmailService } from "./tenant-email-service";
-import { emailService } from "./email-service";
-import { registerProductInventoryRoutes } from "./product-inventory-routes";
-import { registerProductRoutes } from "./product/product-routes";
+import { FacebookService } from "./facebook-service.js";
+import { InstagramService } from "./instagram-service.js";
+import { LinkedInService } from "./linkedin-service.js";
+import { TwitterService } from "./twitter-service.js";
+import { TikTokService } from "./tiktok-service.js";
+import { SocialServiceFactory } from "./social-service-factory.js";
+import { registerLeadCreateEndpoint } from "./lead-create-endpoint.js";
+import { registerPackageTypesRoutes } from "./package-types-routes.js";
+import { registerZoomRoutes } from "./zoom-routes.js";
+import { tenantEmailService } from "./tenant-email-service.js";
+import { emailService } from "./email-service.js";
+import { registerProductInventoryRoutes } from "./product-inventory-routes.js";
+import { registerProductRoutes } from "./product/product-routes.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 

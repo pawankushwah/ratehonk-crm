@@ -4,9 +4,9 @@
  * (e.g. Pending, Overdue) when the configured interval has passed.
  */
 
-import { sql } from "./db";
-import { simpleStorage } from "./simple-storage";
-import { tenantEmailService } from "./tenant-email-service";
+import { sql } from "./db.js";
+import { simpleStorage } from "./simple-storage.js";
+import { tenantEmailService } from "./tenant-email-service.js";
 
 const RUN_INTERVAL_MS = 60 * 60 * 1000; // Every hour
 

@@ -1,9 +1,9 @@
 import bcrypt from "bcrypt";
-import { LeadScoringEngine } from "./leadScoring";
-import { MENU_ITEMS } from "../shared/permissions";
+import { LeadScoringEngine } from "./leadScoring.js";
+import { MENU_ITEMS } from "../shared/permissions.js";
 
 // Use the same database connection as the rest of the app
-import { sql, db } from "./db";
+import { sql, db } from "./db.js";
 // Import Drizzle ORM components for leads queries
 import {
   leads,
@@ -19,8 +19,8 @@ import {
   dropdownOptions,
   imageLogs,
   skuCounters,
-} from "../shared/schema";
-import type { CustomerFile, InsertCustomerFile } from "../shared/schema";
+} from "../shared/schema.js";
+import type { CustomerFile, InsertCustomerFile } from "../shared/schema.js";
 import { eq, desc, and } from "drizzle-orm";
 
 export class SimpleStorage {

@@ -4,8 +4,8 @@
  * Runs every hour to catch any contacts that may have been missed.
  */
 
-import { sql } from "./db";
-import { syncAllContactsToWhatsApp } from "./whatsapp-contact-sync";
+import { sql } from "./db.js";
+import { syncAllContactsToWhatsApp } from "./whatsapp-contact-sync.js";
 
 const RUN_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 

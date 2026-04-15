@@ -1,5 +1,5 @@
-import { simpleStorage } from "./simple-storage";
-import { tenantEmailService } from "./tenant-email-service";
+import { simpleStorage } from "./simple-storage.js";
+import { tenantEmailService } from "./tenant-email-service.js";
 
 interface PackageRecipient {
   name: string;

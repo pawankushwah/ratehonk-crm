@@ -6,7 +6,7 @@
  * - Manual sync button clicked on leads/customers listing pages
  */
 
-import { simpleStorage } from "./simple-storage";
+import { simpleStorage } from "./simple-storage.js";
 
 const WHATSAPP_PROVIDER_API_BASE =
   process.env.WHATSAPP_PROVIDER_API_BASE || "";

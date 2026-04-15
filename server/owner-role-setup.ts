@@ -1,5 +1,5 @@
 // Owner Role Setup for Tenant Registration
-import { sql } from './db';
+import { sql } from './db.js';
 
 // Full owner permissions for all system modules
 export const OWNER_PERMISSIONS = {

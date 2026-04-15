@@ -1,7 +1,7 @@
 import type { Express } from "express";
-import { storage } from "./storage";
-import { simpleStorage} from "./simple-storage";
-import { sql } from "./db";
+import { storage } from "./storage.js";
+import { simpleStorage} from "./simple-storage.js";
+import { sql } from "./db.js";
 import jwt from "jsonwebtoken";
 import multer from "multer";
 

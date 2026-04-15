@@ -1,10 +1,10 @@
 import { Express } from "express";
-import * as dropdownController from "./dropdown.controller";
-import * as dynamicDataController from "./dynamic-data.controller";
-import * as formController from "./form.controller";
-import * as frontendFormController from "./frontend-form.controller";
-import * as imageController from "./image.controller";
-import * as skuController from "./sku.controller";
+import * as dropdownController from "./dropdown.controller.js";
+import * as dynamicDataController from "./dynamic-data.controller.js";
+import * as formController from "./form.controller.js";
+import * as frontendFormController from "./frontend-form.controller.js";
+import * as imageController from "./image.controller.js";
+import * as skuController from "./sku.controller.js";
 
 export const registerProductRoutes = (app: Express, authenticate: any, checkTenantAccess: any) => {
   app.get("/api/dummmy",authenticate, (_, res)=>res.send("😁"))

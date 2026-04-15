@@ -3,8 +3,8 @@
  * Handles all notification types across all modules
  */
 
-import { simpleStorage } from "./simple-storage";
-import { sql } from "./db";
+import { simpleStorage } from "./simple-storage.js";
+import { sql } from "./db.js";
 
 export type NotificationType =
   | "lead_assigned"

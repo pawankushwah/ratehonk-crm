@@ -1,6 +1,6 @@
 import Stripe from 'stripe';
 import Razorpay from 'razorpay';
-import { simpleStorage } from './simple-storage';
+import { simpleStorage } from './simple-storage.js';
 
 // Lazy initialization of payment gateways (only when needed)
 let stripeInstance: Stripe | null = null;

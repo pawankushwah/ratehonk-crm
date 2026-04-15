@@ -1,4 +1,4 @@
-import { simpleStorage } from "./simple-storage";
+import { simpleStorage } from "./simple-storage.js";
 
 // Direct API handlers for subscription functionality
 export class SubscriptionAPI {

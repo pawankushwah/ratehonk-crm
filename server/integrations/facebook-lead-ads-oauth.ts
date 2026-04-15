@@ -4,7 +4,7 @@
  */
 
 import { Express } from "express";
-import { sql } from "../db";
+import { sql } from "../db.js";
 import crypto from "crypto";
 
 // Facebook OAuth Scopes

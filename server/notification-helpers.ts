@@ -3,8 +3,8 @@
  * Easy-to-use functions for creating notifications from different modules
  */
 
-import { notificationService, NotificationType } from "./notification-service";
-import { simpleStorage } from "./simple-storage";
+import { notificationService, NotificationType } from "./notification-service.js";
+import { simpleStorage } from "./simple-storage.js";
 
 /**
  * Lead-related notifications

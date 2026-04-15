@@ -1,4 +1,4 @@
-import { SimpleStorage } from './simple-storage';
+import { SimpleStorage } from './simple-storage.js';
 
 interface LinkedInTokenResponse {
   access_token: string;

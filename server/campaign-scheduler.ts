@@ -3,10 +3,10 @@
  * Handles scheduled campaign execution
  */
 
-import { sql } from "./db";
-import { campaignTracker } from "./campaign-tracker";
-import { tenantEmailService } from "./tenant-email-service";
-import { simpleStorage } from "./simple-storage";
+import { sql } from "./db.js";
+import { campaignTracker } from "./campaign-tracker.js";
+import { tenantEmailService } from "./tenant-email-service.js";
+import { simpleStorage } from "./simple-storage.js";
 
 export class CampaignScheduler {
   /**

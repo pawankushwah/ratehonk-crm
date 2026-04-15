@@ -1,5 +1,5 @@
-import { sql } from "./db";
-import { emailService } from "./email-service";
+import { sql } from "./db.js";
+import { emailService } from "./email-service.js";
 
 interface CalendarEventReminder {
   id: number;

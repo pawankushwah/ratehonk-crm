@@ -1,4 +1,4 @@
-import { SimpleStorage } from './simple-storage';
+import { SimpleStorage } from './simple-storage.js';
 
 interface InstagramTokenResponse {
   access_token: string;

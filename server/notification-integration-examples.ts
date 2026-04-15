@@ -18,7 +18,7 @@ import {
   emailNotifications,
   subscriptionNotifications,
   genericNotifications,
-} from "./notification-helpers";
+} from "./notification-helpers.js";
 
 // ============================================
 // LEAD MODULE INTEGRATION EXAMPLES

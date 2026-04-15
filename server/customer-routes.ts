@@ -1,5 +1,5 @@
 import express from "express";
-import { simpleStorage } from "./simple-storage";
+import { simpleStorage } from "./simple-storage.js";
 
 const router = express.Router();
 

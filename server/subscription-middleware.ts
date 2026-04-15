@@ -1,5 +1,5 @@
-import { sql } from "./db";
-import { simpleStorage } from "./simple-storage";
+import { sql } from "./db.js";
+import { simpleStorage } from "./simple-storage.js";
 
 /**
  * Middleware to check if tenant has access to a specific page/feature based on subscription

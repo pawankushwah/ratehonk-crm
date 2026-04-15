@@ -1,7 +1,7 @@
 import express, { type Request, Response, NextFunction } from "express";
 import cors from "cors";
-import { registerSimpleRoutes } from "./simple-routes";
-import { setupVite, serveStatic, log } from "./vite";
+import { registerSimpleRoutes } from "./simple-routes.js";
+import { setupVite, serveStatic, log } from "./vite.js";
 
 class ServerManager {
   private app: express.Application;

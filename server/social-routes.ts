@@ -1,5 +1,5 @@
 import type { Express } from "express";
-import { SocialServiceFactory } from "./social-service-factory";
+import { SocialServiceFactory } from "./social-service-factory.js";
 
 /**
  * Social media integration routes that use tenant-specific credentials from database

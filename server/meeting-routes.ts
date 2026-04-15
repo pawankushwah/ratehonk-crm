@@ -1,7 +1,7 @@
 import type { Express } from "express";
-import { createGoogleMeetLink } from "./google-calendar-service";
-import { createZoomMeeting } from "./zoom-meeting-service";
-import { createMicrosoftTeamsMeeting, generateTeamsMeetingLink } from "./microsoft-teams-service";
+import { createGoogleMeetLink } from "./google-calendar-service.js";
+import { createZoomMeeting } from "./zoom-meeting-service.js";
+import { createMicrosoftTeamsMeeting, generateTeamsMeetingLink } from "./microsoft-teams-service.js";
 
 export function registerMeetingRoutes(app: Express) {
   // Generate Google Meet link endpoint

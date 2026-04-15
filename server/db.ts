@@ -1,6 +1,6 @@
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
-import { config } from './config';
+import { config } from './config.js';
 
 // Use DATABASE_URL from config system (works without .env files)
 const connectionString = config.database.url;

@@ -4,8 +4,8 @@
  */
 
 import { Express } from "express";
-import { sql } from "../db";
-import { SimpleStorage } from "../simple-storage";
+import { sql } from "../db.js";
+import { SimpleStorage } from "../simple-storage.js";
 
 const simpleStorage = new SimpleStorage();
 

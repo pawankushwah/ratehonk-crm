@@ -1,11 +1,11 @@
-import { db } from "./db";
+import { db } from "./db.js";
 import { socialIntegrations } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
-import { FacebookService } from "./facebook-service";
-import { InstagramService } from "./instagram-service";
-import { LinkedInService } from "./linkedin-service";
-import { TwitterService } from "./twitter-service";
-import { TikTokService } from "./tiktok-service";
+import { FacebookService } from "./facebook-service.js";
+import { InstagramService } from "./instagram-service.js";
+import { LinkedInService } from "./linkedin-service.js";
+import { TwitterService } from "./twitter-service.js";
+import { TikTokService } from "./tiktok-service.js";
 
 /**
  * Factory class to create social media service instances with tenant-specific credentials

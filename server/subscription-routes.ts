@@ -1,5 +1,5 @@
 import { Express } from 'express';
-import { simpleStorage } from './simple-storage';
+import { simpleStorage } from './simple-storage.js';
 import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';

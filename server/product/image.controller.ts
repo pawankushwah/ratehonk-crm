@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { simpleStorage } from "../simple-storage";
+import { simpleStorage } from "../simple-storage.js";
 
 export const uploadImage = async (req: any, res: Response) => {
   try {

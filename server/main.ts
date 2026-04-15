@@ -1,4 +1,4 @@
-import { ServerManager } from './server-manager';
+import { ServerManager } from './server-manager.js';
 
 const startServer = async () => {
   const serverManager = new ServerManager();

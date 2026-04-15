@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { simpleStorage } from "../simple-storage";
+import { simpleStorage } from "../simple-storage.js";
 
 export const getForms = async (req: Request, res: Response) => {
   try {

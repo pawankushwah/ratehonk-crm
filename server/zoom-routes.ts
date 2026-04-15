@@ -1,8 +1,8 @@
 import type { Express } from "express";
 import crypto from "crypto";
-import { zoomService } from "./zoom";
-import { simpleStorage as storage } from "./simple-storage";
-import { authenticate } from "./simple-routes";
+import { zoomService } from "./zoom.js";
+import { simpleStorage as storage } from "./simple-storage.js";
+import { authenticate } from "./simple-routes.js";
 
 // Helper function to match phone number to customer
 async function matchCustomerByPhone(phoneNumber: string, tenantId: number): Promise<number | undefined> {

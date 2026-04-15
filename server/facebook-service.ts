@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import fetch from 'node-fetch';
-import { simpleStorage } from './simple-storage';
+import { simpleStorage } from './simple-storage.js';
 
 interface FacebookUser {
   id: string;

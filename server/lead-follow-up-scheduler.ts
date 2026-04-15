@@ -4,9 +4,9 @@
  * when the configured interval has passed (e.g. every 1, 2, or 7 days).
  */
 
-import { simpleStorage } from "./simple-storage";
-import { tenantEmailService } from "./tenant-email-service";
-import { sql } from "./db";
+import { simpleStorage } from "./simple-storage.js";
+import { tenantEmailService } from "./tenant-email-service.js";
+import { sql } from "./db.js";
 
 const RUN_INTERVAL_MS = 60 * 60 * 1000; // Every hour
 

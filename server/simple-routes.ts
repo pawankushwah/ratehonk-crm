@@ -3,34 +3,34 @@ import {
   gstSettings,
   gstRates,
   serviceProviders,
-} from "./../shared/schema";
+} from "./../shared/schema.js";
 import type { Express } from "express";
 import express from "express";
 import { createServer, type Server } from "http";
-import { simpleStorage } from "./simple-storage";
-import { emailService } from "./email-service";
-import { tenantEmailService } from "./tenant-email-service";
-import { gmailService } from "./gmail-service";
+import { simpleStorage } from "./simple-storage.js";
+import { emailService } from "./email-service.js";
+import { tenantEmailService } from "./tenant-email-service.js";
+import { gmailService } from "./gmail-service.js";
 // Removed unifiedSocialService import - using SocialServiceFactory instead
-import { LinkedInService } from "./linkedin-service";
-import { SocialServiceFactory } from "./social-service-factory";
-import { FacebookService } from "./facebook-service";
-import { registerSocialRoutes } from "./social-routes";
-import { registerZoomRoutes } from "./zoom-routes";
+import { LinkedInService } from "./linkedin-service.js";
+import { SocialServiceFactory } from "./social-service-factory.js";
+import { FacebookService } from "./facebook-service.js";
+import { registerSocialRoutes } from "./social-routes.js";
+import { registerZoomRoutes } from "./zoom-routes.js";
 import {
   registerWhatsAppRoutes,
   sendWhatsAppWelcomeMessage,
   sendWhatsAppCustomMessage,
-} from "./whatsapp-routes";
-import { registerMeetingRoutes } from "./meeting-routes";
-import { processCalendarReminders } from "./calendar-reminder-scheduler";
-import { registerFacebookLeadAdsOAuthRoutes } from "./integrations/facebook-lead-ads-oauth";
-import { registerFacebookLeadAdsRoutes } from "./integrations/facebook-lead-ads-handler";
+} from "./whatsapp-routes.js";
+import { registerMeetingRoutes } from "./meeting-routes.js";
+import { processCalendarReminders } from "./calendar-reminder-scheduler.js";
+import { registerFacebookLeadAdsOAuthRoutes } from "./integrations/facebook-lead-ads-oauth.js";
+import { registerFacebookLeadAdsRoutes } from "./integrations/facebook-lead-ads-handler.js";
 
-import { sql, db } from "./db";
+import { sql, db } from "./db.js";
 import { eq, and, desc, asc } from "drizzle-orm";
 import bcrypt from "bcrypt";
-import { requireActiveSubscription, requirePageAccess } from "./subscription-middleware";
+import { requireActiveSubscription, requirePageAccess } from "./subscription-middleware.js";
 // Google APIs import DISABLED - using direct HTTP requests to avoid "Cannot add property auth" error
 // import { google } from 'googleapis';
 import jwt from "jsonwebtoken";

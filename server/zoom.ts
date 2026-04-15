@@ -1,4 +1,4 @@
-import { db } from "./db";
+import { db } from "./db.js";
 import { zoomTokens, callLogs, type ZoomToken, type InsertZoomToken, type CallLog, type InsertCallLog } from "@shared/schema";
 import { eq, and, desc } from "drizzle-orm";
 

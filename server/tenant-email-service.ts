@@ -1,6 +1,6 @@
 import nodemailer from "nodemailer";
-import { sql } from "./db";
-import { config } from "./config";
+import { sql } from "./db.js";
+import { config } from "./config.js";
 import * as fs from "fs";
 import * as path from "path";
 

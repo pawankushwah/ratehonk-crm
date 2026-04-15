@@ -3,7 +3,7 @@
  * Tracks all campaign metrics: sent, delivered, opened, clicked, etc.
  */
 
-import { sql } from "./db";
+import { sql } from "./db.js";
 
 export interface CampaignTrackingData {
   campaignId: number;

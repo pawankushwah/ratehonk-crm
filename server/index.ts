@@ -8,17 +8,31 @@ import https from "https";
 import http from "http";
 import fs from "fs";
 import path from "path";
-import { registerSimpleRoutes } from "./simple-routes";
-import { registerSubscriptionRoutes } from "./subscription-routes";
-import { setupVite, serveStatic, log } from "./vite";
-import { config, validateConfig } from "./config";
-import { registerProductRoutes } from "./product/product-routes";
-import { checkTenantAccess } from "./routes"
+import { registerSimpleRoutes } from "./simple-routes.js";
+import { registerSubscriptionRoutes } from "./subscription-routes.js";
+import { setupVite, serveStatic, log } from "./vite.js";
+import { config, validateConfig } from "./config.js";
+import { registerProductRoutes } from "./product/product-routes.js";
+import { checkTenantAccess } from "./routes.js"
 
 // Validate configuration and display status
 console.log("🔧 Initializing RateHonk CRM Server...");
-validateConfig();
-console.log(`🗄️  Database: ${new URL(config.database.url).hostname}`);
+try {
+  validateConfig();
+  if (config.database.url && config.database.url.startsWith('postgres')) {
+    try {
+      const dbUrl = new URL(config.database.url);
+      console.log(`🗄️  Database: ${dbUrl.hostname}`);
+    } catch (urlError) {
+      console.warn(`⚠️  Database URL could not be parsed but exists. Host: ${config.database.url.split('@')[1]?.split('/')[0] || 'unknown'}`);
+    }
+  } else {
+    console.warn("⚠️  DATABASE_URL is missing or invalid. Check your environment variables.");
+  }
+} catch (configError) {
+  console.error("❌ Configuration validation failed during startup:", configError);
+}
+
 console.log(`🌍 Environment: ${config.server.nodeEnv}`);
 console.log(`🚀 Port: ${config.server.port}`);
 
@@ -57,7 +71,7 @@ app.use(express.urlencoded({ extended: false, limit: '10mb' }));
 // CRITICAL: Register invoice import routes EARLY to avoid routing conflicts
 import multer from "multer";
 import * as XLSX from "xlsx";
-import { authenticate } from "./estimates-routes";
+import { authenticate } from "./estimates-routes.js";
 registerProductRoutes(app, authenticate, checkTenantAccess);
 
 

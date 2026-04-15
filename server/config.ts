@@ -124,14 +124,14 @@ export function validateConfig() {
     console.error('❌ Configuration errors:');
     errors.forEach(error => console.error(`  - ${error}`));
     
-    if (isActualProduction) {
+    if (isActualProduction && !process.env.VERCEL) {
       console.error('\n🔧 To fix these errors in production:');
       console.error('  1. Set environment variables in your hosting platform');
       console.error('  2. Or use platform-specific configuration methods');
       console.error('  3. Refer to DEPLOYMENT_ENV_SETUP.md for complete list');
       process.exit(1);
     } else {
-      console.warn('⚠️  Using fallback values for development');
+      console.warn('⚠️  Configuration validation failed. In serverless/Vercel environments, we continue to allow log visibility.');
     }
   } else {
     console.log('✅ Configuration validated successfully');
