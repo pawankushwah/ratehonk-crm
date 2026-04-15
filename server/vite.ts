@@ -109,6 +109,12 @@ export async function setupVite(app: Express, server: Server) {
 /* Production: serve static files from the built client   */
 
 export function serveStatic(app: Express) {
+  // On Vercel, static files are served by the edge network, not Express
+  if (process.env.VERCEL) {
+    console.log("🚀 Vercel detected: Skipping Express static file serving");
+    return;
+  }
+
   // In production the build output lives in <project>/dist/public
   const distPath = path.resolve(__dirname, "..", "dist", "public");
 

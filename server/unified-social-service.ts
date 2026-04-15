@@ -504,7 +504,7 @@ export class UnifiedSocialService {
         }
 
         // Update last sync time
-        await simpleStorage.updateSocialIntegration(tenantId, platform, {
+        await simpleStorage.updateSocialIntegrationByPlatform(tenantId, platform, {
           lastSync: new Date().toISOString()
         });
 

@@ -13553,20 +13553,7 @@ RateHonk CRM Team`,
     }
   }
 
-  async getSocialIntegration(tenantId: number, platform: string) {
-    try {
-      const [integration] = await sql`
-        SELECT * FROM social_integrations 
-        WHERE tenant_id = ${tenantId} AND platform = ${platform}
-      `;
-      return integration;
-    } catch (error) {
-      console.error("Error getting social integration:", error);
-      return null;
-    }
-  }
-
-  async updateSocialIntegration(tenantId: number, platform: string, data: any) {
+  async updateSocialIntegrationByPlatform(tenantId: number, platform: string, data: any) {
     try {
       const [updated] = await sql`
         UPDATE social_integrations 

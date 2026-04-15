@@ -17,7 +17,7 @@ const PublicLayout = ({ children }: PublicLayoutProps) => {
             {/* <div className="w-10 h-10 flex items-center justify-center bg-primary/10 rounded-xl font-bold text-lg gradient-text group-hover:scale-110 transition-transform duration-300">
             </div> */}
             <div className="flex flex-col">
-              <img src="/logo.png" alt="Logo" className="w-40" />
+              <img src="/src/assets/RATEHONKLOGO.png" alt="Logo" className="w-40" />
               {/* <span className="font-black text-xl text-text-main tracking-tight leading-none">RateHonk</span> */}
               <span className="text-[10px] text-text-muted uppercase tracking-[0.2em] font-black opacity-60">Storefront</span>
             </div>

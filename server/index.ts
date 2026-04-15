@@ -32,6 +32,9 @@ if (config.server.nodeEnv === 'production') {
 
 const app = express();
 
+// Trust proxy for Vercel/proxies
+app.set("trust proxy", true);
+
 // Configure CORS
 app.use(cors({
   origin: function (origin, callback) {
@@ -432,6 +435,59 @@ app.use((req, res, next) => {
   
   // Register ALL API routes BEFORE Vite setup and BEFORE catch-all
   console.log('🔧 Registering simple routes...');
+  
+  // Vercel Cron Job Endpoints
+  // These allow Vercel to trigger background tasks via HTTP requests
+  app.get('/api/cron/process-all', async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+      console.error('❌ Unauthorized cron attempt');
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    console.log('📅 Cron: Processing all background tasks...');
+    try {
+      // Import schedulers dynamically to avoid startup overhead if not needed
+      const { campaignScheduler } = await import("./campaign-scheduler");
+      const { processLeadFollowUpAutomations } = await import("./lead-follow-up-scheduler");
+      const { processInvoicePaymentReminders } = await import("./invoice-reminder-scheduler");
+      const { processInvoiceStatusAutomations } = await import("./invoice-automation-scheduler");
+      const { processWhatsAppContactSync } = await import("./whatsapp-contact-sync-scheduler");
+
+      // Run all tasks (non-blocking or awaiting depends on desired behavior)
+      // We await them here so the cron request stays open until finished (Vercel allows up to 10s-60s)
+      await Promise.allSettled([
+        campaignScheduler.processScheduledCampaigns(),
+        processLeadFollowUpAutomations(),
+        processInvoicePaymentReminders(),
+        processInvoiceStatusAutomations(),
+        processWhatsAppContactSync()
+      ]);
+
+      res.json({ success: true, message: 'All background tasks processed' });
+    } catch (error: any) {
+      console.error('❌ Cron execution failed:', error);
+      res.status(500).json({ error: 'Cron execution failed', details: error.message });
+    }
+  });
+
+  app.get('/api/cron/campaigns', async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) return res.status(401).send('Unauthorized');
+    
+    const { campaignScheduler } = await import("./campaign-scheduler");
+    await campaignScheduler.processScheduledCampaigns();
+    res.json({ success: true });
+  });
+
+  app.get('/api/cron/lead-follow-ups', async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) return res.status(401).send('Unauthorized');
+    
+    const { processLeadFollowUpAutomations } = await import("./lead-follow-up-scheduler");
+    await processLeadFollowUpAutomations();
+    res.json({ success: true });
+  });
   let server;
   try {
     // Add a direct Facebook configure route in index.ts as a test
@@ -531,14 +587,16 @@ app.use((req, res, next) => {
       serveStatic(app);
     }
     
-    server.listen(port, "0.0.0.0", () => {
-      const protocol = useHttps && !hasCertificates ? 'https (certificates missing)' : 'http';
-      console.log(`✅ Server listening on ${protocol}://localhost:${port}`);
-      console.log(`🏥 Health check: ${protocol}://localhost:${port}/health`);
-      if (useHttps && !hasCertificates) {
-        console.log(`⚠️  HTTPS requested but certificates not found. Run: npm run generate-cert`);
-      }
-    });
+    if (!process.env.VERCEL) {
+      server.listen(port, "0.0.0.0", () => {
+        const protocol = useHttps && !hasCertificates ? 'https (certificates missing)' : 'http';
+        console.log(`✅ Server listening on ${protocol}://localhost:${port}`);
+        console.log(`🏥 Health check: ${protocol}://localhost:${port}/health`);
+        if (useHttps && !hasCertificates) {
+          console.log(`⚠️  HTTPS requested but certificates not found. Run: npm run generate-cert`);
+        }
+      });
+    }
   }
 
   // Add catch-all for unhandled API routes (MUST be after all route registration)
@@ -563,39 +621,47 @@ app.use((req, res, next) => {
     throw err;
   });
 
-  // Start campaign scheduler
-  try {
-    const { campaignScheduler } = await import("./campaign-scheduler");
-    campaignScheduler.start();
-  } catch (error) {
-    console.error("Failed to start campaign scheduler:", error);
-  }
+  // Start schedulers ONLY if NOT running on Vercel
+  // Vercel handles these via Cron Job endpoints defined above
+  if (!process.env.VERCEL) {
+    // Start campaign scheduler
+    try {
+      const { campaignScheduler } = await import("./campaign-scheduler");
+      campaignScheduler.start();
+    } catch (error) {
+      console.error("Failed to start campaign scheduler:", error);
+    }
 
-  // Start lead follow-up automation scheduler
-  try {
-    const { startLeadFollowUpScheduler } = await import("./lead-follow-up-scheduler");
-    startLeadFollowUpScheduler();
-  } catch (error) {
-    console.error("Failed to start lead follow-up scheduler:", error);
-  }
+    // Start lead follow-up automation scheduler
+    try {
+      const { startLeadFollowUpScheduler } = await import("./lead-follow-up-scheduler");
+      startLeadFollowUpScheduler();
+    } catch (error) {
+      console.error("Failed to start lead follow-up scheduler:", error);
+    }
 
-  // Start invoice payment reminder scheduler (sends reminders for invoices with enable_reminder)
-  try {
-    const { startInvoiceReminderScheduler } = await import("./invoice-reminder-scheduler");
-    startInvoiceReminderScheduler();
-    const { startInvoiceAutomationScheduler } = await import("./invoice-automation-scheduler");
-    startInvoiceAutomationScheduler();
-  } catch (error) {
-    console.error("Failed to start invoice reminder scheduler:", error);
-  }
+    // Start invoice payment reminder scheduler
+    try {
+      const { startInvoiceReminderScheduler } = await import("./invoice-reminder-scheduler");
+      startInvoiceReminderScheduler();
+      const { startInvoiceAutomationScheduler } = await import("./invoice-automation-scheduler");
+      startInvoiceAutomationScheduler();
+    } catch (error) {
+      console.error("Failed to start invoice reminder scheduler:", error);
+    }
 
-  // Start WhatsApp contact sync scheduler (syncs leads/customers to WhatsApp in background)
-  try {
-    const { startWhatsAppContactSyncScheduler } = await import("./whatsapp-contact-sync-scheduler");
-    startWhatsAppContactSyncScheduler();
-  } catch (error) {
-    console.error("Failed to start WhatsApp contact sync scheduler:", error);
+    // Start WhatsApp contact sync scheduler
+    try {
+      const { startWhatsAppContactSyncScheduler } = await import("./whatsapp-contact-sync-scheduler");
+      startWhatsAppContactSyncScheduler();
+    } catch (error) {
+      console.error("Failed to start WhatsApp contact sync scheduler:", error);
+    }
+  } else {
+    console.log("🚀 Running on Vercel: Standard schedulers disabled (using Cron Job endpoints)");
   }
 
   // Server already started above before Vite setup
 })();
+
+export default app;
