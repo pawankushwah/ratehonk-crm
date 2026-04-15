@@ -18,7 +18,7 @@ import GlassCard from '@/components/products/GlassCard';
 import Button from '@/components/products/Button';
 import PublicLayout from '@/components/products/PublicLayout';
 import CardRenderer, { type CardDesignConfig } from '@/components/products/CardRenderer';
-import { getDynamicItemDataPublic, getPublicTemplates } from '@/lib/forms';
+import { getDynamicItemDataPublic } from '@/lib/forms';
 import { getRoleValue, getNormalizedVariants, resolveImageUrl, findFieldByRole } from '@/utils/dynamicRenderer';
 import { useLocation, useParams } from 'wouter';
 
@@ -62,13 +62,6 @@ const PublicProductView = () => {
               name: productRecord.template_name
             } : null);
           
-          if (!activeTemplate) {
-            const templates = await getPublicTemplates();
-            activeTemplate = templates?.find((t: any) => 
-               t.name.toLowerCase() === 'inventory' || t.resource_type === 'product'
-            ) || templates?.[0];
-          }
-
           if (activeTemplate) {
             const variants = getNormalizedVariants(productRecord, activeTemplate);
             if (variants.length > 0) {

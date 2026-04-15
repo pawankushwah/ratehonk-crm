@@ -11,7 +11,7 @@ import {
   Share2
 } from 'lucide-react';
 import PublicLayout from '@/components/products/PublicLayout';
-import { getAllDynamicDataPublic, getPublicTemplates } from '@/lib/forms';
+import { getAllDynamicDataPublic } from '@/lib/forms';
 import UniversalCard from '@/components/products/UniversalCard';
 import Drawer from '@/components/products/Drawer';
 import { useLocation, useParams } from 'wouter';
@@ -22,7 +22,6 @@ const PublicProductListing = () => {
     const [, setLocation] = useLocation();
   const [products, setProducts] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [inventoryTemplate, setInventoryTemplate] = useState<any>(null);
   
   // View & Filter States
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('grid');
@@ -33,19 +32,6 @@ const PublicProductListing = () => {
   const fetchData = async (currentSearch = search, activeFilters = filters) => {
     setIsLoading(true);
     try {
-      // Resolve Inventory Template for fallback
-      let invTemplate = inventoryTemplate;
-      // if (!invTemplate) {
-      //   const templates = await getPublicTemplates();
-      //   invTemplate = templates?.find((t: any) => 
-      //     t.name.toLowerCase() === 'inventory' || t.resource_type === 'product'
-      //   ) || templates?.[0];
-        
-      //   if (invTemplate) {
-      //     setInventoryTemplate(invTemplate);
-      //   }
-      // }
-
       const dataRes = await getAllDynamicDataPublic({ 
         user: userId,
         search: currentSearch,
@@ -184,7 +170,12 @@ const PublicProductListing = () => {
                 </thead>
                 <tbody>
                   {products.map((p) => {
-                    const template = p.FormTemplate || inventoryTemplate;
+                    const template = p.FormTemplate || (p.template_schema ? {
+                      schema: p.template_schema,
+                      design: p.template_design,
+                      mapping: p.template_design?.viewMapping || p.template_design?.mapping || {},
+                      name: p.template_name
+                    } : null);
                     const name = getRoleValue('title', p, template);
                     const category = getRoleValue('category', p, template);
                     const price = getRoleValue('price', p, template);
@@ -256,7 +247,12 @@ const PublicProductListing = () => {
               <UniversalCard 
                 key={p.id} 
                 product={p} 
-                template={p.FormTemplate || inventoryTemplate} 
+                template={p.FormTemplate || (p.template_schema ? {
+                  schema: p.template_schema,
+                  design: p.template_design,
+                  mapping: p.template_design?.viewMapping || p.template_design?.mapping || {},
+                  name: p.template_name
+                } : null)} 
                 onView={() => setLocation(`/public/${userId}/${p.id}`)}
               />
             ))}
