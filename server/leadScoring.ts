@@ -1,4 +1,4 @@
-import { Lead } from "@shared/schema";
+import { Lead } from "./../shared/schema.js";
 
 export interface LeadScoringFactors {
   source: number;

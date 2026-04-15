@@ -14,7 +14,7 @@ import {
   type Estimate, type InsertEstimate, type EstimateLineItem, type InsertEstimateLineItem,
   type EstimateEmailLog, type InsertEstimateEmailLog, type CallLog, type InsertCallLog,
   type CustomerFile, type InsertCustomerFile, type DashboardPreference, type InsertDashboardPreference
-} from "@shared/schema";
+} from "./../shared/schema.js";
 import { db } from "./db.js";
 import { eq, and, desc, count, getTableColumns } from "drizzle-orm";
 import postgres from "postgres";

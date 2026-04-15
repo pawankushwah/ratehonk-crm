@@ -1,5 +1,5 @@
 import { db } from "./db.js";
-import { socialIntegrations } from "@shared/schema";
+import { socialIntegrations } from "./../shared/schema.js";
 import { eq, and } from "drizzle-orm";
 import { FacebookService } from "./facebook-service.js";
 import { InstagramService } from "./instagram-service.js";

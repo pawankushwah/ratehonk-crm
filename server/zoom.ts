@@ -1,5 +1,5 @@
 import { db } from "./db.js";
-import { zoomTokens, callLogs, type ZoomToken, type InsertZoomToken, type CallLog, type InsertCallLog } from "@shared/schema";
+import { zoomTokens, callLogs, type ZoomToken, type InsertZoomToken, type CallLog, type InsertCallLog } from "./../shared/schema.js";
 import { eq, and, desc } from "drizzle-orm";
 
 export interface ZoomOAuthResponse {

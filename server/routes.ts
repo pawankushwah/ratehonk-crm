@@ -10,7 +10,7 @@ import {
   insertBookingSchema,
   insertEmailCampaignSchema,
   insertEmailConfigurationSchema,
-} from "@shared/schema";
+} from "./../shared/schema.js";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import multer from "multer";
