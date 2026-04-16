@@ -4,20 +4,32 @@
  */
 
 export type FieldRoleType = 
-  | 'title' 
-  | 'price' 
-  | 'description' 
-  | 'image' 
-  | 'category' 
-  | 'sku' 
-  | 'stock' 
-  | 'badge' 
-  | 'grid' 
-  | 'table'
-  | 'colors'
-  | 'sizes'
-  | 'barcode'
-  | 'carousel';
+| 'text' 
+| 'textarea' 
+| 'number' 
+| 'select' 
+| 'checkbox' 
+| 'radio' 
+| 'addable-select'
+| 'color' 
+| 'date' 
+| 'image' 
+| 'sku' 
+| 'barcode' 
+| 'bundle-items'
+| 'key-value'
+// Product specific fields
+| 'title'
+| 'price'
+| 'description'
+| 'category'
+| 'stock'
+| 'badge'
+| 'grid'
+| 'table'
+| 'colors'
+| 'sizes'
+| 'carousel';
 
 export interface FieldRole {
   role: FieldRoleType;

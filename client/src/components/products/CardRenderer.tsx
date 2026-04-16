@@ -105,6 +105,7 @@ const CardRenderer: React.FC<CardRendererProps> = ({
   const sku = getRoleValue('sku', data, designWithContext, activeVariantData);
   const stock = getRoleValue('stock', data, designWithContext, activeVariantData);
   const barcode = getRoleValue('barcode', data, designWithContext, activeVariantData);
+  const keyValue = getRoleValue('key-value', data, designWithContext, activeVariantData);
   const accentColor = design.styles?.primaryColor || '#ec4899';
 
   const RegistryComponent = (TemplateRegistry as any)[resolvedTemplateId as keyof typeof TemplateRegistry];
@@ -127,6 +128,7 @@ const CardRenderer: React.FC<CardRendererProps> = ({
             sku: cleanValue(sku), 
             stock: cleanValue(stock), 
             barcode: cleanValue(barcode),
+            keyValue: cleanValue(keyValue),
             availableColors,
             availableSizes,
             allImages,

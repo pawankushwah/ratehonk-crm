@@ -3,6 +3,10 @@ import type { TemplateProps } from '../card/common';
 import { SlotWrapper } from '../card/common';
 import { formatDisplayValue, resolveImageUrl } from '@/utils/dynamicRenderer';
 import { Star, Heart, ShoppingCart, ChevronDown, Check, Tag } from 'lucide-react';
+import defaultProductImage from '@/assets/images/default-product-1.png';
+import defaultProductImage2 from '@/assets/images/default-product-2.png';
+import defaultProductImage3 from '@/assets/images/default-product-3.png';
+import defaultProductImage4 from '@/assets/images/default-product-4.png';
 
 const FlowbiteDetailTemplate: React.FC<TemplateProps> = ({
   data,
@@ -60,7 +64,7 @@ const FlowbiteDetailTemplate: React.FC<TemplateProps> = ({
   const sku = initialSku || d.sku || "ID: 455-RH";
   const rating = dataRating !== undefined && dataRating !== '—' ? dataRating : (d.rating || 4.5);
   const reviewCount = dataReviewCount !== undefined && dataReviewCount !== '—' ? dataReviewCount : (d.reviewCount || 0);
-  const description = dataDescription || d.description || "Premium quality item for modern lifestyles.";
+  const description = dataDescription || d.description || "";
 
   // Variant resolution logic (Centralized)
   const processedVariants = variants;
@@ -358,7 +362,7 @@ export const mockData = {
   rating: 4.8,
   reviewCount: 456,
   description: 'Enter the world of bean-to-cup coffee with De\'Longhi Magnifica Start, providing everything you need to get started with your favorite espresso-based drinks at home.',
-  imageUrl: ['/src/assets/images/default-product-1.png', '/src/assets/images/default-product-2.png', '/src/assets/images/default-product-3.png', '/src/assets/images/default-product-4.png'],
+  imageUrl: [defaultProductImage,defaultProductImage2,defaultProductImage3,defaultProductImage4],
   availableColors: ['#000000', '#94a3b8', '#ffffff'],
   availableSizes: ['Standard Edition', 'Plus Edition'],
   highlights: [{

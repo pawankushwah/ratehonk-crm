@@ -3,6 +3,10 @@ import type { TemplateProps } from './common';
 import { SlotWrapper } from './common';
 import { formatDisplayValue } from '@/utils/dynamicRenderer';
 import { Heart, ChevronLeft, ChevronRight, Wallet } from 'lucide-react';
+import defaultProductImage from '@/assets/images/default-product-1.png';
+import defaultProductImage2 from '@/assets/images/default-product-2.png';
+import defaultProductImage3 from '@/assets/images/default-product-3.png';
+import defaultProductImage4 from '@/assets/images/default-product-4.png';
 
 const CarouselTemplate: React.FC<TemplateProps> = ({ 
   data, 
@@ -216,7 +220,7 @@ export const mockData = {
   rating: 4.8,
   reviewCount: 2400,
   description: 'Experience lightning fast loading with an ultra-high speed SSD, deeper immersion with support for haptic feedback and 3D Audio.',
-  imageUrl: '/src/assets/images/default-product-1.png',
+  imageUrl: [defaultProductImage,defaultProductImage2,defaultProductImage3,defaultProductImage4],
   availableColors: ['#ffffff', '#000000', '#2563eb'],
   availableSizes: ['Disc Edition', 'Digital Edition'],
 };

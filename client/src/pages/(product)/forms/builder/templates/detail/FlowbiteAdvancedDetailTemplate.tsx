@@ -4,6 +4,10 @@ import { SlotWrapper } from '../card/common';
 import { formatDisplayValue } from '@/utils/dynamicRenderer';
 import { Star, Info, ChevronDown, Check } from 'lucide-react';
 import CustomSelect from '@/components/products/CustomSelect';
+import defaultProductImage from '@/assets/images/default-product-1.png';
+import defaultProductImage2 from '@/assets/images/default-product-2.png';
+import defaultProductImage3 from '@/assets/images/default-product-3.png';
+import defaultProductImage4 from '@/assets/images/default-product-4.png';
 
 const FlowbiteAdvancedDetailTemplate: React.FC<TemplateProps> = ({
   data,
@@ -16,7 +20,8 @@ const FlowbiteAdvancedDetailTemplate: React.FC<TemplateProps> = ({
   onSlotClick,
   onVariantSelect,
   activeVariantIndex = 0,
-  context
+  context,
+  imageBaseURL
 }) => {
   const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
   const [selectedImage, setSelectedImage] = useState(0);
@@ -24,6 +29,10 @@ const FlowbiteAdvancedDetailTemplate: React.FC<TemplateProps> = ({
   const setSelectedColor = (idx: number) => onVariantSelect?.(idx);
   const [selectedSize, setSelectedSize] = useState(0);
   const [quantity, setQuantity] = useState('1');
+
+  React.useEffect(() => {
+    setSelectedSize(0);
+  }, [activeVariantIndex]);
 
   const mapping = context?.form_schema?.design?.mapping || context?.design?.mapping || context?.mapping || {};
   const formSchema = context?.form_schema?.items || context?.items || context?.schema || (Array.isArray(context) ? context : []);
@@ -42,39 +51,40 @@ const FlowbiteAdvancedDetailTemplate: React.FC<TemplateProps> = ({
     description: dataDescription,
     rating: dataRating,
     reviewCount: dataReviewCount,
-    availableColors = [],
-    availableSizes = [],
     stock: rawStock,
     allImages = [],
-    variants = []
+    variants: rawVariantsArray = [],
   } = (data || {}) as any;
 
   // Final property Resolution (Trusting parent props first)
   const d = data as any;
-  const title = rawTitle || d.title || "Product Name";
-  const price = rawPrice !== undefined && rawPrice !== '—' ? rawPrice : (d.price || 0);
-  const imageUrl = rawImageUrl || d.imageUrl || d.image;
-  const stock = rawStock !== undefined && rawStock !== '—' ? rawStock : (d.stock || 0);
-  const rating = dataRating !== undefined && dataRating !== '—' ? dataRating : (d.rating || 5.0);
-  const reviewCount = dataReviewCount !== undefined && dataReviewCount !== '—' ? dataReviewCount : (d.reviewCount || 0);
-  const description = dataDescription || d.description || (data as any).description || "Premium quality item for modern lifestyles.";
+  const title = rawTitle || d.title || d[mapping.title] || "Product Name";
+  const price = rawPrice !== undefined && rawPrice !== '—' ? rawPrice : (d.price || d[mapping.price] || 0);
+  const imageUrl = rawImageUrl || d.imageUrl || d.image || d[mapping.image];
+  const stock = rawStock !== undefined && rawStock !== '—' ? rawStock : (d.stock || d[mapping.stock] || 0);
+  const rating = dataRating !== undefined && dataRating !== '—' ? dataRating : (d.rating || d[mapping.rating] || 5.0);
+  const reviewCount = dataReviewCount !== undefined && dataReviewCount !== '—' ? dataReviewCount : (d.reviewCount || d[mapping.reviewCount] || 0);
+  const description = dataDescription || d.description || d[mapping.description] || "";
+
+  const availableColors = d.availableColors || d[mapping.colors] || [];
+  const availableSizes = d.availableSizes || d[mapping.sizes] || [];
 
   // Variant resolution logic (Centralized)
-  const processedVariants = variants;
-  const activeVariant = processedVariants[selectedColor] || processedVariants[0];
+  const processedVariants = rawVariantsArray;
+  const activeVariant = processedVariants[activeVariantIndex] || processedVariants[0];
 
   const derivedSizes = React.useMemo(() => {
-    const sizes = activeVariant?.size || [];
+    const sizes = activeVariant?.size || activeVariant?.sizes || [];
     const sizesArray = Array.isArray(sizes) ? sizes : [sizes].filter(Boolean);
     return sizesArray.length > 0 ? Array.from(new Set(sizesArray)) : (availableSizes || []);
   }, [activeVariant, availableSizes]);
 
   // Centralized values from props (already resolved by CardRenderer)
-  const displayPrice = price;
-  const displayStock = stock;
+  const displayPrice = activeVariant?.price || price;
+  const displayStock = activeVariant?.stock || stock;
   const displayImages = (activeVariant?.images && activeVariant.images.length > 0)
     ? activeVariant.images
-    : (allImages.length > 0 ? allImages : [imageUrl || "/src/assets/images/default-product-1.png"].flat().filter(Boolean));
+    : (allImages.length > 0 ? allImages : [imageUrl].flat().filter(Boolean));
 
   const images = displayImages;
 
@@ -114,7 +124,7 @@ const FlowbiteAdvancedDetailTemplate: React.FC<TemplateProps> = ({
                 <div className="relative aspect-square overflow-hidden bg-black/5">
                   <img
                     className="w-full h-full object-contain p-8 transition-transform duration-700 hover:scale-110"
-                    src={images[selectedImage]}
+                    src={imageBaseURL+images[selectedImage]}
                     alt={title}
                   />
                 </div>
@@ -128,7 +138,7 @@ const FlowbiteAdvancedDetailTemplate: React.FC<TemplateProps> = ({
                       className={`w-15 h-15 rounded-xl border-2 transition-all p-2 shrink-0 bg-white/5 ${selectedImage === idx ? 'scale-105' : 'opacity-40 hover:opacity-100'}`}
                       style={{ width: '60px', height: '60px', borderColor: selectedImage === idx ? accentColor : 'transparent' }}
                     >
-                      <img src={img} className="w-full h-full object-contain" alt={`View ${idx + 1}`} />
+                      <img src={imageBaseURL+img} className="w-full h-full object-contain" alt={`View ${idx + 1}`} />
                     </button>
                   ))}
                 </div>
@@ -212,21 +222,23 @@ const FlowbiteAdvancedDetailTemplate: React.FC<TemplateProps> = ({
               {visibility.colors && (
                 <SlotWrapper slot="colors" activeSlot={activeSlot} onSlotClick={onSlotClick} accentColor={accentColor}>
                   <div className="space-y-3">
-                    <span className={`text-[10px] font-black uppercase tracking-widest ${textMuted}`}>Choice Colour</span>
+                    <span className={`text-[10px] font-black uppercase tracking-widest ${textMuted}`}>Color</span>
                     <div className="flex gap-3">
                       {(processedVariants.length > 0 ? processedVariants : availableColors).map((variant: any, i: number) => {
                         const colorValue = typeof variant === 'object' ? variant.color || variant.value || variant.hex : variant;
+                        const isSelected = activeVariantIndex === i;
                         return (
                           <button
                             key={i}
                             onClick={() => setSelectedColor(i)}
-                            className={`flex justify-center items-center w-10 h-10 rounded-full border-2 transition-all ${selectedColor === i ? 'scale-110' : 'border-black'}`}
+                            className={`flex justify-center items-center w-10 h-10 rounded-full border-2 transition-all ${isSelected ? 'scale-110' : 'opacity-60 hover:opacity-100'}`}
                             style={{
                               backgroundColor: colorValue || '#ccc',
-                              borderColor: selectedColor === i ? accentColor : 'transparent',
-                              ['--tw-ring-color' as any]: selectedColor === i ? accentColor : 'transparent'
+                              borderColor: isSelected ? accentColor : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'),
                             }}
-                          >{selectedColor === i && <Check size={14} className='text-white mix-blend-difference m-auto' />}</button>
+                          >
+                            {isSelected && <Check size={14} className='text-white mix-blend-difference m-auto' />}
+                          </button>
                         );
                       })}
                     </div>
@@ -238,7 +250,7 @@ const FlowbiteAdvancedDetailTemplate: React.FC<TemplateProps> = ({
               {visibility.sizes && (
                 <SlotWrapper slot="sizes" activeSlot={activeSlot} onSlotClick={onSlotClick} accentColor={accentColor}>
                   <div className="space-y-3">
-                    <span className={`text-[10px] font-black uppercase tracking-widest ${textMuted}`}>Configuration Selection</span>
+                    <span className={`text-[10px] font-black uppercase tracking-widest ${textMuted}`}>Size</span>
                     <div className="flex flex-wrap gap-3">
                       {(derivedSizes.length > 0 ? derivedSizes : availableSizes).map((size: any, i: number) => {
                         return (
@@ -337,9 +349,9 @@ export const mockData = {
   reviewCount: 128,
   quantity: 1,
   description: 'Mac Studio is a desktop powerhouse. It packs outrageous performance into an unbelievably compact form.',
-  imageUrl: ["/src/assets/images/default-product-1.png", "/src/assets/images/default-product-2.png", "/src/assets/images/default-product-3.png", "/src/assets/images/default-product-4.png"],
-  availableColors: ['Silver', "red", "blue"],
-  availableSizes: ['M2 Max', 'M2 Ultra'],
+  imageUrl: [defaultProductImage,defaultProductImage2,defaultProductImage3,defaultProductImage4],
+  availableColors: ['#F5276C', '#F54927', '#F59E27', '#F5D127', '#F5F5F5'],
+  availableSizes: ['XS', 'S', 'M', 'L', 'XL'],
   highlights: [
     { key: 'Processor', value: 'Apple M2 Ultra' },
     { key: 'RAM', value: '64GB' },

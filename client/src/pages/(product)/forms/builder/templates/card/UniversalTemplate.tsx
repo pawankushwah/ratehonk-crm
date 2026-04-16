@@ -265,7 +265,7 @@ const UniversalTemplate: React.FC<TemplateProps> = ({
         </div>
       )}
 
-      {visibility.highlights && dynamicKeyValues.length > 0 && (
+      {/* {visibility.highlights && dynamicKeyValues.length > 0 && (
         <div className="mt-3">
           <SlotWrapper
             slot="highlights"
@@ -282,7 +282,7 @@ const UniversalTemplate: React.FC<TemplateProps> = ({
             </div>
           </SlotWrapper>
         </div>
-      )}
+      )} */}
 
       {visibility.colors && (processedVariants.length > 0 || availableColors.length > 0) && (
         <div className="mt-4">
