@@ -18,6 +18,7 @@ const FlowbiteAdvancedDetailTemplate: React.FC<TemplateProps> = ({
   textMuted,
   activeSlot,
   onSlotClick,
+  isDark,
   onVariantSelect,
   activeVariantIndex = 0,
   context,
@@ -86,7 +87,7 @@ const FlowbiteAdvancedDetailTemplate: React.FC<TemplateProps> = ({
     ? activeVariant.images
     : (allImages.length > 0 ? allImages : [imageUrl].flat().filter(Boolean));
 
-  const images = displayImages;
+  const images = displayImages || [];
 
   // Final Highlights Resolution
   const resolvedHighlights = React.useMemo(() => {
@@ -131,7 +132,7 @@ const FlowbiteAdvancedDetailTemplate: React.FC<TemplateProps> = ({
 
                 {/* THUMBNAILS */}
                 <div className="flex gap-4 mt-8 no-scrollbar pb-2">
-                  {images.map((img: string, idx: number) => (
+                  {images?.map((img: string, idx: number) => (
                     <button
                       key={idx}
                       onClick={() => setSelectedImage(idx)}

@@ -103,7 +103,7 @@ const UniversalTemplate: React.FC<TemplateProps> = ({
 
   return (
     <div 
-      className={`transition-all duration-300 m-auto w-[300px] flex flex-col ${bgBase} border ${borderBase} backdrop-blur-3xl relative rounded-4xl overflow-hidden`}
+      className={`transition-all duration-300 m-auto w-[300px] h-full flex flex-col ${bgBase} border ${borderBase} backdrop-blur-3xl relative rounded-4xl overflow-hidden`}
       style={style}
     >
       {/* Top Image Section */}

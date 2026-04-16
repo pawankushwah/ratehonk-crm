@@ -3,6 +3,7 @@ import type { TemplateProps } from './common';
 import { SlotWrapper } from './common';
 import { formatDisplayValue } from '@/utils/dynamicRenderer';
 import { Star, Heart } from 'lucide-react';
+import productDefaultImage from '@/assets/images/default-product-1.png';
 
 const HorizontalDetailTemplate: React.FC<TemplateProps> = ({ 
   data, 
@@ -17,7 +18,8 @@ const HorizontalDetailTemplate: React.FC<TemplateProps> = ({
   activeSlot,
   onSlotClick,
   onVariantSelect,
-  activeVariantIndex = 0
+  activeVariantIndex = 0,
+  imageBaseURL
 }) => {
   const { 
     title: initialTitle, 
@@ -27,7 +29,9 @@ const HorizontalDetailTemplate: React.FC<TemplateProps> = ({
     description: initialDescription,
     availableColors = [],
     availableSizes = [],
-    variants = []
+    variants = [],
+    allImages = [],
+    mapping = {}
   } = (data || {}) as any;
 
   // Final property Resolution (Trusting parent props first)
@@ -39,22 +43,29 @@ const HorizontalDetailTemplate: React.FC<TemplateProps> = ({
   // Variant resolution logic
   const processedVariants = variants;
   const activeVariant = processedVariants[activeVariantIndex] || processedVariants[0];
+  const [selectedSizeIdx, setSelectedSizeIdx] = React.useState(0);
+
+  const derivedSizes = React.useMemo(() => {
+      const sizes = activeVariant?.size || [];
+      const sizesArray = Array.isArray(sizes) ? sizes : [sizes].filter(Boolean);
+      return sizesArray.length > 0 ? Array.from(new Set(sizesArray)) : (availableSizes || []);
+    }, [activeVariant, availableSizes]);
 
   // Scoped values
   const displayPrice = initialPrice !== undefined && initialPrice !== '—' ? initialPrice : (activeVariant?.price || 0);
-  const displayImages = (activeVariant?.images && activeVariant.images.length > 0)
-    ? activeVariant.images
-    : [initialImageUrl || d.imageUrl || d.image || "/src/assets/images/default-product-1.png"].flat().filter(Boolean);
+  const imageUrl = d.imageUrl || d.image || d[mapping.image];
+  const images = (activeVariant?.images && activeVariant.images.length > 0) 
+    ? activeVariant.images 
+    : (allImages.length > 0 ? allImages : [imageUrl]);
 
-  const imageUrl = displayImages[0];
   const price = displayPrice;
   const selectedColor = activeVariantIndex;
   const setSelectedColor = (idx: number) => onVariantSelect?.(idx);
 
   return (
-    <div className={`transition-all duration-300 m-auto min-w-[350px] w-full h-[220px] ${bgBase} ${borderBase} ${shadowClass} ${fontClass} rounded-3xl overflow-hidden flex flex-row border`}>
+    <div className={`transition-all duration-300 m-auto min-w-[400px] w-full h-[220px] ${bgBase} ${borderBase} ${shadowClass} ${fontClass} rounded-3xl overflow-hidden flex flex-row border`}>
         {/* LEFT IMAGE SECTION */}
-        <div className={`aspect-4/5 flex items-center justify-center relative border-r overflow-hidden ${borderBase} bg-gray-50 dark:bg-gray-900/50`}>
+        <div className={`relative w-[200px] aspect-4/5 flex items-center justify-center border-r overflow-hidden ${borderBase} bg-gray-50 dark:bg-gray-900/50`}>
           {visibility.image && (
             <SlotWrapper 
               slot="image" 
@@ -64,7 +75,7 @@ const HorizontalDetailTemplate: React.FC<TemplateProps> = ({
               accentColor={accentColor}
             >
               <img 
-                src={imageUrl || "https://placehold.co/600x600?text=Product+Image"} 
+                src={imageBaseURL+images[0]} 
                 alt={title} 
                 className="w-full h-full object-contain grayscale-[0.2] hover:grayscale-0 transition-transform duration-700 hover:scale-110" 
               />
@@ -107,7 +118,9 @@ const HorizontalDetailTemplate: React.FC<TemplateProps> = ({
             </SlotWrapper>
           )}
 
-            <div className="flex items-center gap-4 mt-4">
+            <div className="flex gap-4 mt-4">
+              <div className="flex flex-col gap-4">
+
               {visibility.price && (
                 <SlotWrapper 
                   slot="price"
@@ -122,7 +135,7 @@ const HorizontalDetailTemplate: React.FC<TemplateProps> = ({
               )}
 
               {/* Variants (Colors & Sizes) */}
-              <div className="flex gap-4 items-center">
+              <div className="flex items-center justify-between gap-4 mt-4">
                  {visibility.colors && (
                    <SlotWrapper slot="colors" activeSlot={activeSlot} onSlotClick={onSlotClick} accentColor={accentColor}>
                      <div className="flex gap-1.5">
@@ -148,14 +161,21 @@ const HorizontalDetailTemplate: React.FC<TemplateProps> = ({
                  {visibility.sizes && (
                    <SlotWrapper slot="sizes" activeSlot={activeSlot} onSlotClick={onSlotClick} accentColor={accentColor}>
                      <div className="flex gap-1">
-                       {(data.availableSizes || ['S', 'M', 'L']).slice(0, 2).map((size: any, i: number) => (
-                         <span key={i} className={`text-[7px] font-black uppercase px-1.5 py-0.5 rounded border ${borderBase} ${textMuted} bg-black/5 dark:bg-white/5`}>
-                           {typeof size === 'object' ? size.label : size}
-                         </span>
-                       ))}
+                       {(derivedSizes.length > 0 ? derivedSizes : availableSizes).slice(0, 4).map((size: any, i: number) => (
+                  <div
+                    key={i}
+                    onClick={() => setSelectedSizeIdx(i)}
+                    className={`w-6 h-6 rounded-lg border border-slate-200 bg-slate-50 uppercase flex items-center justify-center text-[10px] font-black cursor-pointer transition-all ${selectedSizeIdx === i ? 'bg-primary text-white scale-110' : `${textMuted}`}`}
+                    style={{ backgroundColor: selectedSizeIdx === i ? accentColor : undefined }}
+                  >
+                    {typeof size === 'object' ? size.label : String(size)}
+                  </div>
+                ))}
                      </div>
                    </SlotWrapper>
                  )}
+              </div>
+
               </div>
             </div>
           </div>
@@ -182,7 +202,7 @@ export const mockData = {
   rating: 4.9,
   reviewCount: 156,
   description: 'The most advanced chips ever built for a personal computer. M3 Pro and M3 Max push performance even further.',
-  imageUrl: '/src/assets/images/default-product-1.png',
+  imageUrl: [productDefaultImage],
   availableColors: ['#94a3b8', '#1e293b'],
   availableSizes: ['14-inch', '16-inch'],
 };

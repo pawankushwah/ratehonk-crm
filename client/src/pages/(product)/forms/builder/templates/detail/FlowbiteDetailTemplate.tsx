@@ -83,7 +83,7 @@ const FlowbiteDetailTemplate: React.FC<TemplateProps> = ({
     ? activeVariant.images
     : (allImages.length > 0 ? allImages : [imageUrl || "/src/assets/images/default-product-1.png"].flat().filter(Boolean));
 
-  const images = displayImages;
+  const images = displayImages || [];
   console.log("http://localhost:5001/api/images/"+images[0], "images")
 
   // Highlights Resolution
@@ -125,7 +125,7 @@ const FlowbiteDetailTemplate: React.FC<TemplateProps> = ({
 
                 {/* THUMBNAILS */}
                 <div className="flex gap-4 mt-8 no-scrollbar pb-2">
-                  {images.map((img: string, idx: number) => (
+                  {images?.map((img: string, idx: number) => (
                     <button
                       key={idx}
                       onClick={() => setSelectedImage(idx)}

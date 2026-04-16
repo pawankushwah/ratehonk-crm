@@ -118,22 +118,22 @@ const CardRenderer: React.FC<CardRendererProps> = ({
     console.log(allImages, "allImages")
   
     const cleanValue = (v: any) => v === '—' ? undefined : v;
-    console.log({ 
-            ...data, 
-            title: cleanValue(title), 
-            price: cleanValue(price), 
-            imageUrl: cleanValue(imageUrl), 
-            images: cleanValue(rawImage), 
-            category: cleanValue(category), 
-            sku: cleanValue(sku), 
-            stock: cleanValue(stock), 
-            barcode: cleanValue(barcode),
-            keyValue: cleanValue(keyValue),
-            availableColors,
-            availableSizes,
-            allImages,
-            variants
-          })
+    // console.log({ 
+    //         ...data, 
+    //         title: cleanValue(title), 
+    //         price: cleanValue(price), 
+    //         imageUrl: cleanValue(imageUrl), 
+    //         images: cleanValue(rawImage), 
+    //         category: cleanValue(category), 
+    //         sku: cleanValue(sku), 
+    //         stock: cleanValue(stock), 
+    //         barcode: cleanValue(barcode),
+    //         keyValue: cleanValue(keyValue),
+    //         availableColors,
+    //         availableSizes,
+    //         allImages,
+    //         variants
+    //       })
     return (
       <ProductDataProvider value={{ data, template, selectedVariant: activeVariant }}>
         <RegistryComponent 

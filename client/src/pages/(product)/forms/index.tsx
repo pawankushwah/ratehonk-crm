@@ -61,6 +61,7 @@ const FormsListPage = () => {
     };
     fetchTemplates();
   }, []);
+  console.log(templates[0], "updated date")
 
   return (
     <Layout>
@@ -152,7 +153,7 @@ const FormsListPage = () => {
                       <div className="p-1.5 rounded-lg bg-primary/10 text-primary">
                         <Clock size={14} />
                       </div>
-                      {template.updatedAt}
+                      {/* {template.updatedAt} */}
                       {new Date(template.updatedAt).toLocaleDateString()}
                     </div>
                   </div>
