@@ -19,7 +19,8 @@ const UniversalTemplate: React.FC<TemplateProps> = ({
   onVariantSelect,
   activeVariantIndex = 0,
   isDark,
-  style
+  style,
+  imageBaseURL
 }) => {
   // const fontClass = 'font-plus-jakarta';
   // const shadowClass = 'shadow-2xl';
@@ -115,9 +116,9 @@ const UniversalTemplate: React.FC<TemplateProps> = ({
             onSlotClick={onSlotClick}
             accentColor={accentColor}
           >
-            {images[0] ? (
+            {allImages[0] ? (
               <img
-                src={images[0]}
+                src={imageBaseURL+allImages[0]}
                 alt={title}
                 className="w-full h-full object-contain pt-5 px-4 pb-0 transition-all duration-700 hover:scale-110"
               />

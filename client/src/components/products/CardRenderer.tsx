@@ -8,6 +8,7 @@ import {
   paddingMap as registryPaddingMap, 
   fontMap as registryFontMap 
 } from '@/pages/(product)/forms/builder/templates';
+import defaultProductImage from '@/assets/images/default-product-1.png';
 
 export interface CardDesignConfig {
   templateId?: string;
@@ -99,7 +100,7 @@ const CardRenderer: React.FC<CardRendererProps> = ({
   const title = getRoleValue('title', data, designWithContext, activeVariantData);
   const price = getRoleValue('price', data, designWithContext, activeVariantData);
   const rawImage = getRoleValue('image', data, designWithContext, activeVariantData);
-  const imageUrl = resolveUrl(rawImage === '—' ? null : rawImage) || '/src/assets/images/default-product-1.png';
+  const imageUrl = resolveUrl(rawImage === '—' ? null : rawImage) || defaultProductImage;
   const category = getRoleValue('category', data, designWithContext, activeVariantData);
   const sku = getRoleValue('sku', data, designWithContext, activeVariantData);
   const stock = getRoleValue('stock', data, designWithContext, activeVariantData);
@@ -111,7 +112,9 @@ const CardRenderer: React.FC<CardRendererProps> = ({
   if (RegistryComponent) {
     const availableColors = getRoleValues('colors', data, designWithContext);
     const availableSizes = getRoleValues('sizes', data, designWithContext);
-    const allImages = getRoleValues('image', data, designWithContext).map(resolveUrl).filter(Boolean);
+    // const allImages = getRoleValues('image', data, designWithContext).map(resolveUrl).filter(Boolean);
+    const allImages = rawImage;
+    console.log(allImages, "allImages")
   
     const cleanValue = (v: any) => v === '—' ? undefined : v;
     console.log({ 
@@ -119,6 +122,7 @@ const CardRenderer: React.FC<CardRendererProps> = ({
             title: cleanValue(title), 
             price: cleanValue(price), 
             imageUrl: cleanValue(imageUrl), 
+            images: cleanValue(rawImage), 
             category: cleanValue(category), 
             sku: cleanValue(sku), 
             stock: cleanValue(stock), 
@@ -146,6 +150,7 @@ const CardRenderer: React.FC<CardRendererProps> = ({
             allImages,
             variants
           }}
+          imageBaseURL={import.meta.env.VITE_API_URL+"/api/images/"}
           visibility={currentVisibility}
           accentColor={accentColor}
           isDark={!isLight}

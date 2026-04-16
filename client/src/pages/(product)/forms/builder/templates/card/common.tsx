@@ -41,6 +41,7 @@ export interface TemplateProps {
   activeVariantIndex?: number;
   context?: any;
   style?: React.CSSProperties;
+  imageBaseURL: string;
 }
 
 interface SlotWrapperProps {

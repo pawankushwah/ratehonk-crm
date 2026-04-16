@@ -16,7 +16,8 @@ const FlowbiteDetailTemplate: React.FC<TemplateProps> = ({
   onSlotClick,
   onVariantSelect,
   activeVariantIndex = 0,
-  context
+  context,
+  imageBaseURL
 }) => {
   const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
   const selectedVariantIdx = activeVariantIndex;
@@ -79,6 +80,7 @@ const FlowbiteDetailTemplate: React.FC<TemplateProps> = ({
     : (allImages.length > 0 ? allImages : [imageUrl || "/src/assets/images/default-product-1.png"].flat().filter(Boolean));
 
   const images = displayImages;
+  console.log("http://localhost:5001/api/images/"+images[0], "images")
 
   // Highlights Resolution
   const resolvedHighlights = useMemo(() => {
@@ -112,7 +114,7 @@ const FlowbiteDetailTemplate: React.FC<TemplateProps> = ({
                 <div className="relative aspect-square overflow-hidden bg-black/5">
                   <img
                     className="w-full h-full object-contain pt-8 transition-transform duration-700 hover:scale-110"
-                    src={images[selectedImage]}
+                    src={imageBaseURL+images[selectedImage]}
                     alt={title}
                   />
                 </div>
@@ -126,7 +128,7 @@ const FlowbiteDetailTemplate: React.FC<TemplateProps> = ({
                       className={`w-15 h-15 rounded-xl border-2 transition-all p-2 shrink-0 bg-white/5 ${selectedImage === idx ? 'scale-105' : 'opacity-40 hover:opacity-100'}`}
                       style={{width: '60px', height: '60px', borderColor: selectedImage === idx ? accentColor : 'transparent' }}
                     >
-                      <img src={img} className="w-full h-full object-contain" alt={`View ${idx + 1}`} />
+                      <img src={imageBaseURL+img.toString()} className="w-full h-full object-contain" alt={`View ${idx + 1}`} />
                     </button>
                   ))}
                 </div>
