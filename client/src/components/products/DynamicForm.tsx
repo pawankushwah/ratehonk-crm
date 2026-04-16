@@ -72,6 +72,7 @@ const ColorPickerField = ({
   useEffect(() => {
     if (value !== internalValue) {
       setInternalValue(value || '#000000');
+      onChange(value || '#000000');
     }
   }, [value]);
 

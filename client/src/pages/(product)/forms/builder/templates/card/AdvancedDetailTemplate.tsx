@@ -3,6 +3,7 @@ import type { TemplateProps } from './common';
 import { SlotWrapper } from './common';
 import { formatDisplayValue } from '@/utils/dynamicRenderer';
 import { Star, Minus, Plus, ShoppingCart } from 'lucide-react';
+import defaultProductImage from '@/assets/images/default-product-1.png';
 
 const AdvancedDetailTemplate: React.FC<TemplateProps> = ({ 
   data, 
@@ -14,7 +15,8 @@ const AdvancedDetailTemplate: React.FC<TemplateProps> = ({
   activeSlot,
   onSlotClick,
   onVariantSelect,
-  activeVariantIndex = 0
+  activeVariantIndex = 0,
+  imageBaseURL
 }) => {
   const { 
     title: initialTitle, 
@@ -26,7 +28,9 @@ const AdvancedDetailTemplate: React.FC<TemplateProps> = ({
     rating: initialRating,
     availableColors = [],
     availableSizes = [],
-    variants = []
+    mapping = {},
+    variants = [],
+    allImages = [],
   } = (data || {}) as any;
 
   // Final property Resolution (Trusting parent props first)
@@ -43,11 +47,11 @@ const AdvancedDetailTemplate: React.FC<TemplateProps> = ({
 
   // Scoped values
   const displayPrice = initialPrice !== undefined && initialPrice !== '—' ? initialPrice : (activeVariant?.price || 0);
-  const displayImages = (activeVariant?.images && activeVariant.images.length > 0)
-    ? activeVariant.images
-    : [initialImageUrl || d.imageUrl || d.image || "/src/assets/images/default-product-1.png"].flat().filter(Boolean);
+  const imageUrl = d.imageUrl || d.image || d[mapping.image];
+  const displayImages = (activeVariant?.images && activeVariant.images.length > 0) 
+    ? activeVariant.images 
+    : (allImages.length > 0 ? allImages : [imageUrl]);
 
-  const imageUrl = displayImages[0];
   const price = displayPrice;
   const [quantity, setQuantity] = React.useState(1);
   // Remove local selectedColor state, use activeVariantIndex prop instead
@@ -55,7 +59,7 @@ const AdvancedDetailTemplate: React.FC<TemplateProps> = ({
   return (
     <div className={`transition-all duration-300 m-auto w-[300px] max-h-[500px] h-fit ${bgBase} border rounded-4xl overflow-hidden flex flex-col`}>
         {/* TOP IMAGE SECTION (1:1 Aspect Ratio) */}
-        <div className={`aspect-4/5 w-full relative border-b overflow-hidden bg-gray-50 dark:bg-gray-900/50`}>
+        <div className={`relative aspect-[4/3] w-full pt-5 border-b overflow-hidden bg-gray-50 dark:bg-gray-900/50`}>
           {visibility.image && (
             <SlotWrapper 
               slot="image" 
@@ -65,7 +69,7 @@ const AdvancedDetailTemplate: React.FC<TemplateProps> = ({
               accentColor={accentColor}
             >
               <img 
-                src={imageUrl || "https://placehold.co/600x600?text=Product+Image"} 
+                src={imageBaseURL+displayImages[0]} 
                 alt={title} 
                 className="w-full h-full object-contain hover:scale-105 transition-transform duration-500" 
               />
@@ -202,7 +206,7 @@ export const mockData = {
   rating: 5.0,
   reviewCount: 320,
   description: 'A 75% layout wireless mechanical keyboard with double-gasket mount design and full CNC aluminum body.',
-  imageUrl: '/src/assets/images/default-product-1.png',
+  imageUrl: [defaultProductImage],
   availableColors: ['#1f2937', '#6b7280', '#9ca3af'],
   availableSizes: ['Red Switch', 'Brown Switch', 'Blue Switch'],
 };

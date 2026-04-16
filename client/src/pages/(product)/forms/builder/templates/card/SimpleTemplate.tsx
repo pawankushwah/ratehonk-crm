@@ -2,6 +2,7 @@ import React from 'react';
 import type { TemplateProps } from './common';
 import { SlotWrapper } from './common';
 import { formatDisplayValue } from '@/utils/dynamicRenderer';
+import defaultProductImage from '@/assets/images/default-product-1.png';
 
 const SimpleTemplate: React.FC<TemplateProps> = ({ 
   data, 
@@ -18,7 +19,8 @@ const SimpleTemplate: React.FC<TemplateProps> = ({
   radiusClass = 'rounded-lg',
   shadowClass = 'shadow-md',
   paddingClass = 'p-6',
-  fontClass = 'font-sans'
+  fontClass = 'font-sans',
+  imageBaseURL
 }) => {
   const { 
     title: initialTitle, 
@@ -28,7 +30,9 @@ const SimpleTemplate: React.FC<TemplateProps> = ({
     description: initialDescription,
     availableColors = [],
     availableSizes = [],
-    variants = []
+    allImages = [],
+    variants = [],
+    mapping = {}
   } = (data || {}) as any;
 
   // Final property Resolution (Trusting parent props first)
@@ -43,11 +47,13 @@ const SimpleTemplate: React.FC<TemplateProps> = ({
 
   // Scoped values
   const displayPrice = initialPrice !== undefined && initialPrice !== '—' ? initialPrice : (activeVariant?.price || 0);
-  const displayImages = (activeVariant?.images && activeVariant.images.length > 0)
-    ? activeVariant.images
-    : [initialImageUrl || d.imageUrl || d.image || "/src/assets/images/default-product-1.png"].flat().filter(Boolean);
+  const imageUrl = d.imageUrl || d.image || d[mapping.image];
+  const displayImages = (activeVariant?.images && activeVariant.images.length > 0) 
+    ? activeVariant.images 
+    : (allImages.length > 0 ? allImages : [imageUrl]);
 
-  const imageUrl = displayImages[0];
+  const images = displayImages;
+
   const price = displayPrice;
 
   return (
@@ -62,7 +68,7 @@ const SimpleTemplate: React.FC<TemplateProps> = ({
               accentColor={accentColor}
             >
               <img 
-                src={imageUrl || "/src/assets/images/default-product-1.png"} 
+                src={imageBaseURL+images[0] || ""} 
                 alt={title || "Product"} 
                 className="w-full h-full object-contain transition-transform duration-700 hover:scale-105" 
               />
@@ -171,7 +177,7 @@ export const mockData = {
   price: 49.99,
   category: 'Clothing',
   description: 'Premium quality denim tshirt designed for comfort and durability.',
-  imageUrl: '/src/assets/images/default-product-1.png',
+  imageUrl: [defaultProductImage],
 };
 
 export default SimpleTemplate;

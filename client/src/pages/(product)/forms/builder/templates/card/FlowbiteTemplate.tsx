@@ -3,6 +3,7 @@ import type { TemplateProps } from './common';
 import { SlotWrapper } from './common';
 import { formatDisplayValue } from '@/utils/dynamicRenderer';
 import { ShoppingCart, Star } from 'lucide-react';
+import defaultProductImage from '@/assets/images/default-product-1.png';
 
 const FlowbiteTemplate: React.FC<TemplateProps> = ({ 
   data, 
@@ -15,7 +16,8 @@ const FlowbiteTemplate: React.FC<TemplateProps> = ({
   activeSlot,
   onSlotClick,
   onVariantSelect,
-  activeVariantIndex = 0
+  activeVariantIndex = 0,
+  imageBaseURL
 }) => {
   const { 
     title: initialTitle, 
@@ -29,7 +31,9 @@ const FlowbiteTemplate: React.FC<TemplateProps> = ({
     availableSizes = [],
     description: initialDescription,
     stock: initialStock,
-    variants = []
+    variants = [],
+    mapping = {},
+    allImages = [],
   } = (data || {}) as any;
 
   // Final property Resolution (Trusting parent props first)
@@ -48,11 +52,11 @@ const FlowbiteTemplate: React.FC<TemplateProps> = ({
   // Scoped values
   const displayPrice = initialPrice !== undefined && initialPrice !== '—' ? initialPrice : (activeVariant?.price || 0);
   const displayStock = initialStock !== undefined && initialStock !== '—' ? initialStock : (activeVariant?.stock || 0);
-  const displayImages = (activeVariant?.images && activeVariant.images.length > 0)
-    ? activeVariant.images
-    : [initialImageUrl || d.imageUrl || d.image || "/src/assets/images/default-product-1.png"].flat().filter(Boolean);
+  const imageUrl = d.imageUrl || d.image || d[mapping.image];
+  const images = (activeVariant?.images && activeVariant.images.length > 0) 
+    ? activeVariant.images 
+    : (allImages.length > 0 ? allImages : [imageUrl]);
 
-  const imageUrl = displayImages[0];
   const price = displayPrice;
   const stock = displayStock;
 
@@ -68,7 +72,7 @@ const FlowbiteTemplate: React.FC<TemplateProps> = ({
               accentColor={accentColor}
             >
               <img 
-                src={imageUrl || "https://placehold.co/600x600?text=Product+Image"} 
+                src={imageBaseURL+images[0]} 
                 alt={title} 
                 className="w-full h-full object-contain pt-5 px-4 pb-0 transition-all duration-700 hover:scale-110" 
               />
@@ -278,7 +282,7 @@ export const mockData = {
   rating: 4.9,
   reviewCount: 856,
   description: 'The ultimate Galaxy experience with Titanium frame and the new S Pen. Galaxy AI is here.',
-  imageUrl: '/src/assets/images/default-product-1.png',
+  imageUrl: [defaultProductImage],
   availableColors: ['#4b5563', '#f3f4f6', '#1e293b'],
   availableSizes: ['128GB', '256GB', '512GB'],
 };

@@ -150,7 +150,7 @@ const CardRenderer: React.FC<CardRendererProps> = ({
             allImages,
             variants
           }}
-          imageBaseURL={import.meta.env.VITE_API_URL+"/api/images/"}
+          imageBaseURL={isPreview ? "" : "/api/images/"}
           visibility={currentVisibility}
           accentColor={accentColor}
           isDark={!isLight}

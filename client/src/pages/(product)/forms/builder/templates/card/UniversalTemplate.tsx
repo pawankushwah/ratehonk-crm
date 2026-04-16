@@ -93,7 +93,7 @@ const UniversalTemplate: React.FC<TemplateProps> = ({
   const displayStock = stock;
   const displayImages = (activeVariant?.images && activeVariant.images.length > 0) 
     ? activeVariant.images 
-    : (allImages.length > 0 ? allImages : [imageUrl || "/src/assets/images/default-product-1.png"]);
+    : (allImages.length > 0 ? allImages : [imageUrl]);
 
   const images = displayImages;
 
@@ -497,7 +497,7 @@ export const UniversalTemplateView: React.FC<TemplateProps> = ({
   const displayStock = activeVariant?.stock || stock;
   const displayImages = (activeVariant?.images && activeVariant.images.length > 0) 
     ? activeVariant.images 
-    : (allImages.length > 0 ? allImages : [imageUrl || "/src/assets/images/default-product-1.png"]);
+    : (allImages.length > 0 ? allImages : [imageUrl]);
 
   const images = displayImages;
 

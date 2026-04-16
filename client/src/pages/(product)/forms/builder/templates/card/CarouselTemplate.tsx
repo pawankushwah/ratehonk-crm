@@ -13,7 +13,8 @@ const CarouselTemplate: React.FC<TemplateProps> = ({
   activeSlot,
   onSlotClick,
   onVariantSelect,
-  activeVariantIndex
+  activeVariantIndex = 0,
+  imageBaseURL,
 }) => {
   const { 
     title: initialTitle, 
@@ -22,7 +23,9 @@ const CarouselTemplate: React.FC<TemplateProps> = ({
     description: initialDescription,
     availableColors = [],
     availableSizes = [],
-    variants = []
+    variants = [],
+    allImages = [],
+    mapping= {}
   } = (data || {}) as any;
 
   // Final property Resolution (Trusting parent props first)
@@ -36,9 +39,10 @@ const CarouselTemplate: React.FC<TemplateProps> = ({
 
   // Scoped values
   const displayPrice = initialPrice !== undefined && initialPrice !== '—' ? initialPrice : (activeVariant?.price || 0);
-  const displayImages = (activeVariant?.images && activeVariant.images.length > 0)
-    ? activeVariant.images
-    : [initialImageUrl || d.imageUrl || d.image || "/src/assets/images/default-product-1.png"].flat().filter(Boolean);
+  const imageUrl = d.imageUrl || d.image || d[mapping.image];
+  const displayImages = (activeVariant?.images && activeVariant.images.length > 0) 
+    ? activeVariant.images 
+    : (allImages.length > 0 ? allImages : [imageUrl]);
 
   const images = displayImages;
   const totalSlides = images.length;
@@ -54,10 +58,9 @@ const CarouselTemplate: React.FC<TemplateProps> = ({
   const prevSlide = () => setCurrentSlide(prev => (prev === 1 ? totalSlides : prev - 1));
 
   return (
-    <div className={`transition-all duration-300 m-auto w-[300px] max-h-[500px] h-fit p-5 flex flex-col bg-white border border-gray-200 dark:bg-gray-800 dark:border-gray-700 ${shadowClass} ${fontClass} rounded-xl overflow-hidden gap-4`}>
+    <div className={`transition-all duration-300 m-auto w-[300px] h-full p-5 flex flex-col bg-white border border-gray-200 dark:bg-gray-800 dark:border-gray-700 ${shadowClass} ${fontClass} rounded-xl overflow-hidden gap-4`}>
         {/* CAROUSEL SECTION (1:1 Aspect Ratio) */}
-        <div className="relative group/carousel overflow-hidden rounded-t-xl">
-          <div className="aspect-4/5 w-full flex items-center justify-center bg-gray-50 dark:bg-gray-900/50 relative">
+          <div className="relative aspect-[4/3] w-full h-[200px] bg-gray-50 dark:bg-gray-900/50 ">
             {visibility.image && (
               <SlotWrapper 
                 slot="image" 
@@ -67,16 +70,18 @@ const CarouselTemplate: React.FC<TemplateProps> = ({
                 accentColor={accentColor}
               >
                 <img 
-                  src={images[currentSlide - 1]} 
+                  src={imageBaseURL + images[currentSlide - 1]} 
                   alt={`${title} - Slide ${currentSlide}`} 
-                  className="w-full h-full object-contain transition-all duration-500" 
+                  className="w-full h-full object-contain transition-transform duration-700 hover:scale-105" 
                 />
               </SlotWrapper>
             )}
           </div>
-
+        
+        {/* INFO SECTION */}
+        <div className="flex flex-col gap-2">
           {/* Navigation Controls */}
-          <div className="flex items-center justify-between mt-3 px-1">
+          <div className="flex items-center justify-between px-1">
             <button 
               onClick={prevSlide}
               className="p-1.5 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
@@ -95,10 +100,6 @@ const CarouselTemplate: React.FC<TemplateProps> = ({
               <ChevronRight size={16} className="text-gray-500" />
             </button>
           </div>
-        </div>
-        
-        {/* INFO SECTION */}
-        <div className="flex flex-col gap-2">
            {visibility.title && (
               <SlotWrapper 
                 slot="title"
