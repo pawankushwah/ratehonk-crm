@@ -7183,6 +7183,26 @@ async getAllLeadsByTenant(
       const newInvoiceId = newInvoice.id;
 
       if (lineItems.length > 0) {
+        // Handle stock updates if enabled
+        if (tenantSettings?.stockUpdate) {
+          for (const item of lineItems) {
+            const productId = item.productId || null;
+            if (productId && !isNaN(parseInt(productId.toString()))) {
+              console.log(`📦 Updating stock for product ${productId}...`);
+              try {
+                await this.updateProductStock(
+                  invoiceData.tenantId,
+                  parseInt(productId.toString()),
+                  parseInt(item.quantity?.toString() || "1")
+                );
+              } catch (stockError) {
+                console.error(`⚠️ Failed to update stock for product ${productId}:`, stockError);
+                // Continue with invoice creation even if stock update fails
+              }
+            }
+          }
+        }
+
         for (const item of lineItems) {
           // Build description from available fields
           const description = item.itemTitle || item.description || item.travelCategory || "Item";
@@ -7198,14 +7218,15 @@ async getAllLeadsByTenant(
           // can be stored in a JSON column if needed, or in a separate table
           await sql`
             INSERT INTO invoice_items (
-              invoice_id, description, quantity, unit_price, total_price, package_id
+              invoice_id, description, quantity, unit_price, total_price, package_id, product_id
             ) VALUES (
               ${newInvoiceId},
               ${description},
               ${quantity},
               ${unitPrice},
               ${totalPrice},
-              ${item.packageId || null}
+              ${item.packageId || null},
+              ${item.productId || null}
             )
           `;
         }
@@ -8434,14 +8455,15 @@ async getAllLeadsByTenant(
 
           await sql`
             INSERT INTO invoice_items (
-              invoice_id, description, quantity, unit_price, total_price, package_id
+              invoice_id, description, quantity, unit_price, total_price, package_id, product_id
             ) VALUES (
               ${invoiceId},
               ${description},
               ${quantity},
               ${unitPrice},
               ${totalPrice},
-              ${item.packageId || null}
+              ${item.packageId || null},
+              ${item.productId || null}
             )
           `;
         }
@@ -13821,6 +13843,7 @@ RateHonk CRM Team`,
           customer_welcome_template_language,
           customer_welcome_template_session_id,
           auto_assignment_priority_role_id,
+          product_invoice,
           lead_scoring_enabled,
           auto_lead_assignment,
           duplicate_detection,
@@ -13865,6 +13888,7 @@ RateHonk CRM Team`,
         customerWelcomeTemplateLanguage: (settings as any).customer_welcome_template_language || "en",
         customerWelcomeTemplateSessionId: (settings as any).customer_welcome_template_session_id || null,
         autoAssignmentPriorityRoleId: settings.auto_assignment_priority_role_id || null,
+        productInvoice: settings.product_invoice ?? true,
         leadScoringEnabled: settings.lead_scoring_enabled ?? true,
         autoLeadAssignment: settings.auto_lead_assignment ?? false,
         duplicateDetection: settings.duplicate_detection ?? true,
@@ -13908,6 +13932,7 @@ RateHonk CRM Team`,
           customer_welcome_template_language,
           customer_welcome_template_session_id,
           auto_assignment_priority_role_id,
+          product_invoice,
           lead_scoring_enabled,
           auto_lead_assignment,
           duplicate_detection,
@@ -13929,6 +13954,7 @@ RateHonk CRM Team`,
           ${settingsData.customerWelcomeTemplateLanguage || "en"},
           ${settingsData.customerWelcomeTemplateSessionId || null},
           ${settingsData.autoAssignmentPriorityRoleId || null},
+          ${settingsData.productInvoice ?? true},
           ${settingsData.leadScoringEnabled ?? true},
           ${settingsData.autoLeadAssignment ?? false},
           ${settingsData.duplicateDetection ?? true},
@@ -13950,6 +13976,7 @@ RateHonk CRM Team`,
           customer_welcome_template_language = COALESCE(${settingsData.customerWelcomeTemplateLanguage}, tenant_settings.customer_welcome_template_language),
           customer_welcome_template_session_id = COALESCE(${settingsData.customerWelcomeTemplateSessionId}, tenant_settings.customer_welcome_template_session_id),
           auto_assignment_priority_role_id = COALESCE(${settingsData.autoAssignmentPriorityRoleId}, tenant_settings.auto_assignment_priority_role_id),
+          product_invoice = COALESCE(${settingsData.productInvoice}, tenant_settings.product_invoice),
           lead_scoring_enabled = COALESCE(${settingsData.leadScoringEnabled}, tenant_settings.lead_scoring_enabled),
           auto_lead_assignment = COALESCE(${settingsData.autoLeadAssignment}, tenant_settings.auto_lead_assignment),
           duplicate_detection = COALESCE(${settingsData.duplicateDetection}, tenant_settings.duplicate_detection),
@@ -13969,6 +13996,7 @@ RateHonk CRM Team`,
           customer_welcome_template_language,
           customer_welcome_template_session_id,
           auto_assignment_priority_role_id,
+          product_invoice,
           lead_scoring_enabled,
           auto_lead_assignment,
           duplicate_detection,
@@ -13996,6 +14024,7 @@ RateHonk CRM Team`,
         customerWelcomeTemplateLanguage: (updatedSettings as any).customer_welcome_template_language || "en",
         customerWelcomeTemplateSessionId: (updatedSettings as any).customer_welcome_template_session_id || null,
         autoAssignmentPriorityRoleId: updatedSettings.auto_assignment_priority_role_id || null,
+        productInvoice: updatedSettings.product_invoice ?? true,
         leadScoringEnabled: updatedSettings.lead_scoring_enabled ?? true,
         autoLeadAssignment: updatedSettings.auto_lead_assignment ?? false,
         duplicateDetection: updatedSettings.duplicate_detection ?? true,
@@ -16502,6 +16531,7 @@ async getDashboardMetrics(
         timezone: settings.timezone || "UTC",
         dateFormat: settings.date_format || "MM/DD/YYYY",
         defaultGstSettingId: settings.default_gst_setting_id || null,
+        stockUpdate: settings.stock_update,
         showTax: settings.show_tax,
         showDiscount: settings.show_discount,
         showNotes: settings.show_notes,
@@ -16539,7 +16569,7 @@ async getDashboardMetrics(
   async upsertInvoiceSettings(tenantId: number, settings: any) {
     try {
       const [result] =
-        await sql`INSERT INTO tenant_settings (tenant_id, invoice_number_start, invoice_number_prefix, default_currency, timezone, date_format, default_gst_setting_id, show_tax, show_discount, show_notes, show_voucher_invoice, show_provider, show_vendor, show_unit_price, show_additional_commission, send_invoice_via_email, send_invoice_via_whatsapp, updated_at) VALUES (${tenantId}, ${settings.invoiceNumberStart !== undefined ? settings.invoiceNumberStart : 1}, ${settings.invoiceNumberPrefix || "INV"}, ${settings.defaultCurrency || "USD"}, ${settings.timezone || "UTC"}, ${settings.dateFormat || "MM/DD/YYYY"}, ${settings.defaultGstSettingId || null}, ${settings.showTax !== undefined ? settings.showTax : true}, ${settings.showDiscount !== undefined ? settings.showDiscount : true}, ${settings.showNotes !== undefined ? settings.showNotes : true}, ${settings.showVoucherInvoice !== undefined ? settings.showVoucherInvoice : true}, ${settings.showProvider !== undefined ? settings.showProvider : true}, ${settings.showVendor !== undefined ? settings.showVendor : true}, ${settings.showUnitPrice !== undefined ? settings.showUnitPrice : true}, ${settings.showAdditionalCommission !== undefined ? settings.showAdditionalCommission : false}, ${settings.sendInvoiceViaEmail !== undefined ? settings.sendInvoiceViaEmail : true}, ${settings.sendInvoiceViaWhatsapp !== undefined ? settings.sendInvoiceViaWhatsapp : false}, NOW()) ON CONFLICT (tenant_id) DO UPDATE SET invoice_number_start = COALESCE(${settings.invoiceNumberStart}, tenant_settings.invoice_number_start), invoice_number_prefix = COALESCE(${settings.invoiceNumberPrefix}, tenant_settings.invoice_number_prefix), default_currency = COALESCE(${settings.defaultCurrency}, tenant_settings.default_currency), timezone = COALESCE(${settings.timezone}, tenant_settings.timezone), date_format = COALESCE(${settings.dateFormat}, tenant_settings.date_format), default_gst_setting_id = COALESCE(${settings.defaultGstSettingId}, tenant_settings.default_gst_setting_id), show_tax = COALESCE(${settings.showTax}, tenant_settings.show_tax), show_discount = COALESCE(${settings.showDiscount}, tenant_settings.show_discount), show_notes = COALESCE(${settings.showNotes}, tenant_settings.show_notes), show_voucher_invoice = COALESCE(${settings.showVoucherInvoice}, tenant_settings.show_voucher_invoice), show_provider = COALESCE(${settings.showProvider}, tenant_settings.show_provider), show_vendor = COALESCE(${settings.showVendor}, tenant_settings.show_vendor), show_unit_price = COALESCE(${settings.showUnitPrice}, tenant_settings.show_unit_price), show_additional_commission = COALESCE(${settings.showAdditionalCommission}, tenant_settings.show_additional_commission), send_invoice_via_email = COALESCE(${settings.sendInvoiceViaEmail}, tenant_settings.send_invoice_via_email), send_invoice_via_whatsapp = COALESCE(${settings.sendInvoiceViaWhatsapp}, tenant_settings.send_invoice_via_whatsapp), updated_at = NOW() RETURNING *`;
+        await sql`INSERT INTO tenant_settings (tenant_id, invoice_number_start, invoice_number_prefix, default_currency, timezone, date_format, default_gst_setting_id, stock_update, show_tax, show_discount, show_notes, show_voucher_invoice, show_provider, show_vendor, show_unit_price, show_additional_commission, send_invoice_via_email, send_invoice_via_whatsapp, updated_at) VALUES (${tenantId}, ${settings.invoiceNumberStart !== undefined ? settings.invoiceNumberStart : 1}, ${settings.invoiceNumberPrefix || "INV"}, ${settings.defaultCurrency || "USD"}, ${settings.timezone || "UTC"}, ${settings.dateFormat || "MM/DD/YYYY"}, ${settings.defaultGstSettingId || null}, ${settings.stockUpdate !== undefined ? settings.stockUpdate : true}, ${settings.showTax !== undefined ? settings.showTax : true}, ${settings.showDiscount !== undefined ? settings.showDiscount : true}, ${settings.showNotes !== undefined ? settings.showNotes : true}, ${settings.showVoucherInvoice !== undefined ? settings.showVoucherInvoice : true}, ${settings.showProvider !== undefined ? settings.showProvider : true}, ${settings.showVendor !== undefined ? settings.showVendor : true}, ${settings.showUnitPrice !== undefined ? settings.showUnitPrice : true}, ${settings.showAdditionalCommission !== undefined ? settings.showAdditionalCommission : false}, ${settings.sendInvoiceViaEmail !== undefined ? settings.sendInvoiceViaEmail : true}, ${settings.sendInvoiceViaWhatsapp !== undefined ? settings.sendInvoiceViaWhatsapp : false}, NOW()) ON CONFLICT (tenant_id) DO UPDATE SET invoice_number_start = COALESCE(${settings.invoiceNumberStart}, tenant_settings.invoice_number_start), invoice_number_prefix = COALESCE(${settings.invoiceNumberPrefix}, tenant_settings.invoice_number_prefix), default_currency = COALESCE(${settings.defaultCurrency}, tenant_settings.default_currency), timezone = COALESCE(${settings.timezone}, tenant_settings.timezone), date_format = COALESCE(${settings.dateFormat}, tenant_settings.date_format), default_gst_setting_id = COALESCE(${settings.defaultGstSettingId}, tenant_settings.default_gst_setting_id), stock_update = COALESCE(${settings.stockUpdate}, tenant_settings.stock_update), show_tax = COALESCE(${settings.showTax}, tenant_settings.show_tax), show_discount = COALESCE(${settings.showDiscount}, tenant_settings.show_discount), show_notes = COALESCE(${settings.showNotes}, tenant_settings.show_notes), show_voucher_invoice = COALESCE(${settings.showVoucherInvoice}, tenant_settings.show_voucher_invoice), show_provider = COALESCE(${settings.showProvider}, tenant_settings.show_provider), show_vendor = COALESCE(${settings.showVendor}, tenant_settings.show_vendor), show_unit_price = COALESCE(${settings.showUnitPrice}, tenant_settings.show_unit_price), show_additional_commission = COALESCE(${settings.showAdditionalCommission}, tenant_settings.show_additional_commission), send_invoice_via_email = COALESCE(${settings.sendInvoiceViaEmail}, tenant_settings.send_invoice_via_email), send_invoice_via_whatsapp = COALESCE(${settings.sendInvoiceViaWhatsapp}, tenant_settings.send_invoice_via_whatsapp), updated_at = NOW() RETURNING *`;
       return {
         id: result.id,
         tenantId: result.tenant_id,
@@ -16549,6 +16579,7 @@ async getDashboardMetrics(
         timezone: result.timezone || "UTC",
         dateFormat: result.date_format || "MM/DD/YYYY",
         defaultGstSettingId: result.default_gst_setting_id || null,
+        stockUpdate: result.stock_update,
         showTax: result.show_tax,
         showDiscount: result.show_discount,
         showNotes: result.show_notes,
@@ -18423,16 +18454,27 @@ async getDashboardMetrics(
   }
 
   async getFormTemplates(tenantId: number, resourceType?: string) {
-    if (resourceType) {
-      return await sql`SELECT * FROM form_templates WHERE tenant_id = ${tenantId} ORDER BY name ASC`;
-    }
-    return await sql`SELECT * FROM form_templates WHERE tenant_id = ${tenantId} ORDER BY name ASC`;
+    return await sql`
+      SELECT ft.*, ff.form_key as "formKey"
+      FROM form_templates ft
+      LEFT JOIN frontend_forms ff ON ft.mapped_to = ff.id
+      WHERE ft.tenant_id = ${tenantId} 
+      ORDER BY ft.name ASC
+    `;
+  }
+  async getFormTemplatebyId(tenantId: number, id: number) {
+    return await sql`
+      SELECT ft.*, ff.form_key as "formKey"
+      FROM form_templates ft
+      LEFT JOIN frontend_forms ff ON ft.mapped_to = ff.id
+      WHERE ft.tenant_id = ${tenantId} AND ft.id = ${id}
+    `;
   }
 
   async createFormTemplate(data: any) {
     const [template] = await sql`
-      INSERT INTO form_templates (name, resource_type, schema, design, user_id, tenant_id, mapped_to, updated_at)
-      VALUES (${data.name}, ${data.resourceType || 'product'}, ${JSON.stringify(data.schema)}::jsonb, 
+      INSERT INTO form_templates (name, schema, design, user_id, tenant_id, mapped_to, updated_at)
+      VALUES (${data.name}, ${JSON.stringify(data.schema)}::jsonb, 
               ${data.design ? JSON.stringify(data.design) : null}::jsonb, ${data.userId}, ${data.tenantId}, 
               ${data.mappedTo}, NOW())
       RETURNING *`;
@@ -18466,33 +18508,46 @@ async getDashboardMetrics(
   }
 
   async getDynamicDataEntries(tenantId: number, filters: any) {
-    let query = sql`
-      SELECT dd.*, ft.name as template_name, ft.schema as template_schema, ft.design as template_design, ft.mapping as template_mapping
-      FROM dynamic_data dd
-      JOIN form_templates ft ON dd.template_id = ft.id
-      WHERE dd.tenant_id = ${tenantId}
-    `;
+    let whereClause = sql`dd.tenant_id = ${tenantId}`;
 
     if (filters.templateId) {
-      query = sql`${query} AND dd.template_id = ${filters.templateId}`;
+      whereClause = sql`${whereClause} AND dd.template_id = ${filters.templateId}`;
     }
+    
     if (filters.search) {
       const searchTerm = `%${filters.search.toLowerCase()}%`;
-      query = sql`${query} AND LOWER(dd.data::text) LIKE ${searchTerm}`;
+      whereClause = sql`${whereClause} AND LOWER(dd.data::text) LIKE ${searchTerm}`;
+    }
+
+    if (filters.jsonFilters) {
+      for (const key of Object.keys(filters.jsonFilters)) {
+        const val = filters.jsonFilters[key];
+        if (val !== undefined && val !== null && val !== '') {
+          whereClause = sql`${whereClause} AND dd.data->>${key} = ${val}`;
+        }
+      }
     }
 
     const limit = filters.limit ? parseInt(filters.limit) : 50;
     const offset = filters.offset ? parseInt(filters.offset) : 0;
 
-    const results = await sql`${query} ORDER BY dd.created_at DESC LIMIT ${limit} OFFSET ${offset}`;
+    const query = sql`
+      SELECT dd.*, ft.name as template_name, ft.schema as template_schema, ft.design as template_design, ft.mapping as template_mapping
+      FROM dynamic_data dd
+      JOIN form_templates ft ON dd.template_id = ft.id
+      WHERE ${whereClause}
+      ORDER BY dd.created_at DESC 
+      LIMIT ${limit} OFFSET ${offset}
+    `;
+    
+    const results = await sql`${query}`;
     
     // Get total count for pagination
     const countResult = await sql`
       SELECT COUNT(*) as total
       FROM dynamic_data dd
       JOIN form_templates ft ON dd.template_id = ft.id
-      WHERE dd.tenant_id = ${tenantId}
-      ${filters.templateId ? sql`AND dd.template_id = ${filters.templateId}` : sql``}
+      WHERE ${whereClause}
     `;
 
     return {
@@ -18513,6 +18568,30 @@ async getDashboardMetrics(
 
   async deleteDynamicData(id: number, tenantId: number) {
     await sql`DELETE FROM dynamic_data WHERE id = ${id} AND tenant_id = ${tenantId}`;
+  }
+
+  async updateProductStock(tenantId: number, productId: number, quantityDelta: number) {
+    try {
+      const [product] = await sql`
+        SELECT stock FROM dynamic_data WHERE id = ${productId} AND tenant_id = ${tenantId}
+      `;
+
+      if (!product) return null;
+
+      const newQty = product.stock - quantityDelta || 0;
+
+      const [updated] = await sql`
+        UPDATE dynamic_data SET 
+          stock = ${newQty},
+          updated_at = NOW()
+        WHERE id = ${productId} AND tenant_id = ${tenantId}
+        RETURNING *
+      `;
+      return updated;
+    } catch (error) {
+      console.error("updateProductStock error:", error);
+      throw error;
+    }
   }
 
   async generateNextSku(tenantId: number, prefix: string) {
@@ -18542,7 +18621,13 @@ async getDashboardMetrics(
   // --- Dropdown Operations ---
 
   async getDropdownSets(tenantId: number) {
-    return await sql`SELECT * FROM dropdown_sets WHERE tenant_id = ${tenantId} ORDER BY name ASC`;
+    return await sql`
+      SELECT ds.*, 
+             COALESCE((SELECT COUNT(*)::int FROM dropdown_options WHERE set_id = ds.id), 0) as options_count
+      FROM dropdown_sets ds
+      WHERE ds.tenant_id = ${tenantId} 
+      ORDER BY ds.name ASC
+    `;
   }
 
   async createDropdownSet(tenantId: number, name: string) {
@@ -18592,9 +18677,12 @@ async getDashboardMetrics(
       // Insert new options
       if (options && options.length > 0) {
         for (const [index, opt] of options.entries()) {
+          const label = typeof opt === 'string' ? opt : opt.label;
+          const value = typeof opt === 'string' ? opt : opt.value;
+          const order = typeof opt === 'string' ? index : (opt.order ?? index);
           await sql`
             INSERT INTO dropdown_options (set_id, label, value, "order")
-            VALUES (${id}, ${opt.label}, ${opt.value}, ${opt.order ?? index})`;
+            VALUES (${id}, ${label}, ${value}, ${order})`;
         }
       }
 

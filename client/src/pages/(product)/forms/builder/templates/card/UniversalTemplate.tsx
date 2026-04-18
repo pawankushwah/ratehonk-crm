@@ -39,12 +39,13 @@ const UniversalTemplate: React.FC<TemplateProps> = ({
   const title = d.title || d[mapping.title];
   const price = d.price !== undefined ? d.price : d[mapping.price];
   const description = d.description || d[mapping.description] || (data as any).description || "Premium quality item for modern lifestyles.";
-  const category = d.category || d[mapping.category] || "Retail Item";
-  const sku = d.sku || d[mapping.sku] || "ID: 455-RH";
+  let category = d.category || d[mapping.category] || "";
+  if (Array.isArray(category)) category = category.join(', ');
+  const sku = d.sku || d[mapping.sku] || "";
   const stock = d.stock !== undefined ? d.stock : (d[mapping.stock] || 0);
   const rating = d.rating !== undefined ? d.rating : (d[mapping.rating] || 4.5);
   const reviewCount = d.reviewCount !== undefined ? d.reviewCount : (d[mapping.reviewCount] || 0);
-  const promo = d.promo || d[mapping.promo] || "SPECIAL OFFER";
+  // const promo = d.promo || d[mapping.promo] || "SPECIAL OFFER";
   const imageUrl = d.imageUrl || d.image || d[mapping.image];
 
   const mappedHighlightsId = mapping.highlights;
@@ -144,7 +145,7 @@ const UniversalTemplate: React.FC<TemplateProps> = ({
         </SlotWrapper>
       )}
 
-      {visibility.promo && (
+      {/* {visibility.promo && (
         <div className="absolute top-4 right-4">
           <SlotWrapper slot="promo" activeSlot={activeSlot} onSlotClick={onSlotClick} accentColor={accentColor}>
             <span className="px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest backdrop-blur-md border border-rose-500/30 bg-rose-500 text-white shadow-lg">
@@ -152,7 +153,7 @@ const UniversalTemplate: React.FC<TemplateProps> = ({
             </span>
           </SlotWrapper>
         </div>
-      )}
+      )} */}
 
       <div className="absolute bottom-4 right-4 z-10">
         {visibility.price && (
@@ -401,7 +402,8 @@ export const UniversalTemplateView: React.FC<TemplateProps> = ({
   const title = d.title || d[mapping.title];
   const price = d.price !== undefined ? d.price : d[mapping.price];
   const description = d.description || d[mapping.description] || (data as any).description || "Premium quality item for modern lifestyles.";
-  // const category = d.category || d[mapping.category] || "Retail Item";
+  let category = d.category || d[mapping.category] || "";
+  if (Array.isArray(category)) category = category.join(', ');
   const sku = d.sku || d[mapping.sku] || "ID: 455-RH";
   const stock = d.stock !== undefined ? d.stock : (d[mapping.stock] || 0);
   // const rating = d.rating !== undefined ? d.rating : (d[mapping.rating] || 4.5);

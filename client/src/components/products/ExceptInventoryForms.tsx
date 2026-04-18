@@ -52,14 +52,17 @@ const ExceptInventoryForms = ({
       setError(null);
       try {
         const response = await getTemplates();
-        const templates = response.data || [];
+        const templates = Array.isArray(response) ? response : (response.data || []);
         
         const currentFormKey = getFormKey(itemType);
-        
+        console.log(currentFormKey, "cuurrenkdf;alskdj", templates, templateId, "templateId")
         let targetTemplate;
         if (templateId) {
+          console.log("templateId")
           targetTemplate = templates.find((t: any) => t.id === templateId);
         } else {
+          console.log("templateIdkjlkkjklkjl")
+
           // Find by formKey or name
           targetTemplate = templates.find((t: any) => 
             (t.formKey && t.formKey.toLowerCase() === currentFormKey) ||
@@ -68,6 +71,7 @@ const ExceptInventoryForms = ({
           );
         }
 
+        console.log(targetTemplate, "targetTemplate")
         if (targetTemplate) {
           setSchema(targetTemplate.schema);
           setTargetTemplateId(targetTemplate.id);

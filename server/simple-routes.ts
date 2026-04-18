@@ -2177,7 +2177,7 @@ app.get("/api/All-leads", authenticateToken, async (req, res) => {
           ? 10000 
           : 50;
         const offset = offsetParam ? parseInt(offsetParam, 10) : 0;
-
+console.log("simple route Checking");
         const result = await simpleStorage.getCustomersByTenant({
           tenantId,
           search: searchParam,
@@ -20176,6 +20176,7 @@ Please improve this email.`;
 
       // Get tenant settings to retrieve system settings
       const settings = await simpleStorage.getTenantSettings(user.tenantId);
+      console.log(settings)
 
       // Return system settings with stored values or defaults
       res.json({
@@ -20185,6 +20186,7 @@ Please improve this email.`;
         dataRetentionDays: (settings as any).dataRetentionDays || 365,
         auditLogging: (settings as any).auditLogging !== false,
         sessionTimeout: (settings as any).sessionTimeout || 120,
+        productInvoice: (settings as any).productInvoice ?? true
       });
     } catch (error) {
       console.error("Get system settings error:", error);
@@ -20243,6 +20245,7 @@ Please improve this email.`;
         dataRetentionDays,
         auditLogging,
         sessionTimeout,
+        productInvoice
       } = req.body;
 
       // Store system settings in tenant_settings table
@@ -20260,6 +20263,7 @@ Please improve this email.`;
           dataRetentionDays,
           auditLogging,
           sessionTimeout,
+          productInvoice
         },
       );
 
@@ -20270,6 +20274,7 @@ Please improve this email.`;
         dataRetentionDays,
         auditLogging,
         sessionTimeout,
+        productInvoice
       });
 
       res.json({
@@ -20279,6 +20284,8 @@ Please improve this email.`;
         dataRetentionDays: updated.dataRetentionDays ?? dataRetentionDays,
         auditLogging: updated.auditLogging ?? auditLogging,
         sessionTimeout: updated.sessionTimeout ?? sessionTimeout,
+        productInvoice: updated.productInvoice ?? productInvoice 
+
       });
     } catch (error) {
       console.error("Update system settings error:", error);
@@ -27089,14 +27096,12 @@ ${args.tenantName}`;
 
       const [customer] = await sql`
         INSERT INTO customers (
-          tenant_id, first_name, last_name, name, email, phone, 
+          tenant_id, name, email, phone, 
           address, city, state, country, postal_code, pincode,
           company, customer_type, notes, crm_status,
           created_at, updated_at
         ) VALUES (
           ${customerData.tenantId},
-          ${customerData.firstName || ""},
-          ${customerData.lastName || ""},
           ${customerData.name || `${customerData.firstName || ""} ${customerData.lastName || ""}`.trim()},
           ${customerData.email || null},
           ${customerData.phone || null},

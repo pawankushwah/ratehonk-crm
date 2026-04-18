@@ -57,16 +57,28 @@ const ProductBasePage: React.FC<ProductBasePageProps> = ({
   
   // View & Pagination & Search States
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('grid');
-  const [search, setSearch] = useState('');
+  
+  // Read initial states from URL query
+  const [search, setSearch] = useState(() => new URLSearchParams(window.location.search).get('search') || '');
+  const [filters, setFilters] = useState<Record<string, string>>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const initial: Record<string, string> = {};
+    params.forEach((val, key) => {
+      if (key !== 'search' && key !== 'viewMode' && key !== 'page') {
+        initial[key] = val;
+      }
+    });
+    return initial;
+  });
+
   const [drawerMode, setDrawerMode] = useState<'create' | 'edit' | 'view'>('create');
   const [selectedProduct, setSelectedProduct] = useState<any>(null);
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useState(() => Number(new URLSearchParams(window.location.search).get('page')) || 1);
   const [meta, setMeta] = useState<any>(null);
   const [isFilterDrawerOpen, setIsFilterDrawerOpen] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [sharingProduct, setSharingProduct] = useState<any>(null);
   const [isCopied, setIsCopied] = useState(false);
-  const [filters, setFilters] = useState<Record<string, string>>({});
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [, setLocation] = useLocation();
   // const { setTitle, setIsSidebarHidden, setIsHeaderHidden } = useDashboard();
@@ -107,8 +119,8 @@ const ProductBasePage: React.FC<ProductBasePageProps> = ({
       }
 
       if (invTemplate) {
-        const dataRes = await getAllDynamicData(allTypes ? {} : { 
-          templateId: invTemplate.id, 
+        const dataRes = await getAllDynamicData({ 
+          ...(allTypes ? {} : { templateId: invTemplate.id }),
           page: currentPage, 
           limit, 
           search: currentSearch,
@@ -144,8 +156,28 @@ const ProductBasePage: React.FC<ProductBasePageProps> = ({
     return () => clearTimeout(timer);
   }, [page, search, filters]);
 
+  // Sync state to URL without reloading the page
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (page > 1) params.set('page', page.toString());
+    if (search) params.set('search', search);
+    Object.entries(filters).forEach(([k, v]) => {
+      if (v) params.set(k, v);
+    });
+    
+    const newSearch = params.toString();
+    const newUrl = window.location.pathname + (newSearch ? `?${newSearch}` : '');
+    window.history.replaceState(null, '', newUrl);
+  }, [page, search, filters]);
+
   const handleFilterChange = (key: string, value: string) => {
-    setFilters(prev => ({ ...prev, [key]: value }));
+    setFilters(prev => {
+      const newFilters = { ...prev };
+      if (!value) delete newFilters[key];
+      else newFilters[key] = value;
+      return newFilters;
+    });
+    setPage(1); // Reset to first page when filtering
   };
 
   const getFilterableFields = () => {
@@ -452,7 +484,8 @@ const ProductBasePage: React.FC<ProductBasePageProps> = ({
                onSave={handleSave} 
                initialData={selectedProduct} 
                mode={drawerMode} 
-               itemType={drawerView as any} 
+               itemType={drawerView as any}
+               templateId={templateId}
              />
           )}
         </div>

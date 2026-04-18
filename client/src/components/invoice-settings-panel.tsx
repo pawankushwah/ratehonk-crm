@@ -41,6 +41,7 @@ interface InvoiceSettings {
   showAdditionalCommission: boolean;
   sendInvoiceViaEmail: boolean;
   sendInvoiceViaWhatsapp: boolean;
+  stockUpdate: boolean;
 }
 
 interface InvoiceSettingsPanelProps {
@@ -68,6 +69,7 @@ export function InvoiceSettingsPanel({ tenantId }: InvoiceSettingsPanelProps) {
     showAdditionalCommission: false,
     sendInvoiceViaEmail: true,
     sendInvoiceViaWhatsapp: false,
+    stockUpdate: false
   });
 
   const { data: fetchedSettings, isLoading, refetch } = useQuery({
@@ -308,6 +310,22 @@ export function InvoiceSettingsPanel({ tenantId }: InvoiceSettingsPanelProps) {
               </div>
             </SheetContent>
           </Sheet>
+
+          <div className="space-y-2">
+            <div className="flex gap-2 justify-between items-center">
+              <Label htmlFor="stockUpdate" className="cursor-pointer">
+                  Enable Stock Update
+                </Label>
+                <Switch
+                  id="stockUpdate"
+                  checked={settings.stockUpdate}
+                  onCheckedChange={(checked) =>
+                    setSettings({ ...settings, stockUpdate: checked })
+                  }
+                  data-testid="switch-stock-update"
+                />
+            </div>
+          </div>
 
           {/* Field Visibility Toggles */}
           <div className="space-y-4 border-t pt-4">

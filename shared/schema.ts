@@ -105,6 +105,7 @@ export const tenantSettings = pgTable("tenant_settings", {
   timezone: text("timezone").default("UTC"),
   dateFormat: text("date_format").default("MM/DD/YYYY"),
   defaultGstSettingId: integer("default_gst_setting_id"), // Default tax setting for invoices
+  stockUpdate: boolean("stock_update").default(true),
   // Field visibility toggles for invoice create page
   showTax: boolean("show_tax").default(true),
   showDiscount: boolean("show_discount").default(true),
@@ -127,6 +128,13 @@ export const tenantSettings = pgTable("tenant_settings", {
   customerWelcomeTemplateName: text("customer_welcome_template_name"),
   customerWelcomeTemplateLanguage: text("customer_welcome_template_language").default("en"),
   customerWelcomeTemplateSessionId: text("customer_welcome_template_session_id"),
+  leadScoringEnabled: boolean("lead_scoring_enabled").default(false),
+  auto_lead_assignment: boolean("auto_lead_assignment").default(false),
+  duplicate_detection: boolean("duplicate_detection").default(false),
+  data_retention_days: integer("data_retention_days").default(365),
+  audit_logging: boolean("audit_logging").default(true),
+  session_timeout: integer("session_timeout").default(120),
+  product_invoice: boolean("product_invoice").default(true),
   // Lead Auto-Assignment Settings
   autoAssignmentPriorityRoleId: integer("auto_assignment_priority_role_id").references(() => roles.id),
   // Lead follow-up email automations (enable/disable at tenant level)
@@ -430,17 +438,45 @@ export const invoices = pgTable("invoices", {
   invoiceDate: timestamp("invoice_date").notNull(),
   issueDate: timestamp("issue_date"), // Keep both for compatibility
   dueDate: timestamp("due_date").notNull(),
+  
+  // Amount details
   subtotal: decimal("subtotal", { precision: 10, scale: 2 }).notNull(),
   taxAmount: decimal("tax_amount", { precision: 10, scale: 2 }).default("0"),
+  discountAmount: decimal("discount_amount", { precision: 10, scale: 2 }).default("0"),
   totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
+  paidAmount: decimal("paid_amount", { precision: 10, scale: 2 }).default("0"),
+  currency: text("currency").default("USD"),
+  
+  // Payment specifics
+  paymentMethod: text("payment_method"),
+  paymentTerms: text("payment_terms"),
+  isTaxInclusive: boolean("is_tax_inclusive").default(false),
+  
+  // Notes and tags
   notes: text("notes"),
+  additionalNotes: text("additional_notes"),
   tags: json("tags").$type<string[]>(), // Array of tags like ["Reissued"]
+  
+  // Reminders
   enableReminder: boolean("enable_reminder").default(false),
   reminderFrequency: text("reminder_frequency"),
   reminderSpecificDate: timestamp("reminder_specific_date"),
+  
+  // Details for travel/products
+  lineItems: json("line_items").$type<any[]>(),
+  travelDate: timestamp("travel_date"),
+  departureDate: timestamp("departure_date"),
+  arrivalDate: timestamp("arrival_date"),
+  
+  // Attachments
+  attachments: json("attachments").$type<any[]>(),
+  internalAttachments: json("internal_attachments").$type<any[]>(),
+  
+  // Cancellation
   hasCancellationCharge: boolean("has_cancellation_charge").default(false),
   cancellationChargeAmount: decimal("cancellation_charge_amount", { precision: 10, scale: 2 }).default("0"),
   cancellationChargeNotes: text("cancellation_charge_notes"),
+  
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -454,6 +490,7 @@ export const invoiceItems = pgTable("invoice_items", {
   unitPrice: decimal("unit_price", { precision: 10, scale: 2 }).notNull(),
   totalPrice: decimal("total_price", { precision: 10, scale: 2 }).notNull(),
   packageId: integer("package_id"),
+  productId: integer("product_id"),
 });
 
 // Payment Installments - For splitting invoice payments
@@ -1380,6 +1417,7 @@ export const dynamicData = pgTable("dynamic_data", {
   tenantId: integer("tenant_id").notNull().references(() => tenants.id),
   userId: integer("user_id").references(() => users.id),
   data: jsonb("data").notNull(),
+  stock: integer("stock"), // Stores { total: number, variants: { [variantId]: number } }
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

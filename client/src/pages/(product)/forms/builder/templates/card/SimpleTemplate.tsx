@@ -57,8 +57,8 @@ const SimpleTemplate: React.FC<TemplateProps> = ({
   const price = displayPrice;
 
   return (
-    <div className={`flex flex-col m-auto w-[320px] transition-all duration-300 overflow-hidden border ${bgBase} ${borderBase} ${radiusClass} ${shadowClass} ${fontClass}`}>
-        <div className={`relative aspect-[4/3] overflow-hidden bg-slate-100 dark:bg-slate-800`}>
+    <div className={`h-full flex flex-col m-auto w-[320px] transition-all duration-300 overflow-hidden border ${bgBase} ${borderBase} ${radiusClass}`}>
+        <div className={`relative aspect-square overflow-hidden bg-slate-100 dark:bg-slate-800`}>
           {visibility?.image !== false && (
             <SlotWrapper 
               slot="image" 

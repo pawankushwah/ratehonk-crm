@@ -206,6 +206,34 @@ export const getRoleValue = (role: FieldRoleType, product: any, template: any, v
     return data[role];
   }
 
+  // --- HACK/FALLBACK FOR ORPHANED CATEGORY DATA ---
+  if (role === 'category') {
+    // If we're looking for category and it's missing from schema mapping,
+    // let's scan the data keys for common category-like values as a last resort.
+    // E.g. anything that is exactly "Clothing", "Electronics", "Books", etc.
+    const COMMON_CATEGORIES = ['clothing', 'electronics', 'books', 'beauty', 'home', 'sports'];
+    for (const key of Object.keys(data)) {
+      if (typeof data[key] === 'string' && COMMON_CATEGORIES.includes(data[key].toLowerCase())) {
+        return data[key];
+      }
+      if (Array.isArray(data[key]) && data[key].length > 0 && typeof data[key][0] === 'string' && COMMON_CATEGORIES.includes(data[key][0].toLowerCase())) {
+        return data[key][0];
+      }
+    }
+  }
+
+  // --- HACK/FALLBACK FOR ORPHANED SKU DATA ---
+  if (role === 'sku') {
+    for (const key of Object.keys(data)) {
+      if (typeof data[key] === 'string' && /^[A-Z0-9]+-[A-Z0-9]+$/i.test(data[key])) {
+        if (!data[key].includes(COMMON_CATEGORIES[0])) return data[key];
+      }
+      if (typeof data[key] === 'string' && data[key].toUpperCase().includes('PROD-')) {
+        return data[key];
+      }
+    }
+  }
+
   // Check for common naming variations in mock data (even if fieldId exists)
   if (role === 'image' && !isEmptyValue(data.imageUrl)) return data.imageUrl;
   if (role === 'colors' && !isEmptyValue(data.availableColors)) return data.availableColors;

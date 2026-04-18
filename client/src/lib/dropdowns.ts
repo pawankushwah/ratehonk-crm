@@ -10,6 +10,7 @@ export interface Dropdown {
   id: string;
   name: string;
   options: DropdownOption[];
+  options_count?: number;
 }
 
 export const getDropdowns = async (): Promise<Dropdown[]> => {

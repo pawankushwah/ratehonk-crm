@@ -67,14 +67,15 @@ export const getDataPublic = async (req: any, res: Response) => {
 
 export const getAllData = async (req: any, res: Response) => {
   try {
-    const { template_id, page = 1, limit = 10, search } = req.query as any;
+    const { template_id, page = 1, limit = 10, search, ...otherFilters } = req.query as any;
     const tenantId = req.user.tenantId;
     
     const filters = {
       templateId: template_id ? Number(template_id) : undefined,
       search,
       limit: Number(limit),
-      offset: (Number(page) - 1) * Number(limit)
+      offset: (Number(page) - 1) * Number(limit),
+      jsonFilters: otherFilters
     };
 
     const { data: rows, total } = await simpleStorage.getDynamicDataEntries(tenantId, filters);
@@ -98,13 +99,14 @@ export const getAllData = async (req: any, res: Response) => {
 
 export const getAllDataPublic = async (req: any, res: Response) => {
   try {
-    const { template_id, page = 1, limit = 10, search, user: tenantId } = req.query as any;
+    const { template_id, page = 1, limit = 10, search, user: tenantId, ...otherFilters } = req.query as any;
     
     const filters = {
       templateId: template_id ? Number(template_id) : undefined,
       search,
       limit: Number(limit),
-      offset: (Number(page) - 1) * Number(limit)
+      offset: (Number(page) - 1) * Number(limit),
+      jsonFilters: otherFilters
     };
 
     const { data: rows, total } = await simpleStorage.getDynamicDataEntries(tenantId, filters);

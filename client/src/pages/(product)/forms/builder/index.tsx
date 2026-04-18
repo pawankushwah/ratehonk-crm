@@ -1171,10 +1171,10 @@ export default function FormBuilderPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-4 gap-10 items-start">
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-10">
               {/* Sidebar / Toolbox - Sticky */}
-              <div className="lg:col-span-1 space-y-6 sticky top-4">
-                <GlassCard ref={sidebarRef} className="p-5 bg-primary/5 border-primary/20 backdrop-blur-xl h-[calc(100vh-150px)] overflow-y-auto">
+              <div className="lg:col-span-1 space-y-6">
+                <GlassCard ref={sidebarRef} className="sticky top-20 p-5 bg-white border-primary/20 backdrop-blur-xl h-[calc(100vh-150px)] overflow-y-auto custom-scrollbar">
                   <h3 className="text-sm font-black text-primary mb-5 flex items-center gap-2 uppercase tracking-tighter">
                     <Settings2 size={16} /> Workspace Toolbox
                   </h3>
@@ -2982,18 +2982,18 @@ const PlusSeparator = ({
   }, [showMenu]);
 
   return (
-    <div className="relative h-10 group/plus flex items-center justify-center z-10 pointer-events-none">
-      <div className="absolute inset-0 flex items-center px-4">
-        <div className="w-full border-t-2 border-primary/5 group-hover/plus:border-primary/30 transition-all" />
+    <div className={`relative h-10 group/plus flex items-center justify-center ${showMenu ? 'z-50' : 'z-10'}`}>
+      <div className="absolute inset-0 flex items-center px-4 transition-all">
+        <div className="w-full border-t-2 border-primary/5 opacity-0 group-hover/plus:opacity-100 group-hover/plus:border-primary/50 transition-all" />
       </div>
-      <div className="relative pointer-events-auto" ref={menuRef}>
+      <div className="relative" ref={menuRef}>
         <button 
           onClick={() => setShowMenu(!showMenu)}
           className={`
             relative z-30 w-8 h-8 rounded-full flex items-center justify-center transition-all shadow-xl
             ${showMenu 
               ? 'bg-primary text-white scale-110 rotate-45' 
-              : 'bg-glass-bg border border-glass-border text-text-muted hover:text-white hover:bg-primary hover:border-primary opacity-0 scale-50 group-hover/plus:opacity-100 group-hover/plus:scale-100'}
+              : 'bg-glass-bg border border-glass-border text-text-muted hover:text-white group-hover/plus:bg-primary group-hover/plus:border-primary opacity-0 scale-50 group-hover/plus:opacity-100 group-hover/plus:scale-100'}
           `}
         >
           <Plus size={16} />

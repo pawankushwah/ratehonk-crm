@@ -125,7 +125,7 @@ const FlowbiteDetailTemplate: React.FC<TemplateProps> = ({
 
                 {/* THUMBNAILS */}
                 <div className="flex gap-4 mt-8 no-scrollbar pb-2">
-                  {images?.map((img: string, idx: number) => (
+                  {images && images.length > 0 && images?.map((img: string, idx: number) => (
                     <button
                       key={idx}
                       onClick={() => setSelectedImage(idx)}

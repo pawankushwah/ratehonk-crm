@@ -57,11 +57,16 @@ export function CustomerCreateForm({
 
   const createMutation = useMutation({
     mutationFn: async (data: CustomerFormData) => {
+      const parsedTenantId = parseInt(tenantId);
+      if (isNaN(parsedTenantId)) {
+        throw new Error("Invalid tenant ID");
+      }
+      
       const response = await apiRequest("POST", "/api/customers", {
         ...data,
         name: `${data.firstName} ${data.lastName}`,
         crmStatus: "active",
-        tenantId: parseInt(tenantId),
+        tenantId: parsedTenantId,
       });
       return response.json();
     },

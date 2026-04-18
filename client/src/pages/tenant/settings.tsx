@@ -96,6 +96,7 @@ const userPreferencesSchema = z.object({
 const systemSettingsSchema = z.object({
   dataRetentionDays: z.number().min(30).max(2555),
   auditLogging: z.boolean(),
+  productInvoice: z.boolean(),
   sessionTimeout: z.number().min(15).max(480),
 });
 
@@ -319,6 +320,7 @@ export default function Settings() {
     defaultValues: {
       dataRetentionDays: 365,
       auditLogging: true,
+      productInvoice: true,
       sessionTimeout: 120,
     },
   });
@@ -327,6 +329,7 @@ export default function Settings() {
   React.useEffect(() => {
     if (systemData) {
       systemForm.reset({
+        productInvoice: (systemData as any).productInvoice ?? true,
         dataRetentionDays: (systemData as any).dataRetentionDays || 365,
         auditLogging: (systemData as any).auditLogging !== false,
         sessionTimeout: (systemData as any).sessionTimeout || 120,
@@ -1403,6 +1406,43 @@ export default function Settings() {
                       />
                     </div>
                   </CardContent>
+                </Card>
+                <Card>
+
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <Shield className="h-5 w-5" />
+                      Invoice Settings
+                    </CardTitle>
+                    {/* <CardDescription>
+                      Configure security settings and data retention
+                    </CardDescription> */}
+                  </CardHeader>
+                  <CardContent className="space-y-6">
+                <FormField
+                      control={systemForm.control}
+                      name="productInvoice"
+                      render={({ field }) => (
+                        <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                          <div className="space-y-0.5">
+                            <FormLabel className="text-base">
+                              Enable Product Invoice
+                            </FormLabel>
+                            <FormDescription>
+                              Invoice will be created for Product
+                            </FormDescription>
+                          </div>
+                          <FormControl>
+                            <Switch
+                              checked={field.value}
+                              onCheckedChange={field.onChange}
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                  </CardContent>
+
                 </Card>
 
                 <div className="flex justify-end">

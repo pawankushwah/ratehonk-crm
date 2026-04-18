@@ -16,6 +16,7 @@ import {
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
@@ -68,6 +69,21 @@ import { ModernTemplate, InvoiceData } from "@/components/invoices/invoice-templ
 import { ObjectUploader } from "@/components/ObjectUploader";
 import type { UploadResult } from "@uppy/core";
 
+interface InvoiceSettings {
+  invoiceNumberStart: number;
+  invoiceNumberPrefix: string;
+  showTax: boolean;
+  showDiscount: boolean;
+  showNotes: boolean;
+  showVoucherInvoice: boolean;
+  showProvider: boolean;
+  showVendor: boolean;
+  showUnitPrice: boolean;
+  showAdditionalCommission: boolean;
+  defaultCurrency: string;
+  defaultGstSettingId: number | null;
+}
+
 export default function InvoiceCreate() {
   const { tenant } = useAuth();
   const { toast } = useToast();
@@ -103,9 +119,20 @@ export default function InvoiceCreate() {
       taxRateId: "",
       additionalCommissionPercentage: "",
       additionalCommission: "",
+      productId: "",
       totalAmount: 0,
     },
   ]);
+
+  const { data: systemData, isLoading: systemLoading } = useQuery({
+    queryKey: ["/api/system/settings"],
+  });
+  const [isProductInvoice, setIsProductInvoice] = useState(null);
+  useEffect(()=>{
+    if(systemData){
+      setIsProductInvoice(systemData.productInvoice ?? true);
+    }
+  }, [systemData]);
 
   const [selectedBookingId, setSelectedBookingId] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
@@ -182,7 +209,7 @@ export default function InvoiceCreate() {
   const [previewInvoiceData, setPreviewInvoiceData] = useState<InvoiceData | null>(null);
 
   // Fetch invoice settings
-  const { data: invoiceSettings = {
+  const { data: invoiceSettings = { 
     invoiceNumberStart: 1,
     invoiceNumberPrefix: "INV",
     showTax: true,
@@ -195,7 +222,7 @@ export default function InvoiceCreate() {
     showAdditionalCommission: false,
     defaultCurrency: "USD",
     defaultGstSettingId: null,
-  }, refetch: refetchInvoiceSettings, isLoading: isLoadingSettings } = useQuery({
+  }, refetch: refetchInvoiceSettings, isLoading: isLoadingSettings } = useQuery<InvoiceSettings>({
     queryKey: ["/api/invoice-settings", tenant?.id],
     enabled: !!tenant?.id,
     queryFn: async () => {
@@ -300,14 +327,14 @@ export default function InvoiceCreate() {
     const prefix = invoiceNumberPrefix;
     
     // Only log in development mode and limit logging to first run
-    if (process.env.NODE_ENV === 'development' && !hasInitialized.current) {
+    if (import.meta.env.DEV && !hasInitialized.current) {
       console.log("🔢 Generating invoice number - invoices count:", invoicesLength, "startNumber:", startNumber, "prefix:", prefix);
     }
     
     if (!invoices || invoices.length === 0) {
       // No existing invoices, use starting number from settings
       const generated = `${prefix}${String(startNumber).padStart(3, '0')}`;
-      if (process.env.NODE_ENV === 'development' && !hasInitialized.current) {
+      if (import.meta.env.DEV && !hasInitialized.current) {
         console.log("🔢 No existing invoices, using start number from settings:", generated);
       }
       return generated;
@@ -363,7 +390,7 @@ export default function InvoiceCreate() {
     
     // Return without dash: INV001 instead of INV-001
     const generated = `${prefix}${String(nextNumber).padStart(3, '0')}`;
-    if (process.env.NODE_ENV === 'development' && !hasInitialized.current) {
+    if (import.meta.env.DEV && !hasInitialized.current) {
       console.log("🔢 Final generated invoice number:", generated);
     }
     return generated;
@@ -417,7 +444,7 @@ export default function InvoiceCreate() {
         // Extract and set just the number part
         const numberPart = extractNumberPart(fullNumber, prefix);
         setInvoiceNumberOnly(numberPart);
-        if (process.env.NODE_ENV === 'development') {
+        if (import.meta.env.DEV) {
           console.log("🔢 Set invoice number:", fullNumber, "Number part:", numberPart);
         }
       }
@@ -581,6 +608,25 @@ export default function InvoiceCreate() {
     enabled:
       !!tenant?.id && !!selectedTaxSettingId && selectedTaxSettingId !== "none",
   });
+  console.log(gstRates, selectedTaxSettingId)
+
+  // Fetch products (dynamic data)
+  const { data: productsData } = useQuery({
+    queryKey: ["/api/resources/data/all"],
+    enabled: !!tenant?.id,
+    queryFn: async () => {
+      const token = auth.getToken();
+      const response = await fetch("/api/resources/data/all?limit=1000", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) return { data: [] };
+      return response.json();
+    },
+  });
+
+  const products = useMemo(() => {
+    return productsData?.data || [];
+  }, [productsData]);
 
   // Track if invoice data has been loaded to prevent re-loading
   const invoiceDataLoadedRef = useRef<number | null>(null);
@@ -917,6 +963,7 @@ export default function InvoiceCreate() {
           taxRateId: item.taxRateId?.toString() || "",
           additionalCommissionPercentage: item.additionalCommissionPercentage?.toString() || "",
           additionalCommission: item.additionalCommission?.toString() || "",
+          productId: item.productId?.toString() || item.product_id?.toString() || "",
           totalAmount: parseFloat(item.totalAmount?.toString() || item.totalPrice?.toString() || "0"),
         })));
       }
@@ -1243,20 +1290,25 @@ export default function InvoiceCreate() {
       label: lt.name || lt.type_name || lt.typeName || `Lead Type ${lt.id}`,
     }));
 
+    const defaultCategory = isProductInvoice ? [
+      { value: "Electronics", label: "Electronics" },
+      { value: "Clothing", label: "Clothing" }
+    ] : [
+      { value: "Flight", label: "Flight" },
+      { value: "Hotel", label: "Hotel" },
+      { value: "Transport", label: "Transport" },
+      { value: "Tour Package", label: "Tour Package" },
+      { value: "Itinerary", label: "Itinerary" },
+      { value: "Visa Services", label: "Visa Services" },
+      { value: "Insurance", label: "Insurance" },
+      { value: "Meals", label: "Meals" },
+      { value: "Activities", label: "Activities" },
+      { value: "Other Services", label: "Other Services" },
+    ];
+
     const defaultCategories =
       leadTypeCategories.length === 0
-        ? [
-          { value: "Flight", label: "Flight" },
-          { value: "Hotel", label: "Hotel" },
-          { value: "Transport", label: "Transport" },
-          { value: "Tour Package", label: "Tour Package" },
-          { value: "Itinerary", label: "Itinerary" },
-          { value: "Visa Services", label: "Visa Services" },
-          { value: "Insurance", label: "Insurance" },
-          { value: "Meals", label: "Meals" },
-          { value: "Activities", label: "Activities" },
-          { value: "Other Services", label: "Other Services" },
-        ]
+        ? defaultCategory
         : leadTypeCategories;
 
     return [
@@ -1388,7 +1440,6 @@ export default function InvoiceCreate() {
       })),
     ];
   };
-
   // Get payment status options
   // Hide cancelled, void, and overdue when creating new invoice
   // Show all options when editing existing invoice
@@ -1487,6 +1538,134 @@ export default function InvoiceCreate() {
     } as typeof item;
   };
 
+  const getProductDetail = (product: any, detailKey: 'title' | 'price' | 'purchasePrice' | 'category') => {
+      const data = product.data || {};
+      const viewMapping = product.template_design?.viewMapping || {};
+      
+      let fieldId;
+      if (detailKey === 'title') fieldId = viewMapping.title;
+      if (detailKey === 'price') fieldId = viewMapping.price;
+      
+      if (fieldId && data[fieldId] !== undefined && data[fieldId] !== "") {
+        const val = data[fieldId];
+        if (Array.isArray(val)) return val[0];
+        return val;
+      }
+  
+      // Fallback: search schema recursively
+      const schemaItems = product.FormTemplate?.form_schema?.items || product.template_schema?.items || product.template_schema || [];
+      let foundId = '';
+  
+      const searchSchema = (items: any[]) => {
+        for (const item of items) {
+          const labelSafe = (item.label || item.name || '').toLowerCase();
+          
+          if (detailKey === 'title') {
+             if (labelSafe.includes('name') || labelSafe.includes('title')) {
+               foundId = item.id;
+               return;
+             }
+          } else if (detailKey === 'price') {
+             if (labelSafe.includes('sales price') || labelSafe.includes('selling') || labelSafe.includes('service rate') || labelSafe === 'price' || labelSafe === 'rate') {
+               foundId = item.id;
+               return;
+             }
+          } else if (detailKey === 'purchasePrice') {
+             if (labelSafe.includes('purchase cost') || labelSafe.includes('purchase price') || labelSafe === 'cost') {
+               foundId = item.id;
+               return;
+             }
+          } else if (detailKey === 'category') {
+             if (labelSafe.includes('category') || labelSafe.includes('type')) {
+               foundId = item.id;
+               return;
+             }
+          }
+          
+          if (item.items) searchSchema(item.items);
+          if (item.fields) searchSchema(item.fields);
+        }
+      };
+      if (Array.isArray(schemaItems)) searchSchema(schemaItems);
+  
+      if (foundId && data[foundId] !== undefined && data[foundId] !== "") {
+        const val = data[foundId];
+        if (Array.isArray(val)) {
+          return typeof val[0] === 'object' ? (val[0].label || val[0].value) : val[0];
+        }
+        return typeof val === 'object' ? (val.label || val.value) : val;
+      }
+      
+      // Final fallback
+      if (detailKey === 'title') return data.name || data.productName || data.title || "Unnamed Product";
+      if (detailKey === 'price') return data.price || data.sellingPrice || data.serviceRate || data.salesPrice || "0";
+      if (detailKey === 'purchasePrice') return data.purchasePrice || data.purchaseCost || data.cost || "0";
+      if (detailKey === 'category') return data.category || data.type || "Unknown";
+  
+      return null;
+    };
+ // Get products options
+  const getProducts = (): AutocompleteOption[] => {
+    return products.map((product: any) => {
+      const name = getProductDetail(product, 'title') || "Unnamed Product";
+      const category = getProductDetail(product, 'category');
+      const templateName = product.FormTemplate?.name || product.template_name || "";
+      let typeDisplay = "Product";
+      if (category && category !== "Unknown") {
+        typeDisplay = category;
+      } else if (templateName) {
+        typeDisplay = templateName;
+      }
+      
+      return {
+        value: product.id.toString(),
+        label: `${name} (${typeDisplay})`,
+      };
+    });
+  };
+  // Handle product selection
+  const handleProductSelection = (productId: string, index: number) => {
+    const selectedProduct = products.find((p: any) => p.id.toString() === productId);
+    if (!selectedProduct) return;
+
+    const name = getProductDetail(selectedProduct, 'title') || "Unnamed Product";
+    const price = getProductDetail(selectedProduct, 'price') || "0";
+    const purchasePrice = getProductDetail(selectedProduct, 'purchasePrice') || "0";
+
+    // Find variants field dynamically
+    let availableVariants = [];
+    const schemaItems = selectedProduct.FormTemplate?.form_schema?.items || selectedProduct.template_schema?.items || selectedProduct.template_schema || [];
+    let variantsFieldId = '';
+    const traverse = (items: any[]) => {
+      for (const item of items) {
+         if (item.kind === 'group' && (item.label?.toLowerCase().includes('variant') || item.name?.toLowerCase().includes('variant'))) {
+           variantsFieldId = item.id;
+           break;
+         }
+         if (item.items) traverse(item.items);
+         if (item.fields) traverse(item.fields);
+      }
+    };
+    if (Array.isArray(schemaItems)) traverse(schemaItems);
+    if (variantsFieldId) {
+      availableVariants = selectedProduct.data?.[variantsFieldId] || [];
+    }
+
+    const updatedItems = [...lineItems];
+    updatedItems[index] = calculateLineItemTotals({
+      ...updatedItems[index],
+      productId: productId,
+      itemTitle: name,
+      sellingPrice: price.toString(),
+      unitPrice: price.toString(),
+      purchasePrice: purchasePrice.toString(),
+      availableVariants,
+      variantId: "", // Reset variant on product change
+    });
+
+    setLineItems(updatedItems);
+  };
+
   // Update line item
   const updateLineItem = (index: number, field: string, value: any) => {
     const updatedItems = [...lineItems];
@@ -1538,6 +1717,7 @@ export default function InvoiceCreate() {
         taxRateId: "",
         additionalCommissionPercentage: "",
         additionalCommission: "",
+        productId: "",
         totalAmount: price,
       },
     ]);
@@ -1564,6 +1744,7 @@ export default function InvoiceCreate() {
         taxRateId: "",
         additionalCommissionPercentage: "",
         additionalCommission: "",
+        productId: "",
         totalAmount: 0,
       },
     ]);
@@ -1854,7 +2035,9 @@ export default function InvoiceCreate() {
   };
 
   // Handle customer selection
-  const handleCustomerSelection = (customerId: string) => {
+  const handleCustomerSelection = (customerId: string | null) => {
+    if (!customerId) return;
+    
     if (customerId === "create_new") {
       setIsCustomerPanelOpen(true);
     } else {
@@ -2296,6 +2479,7 @@ export default function InvoiceCreate() {
         purchasePrice: parseFloat(item.purchasePrice || "0"),
         tax: parseFloat(item.tax || "0"),
         additionalCommission: parseFloat(item.additionalCommission || "0"),
+        productId: item.productId ? parseInt(item.productId) : null,
       })),
       expenses, // Include auto-generated expenses
       installments: enableInstallments ? calculateInstallments().map(inst => ({
@@ -2467,13 +2651,25 @@ export default function InvoiceCreate() {
 
   // Calculate grid template columns dynamically (must be before any conditional returns)
   const gridTemplate = useMemo(() => {
-    const columns = [
+    const columns = isProductInvoice ? [
+      '30px', // # column - smaller (fixed)
+      ...(isProductInvoice ? ['minmax(250px, 2fr)'] : []), // Product - only for product invoice
+      'minmax(80px, 1fr)', // Pax/Qty - small (flexible, min 60px)
+      ...(invoiceSettings?.showUnitPrice ? ['minmax(130px, 1fr)'] : []), // Unit Price - small (flexible, min 100px)
+      'minmax(130px, 1fr)', // Selling Price - small (flexible, min 100px)
+      'minmax(130px, 1fr)', // Purchase Price - small (flexible, min 100px)
+      ...(invoiceSettings?.showTax ? ['minmax(100px, 1fr)'] : []), // Tax - small (flexible, min 100px)
+      'minmax(100px, 1fr)', // Amount - small (flexible, min 100px)
+      ...(invoiceSettings?.showAdditionalCommission ? ['minmax(100px, 1fr)'] : []), // Additional Commission - small (flexible, min 100px)
+      ...(invoiceSettings?.showVoucherInvoice ? ['minmax(100px, 1fr)'] : []), // Invoice/Voucher - small (flexible, min 100px)
+      '50px', // Delete button - small (fixed)
+    ] : [
       '30px', // # column - smaller (fixed)
       'minmax(180px, 1.5fr)', // Category - reduced width (flexible, min 180px)
-      ...(invoiceSettings?.showVendor ? ['minmax(180px, 1.5fr)'] : []), // Vendor - reduced width (flexible, min 180px)
-      ...(invoiceSettings?.showProvider ? ['minmax(180px, 1.5fr)'] : []), // Provider - reduced width (flexible, min 180px)
-      ...(shouldShowPackageColumnForAnyItem ? ['minmax(180px, 1.5fr)'] : []), // Package - conditional, after Provider
-      'minmax(60px, 1fr)', // Pax - small (flexible, min 60px)
+      ...(invoiceSettings?.showVendor ? ['minmax(180px, 1.5fr)'] : []), // Vendor - hide for product invoice
+      ...(invoiceSettings?.showProvider ? ['minmax(180px, 1.5fr)'] : []), // Provider - hide for product invoice
+      ...(shouldShowPackageColumnForAnyItem ? ['minmax(180px, 1.5fr)'] : []), // Package - hide for product invoice
+      'minmax(80px, 1fr)', // Pax/Qty - small (flexible, min 60px)
       ...(invoiceSettings?.showUnitPrice ? ['minmax(130px, 1fr)'] : []), // Unit Price - small (flexible, min 100px)
       'minmax(130px, 1fr)', // Selling Price - small (flexible, min 100px)
       'minmax(130px, 1fr)', // Purchase Price - small (flexible, min 100px)
@@ -2484,7 +2680,7 @@ export default function InvoiceCreate() {
       '50px', // Delete button - small (fixed)
     ];
     return columns.join(' ');
-  }, [invoiceSettings?.showVendor, invoiceSettings?.showProvider, invoiceSettings?.showUnitPrice, invoiceSettings?.showTax, invoiceSettings?.showAdditionalCommission, invoiceSettings?.showVoucherInvoice, shouldShowPackageColumnForAnyItem]);
+  }, [isProductInvoice, invoiceSettings?.showVendor, invoiceSettings?.showProvider, invoiceSettings?.showUnitPrice, invoiceSettings?.showTax, invoiceSettings?.showAdditionalCommission, invoiceSettings?.showVoucherInvoice, shouldShowPackageColumnForAnyItem]);
 
   // Grid template for expense table
   const expenseGridTemplate = useMemo(() => {
@@ -2584,7 +2780,16 @@ export default function InvoiceCreate() {
                 <div></div>
                 <div></div>
                 <div></div>
-                <div></div>
+                  <div className="flex items-center gap-2 h-full">
+                    {/* <span className="text-sm text-muted-foreground">Travel</span>
+                    <Switch
+                      id="isProductinvoice"
+                      checked={isProductInvoice}
+                      onCheckedChange={setIsProductInvoice}
+                      data-testid="switch-is-product-invoice"
+                    />
+                    <span className="text-sm text-muted-foreground">Product</span> */}
+                  </div>
                 <div>
                   <Label htmlFor="invoiceNumber">Invoice Number *</Label>
                   <div className="flex items-center gap-2">
@@ -2609,6 +2814,7 @@ export default function InvoiceCreate() {
                   </div>
                 </div>
               </div>
+
               {/* Customer and Invoice Date Row */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="lg:col-span-2">
@@ -2805,27 +3011,6 @@ export default function InvoiceCreate() {
                   <input type="hidden" name="travelDate" value={travelDate} />
                 </div>
 
-                <div>
-                  <Label htmlFor="departureDate">Departure Date</Label>
-                  <DatePicker
-                    value={departureDate}
-                    onChange={setDepartureDate}
-                    placeholder="Select departure date"
-                    className="w-full"
-                  />
-                  <input type="hidden" name="departureDate" value={departureDate} />
-                </div>
-
-                <div>
-                  <Label htmlFor="arrivalDate">Arrival Date</Label>
-                  <DatePicker
-                    value={arrivalDate}
-                    onChange={setArrivalDate}
-                    placeholder="Select arrival date"
-                    className="w-full"
-                  />
-                  <input type="hidden" name="arrivalDate" value={arrivalDate} />
-                </div>
               </div>
 
               {/* Line Items */}
@@ -2846,11 +3031,9 @@ export default function InvoiceCreate() {
                     }}
                   >
                     <div className="text-center flex items-center justify-center">#</div>
-                    <div className="flex items-center">Category *</div>
-                    {invoiceSettings?.showVendor && <div className="flex items-center">Vendor</div>}
-                    {invoiceSettings?.showProvider && <div className="flex items-center">Provider</div>}
-                    {shouldShowPackageColumnForAnyItem && <div className="flex items-center">Package</div>}
-                    <div className="flex items-center">Pax *</div>
+                    <div className="flex items-center">Product</div>
+                    <div className="flex items-center">Qty *</div>
+
                     {invoiceSettings?.showUnitPrice && <div className="flex items-center">Unit Price ({currencySymbol}) *</div>}
                     <div className="flex items-center">Selling Price ({currencySymbol}) *</div>
                     <div className="flex items-center">Purchase Price ({currencySymbol}) *</div>
@@ -2872,65 +3055,18 @@ export default function InvoiceCreate() {
                         <span className="font-medium text-sm">{index + 1}</span>
                       </div>
 
-                      <div className="flex items-center">
-                        <AutocompleteInput
-                          data-testid={`autocomplete-category-${index}`}
-                          suggestions={getTravelCategories()}
-                          value={item.travelCategory}
-                          onValueChange={(value) =>
-                            handleTravelCategorySelection(value, index)
-                          }
-                          placeholder="Select..."
-                          emptyText="No categories found"
-                        />
-                      </div>
-
-                      {invoiceSettings?.showVendor && (
-                        <div className="flex items-center">
-                          <AutocompleteInput
-                            data-testid={`autocomplete-vendor-${index}`}
-                            suggestions={getVendorOptions()}
-                            value={item.vendor}
-                            onValueChange={(value) =>
-                              handleVendorSelection(value, index)
-                            }
-                            placeholder="Select..."
-                            emptyText="No vendors found"
-                          />
-                        </div>
-                      )}
-
-                      {invoiceSettings?.showProvider && (
-                        <div className="flex items-center">
-                          <AutocompleteInput
-                            data-testid={`autocomplete-service-provider-${index}`}
-                            suggestions={getServiceProviderOptions(
-                              item.travelCategory,
-                            )}
-                            value={item.serviceProviderId}
-                            onValueChange={(value) =>
-                              handleServiceProviderSelection(value, index)
-                            }
-                            placeholder="Select..."
-                            emptyText="No providers found"
-                          />
-                        </div>
-                      )}
-
-                      {shouldShowPackageColumn(item.travelCategory) && (
-                        <div className="flex items-center">
-                          <AutocompleteInput
-                            data-testid={`autocomplete-package-${index}`}
-                            suggestions={getPackageOptions()}
-                            value={item.packageId}
-                            onValueChange={(value) =>
-                              updateLineItem(index, "packageId", value)
-                            }
-                            placeholder="Select..."
-                            emptyText="No packages found"
-                          />
-                        </div>
-                      )}
+                          <div className="flex items-center">
+                            <AutocompleteInput
+                              data-testid={`autocomplete-product-${index}`}
+                              suggestions={getProducts()}
+                              value={item.productId}
+                              onValueChange={(value) =>
+                                handleProductSelection(value, index)
+                              }
+                              placeholder="Product..."
+                              emptyText="No products found"
+                            />
+                          </div>
 
                       <div className="flex items-center">
                         <Input
@@ -4264,6 +4400,9 @@ export default function InvoiceCreate() {
         <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
           <SheetHeader>
             <SheetTitle>Create New Customer</SheetTitle>
+            <SheetDescription className="sr-only">
+              Form to create a new customer and automatically select them for the invoice.
+            </SheetDescription>
           </SheetHeader>
           <div className="mt-6">
             <CustomerCreateForm
@@ -4290,6 +4429,9 @@ export default function InvoiceCreate() {
         <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
           <SheetHeader>
             <SheetTitle>Create New Vendor</SheetTitle>
+            <SheetDescription className="sr-only">
+              Form to create a new vendor for the invoice line items.
+            </SheetDescription>
           </SheetHeader>
           <div className="mt-6">
             <VendorCreateForm
@@ -4317,6 +4459,9 @@ export default function InvoiceCreate() {
         <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
           <SheetHeader>
             <SheetTitle>Create New Travel Category</SheetTitle>
+            <SheetDescription className="sr-only">
+              Form to create a new travel category for the invoice line items.
+            </SheetDescription>
           </SheetHeader>
           <div className="mt-6">
             <LeadTypeCreateForm
@@ -4349,6 +4494,9 @@ export default function InvoiceCreate() {
         <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
           <SheetHeader>
             <SheetTitle>Create New Service Provider</SheetTitle>
+            <SheetDescription className="sr-only">
+              Form to create a new service provider for the invoice line items.
+            </SheetDescription>
           </SheetHeader>
           <div className="mt-6">
             <ServiceProviderCreateForm

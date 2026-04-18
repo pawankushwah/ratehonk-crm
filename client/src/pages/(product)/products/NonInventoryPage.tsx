@@ -4,7 +4,7 @@ const NonInventoryPage = () => {
   return (
     <ProductBasePage 
       title="Non-inventory" 
-      templateName="Non-inventory"
+      templateName="non-inventory"
       defaultDrawerView="non-inventory"
     />
   );

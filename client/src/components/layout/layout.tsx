@@ -16,7 +16,7 @@ export function Layout({ children, initialSidebarCollapsed = true }: LayoutProps
         style={{ marginLeft: "4rem" }}
       >
         <Header />
-        <main className="flex-1 overflow-y-auto bg-gray-50 min-h-[calc(100vh-4rem)]">
+        <main className="flex-1 bg-gray-50 min-h-[calc(100vh-4rem)]">
           {children}
         </main>
       </div>

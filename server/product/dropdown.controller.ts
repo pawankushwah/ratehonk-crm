@@ -39,7 +39,9 @@ export const createSet = async (req: any, res: Response) => {
     // Create options if provided
     if (options && Array.isArray(options)) {
       for (const [index, opt] of options.entries()) {
-        await simpleStorage.createDropdownOption(set.id, opt.label, opt.value);
+        const label = typeof opt === 'string' ? opt : opt.label;
+        const value = typeof opt === 'string' ? opt : opt.value;
+        await simpleStorage.createDropdownOption(set.id, label, value);
       }
     }
 

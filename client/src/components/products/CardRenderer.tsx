@@ -38,6 +38,7 @@ interface CardRendererProps {
   mode?: 'card' | 'view';
   selectedVariant?: any;
   isPreview?: boolean;
+  wholeData: Record<string, any>;
 }
 
 const CardRenderer: React.FC<CardRendererProps> = ({ 
@@ -48,8 +49,10 @@ const CardRenderer: React.FC<CardRendererProps> = ({
   activeSlot, 
   mode = 'card',
   selectedVariant: propSelectedVariant,
-  isPreview = false
+  isPreview = false,
+  wholeData
 }) => {
+  console.log("whole Data", wholeData)
   const [localVariantIndex, setLocalVariantIndex] = useState(0);
   const isLight = design?.theme !== 'dark';
 
@@ -69,6 +72,7 @@ const CardRenderer: React.FC<CardRendererProps> = ({
     title: true,
     price: true,
     description: true,
+    category: true,
     sku: true,
     stock: true,
     barcode: true,
@@ -102,8 +106,10 @@ const CardRenderer: React.FC<CardRendererProps> = ({
   const rawImage = getRoleValue('image', data, designWithContext, activeVariantData);
   const imageUrl = resolveUrl(rawImage === '—' ? null : rawImage) || defaultProductImage;
   const category = getRoleValue('category', data, designWithContext, activeVariantData);
+  console.log(category, "category")
   const sku = getRoleValue('sku', data, designWithContext, activeVariantData);
-  const stock = getRoleValue('stock', data, designWithContext, activeVariantData);
+  // const stock = getRoleValue('stock', data, designWithContext, activeVariantData);
+  const stock = wholeData ? wholeData.stock : getRoleValue('stock', data, designWithContext, activeVariantData);
   const barcode = getRoleValue('barcode', data, designWithContext, activeVariantData);
   const keyValue = getRoleValue('key-value', data, designWithContext, activeVariantData);
   const accentColor = design.styles?.primaryColor || '#ec4899';

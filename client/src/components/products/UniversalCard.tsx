@@ -50,6 +50,7 @@ const UniversalCard: React.FC<UniversalCardProps> = ({
         data={product.data || product} 
         template={template}
         mode="card"
+        wholeData={product}
       />
       
       {/* Universal Action Overlay (Synced with App State) */}

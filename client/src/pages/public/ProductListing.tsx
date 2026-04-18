@@ -25,8 +25,18 @@ const PublicProductListing = () => {
   
   // View & Filter States
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('grid');
-  const [search, setSearch] = useState('');
-  const [filters, setFilters] = useState<Record<string, string>>({});
+  // Read initial states from URL query
+  const [search, setSearch] = useState(() => new URLSearchParams(window.location.search).get('search') || '');
+  const [filters, setFilters] = useState<Record<string, string>>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const initial: Record<string, string> = {};
+    params.forEach((val, key) => {
+      if (key !== 'search' && key !== 'viewMode') {
+        initial[key] = val;
+      }
+    });
+    return initial;
+  });
   const [isFilterDrawerOpen, setIsFilterDrawerOpen] = useState(false);
 
   const fetchData = async (currentSearch = search, activeFilters = filters) => {
@@ -56,8 +66,26 @@ const PublicProductListing = () => {
     return () => clearTimeout(timer);
   }, [userId, search, filters]);
 
+  // Sync state to URL without reloading the page
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (search) params.set('search', search);
+    Object.entries(filters).forEach(([k, v]) => {
+      if (v) params.set(k, v);
+    });
+    
+    const newSearch = params.toString();
+    const newUrl = window.location.pathname + (newSearch ? `?${newSearch}` : '');
+    window.history.replaceState(null, '', newUrl);
+  }, [search, filters]);
+
   const handleFilterChange = (key: string, value: string) => {
-    setFilters(prev => ({ ...prev, [key]: value }));
+    setFilters(prev => {
+      const newFilters = { ...prev };
+      if (!value) delete newFilters[key];
+      else newFilters[key] = value;
+      return newFilters;
+    });
   };
 
   const shareUrl = window.location.href;

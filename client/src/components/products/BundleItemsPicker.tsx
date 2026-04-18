@@ -47,7 +47,7 @@ const BundleItemsPicker: React.FC<BundleItemsPickerProps> = ({
     const fetchTemplatesData = async () => {
       try {
         const res = await getTemplates();
-        setTemplates(res.data || []);
+        setTemplates(Array.isArray(res) ? res : (res.data || []));
       } catch (err) {
         console.error('Failed to fetch templates:', err);
       }
@@ -88,10 +88,46 @@ const BundleItemsPicker: React.FC<BundleItemsPickerProps> = ({
     return () => clearTimeout(delayDebounceFn);
   }, [search]);
 
+  const resolveTemplate = (product: any) => {
+    return templates.find(t => t.id === product.template_id || t.id === product.templateId) 
+      || product.FormTemplate 
+      || (product.template_schema ? { 
+        schema: product.template_schema, 
+        design: product.template_design, 
+        mapping: product.template_design?.cardMapping || product.template_design?.mapping || product.template_mapping || {},
+        name: product.template_name 
+      } : undefined);
+  };
+
+  const fallbackExtract = (data: any, currentName: string, currentSku: string) => {
+    let name = currentName;
+    let sku = currentSku;
+    if (!data) return { name, sku };
+
+    const values = Object.values(data).filter(v => typeof v === 'string') as string[];
+    
+    if (sku === '—' || sku === 'NO-SKU') {
+      const match = values.find(v => /^[A-Z0-9]+-\d{3,}$/.test(v));
+      if (match) sku = match;
+    }
+    
+    if (name === '—' || name === 'Unnamed Item') {
+      const candidates = values.filter(v => v !== sku && v.length >= 3 && !v.toLowerCase().includes('tax') && !v.toLowerCase().includes('income') && !v.includes('{'));
+      if (candidates.length > 0) name = candidates[0];
+    }
+    
+    return { name, sku };
+  };
+
   const addItem = (product: any) => {
-    const template = templates.find(t => t.id === product.templateId) || product.FormTemplate;
-    const name = getRoleValue('title', product, template);
-    const sku = getRoleValue('sku', product, template);
+    let template = resolveTemplate(product);
+    let name = getRoleValue('title', product, template);
+    let sku = getRoleValue('sku', product, template);
+
+    const fallback = fallbackExtract(product.data, name, sku);
+    name = fallback.name;
+    sku = fallback.sku;
+
     const price = Number(getRoleValue('price', product, template) || 0);
     const image = getRoleValue('image', product, template);
     const imageUrl = resolveImageUrl(image?.[0] || image);
@@ -158,9 +194,14 @@ const BundleItemsPicker: React.FC<BundleItemsPickerProps> = ({
           <GlassCard className="absolute top-full mt-2 w-full z-[100] p-2 bg-[var(--color-bg-main)]/95 backdrop-blur-2xl border-primary/20 shadow-2xl animate-in fade-in slide-in-from-top-2 duration-300">
             <div className="space-y-1 max-h-60 overflow-y-auto custom-scrollbar">
               {searchResults.map((product) => {
-                const template = templates.find(t => t.id === product.templateId) || product.FormTemplate;
-                const name = getRoleValue('title', product, template);
-                const sku = getRoleValue('sku', product, template);
+                let template = resolveTemplate(product);
+                let name = getRoleValue('title', product, template);
+                let sku = getRoleValue('sku', product, template);
+                
+                const fallback = fallbackExtract(product.data, name, sku);
+                name = fallback.name;
+                sku = fallback.sku;
+
                 const price = getRoleValue('price', product, template);
                 const image = getRoleValue('image', product, template);
                 const imageUrl = resolveImageUrl(image?.[0] || image);

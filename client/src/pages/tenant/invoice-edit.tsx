@@ -102,6 +102,7 @@ export default function InvoiceEdit() {
       vendor: "",
       serviceProviderId: "",
       packageId: "",
+      productId: "",
       itemTitle: "",
       invoiceNumber: "",
       voucherNumber: "",
@@ -124,6 +125,7 @@ export default function InvoiceEdit() {
 
   const [selectedBookingId, setSelectedBookingId] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
+  const [isProductInvoice, setIsProductInvoice] = useState(true);
   const [customerSearch, setCustomerSearch] = useState("");
   const debouncedCustomerSearch = useDebounce(customerSearch, 500);
   const [redirectTo, setRedirectTo] = useState<string | null>(null);
@@ -612,6 +614,22 @@ export default function InvoiceEdit() {
     enabled:
       !!tenant?.id && !!selectedTaxSettingId && selectedTaxSettingId !== "none",
   });
+  // Fetch products (dynamic data)
+  const { data: productsData } = useQuery({
+    queryKey: ["/api/resources/data/all"],
+    enabled: !!tenant?.id,
+    queryFn: async () => {
+      const response = await fetch(`/api/resources/data/all`, {
+        headers: { Authorization: `Bearer ${auth.getToken()}` },
+      });
+      if (!response.ok) return { data: [] };
+      return await response.json();
+    },
+  });
+
+  const products = useMemo(() => {
+    return productsData?.data || [];
+  }, [productsData]);
 
   // Track if invoice data has been loaded to prevent re-loading
   const invoiceDataLoadedRef = useRef<number | null>(null);
@@ -954,6 +972,9 @@ export default function InvoiceEdit() {
           vendor: item.vendor?.toString() || item.vendorId?.toString() || "",
           serviceProviderId: item.serviceProviderId?.toString() || "",
           packageId: item.packageId?.toString() || "",
+          productId: item.productId?.toString() || item.product_id?.toString() || "",
+          variantId: item.variantId?.toString() || item.variant_id?.toString() || "",
+          availableVariants: item.availableVariants || [], // Will be populated dynamically next
           itemTitle: item.itemTitle || item.description || "",
           invoiceNumber: item.invoiceNumber || "",
           voucherNumber: item.voucherNumber || "",
@@ -1487,6 +1508,137 @@ export default function InvoiceEdit() {
     } as typeof item;
   };
 
+  // Helper to extract product details using viewMapping or fallback searches
+  const getProductDetail = (product: any, detailKey: 'title' | 'price' | 'purchasePrice' | 'category') => {
+    const data = product.data || {};
+    const viewMapping = product.template_design?.viewMapping || {};
+    
+    let fieldId;
+    if (detailKey === 'title') fieldId = viewMapping.title;
+    if (detailKey === 'price') fieldId = viewMapping.price;
+    
+    if (fieldId && data[fieldId] !== undefined && data[fieldId] !== "") {
+      const val = data[fieldId];
+      if (Array.isArray(val)) return val[0];
+      return val;
+    }
+
+    // Fallback: search schema recursively
+    const schemaItems = product.FormTemplate?.form_schema?.items || product.template_schema?.items || product.template_schema || [];
+    let foundId = '';
+
+    const searchSchema = (items: any[]) => {
+      for (const item of items) {
+        const labelSafe = (item.label || item.name || '').toLowerCase();
+        
+        if (detailKey === 'title') {
+           if (labelSafe.includes('name') || labelSafe.includes('title')) {
+             foundId = item.id;
+             return;
+           }
+        } else if (detailKey === 'price') {
+           if (labelSafe.includes('sales price') || labelSafe.includes('selling') || labelSafe.includes('service rate') || labelSafe === 'price' || labelSafe === 'rate') {
+             foundId = item.id;
+             return;
+           }
+        } else if (detailKey === 'purchasePrice') {
+           if (labelSafe.includes('purchase cost') || labelSafe.includes('purchase price') || labelSafe === 'cost') {
+             foundId = item.id;
+             return;
+           }
+        } else if (detailKey === 'category') {
+           if (labelSafe.includes('category') || labelSafe.includes('type')) {
+             foundId = item.id;
+             return;
+           }
+        }
+        
+        if (item.items) searchSchema(item.items);
+        if (item.fields) searchSchema(item.fields);
+      }
+    };
+    if (Array.isArray(schemaItems)) searchSchema(schemaItems);
+
+    if (foundId && data[foundId] !== undefined && data[foundId] !== "") {
+      const val = data[foundId];
+      if (Array.isArray(val)) {
+        return typeof val[0] === 'object' ? (val[0].label || val[0].value) : val[0];
+      }
+      return typeof val === 'object' ? (val.label || val.value) : val;
+    }
+    
+    // Final fallback
+    if (detailKey === 'title') return data.name || data.productName || data.title || "Unnamed Product";
+    if (detailKey === 'price') return data.price || data.sellingPrice || data.serviceRate || data.salesPrice || "0";
+    if (detailKey === 'purchasePrice') return data.purchasePrice || data.purchaseCost || data.cost || "0";
+    if (detailKey === 'category') return data.category || data.type || "Unknown";
+
+    return null;
+  };
+
+  // Get products options
+  const getProducts = (): AutocompleteOption[] => {
+    return products.map((product: any) => {
+      const name = getProductDetail(product, 'title') || "Unnamed Product";
+      const category = getProductDetail(product, 'category');
+      const templateName = product.FormTemplate?.name || product.template_name || "";
+      let typeDisplay = "Product";
+      if (category && category !== "Unknown") {
+        typeDisplay = category;
+      } else if (templateName) {
+        typeDisplay = templateName;
+      }
+      
+      return {
+        value: product.id.toString(),
+        label: `${name} (${typeDisplay})`,
+      };
+    });
+  };
+
+  // Handle product selection
+  const handleProductSelection = (productId: string, index: number) => {
+    const selectedProduct = products.find((p: any) => p.id.toString() === productId);
+    if (!selectedProduct) return;
+
+    const name = getProductDetail(selectedProduct, 'title') || "Unnamed Product";
+    const price = getProductDetail(selectedProduct, 'price') || "0";
+    const purchasePrice = getProductDetail(selectedProduct, 'purchasePrice') || "0";
+
+    // Find variants field dynamically
+    let availableVariants = [];
+    const schemaItems = selectedProduct.FormTemplate?.form_schema?.items || selectedProduct.template_schema?.items || selectedProduct.template_schema || [];
+    let variantsFieldId = '';
+    const traverse = (items: any[]) => {
+      for (const item of items) {
+         if (item.kind === 'group' && (item.label?.toLowerCase().includes('variant') || item.name?.toLowerCase().includes('variant'))) {
+           variantsFieldId = item.id;
+           break;
+         }
+         if (item.items) traverse(item.items);
+         if (item.fields) traverse(item.fields);
+      }
+    };
+    if (Array.isArray(schemaItems)) traverse(schemaItems);
+    if (variantsFieldId) {
+      availableVariants = selectedProduct.data?.[variantsFieldId] || [];
+    }
+
+    const updatedItems = [...lineItems];
+    updatedItems[index] = calculateLineItemTotals({
+      ...updatedItems[index],
+      productId: productId,
+      itemTitle: name,
+      sellingPrice: price.toString(),
+      unitPrice: price.toString(),
+      purchasePrice: purchasePrice.toString(),
+      availableVariants,
+      variantId: "", // Reset variant on product change
+    });
+
+    setLineItems(updatedItems);
+  };
+
   // Update line item
   const updateLineItem = (index: number, field: string, value: any) => {
     const updatedItems = [...lineItems];
@@ -1524,6 +1676,7 @@ export default function InvoiceEdit() {
         travelCategory: "other",
         vendor: "",
         serviceProviderId: "",
+        productId: "",
         packageId: "",
         itemTitle: "",
         invoiceNumber: "",
@@ -2694,16 +2847,21 @@ export default function InvoiceEdit() {
       travelDate: travelDate || undefined,
       departureDate: departureDate || undefined,
       arrivalDate: arrivalDate || undefined,
-      lineItems: lineItems.map((item) => ({
-        ...item,
-        quantity: parseInt(item.quantity || "1"),
-        unitPrice: parseFloat(item.unitPrice || "0"),
-        sellingPrice: parseFloat(item.sellingPrice || "0"),
-        purchasePrice: parseFloat(item.purchasePrice || "0"),
-        tax: parseFloat(item.tax || "0"),
-        additionalCommission: parseFloat(item.additionalCommission || "0"),
-        packageId: item.packageId || null,
-      })),
+      lineItems: lineItems.map((item) => {
+        const { availableVariants, ...itemData } = item;
+        return {
+          ...itemData,
+          quantity: parseInt(item.quantity || "1"),
+          unitPrice: parseFloat(item.unitPrice || "0"),
+          sellingPrice: parseFloat(item.sellingPrice || "0"),
+          purchasePrice: parseFloat(item.purchasePrice || "0"),
+          tax: parseFloat(item.tax || "0"),
+          additionalCommission: parseFloat(item.additionalCommission || "0"),
+          packageId: item.packageId || null,
+          productId: item.productId ? parseInt(item.productId) : null,
+          variantId: item.variantId || null,
+        };
+      }),
       expenses, // Include auto-generated expenses
       installments: enableInstallments ? calculateInstallments().map(inst => ({
         installmentNumber: inst.installmentNumber,
@@ -2759,7 +2917,19 @@ export default function InvoiceEdit() {
 
   // Calculate grid template columns dynamically (must be before any conditional returns)
   const gridTemplate = useMemo(() => {
-    const columns = [
+    const columns = isProductInvoice ? [
+      '30px', // # column - smaller (fixed)
+      ...(isProductInvoice ? ['minmax(250px, 2fr)'] : []), // Product - only for product invoice
+      'minmax(80px, 1fr)', // Pax/Qty - small (flexible, min 60px)
+      ...(invoiceSettings?.showUnitPrice ? ['minmax(130px, 1fr)'] : []), // Unit Price - small (flexible, min 100px)
+      'minmax(130px, 1fr)', // Selling Price - small (flexible, min 100px)
+      'minmax(130px, 1fr)', // Purchase Price - small (flexible, min 100px)
+      ...(invoiceSettings?.showTax ? ['minmax(100px, 1fr)'] : []), // Tax - small (flexible, min 100px)
+      'minmax(100px, 1fr)', // Amount - small (flexible, min 100px)
+      ...(invoiceSettings?.showAdditionalCommission ? ['minmax(100px, 1fr)'] : []), // Additional Commission - small (flexible, min 100px)
+      ...(invoiceSettings?.showVoucherInvoice ? ['minmax(100px, 1fr)'] : []), // Invoice/Voucher - small (flexible, min 100px)
+      '50px', // Delete button - small (fixed)
+    ] : [
       '30px', // # column - smaller (fixed)
       'minmax(180px, 1.5fr)', // Category - reduced width (flexible, min 180px)
       ...(invoiceSettings?.showVendor ? ['minmax(180px, 1.5fr)'] : []), // Vendor - reduced width (flexible, min 180px)
@@ -2776,7 +2946,7 @@ export default function InvoiceEdit() {
       '50px', // Delete button - small (fixed)
     ];
     return columns.join(' ');
-  }, [invoiceSettings?.showVendor, invoiceSettings?.showProvider, invoiceSettings?.showUnitPrice, invoiceSettings?.showTax, invoiceSettings?.showAdditionalCommission, invoiceSettings?.showVoucherInvoice, shouldShowPackageColumnForAnyItem]);
+  }, [isProductInvoice, invoiceSettings?.showVendor, invoiceSettings?.showProvider, invoiceSettings?.showUnitPrice, invoiceSettings?.showTax, invoiceSettings?.showAdditionalCommission, invoiceSettings?.showVoucherInvoice, shouldShowPackageColumnForAnyItem]);
 
   // Grid template for expense table
   const expenseGridTemplate = useMemo(() => {
@@ -3097,27 +3267,6 @@ export default function InvoiceEdit() {
                   <input type="hidden" name="travelDate" value={travelDate} />
                 </div>
 
-                <div>
-                  <Label htmlFor="departureDate">Departure Date</Label>
-                  <DatePicker
-                    value={departureDate}
-                    onChange={setDepartureDate}
-                    placeholder="Select departure date"
-                    className="w-full"
-                  />
-                  <input type="hidden" name="departureDate" value={departureDate} />
-                </div>
-
-                <div>
-                  <Label htmlFor="arrivalDate">Arrival Date</Label>
-                  <DatePicker
-                    value={arrivalDate}
-                    onChange={setArrivalDate}
-                    placeholder="Select arrival date"
-                    className="w-full"
-                  />
-                  <input type="hidden" name="arrivalDate" value={arrivalDate} />
-                </div>
               </div>
 
               {/* Line Items */}
@@ -3136,15 +3285,12 @@ export default function InvoiceEdit() {
                       width: '100%',
                       willChange: 'transform'
                     }}
-                  >
-                    <div className="text-center flex items-center justify-center">#</div>
-                    <div className="flex items-center">Category *</div>
-                    {invoiceSettings?.showVendor && <div className="flex items-center">Vendor</div>}
-                    {invoiceSettings?.showProvider && <div className="flex items-center">Provider</div>}
-                    {shouldShowPackageColumnForAnyItem && <div className="flex items-center">Package</div>}
-                    <div className="flex items-center">Pax *</div>
-                    {invoiceSettings?.showUnitPrice && <div className="flex items-center">Unit Price ({currencySymbol}) *</div>}
-                    <div className="flex items-center">Selling Price ({currencySymbol}) *</div>
+                    >
+                      <div className="text-center flex items-center justify-center">#</div>
+                      <div className="flex items-center">Product</div>
+                      <div className="flex items-center">Qty *</div>
+                      {invoiceSettings?.showUnitPrice && <div className="flex items-center">Unit Price ({currencySymbol}) *</div>}
+                      <div className="flex items-center">Selling Price ({currencySymbol}) *</div>
                     <div className="flex items-center">Purchase Price ({currencySymbol}) *</div>
                     {invoiceSettings?.showTax && <div className="flex items-center">Tax ({currencySymbol})</div>}
                     <div className="flex items-center">Amount ({currencySymbol})</div>
@@ -3164,65 +3310,18 @@ export default function InvoiceEdit() {
                         <span className="font-medium text-sm">{index + 1}</span>
                       </div>
 
-                      <div className="flex items-center">
-                        <AutocompleteInput
-                          data-testid={`autocomplete-category-${index}`}
-                          suggestions={getTravelCategories()}
-                          value={item.travelCategory}
-                          onValueChange={(value) =>
-                            handleTravelCategorySelection(value, index)
-                          }
-                          placeholder="Select..."
-                          emptyText="No categories found"
-                        />
-                      </div>
-
-                      {invoiceSettings?.showVendor && (
-                        <div className="flex items-center">
-                          <AutocompleteInput
-                            data-testid={`autocomplete-vendor-${index}`}
-                            suggestions={getVendorOptions()}
-                            value={item.vendor}
-                            onValueChange={(value) =>
-                              handleVendorSelection(value, index)
-                            }
-                            placeholder="Select..."
-                            emptyText="No vendors found"
-                          />
-                        </div>
-                      )}
-
-                      {invoiceSettings?.showProvider && (
-                        <div className="flex items-center">
-                          <AutocompleteInput
-                            data-testid={`autocomplete-service-provider-${index}`}
-                            suggestions={getServiceProviderOptions(
-                              item.travelCategory,
-                            )}
-                            value={item.serviceProviderId}
-                            onValueChange={(value) =>
-                              handleServiceProviderSelection(value, index)
-                            }
-                            placeholder="Select..."
-                            emptyText="No providers found"
-                          />
-                        </div>
-                      )}
-
-                      {shouldShowPackageColumn(item.travelCategory) && (
-                        <div className="flex items-center">
-                          <AutocompleteInput
-                            data-testid={`autocomplete-package-${index}`}
-                            suggestions={getPackageOptions()}
-                            value={item.packageId}
-                            onValueChange={(value) =>
-                              updateLineItem(index, "packageId", value)
-                            }
-                            placeholder="Select..."
-                            emptyText="No packages found"
-                          />
-                        </div>
-                      )}
+                          <div className="flex items-center">
+                            <AutocompleteInput
+                              data-testid={`autocomplete-product-${index}`}
+                              suggestions={getProducts()}
+                              value={item.productId}
+                              onValueChange={(value) =>
+                                handleProductSelection(value, index)
+                              }
+                              placeholder="Product..."
+                              emptyText="No products found"
+                            />
+                          </div>
 
                       <div className="flex items-center">
                         <Input

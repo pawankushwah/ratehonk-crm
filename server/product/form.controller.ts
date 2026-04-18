@@ -39,7 +39,7 @@ export const getTemplate = async (req: any, res: Response) => {
   try {
     const id = req.params.id;
     const tenantId = req.user.tenantId;
-    const template = await simpleStorage.getFormTemplates(Number(id), tenantId);
+    const template = await simpleStorage.getFormTemplatebyId(Number(tenantId), Number(id));
     
     if (!template) return res.status(404).json({ success: false, message: "Template not found" });
     

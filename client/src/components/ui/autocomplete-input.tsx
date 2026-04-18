@@ -27,7 +27,7 @@ export interface AutocompleteOption {
 interface AutocompleteInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'> {
   suggestions: AutocompleteOption[];
   value: string;
-  onValueChange: (value: string) => void;
+  onValueChange: (value: string | null) => void;
   emptyText?: string;
   allowCustomValue?: boolean;
   onSearch?: (searchTerm: string) => void;
@@ -112,15 +112,22 @@ export function AutocompleteInput({
   const handleSelectSuggestion = (selectedValue: string) => {
     // Mark that we're selecting to prevent blur from clearing input
     isSelectingRef.current = true;
-    onValueChange(selectedValue);
+    
     // Clear input value to reset search, but keep the selected label visible
     setInputValue("");
     isUserTypingRef.current = false; // Reset typing flag when selecting
     setOpen(false);
-    // Reset selecting flag after a delay
+
+    // Use setTimeout to ensure the popover is closing before triggering onValueChange
+    // This prevents focus conflicts when the selection triggers a modal/sheet to open
     setTimeout(() => {
-      isSelectingRef.current = false;
-    }, 300);
+      onValueChange(selectedValue);
+      
+      // Reset selecting flag after a delay
+      setTimeout(() => {
+        isSelectingRef.current = false;
+      }, 300);
+    }, 0);
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -321,9 +328,11 @@ export function AutocompleteInput({
                     key={suggestion.value}
                     value={suggestion.value}
                     onSelect={() => handleSelectSuggestion(suggestion.value)}
-                    onMouseDown={() => {
+                    onMouseDown={(e) => {
+                      // Prevent event from bubbling and causing form submission or focus issues
+                      e.preventDefault();
+                      e.stopPropagation();
                       // Set selecting flag before blur event fires
-                      // This prevents the blur handler from clearing the input
                       isSelectingRef.current = true;
                     }}
                     className={cn(
