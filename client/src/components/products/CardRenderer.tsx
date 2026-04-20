@@ -91,27 +91,71 @@ const CardRenderer: React.FC<CardRendererProps> = ({
   const designWithContext = { ...design, mapping: currentMapping, visibility: currentVisibility };
 
   // Calculate variants early to support variant-aware resolution
-  const variants = getNormalizedVariants(data, designWithContext);
+  const variants = wholeData.variants || [];
   const activeVariant = variants[localVariantIndex];
-  const activeVariantData = activeVariant?.rawData;
-  console.log(variants, "card renderre")
-
+  console.log(variants, "variants", activeVariant, "activeVariant")
+  
   const radiusClass = (registryRadiusMap as any)[design.styles?.borderRadius || 'lg'] || 'rounded-lg';
   const shadowClass = (registryShadowMap as any)[design.styles?.shadow || 'lg'] || 'shadow-lg';
   const paddingClass = (registryPaddingMap as any)[design.styles?.padding || 'md'] || 'p-6';
   const fontClass = (registryFontMap as any)[design.styles?.fontFamily || 'plus-jakarta'] || 'font-plus-jakarta';
 
-  const title = getRoleValue('title', data, designWithContext, activeVariantData);
-  const price = getRoleValue('price', data, designWithContext, activeVariantData);
-  const rawImage = getRoleValue('image', data, designWithContext, activeVariantData);
-  const imageUrl = resolveUrl(rawImage === '—' ? null : rawImage) || defaultProductImage;
-  const category = getRoleValue('category', data, designWithContext, activeVariantData);
-  console.log(category, "category")
-  const sku = getRoleValue('sku', data, designWithContext, activeVariantData);
-  // const stock = getRoleValue('stock', data, designWithContext, activeVariantData);
-  const stock = wholeData ? wholeData.stock : getRoleValue('stock', data, designWithContext, activeVariantData);
-  const barcode = getRoleValue('barcode', data, designWithContext, activeVariantData);
-  const keyValue = getRoleValue('key-value', data, designWithContext, activeVariantData);
+  // Direct Assignment from wholeData (specialized fields from backend)
+  let title = '—';
+  let price = '—';
+  let sku = '—';
+  let stock = '—';
+  let category = '—';
+  let images = [];
+
+  const fKey = wholeData.FormTemplate.formKey;
+  console.log(wholeData, "wholeData")
+  
+  if (fKey === 'inventory') {
+    title = wholeData.name || '—';
+    category = wholeData.category || '—';
+    if (activeVariant) {
+      price = activeVariant.sales_price ?? '—';
+      sku = activeVariant.model_number || activeVariant.sku || '—';
+      stock = activeVariant.variant_stock ?? '—';
+      images = activeVariant.images || [];
+    } else {
+      price = wholeData.sales_price ?? '—';
+      sku = wholeData.sku || '—';
+      stock = wholeData.stock ?? '—';
+      images = wholeData.images || [];
+    }
+    console.log(images, "images")
+  } else if (fKey === 'non-inventory') {
+    title = wholeData.name || '—';
+    price = wholeData.sales_price ?? '—';
+    sku = wholeData.sku || '—';
+    stock = wholeData.stock ?? '—';
+    category = wholeData.category || '—';
+    images = wholeData.images || [];
+  } else if (fKey === 'service') {
+    title = wholeData.name || '—';
+    price = wholeData.rate ?? '—';
+    sku = wholeData.sku || '—';
+    images = wholeData.images || [];
+  } else if (fKey === 'bundle') {
+    title = wholeData.name || '—';
+    sku = wholeData.sku || '—';
+    stock = wholeData.stock ?? '—';
+    images = wholeData.images || [];
+  } else {
+    // Fallback for other data types
+    title = wholeData.name || getRoleValue('title', wholeData, designWithContext, activeVariant) || '—';
+    price = wholeData.sales_price || wholeData.rate || getRoleValue('price', wholeData, designWithContext, activeVariant) || '—';
+    sku = wholeData.sku || getRoleValue('sku', wholeData, designWithContext, activeVariant) || '—';
+    stock = wholeData.stock ?? getRoleValue('stock', wholeData, designWithContext, activeVariant) ?? '—';
+    images = wholeData.images || [];
+  }
+
+  const imageUrl = resolveUrl(images.length > 0 ? images[0] : null) || defaultProductImage;
+  const barcode = wholeData.barcode || wholeData.data?.barcode || '—';
+  const keyValue = wholeData.keyValue || wholeData.data?.keyValue || '—';
+  const allImages = images;
   const accentColor = design.styles?.primaryColor || '#ec4899';
 
   const RegistryComponent = (TemplateRegistry as any)[resolvedTemplateId as keyof typeof TemplateRegistry];
@@ -120,7 +164,6 @@ const CardRenderer: React.FC<CardRendererProps> = ({
     const availableColors = getRoleValues('colors', data, designWithContext);
     const availableSizes = getRoleValues('sizes', data, designWithContext);
     // const allImages = getRoleValues('image', data, designWithContext).map(resolveUrl).filter(Boolean);
-    const allImages = rawImage;
     console.log(allImages, "allImages")
   
     const cleanValue = (v: any) => v === '—' ? undefined : v;
@@ -156,7 +199,8 @@ const CardRenderer: React.FC<CardRendererProps> = ({
             availableColors,
             availableSizes,
             allImages,
-            variants
+            variants,
+            bundleItems: wholeData.bundleItems || []
           }}
           imageBaseURL={isPreview ? "" : "/api/images/"}
           visibility={currentVisibility}

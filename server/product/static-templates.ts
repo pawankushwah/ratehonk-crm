@@ -288,25 +288,31 @@ export const STATIC_TEMPLATES = [
           {
             "id": "1774593375945",
             "kind": "field",
-            "type": "checkbox",
+            "type": "select",
             "label": "Size",
             "layout": {
-              "colSpan": 6
-            },
-            "options": [
-              "S",
-              "M",
-              "L",
-              "XL",
-              "2XL",
-              "3XL"
-            ],
-            "properties": {
-              "required": true,
-              "hideLabel": true
+                "colSpan": 6
             },
             "locked": true,
-            "disabledProperties": ["required", "type", "logic"]
+            "options": [
+                "S",
+                "M",
+                "L",
+                "XL",
+                "2XL",
+                "3XL"
+            ],
+            "isCustom": false,
+            "isStatic": true,
+            "properties": {
+                "required": true,
+                "hideLabel": true
+            },
+            "disabledProperties": [
+                "required",
+                "type",
+                "logic"
+            ]
           },
           {
             "id": "1774593452328",
@@ -569,7 +575,9 @@ export const STATIC_TEMPLATES = [
             "properties": {
               "min": 0,
               "required": true
-            }
+            },
+            "locked": true,
+            "disabledProperties": ["required", "type", "logic"]
           },
           {
             "id": "1775120423797",
@@ -582,7 +590,9 @@ export const STATIC_TEMPLATES = [
             "properties": {
               "min": 0,
               "required": true
-            }
+            },
+            "locked": true,
+            "disabledProperties": ["required", "type", "logic"]
           },
           {
             "id": "1775120477038",
@@ -591,7 +601,9 @@ export const STATIC_TEMPLATES = [
             "label": "Description",
             "layout": {
               "colSpan": 12
-            }
+            },
+            "locked": true,
+            "disabledProperties": ["required", "type", "logic"]
           }
         ],
         "isRepeatable": false
@@ -685,7 +697,9 @@ export const STATIC_TEMPLATES = [
             "properties": {
               "required": true,
               "addButtonTitle": "Add Billing Type"
-            }
+            },
+            "locked": true,
+            "disabledProperties": ["required", "type", "logic"]
           },
           {
             "id": "1775120714619",
@@ -695,13 +709,17 @@ export const STATIC_TEMPLATES = [
             "properties": {
               "min": 0,
               "required": true
-            }
+            },
+            "locked": true,
+            "disabledProperties": ["required", "type", "logic"]
           },
           {
             "id": "1775120742746",
             "kind": "field",
             "type": "textarea",
-            "label": "Description"
+            "label": "Description",
+            "locked": true,
+            "disabledProperties": ["required", "type", "logic"]
           },
           {
             "id": "1775280310136",

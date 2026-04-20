@@ -389,13 +389,13 @@ function Router() {
       <Route path="/public/:userId">
         <PublicProductListing />
       </Route>
-      <Route path="/public/:userId/:productId">
+      <Route path="/public/:userId/:formKey/:productId">
         <PublicProductView />
       </Route>
 
       {/* Private Routes */}
       
-        <Route path="/products/view/:id">
+        <Route path="/products/:formKey/:id">
           <ProtectedRoute><ViewProductPage /></ProtectedRoute>
         </Route>
         <Route path="/forms">

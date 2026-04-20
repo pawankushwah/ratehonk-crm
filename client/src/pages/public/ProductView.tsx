@@ -35,7 +35,7 @@ const DEFAULT_VIEW_DESIGN: CardDesignConfig = {
 };
 
 const PublicProductView = () => {
-  const { userId, productId } = useParams<{ userId: string; productId: string }>();
+  const { userId, productId, formKey } = useParams<{ userId: string; productId: string; formKey: string }>();
   const [, setLocation] = useLocation();
   const [product, setProduct] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -49,7 +49,7 @@ const PublicProductView = () => {
       if (!productId) return;
       setIsLoading(true);
       try {
-        const productRecord = await getDynamicItemDataPublic(productId, userId);
+        const productRecord = await getDynamicItemDataPublic(productId, userId, formKey);
         if (productRecord && productRecord.id) {
           setProduct(productRecord);
           
@@ -82,13 +82,6 @@ const PublicProductView = () => {
     fetchProductDetails();
   }, [productId, userId]);
 
-  const template = product?.FormTemplate || (product?.template_schema ? {
-    schema: product.template_schema,
-    design: product.template_design,
-    mapping: product.template_design?.viewMapping || product.template_design?.mapping || {},
-    name: product.template_name
-  } : null);
-
   if (isLoading) {
     return (
       <PublicLayout username={userId}>
@@ -115,6 +108,8 @@ const PublicProductView = () => {
     );
   }
 
+  const template = product.FormTemplate;
+
   const pd = product.data || product || {};
   const name = getRoleValue('title', product, template);
   const category = getRoleValue('category', product, template);
@@ -128,25 +123,6 @@ const PublicProductView = () => {
 
   return (
     <PublicLayout username={userId}>
-      {/* <Helmet> */}
-        {/* <title>{shareTitle}</title>
-        <meta name="description" content={shareDescription} /> */}
-        
-        {/* Open Graph / Facebook */}
-        {/* <meta property="og:type" content="product" />
-        <meta property="og:url" content={shareUrl} />
-        <meta property="og:title" content={shareTitle} />
-        <meta property="og:description" content={shareDescription} />
-        <meta property="og:image" content={shareImage} /> */}
-
-        {/* Twitter */}
-        {/* <meta property="twitter:card" content="summary_large_image" />
-        <meta property="twitter:url" content={shareUrl} />
-        <meta property="twitter:title" content={shareTitle} />
-        <meta property="twitter:description" content={shareDescription} />
-        <meta property="twitter:image" content={shareImage} /> */}
-      {/* </Helmet> */}
-
       <div className="mb-10">
         <button 
           onClick={() => setLocation(`/public/${userId}`)}
@@ -164,6 +140,7 @@ const PublicProductView = () => {
            template={template} 
            mode="view" 
            selectedVariant={selectedVariant}
+           wholeData={product}
          />
       </div>
     </PublicLayout>

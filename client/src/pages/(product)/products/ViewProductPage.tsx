@@ -24,7 +24,7 @@ const DEFAULT_VIEW_DESIGN: CardDesignConfig = {
 };
 
 const ViewProductPage = () => {
-  const { id } = useParams<{ id: string }>();
+  const { id, formKey } = useParams<{ id: string, formKey: string }>();
   const [, setLocation] = useLocation();
   const [product, setProduct] = useState<any>(null);
   const [template, setTemplate] = useState<any>(null);
@@ -43,7 +43,7 @@ const ViewProductPage = () => {
       setIsLoading(true);
       try {
         // 1. Fetch Product Data first (contains embedded template)
-        const dataRes = await getDynamicItemData(id);
+        const dataRes = await getDynamicItemData(id, formKey);
         
         if (dataRes.success && dataRes.data) {
           const productResponse = dataRes.data;
@@ -110,6 +110,7 @@ const ViewProductPage = () => {
     fetchProductDetails();
   }, [id]);
 
+
   if (isLoading) {
     return (
       <div className="flex flex-col items-center justify-center p-32">
@@ -134,7 +135,7 @@ const ViewProductPage = () => {
     );
   }
 
-  const productData = product?.data || product || {};
+  const productData = product.data || product || {};
   const name = getRoleValue('title', product, template);
   const description = getRoleValue('description', product, template);
   
@@ -157,10 +158,8 @@ const ViewProductPage = () => {
     });
   };
   
-  if (template?.form_schema?.items) {
-    traverseSchema(template.form_schema.items);
-  } else if (template?.schema) {
-    traverseSchema(template.schema);
+  if (template?.schema) {
+    traverseSchema(Array.isArray(template.schema) ? template.schema : (template.schema.items || []));
   }
 
   const image = getRoleValue('image', product, template);
@@ -188,6 +187,7 @@ const ViewProductPage = () => {
           template={template}
           mode="view"
           selectedVariant={selectedVariant}
+          wholeData={product}
         />
       </div>
 

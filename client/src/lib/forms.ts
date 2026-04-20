@@ -98,14 +98,14 @@ export const submitFormData = async (resourceId: string, templateId: string, dat
   return res.data;
 };
 
-export const getDynamicItemData = async (resourceId: string) => {
-  const response = await apiRequest('GET', `/api/resources/data/${resourceId}`);
+export const getDynamicItemData = async (resourceId: string, formKey: string) => {
+  const response = await apiRequest('GET', `/api/resources/data/${resourceId}?formKey=${formKey}`);
   const res = await response.json();
   return res;
 };
 
-export const getDynamicItemDataPublic = async (resourceId: string, userId: string) => {
-  const response = await apiRequest('GET', `/api/resources/data/${resourceId}/public?user=${userId}`);
+export const getDynamicItemDataPublic = async (resourceId: string, userId: string, formKey: string) => {
+  const response = await apiRequest('GET', `/api/resources/data/${resourceId}/public?user=${userId}&formKey=${formKey}`);
   const res = await response.json();
   return res.data;
 };

@@ -113,7 +113,6 @@ export default function InvoiceEdit() {
       tax: "",
       taxRateId: "",
       additionalCommissionPercentage: "",
-      productId: "",
       variantId: "",
       availableVariants: [] as any[],
       totalAmount: 0,

@@ -1,11 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Search, 
-  Plus, 
-  Minus, 
-  Trash2, 
-  Package, 
-  Loader2
+import {
+  Search,
+  Plus,
+  Minus,
+  Trash2,
+  Package,
+  Loader2,
+  ChevronDown,
+  ChevronUp,
+  Layers
 } from 'lucide-react';
 import { getAllDynamicData, getTemplates } from '@/lib/forms';
 import GlassCard from '@/components/products/GlassCard';
@@ -13,12 +16,17 @@ import Input from '@/components/products/Input';
 import { getRoleValue, resolveImageUrl } from '@/utils/dynamicRenderer';
 
 interface BundleItem {
-  id: string;
+  id: string; // dynamic_data_id
+  variantId?: number; // Optional variant ID
   name: string;
   sku: string;
   price: number;
+  currentPrice?: number;
   quantity: number;
   imageUrl?: string | null;
+  color?: string | null;
+  typeLabel?: string;
+  typeColor?: string;
 }
 
 interface BundleItemsPickerProps {
@@ -88,88 +96,108 @@ const BundleItemsPicker: React.FC<BundleItemsPickerProps> = ({
     return () => clearTimeout(delayDebounceFn);
   }, [search]);
 
-  const resolveTemplate = (product: any) => {
-    return templates.find(t => t.id === product.template_id || t.id === product.templateId) 
-      || product.FormTemplate 
-      || (product.template_schema ? { 
-        schema: product.template_schema, 
-        design: product.template_design, 
-        mapping: product.template_design?.cardMapping || product.template_design?.mapping || product.template_mapping || {},
-        name: product.template_name 
-      } : undefined);
+  const getProductTypeTag = (formKey: string) => {
+    const types: Record<string, { label: string, color: string }> = {
+      'inventory': { label: 'INVENTORY', color: 'bg-emerald-500/10 text-emerald-500' },
+      'non-inventory': { label: 'NON-INVENTORY', color: 'bg-blue-500/10 text-blue-500' },
+      'service': { label: 'SERVICE', color: 'bg-amber-500/10 text-amber-500' },
+      'bundle': { label: 'BUNDLE', color: 'bg-purple-500/10 text-purple-500' }
+    };
+    return types[formKey] || { label: 'OTHER', color: 'bg-slate-500/10 text-slate-500' };
   };
 
-  const fallbackExtract = (data: any, currentName: string, currentSku: string) => {
-    let name = currentName;
-    let sku = currentSku;
-    if (!data) return { name, sku };
+  const getProductDisplayData = (product: any, variant?: any) => {
+    const fKey = product.FormTemplate?.formKey;
+    let name = product.name || 'Unnamed Item';
+    let sku = product.sku || 'No SKU';
+    let price = product.price || 0;
+    let image = product.images?.[0] || product.image;
+    let color = variant?.color || product.color;
 
-    const values = Object.values(data).filter(v => typeof v === 'string') as string[];
-    
-    if (sku === '—' || sku === 'NO-SKU') {
-      const match = values.find(v => /^[A-Z0-9]+-\d{3,}$/.test(v));
-      if (match) sku = match;
+    // Use variant specific data if provided
+    if (variant) {
+      name = `${name} - ${variant.name || 'Variant'}`;
+      sku = variant.sku || sku;
+      price = variant.sales_price || price;
+      image = (variant.images && variant.images.length > 0) ? variant.images[0] : (variant.image || image);
+    } else if (fKey === 'non-inventory') {
+      price = product.sales_price || product.price || 0;
+    } else if (fKey === 'service') {
+      price = product.rate || product.price || 0;
+    } else if (fKey === 'bundle') {
+      price = product.sales_price || product.price || 0;
     }
-    
-    if (name === '—' || name === 'Unnamed Item') {
-      const candidates = values.filter(v => v !== sku && v.length >= 3 && !v.toLowerCase().includes('tax') && !v.toLowerCase().includes('income') && !v.includes('{'));
-      if (candidates.length > 0) name = candidates[0];
-    }
-    
-    return { name, sku };
+
+    return {
+      name,
+      sku,
+      price,
+      color,
+      imageUrl: resolveImageUrl(image),
+      typeInfo: getProductTypeTag(fKey || 'other')
+    };
   };
 
-  const addItem = (product: any) => {
-    let template = resolveTemplate(product);
-    let name = getRoleValue('title', product, template);
-    let sku = getRoleValue('sku', product, template);
+  const addItem = (product: any, variant?: any) => {
+    const displayData = getProductDisplayData(product, variant);
 
-    const fallback = fallbackExtract(product.data, name, sku);
-    name = fallback.name;
-    sku = fallback.sku;
+    const existing = value.find(item =>
+      item.id === product.id &&
+      (variant ? item.variantId === variant.id : !item.variantId)
+    );
 
-    const price = Number(getRoleValue('price', product, template) || 0);
-    const image = getRoleValue('image', product, template);
-    const imageUrl = resolveImageUrl(image?.[0] || image);
-
-    const existing = value.find(item => item.id === product.id);
     if (existing) {
-      updateQuantity(product.id, existing.quantity + 1);
+      updateQuantity(product.id, existing.quantity + 1, variant?.id);
     } else {
-      onChange([...value, { 
-        id: product.id, 
-        name: name === '—' ? 'Unnamed Item' : name, 
-        sku: sku === '—' ? 'NO-SKU' : sku, 
-        price, 
+      onChange([...value, {
+        id: product.id,
+        variantId: variant?.id,
+        name: displayData.name,
+        sku: displayData.sku,
+        price: Number(displayData.price),
+        currentPrice: Number(displayData.price),
         quantity: 1,
-        imageUrl 
+        imageUrl: displayData.imageUrl,
+        color: displayData.color,
+        typeLabel: displayData.typeInfo.label,
+        typeColor: displayData.typeInfo.color
       }]);
     }
     setSearch('');
     setShowResults(false);
   };
 
-  const removeItem = (id: string) => {
-    onChange(value.filter(item => item.id !== id));
+  const removeItem = (id: string, variantId?: number) => {
+    onChange(value.filter(item => !(item.id === id && item.variantId === variantId)));
   };
 
-  const updateQuantity = (id: string, qty: number) => {
+  const updateQuantity = (id: string, qty: number, variantId?: number) => {
     if (qty < 1) return;
-    onChange(value.map(item => item.id === id ? { ...item, quantity: qty } : item));
+    onChange(value.map(item =>
+      (item.id === id && item.variantId === variantId) ? { ...item, quantity: qty } : item
+    ));
   };
 
   const totalItems = value.reduce((sum, item) => sum + item.quantity, 0);
   const totalPrice = value.reduce((sum, item) => sum + (item.price * item.quantity), 0);
 
+  // Process search results into a flat list (Variants only if they exist, otherwise Product)
+  const flattenedResults = searchResults.flatMap(product => {
+    if (product.variants && product.variants.length > 0) {
+      return product.variants.map((v: any) => ({ product, variant: v }));
+    }
+    return [{ product, variant: null }];
+  });
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <label className="text-[10px] font-black uppercase tracking-[0.2em] text-text-muted pl-1">
+        <label className="text-[12px] font-bold text-slate-700 dark:text-slate-300 tracking-tight px-0.5">
           {label} {required && <span className="text-red-500">*</span>}
         </label>
         {value.length > 0 && (
           <div className="flex items-center gap-2">
-            <span className="text-[10px] font-black text-primary bg-primary/10 px-3 py-1 rounded-full ring-1 ring-primary/20">
+            <span className="text-xs font-bold text-primary bg-primary/10 px-3 py-1 rounded-full ring-1 ring-primary/20">
               {totalItems} ITEMS SELECTED
             </span>
           </div>
@@ -190,50 +218,59 @@ const BundleItemsPicker: React.FC<BundleItemsPickerProps> = ({
           </div>
         </div>
 
-        {showResults && searchResults.length > 0 && (
+        {showResults && flattenedResults.length > 0 && (
           <GlassCard className="absolute top-full mt-2 w-full z-[100] p-2 bg-[var(--color-bg-main)]/95 backdrop-blur-2xl border-primary/20 shadow-2xl animate-in fade-in slide-in-from-top-2 duration-300">
-            <div className="space-y-1 max-h-60 overflow-y-auto custom-scrollbar">
-              {searchResults.map((product) => {
-                let template = resolveTemplate(product);
-                let name = getRoleValue('title', product, template);
-                let sku = getRoleValue('sku', product, template);
-                
-                const fallback = fallbackExtract(product.data, name, sku);
-                name = fallback.name;
-                sku = fallback.sku;
+            <div className="space-y-1 max-h-80 overflow-y-auto custom-scrollbar">
+              {flattenedResults.map((item, idx) => {
+                const { product, variant } = item;
+                const displayData = getProductDisplayData(product, variant);
 
-                const price = getRoleValue('price', product, template);
-                const image = getRoleValue('image', product, template);
-                const imageUrl = resolveImageUrl(image?.[0] || image);
-                
                 return (
                   <button
-                    key={product.id}
-                    onClick={() => addItem(product)}
-                    className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-primary/10 transition-all group/result text-left border border-transparent hover:border-primary/20"
+                    key={`${product.id}-${variant?.id || 'base'}-${idx}`}
+                    onClick={() => addItem(product, variant)}
+                    className={`w-full flex items-center justify-between p-3 rounded-xl hover:bg-primary/10 transition-all group/result text-left border border-transparent hover:border-primary/20 ${variant ? 'ml-0 border-l-primary/30' : ''}`}
                   >
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center text-text-muted group-hover/result:text-primary overflow-hidden border border-white/5 transition-colors">
-                        {imageUrl ? (
-                          <img src={imageUrl} alt={name} className="w-full h-full object-cover" />
+                      <div className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center text-text-muted group-hover/result:text-primary overflow-hidden border border-white/5 transition-colors shrink-0">
+                        {displayData.imageUrl ? (
+                          <img src={displayData.imageUrl} alt={displayData.name} className="w-full h-full object-cover" />
                         ) : (
                           <Package size={20} />
                         )}
                       </div>
-                      <div>
-                        <p className="text-sm font-bold text-text-main leading-tight italic">
-                          {name === '—' ? 'Unnamed Item' : name}
-                        </p>
-                        <p className="text-[10px] text-text-muted uppercase tracking-widest mt-1 italic">
-                          {sku === '—' ? 'No SKU' : sku} • {template?.name || 'Item'}
-                        </p>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <p className="text-sm font-bold text-text-main line-clamp-1">
+                            {displayData.name}
+                          </p>
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ring-1 ring-inset ${displayData.typeInfo.color} ring-current/20 shrink-0`}>
+                            {displayData.typeInfo.label}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <p className="text-xs text-text-muted truncate">
+                            {displayData.sku}
+                          </p>
+                          {displayData.color && (
+                            <div className="flex items-center gap-1 ml-auto">
+                              <div
+                                className="w-3 h-3 rounded-full border border-white/10 shadow-sm"
+                                style={{ backgroundColor: displayData.color }}
+                                title={`Color: ${displayData.color}`}
+                              />
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
-                    <div className="flex flex-col items-end gap-1">
-                       <div className="p-1.5 rounded-full bg-primary/20 text-primary opacity-0 group-hover/result:opacity-100 transition-all scale-75 group-hover/result:scale-100">
+                    <div className="flex items-center gap-4 shrink-0 pl-2">
+                      <div className="flex flex-col items-end gap-1">
+                        <div className="p-1.5 rounded-full bg-primary/20 text-primary opacity-0 group-hover/result:opacity-100 transition-all scale-75 group-hover/result:scale-100">
                           <Plus size={14} />
-                       </div>
-                       <span className="text-xs font-black text-text-main">${price || 0}</span>
+                        </div>
+                        <span className="text-xs font-bold text-text-main">${displayData.price}</span>
+                      </div>
                     </div>
                   </button>
                 );
@@ -243,88 +280,121 @@ const BundleItemsPicker: React.FC<BundleItemsPickerProps> = ({
         )}
       </div>
 
-      <div className="space-y-3">
+      <div className="space-y-2">
         {value.map((item) => (
-          <div 
-            key={item.id} 
-            className="group/item relative flex flex-col sm:flex-row items-center gap-6 p-4 rounded-2xl bg-white/5 border border-glass-border hover:bg-white/10 hover:border-primary/30 transition-all duration-300 animate-in slide-in-from-left-4"
+          <div
+            key={`${item.id}-${item.variantId || 'base'}`}
+            className="group/item relative flex items-center gap-4 p-3 rounded-2xl bg-white/5 border border-glass-border hover:bg-white/10 hover:border-primary/20 transition-all duration-300 animate-in slide-in-from-left-4"
           >
-            {/* Professional Clean Image Container */}
-            <div className="relative w-20 h-20 shrink-0 rounded-xl bg-black/20 border border-glass-border overflow-hidden flex items-center justify-center">
+            {/* Image Thumbnail */}
+            <div className="relative w-14 h-14 shrink-0 rounded-xl bg-black/20 border border-glass-border overflow-hidden flex items-center justify-center">
               {item.imageUrl ? (
                 <img src={item.imageUrl} alt={item.name} className="w-full h-full object-cover" />
               ) : (
-                <Package size={24} className="text-text-muted/20" />
+                <Package size={20} className="text-text-muted/20" />
+              )}
+              {item.variantId && (
+                <div className="absolute top-1 right-1">
+                  <Layers size={10} className="text-primary" />
+                </div>
               )}
             </div>
-            
-            {/* Content Area - Professional Layout */}
+
+            {/* Info Area */}
             <div className="flex-1 min-w-0">
-               <div className="flex items-center gap-2 mb-1">
-                 <p className="text-[10px] font-medium text-text-muted uppercase tracking-widest opacity-50">
-                   SKU: {item.sku}
-                 </p>
-               </div>
-               <h4 className="text-sm font-bold text-text-main line-clamp-1 mb-2">
-                 {item.name}
-               </h4>
-               <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 mb-0.5">
+                <h4 className="text-sm font-bold text-text-main truncate">
+                  {item.name}
+                </h4>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <p className="text-xs font-medium text-text-muted truncate">
+                  {item.sku}
+                </p>
+                {item.color && (
+                  <div
+                    className="w-2.5 h-2.5 rounded-full border border-white/10 shadow-sm shrink-0"
+                    style={{ backgroundColor: item.color }}
+                    title={`Color: ${item.color}`}
+                  />
+                )}
+              </div>
+              <div className="flex items-center gap-2 my-2">
+                {item.typeLabel && (
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ring-1 ring-inset ${item.typeColor || 'bg-slate-500/10 text-slate-500'} ring-current/20 shrink-0`}>
+                    {item.typeLabel}
+                  </span>
+                )}
+
+                <div className="w-fit">{item.currentPrice !== undefined && item.currentPrice !== item.price && (
+                  <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/20 animate-in fade-in zoom-in duration-300 w-fit">
+                    <span className="text-[9px] font-bold text-amber-600 dark:text-amber-400">Actual: ${item.currentPrice}</span>
+                    <button
+                      onClick={() => {
+                        onChange(value.map(v => (v.id === item.id && v.variantId === item.variantId) ? { ...v, price: item.currentPrice || 0 } : v));
+                      }}
+                      className="text-[8px] font-black text-amber-600 hover:text-amber-700 underline underline-offset-2"
+                    >
+                      USE CURRENT
+                    </button>
+                  </div>
+                )}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4">
+                <div className="flex items-end gap-1">
+                  <div className="flex items-center gap-1.5 p-1 bg-white/5 rounded-lg border border-glass-border">
+                    <button
+                      onClick={() => updateQuantity(item.id, item.quantity - 1, item.variantId)}
+                      className="w-6 h-6 flex items-center justify-center hover:bg-white/10 rounded-md text-text-muted hover:text-primary transition-all disabled:opacity-30"
+                      disabled={item.quantity <= 1}
+                    >
+                      <Minus size={12} />
+                    </button>
+                    <span className="text-xs font-bold text-text-main min-w-[1.2rem] text-center">{item.quantity}</span>
+                    <button
+                      onClick={() => updateQuantity(item.id, item.quantity + 1, item.variantId)}
+                      className="w-6 h-6 flex items-center justify-center hover:bg-white/10 rounded-md text-text-muted hover:text-primary transition-all"
+                    >
+                      <Plus size={12} />
+                    </button>
+                  </div>
+
                   <div className="relative group/price">
-                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-text-muted">$</span>
-                    <input 
+                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs font-bold text-text-muted">$</span>
+                    <input
                       type="number"
                       value={item.price}
                       onChange={(e) => {
                         const newPrice = Number(e.target.value);
-                        onChange(value.map(v => v.id === item.id ? { ...v, price: newPrice } : v));
+                        onChange(value.map(v => (v.id === item.id && v.variantId === item.variantId) ? { ...v, price: newPrice } : v));
                       }}
-                      className="w-20 pl-5 pr-2 py-1 rounded-md border border-glass-border text-xs font-bold text-text-main focus:border-primary/50 outline-none transition-all bg-white"
+                      className="w-20 h-8 pl-5 pr-2 py-1 rounded-lg border border-glass-border text-xs font-bold text-text-main focus:border-primary/50 outline-none transition-all bg-white"
                     />
                   </div>
-                  <span className="text-[10px] font-medium text-text-muted uppercase tracking-widest">
-                    Price/Unit
-                  </span>
-               </div>
-            </div>
-
-            {/* Actions & Quantity */}
-            <div className="flex flex-wrap items-center justify-between sm:justify-end gap-x-8 w-full sm:w-auto pt-4 sm:pt-0 border-t sm:border-0 border-glass-border">
-              <div className="flex items-center gap-3">
-                <div className="flex items-center rounded-xl p-1 border border-glass-border">
-                  <button 
-                    onClick={() => updateQuantity(item.id, item.quantity - 1)}
-                    className="w-8 h-8 flex items-center justify-center hover:bg-white/10 rounded-lg text-text-muted hover:text-primary transition-all disabled:opacity-30"
-                    disabled={item.quantity <= 1}
-                  >
-                    <Minus size={14} />
-                  </button>
-                  <div className="w-10 text-center">
-                     <span className="text-sm font-bold text-text-main">{item.quantity}</span>
-                  </div>
-                  <button 
-                    onClick={() => updateQuantity(item.id, item.quantity + 1)}
-                    className="w-8 h-8 flex items-center justify-center hover:bg-white/10 rounded-lg text-text-muted hover:text-primary transition-all"
-                  >
-                    <Plus size={14} />
-                  </button>
                 </div>
-              </div>
 
-              <div className="flex flex-col items-end min-w-[90px]">
-                 <p className="text-[9px] font-bold text-text-muted uppercase tracking-widest mb-0.5">Subtotal</p>
-                 <span className="text-base font-bold text-primary">
+                <div className="flex-1 flex flex-col gap-5 items-end justify-between min-w-[70px]">
+                  {/* <p className="text-[10px] font-bold text-text-muted uppercase mb-0.5">Subtotal</p> */}
+                  <span className="text-base font-bold text-primary flex-1 h-full">
                     ${(item.price * item.quantity).toFixed(2)}
-                 </span>
-              </div>
+                  </span>
+                </div>
 
-              <button 
-                onClick={() => removeItem(item.id)}
-                className="w-10 h-10 flex items-center justify-center text-text-muted hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all"
-                title="Remove item"
-              >
-                <Trash2 size={18} />
-              </button>
+                <button
+                  onClick={() => removeItem(item.id, item.variantId)}
+                  className="w-8 h-8 flex items-center justify-center text-text-muted hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all"
+                  title="Remove item"
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
             </div>
+
+            {/* Price & Quantity Controls */}
+
           </div>
         ))}
 
@@ -335,21 +405,17 @@ const BundleItemsPicker: React.FC<BundleItemsPickerProps> = ({
             </div>
             <div>
               <p className="text-sm font-bold text-text-main">No items included yet</p>
-              <p className="text-[10px] text-text-muted uppercase tracking-widest mt-1 italic">Search for products above to start building the bundle</p>
+              <p className="text-xs text-text-muted mt-1">Search for products above to start building the bundle</p>
             </div>
           </div>
         )}
 
         {value.length > 0 && (
           <div className="pt-6 mt-4 border-t border-glass-border flex flex-col items-end gap-2 animate-in slide-in-from-bottom-2">
-             <div className="flex items-center gap-4 text-text-muted uppercase tracking-[0.2em] font-bold text-[10px]">
-               <span>Total Items:</span>
-               <span className="text-text-main">{totalItems}</span>
-             </div>
-             <div className="flex items-center gap-4">
-                <span className="text-text-muted uppercase tracking-[0.2em] font-bold text-[10px]">Grand Total:</span>
-                <span className="text-2xl font-black text-primary">${totalPrice.toFixed(2)}</span>
-             </div>
+            <div className="flex items-center gap-4">
+              <span className="text-text-muted font-bold text-xs">Grand Total:</span>
+              <span className="text-2xl font-bold text-primary">${totalPrice.toFixed(2)}</span>
+            </div>
           </div>
         )}
 

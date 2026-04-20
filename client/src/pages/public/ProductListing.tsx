@@ -281,7 +281,7 @@ const PublicProductListing = () => {
                   mapping: p.template_design?.viewMapping || p.template_design?.mapping || {},
                   name: p.template_name
                 } : null)} 
-                onView={() => setLocation(`/public/${userId}/${p.id}`)}
+                onView={() => setLocation(`/public/${userId}/${p.formKey}/${p.id}`)}
               />
             ))}
           </div>

@@ -10,6 +10,7 @@ import { getTemplates, uploadImage, submitFormData, updateDynamicData } from '@/
 import { compressImage } from '@/utils/imageCompressor';
 import Button from '@/components/products/Button';
 import { DynamicForm } from '@/components/products/DynamicForm';
+import { findFieldByRole } from '@/utils/dynamicRenderer';
 import { BuilderItem } from '@/types/form';
 
 interface InventoryFormProps {
@@ -44,34 +45,50 @@ const InventoryForm = ({
 
   useEffect(() => {
     const fetchTargetTemplate = async () => {
-      if (propTemplate) {
-        setSchema(propTemplate.schema);
-        setTargetTemplateId(propTemplate.id);
-        setIsLoading(false);
-        return;
-      }
-
-      try {
-        // Use standard getTemplate API (singular) like ProductBasePage
-        const tId = templateId || templateName || 'inventory';
-        const targetTemplate = await getTemplate(tId);
-
-        if (targetTemplate) {
-          setSchema(targetTemplate.schema);
-          setTargetTemplateId(targetTemplate.id);
-        } else {
-          setError(`${templateName || 'Inventory'} form template not found. Please create one in the Form Builder.`);
+      let activeTemplate = propTemplate;
+      
+      if (!activeTemplate) {
+        try {
+          const tId = templateId || templateName || 'inventory';
+          activeTemplate = await getTemplate(tId);
+        } catch (err) {
+          console.error('Failed to fetch template:', err);
+          setError('Failed to load the form template.');
+          setIsLoading(false);
+          return;
         }
-      } catch (err) {
-        console.error('Failed to fetch template:', err);
-        setError('Failed to load the form template.');
-      } finally {
-        setIsLoading(false);
       }
+
+      if (activeTemplate) {
+        setSchema(activeTemplate.schema);
+        setTargetTemplateId(activeTemplate.id);
+        
+        // If we are editing, merge specialized fields (name, sku, category, price)
+        // back into the formData blob so they show up in the form fields.
+        if (mode === 'edit' && initialData) {
+          const mergedData = { ...(initialData.data || {}) };
+          
+          // Use the helper to find matching field IDs for core roles
+          const nameId = findFieldByRole('title', activeTemplate);
+          const skuId = findFieldByRole('sku', activeTemplate);
+          const categoryId = findFieldByRole('category', activeTemplate);
+          const priceId = findFieldByRole('price', activeTemplate);
+          
+          if (nameId && initialData.name) mergedData[nameId] = initialData.name;
+          if (skuId && initialData.sku) mergedData[skuId] = initialData.sku;
+          if (categoryId && initialData.category) mergedData[categoryId] = initialData.category;
+          if (priceId && initialData.price) mergedData[priceId] = initialData.price;
+          
+          setFormData(mergedData);
+        }
+      } else {
+        setError(`${templateName || 'Inventory'} form template not found.`);
+      }
+      setIsLoading(false);
     };
 
     fetchTargetTemplate();
-  }, [templateId, templateName]);
+  }, [templateId, templateName, propTemplate, initialData, mode]);
 
   const handleImageUpload = async (file: File, originalFile?: File) => {
     try {
@@ -238,22 +255,35 @@ const InventoryForm = ({
       />
 
       <div className="pt-8 border-t border-slate-200 flex gap-4 mb-5">
-        {mode === 'view' ? (
-          <Button variant="outline" className="flex-1" onClick={onCancel}>Close View</Button>
-        ) : (
-          <>
-            <Button variant="outline" className="flex-1" onClick={onCancel} disabled={isSaving}>Cancel</Button>
-            <Button 
-              className={`flex-1 shadow-xl ${isSuccess ? 'bg-emerald-500 hover:bg-emerald-600 shadow-emerald-500/20' : 'shadow-primary/20'}`} 
+        {(() => {
+          if (mode === 'view') {
+            return <Button variant="outline" className="flex-1" onClick={onCancel}>Close View</Button>;
+          }
+          
+          let buttonLabel = '';
+          if (isSuccess) {
+            buttonLabel = 'Saved!';
+          } else if (mode === 'edit') {
+            buttonLabel = 'Update Details';
+          } else {
+            buttonLabel = 'Create Inventory';
+          }
+
+          return (
+            <>
+              <Button variant="outline" className="flex-1" onClick={onCancel} disabled={isSaving}>Cancel</Button>
+              <Button 
+                className={`flex-1 shadow-xl ${isSuccess ? 'bg-emerald-500 hover:bg-emerald-600 shadow-emerald-500/20' : 'shadow-primary/20'}`} 
                 onClick={handleFinalSave}
-              loading={isSaving}
-              disabled={isSaving || isSuccess}
-              icon={isSuccess ? CheckCircle2 : undefined}
-            >
-              {isSuccess ? 'Saved!' : mode === 'edit' ? 'Update' : 'Save'}
-            </Button>
-          </>
-        )}
+                loading={isSaving}
+                disabled={isSaving || isSuccess}
+                icon={isSuccess ? CheckCircle2 : undefined}
+              >
+                {buttonLabel}
+              </Button>
+            </>
+          );
+        })()}
       </div>
     </div>
   );

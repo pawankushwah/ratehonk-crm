@@ -11,6 +11,7 @@ import { DynamicForm } from './DynamicForm';
 import { type BuilderItem } from '@/types/form';
 import { getTemplate, getTemplates, uploadImage, submitFormData, updateDynamicData } from '@/lib/forms';
 import { compressImage } from '@/utils/imageCompressor';
+import { findFieldByRole } from '@/utils/dynamicRenderer';
 
 interface NonInventoryFormProps {
   onCancel: () => void;
@@ -50,36 +51,51 @@ const ExceptInventoryForms = ({
 
   useEffect(() => {
     const fetchTargetTemplate = async () => {
-      if (propTemplate) {
-        setSchema(propTemplate.schema);
-        setTargetTemplateId(propTemplate.id);
-        setIsLoading(false);
-        return;
-      }
+      let activeTemplate = propTemplate;
 
-      setIsLoading(true);
-      setError(null);
-      try {
-        // Use standard getTemplate API (singular) like ProductBasePage
-        const tId = templateId || getFormKey(itemType);
-        const targetTemplate = await getTemplate(tId);
-
-        if (targetTemplate) {
-          setSchema(targetTemplate.schema);
-          setTargetTemplateId(targetTemplate.id);
-        } else {
-          setError(`Template for "${itemType}" (key: ${tId}) not found. Please create one with this formKey in the Form Builder.`);
+      if (!activeTemplate) {
+        setIsLoading(true);
+        setError(null);
+        try {
+          const tId = templateId || getFormKey(itemType);
+          activeTemplate = await getTemplate(tId);
+        } catch (err) {
+          console.error('Failed to fetch template:', err);
+          setError('Failed to load the form template.');
+          setIsLoading(false);
+          return;
         }
-      } catch (err) {
-        console.error('Failed to fetch template:', err);
-        setError('Failed to load the form template.');
-      } finally {
-        setIsLoading(false);
       }
+
+      if (activeTemplate) {
+        setSchema(activeTemplate.schema);
+        setTargetTemplateId(activeTemplate.id);
+
+        // Merge specialized fields back into formData if editing
+        if (mode === 'edit' && initialData) {
+          const mergedData = { ...(initialData.data || {}) };
+          
+          const nameId = findFieldByRole('title', activeTemplate);
+          const priceId = findFieldByRole('price', activeTemplate);
+          
+          if (nameId && initialData.name) mergedData[nameId] = initialData.name;
+          if (priceId && initialData.price) mergedData[priceId] = initialData.price;
+          
+          // Merge bundle items for recovery in picker
+          if (itemType === 'bundle' && initialData.bundleItems) {
+            mergedData['1775121053564'] = initialData.bundleItems;
+          }
+          
+          setFormData(mergedData);
+        }
+      } else {
+        setError(`Template for "${itemType}" not found.`);
+      }
+      setIsLoading(false);
     };
 
     fetchTargetTemplate();
-  }, [itemType, templateId]);
+  }, [itemType, templateId, propTemplate, initialData, mode]);
 
   const handleImageUpload = async (file: File) => {
     try {

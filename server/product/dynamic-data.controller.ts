@@ -79,9 +79,15 @@ export const submitData = async (req: any, res: Response) => {
 export const getData = async (req: any, res: Response) => {
   try {
     const { res_id } = req.params;
+    const { formKey } = req.query;
     const tenantId = req.user.tenantId;
-    const data = await simpleStorage.getDynamicData(Number(res_id), Number(tenantId));
-    if (!data) return res.status(404).json({ success: false, message: "Data not found" });
+    console.log(`[getData] Fetching ID: ${res_id} (formKey: ${formKey}) for Tenant: ${tenantId}`);
+    
+    const data = await simpleStorage.getDynamicData(Number(res_id), Number(tenantId), formKey as string);
+    if (!data) {
+      console.warn(`[getData] Record ${res_id} not found for tenant ${tenantId}`);
+      return res.status(404).json({ success: false, message: "Data not found" });
+    }
 
     // Merge template if it exists
     if (data.FormTemplate && data.FormTemplate.formKey) {
@@ -93,6 +99,7 @@ export const getData = async (req: any, res: Response) => {
 
     return res.json({ success: true, data, message: "Data fetched successfully" });
   } catch (error) {
+    console.error('[getData] Error:', error);
     return res.status(500).json({ success: false, message: "Failed to fetch data", error });
   }
 };
@@ -100,9 +107,18 @@ export const getData = async (req: any, res: Response) => {
 export const getDataPublic = async (req: any, res: Response) => {
   try {
     const { res_id } = req.params;
-    const { user: tenantId } = req.query;
-    const data = await simpleStorage.getDynamicData(Number(res_id), tenantId);
-    if (!data) return res.status(404).json({ success: false, message: "Data not found" });
+    const { user: tenantId, formKey } = req.query;
+    console.log(`[getDataPublic] Fetching ID: ${res_id} (formKey: ${formKey}) for public Tenant: ${tenantId}`);
+
+    if (!tenantId) {
+      return res.status(400).json({ success: false, message: "Missing tenant information (?user=ID)" });
+    }
+
+    const data = await simpleStorage.getDynamicData(Number(res_id), Number(tenantId), formKey as string);
+    if (!data) {
+      console.warn(`[getDataPublic] Record ${res_id} not found for tenant ${tenantId}`);
+      return res.status(404).json({ success: false, message: "Data not found" });
+    }
 
     // Merge template if it exists
     if (data.FormTemplate && data.FormTemplate.formKey) {
@@ -114,22 +130,50 @@ export const getDataPublic = async (req: any, res: Response) => {
 
     return res.json({ success: true, data, message: "Data fetched successfully" });
   } catch (error) {
+    console.error('[getDataPublic] Error:', error);
     return res.status(500).json({ success: false, message: "Failed to fetch data", error });
   }
 };
 
 export const getAllData = async (req: any, res: Response) => {
   try {
+    console.log('--- FETCH ALL DATA ---');
+    console.log('Query:', req.query);
     const { template_id, page = 1, limit = 10, search, ...otherFilters } = req.query as any;
     const tenantId = req.user.tenantId;
     
+    console.log('TemplateID Filter Input:', template_id);
+
+    let resolvedTemplateId: number | undefined = undefined;
+    if (template_id) {
+      if (!isNaN(Number(template_id))) {
+        resolvedTemplateId = Number(template_id);
+      } else {
+        // Resolve form_key to ID
+        console.log(`Resolving form_key "${template_id}" for tenant ${tenantId}`);
+        const templates = await simpleStorage.getFormTemplateByKey(Number(tenantId), template_id);
+        if (templates && templates[0]) {
+          resolvedTemplateId = templates[0].id;
+          console.log(`Resolved "${template_id}" to ID: ${resolvedTemplateId}`);
+        } else {
+          console.log(`No DB template found for key "${template_id}". Filtering may return empty results.`);
+          // If no DB template exists for this key, then no data records can possibly exist for it
+          // as they require a valid template_id foreign key.
+          // We'll set it to -1 to ensure an empty result rather than returning everything.
+          resolvedTemplateId = -1; 
+        }
+      }
+    }
+
     const filters = {
-      templateId: template_id ? Number(template_id) : undefined,
+      templateId: resolvedTemplateId,
       search,
       limit: Number(limit),
       offset: (Number(page) - 1) * Number(limit),
       jsonFilters: otherFilters
     };
+
+    console.log('Final Database Filters:', filters);
 
     const { data: rows, total } = await simpleStorage.getDynamicDataEntries(tenantId, filters);
 

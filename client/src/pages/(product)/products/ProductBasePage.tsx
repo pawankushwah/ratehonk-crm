@@ -40,6 +40,8 @@ interface ProductBasePageProps {
   templateId?: string;
   defaultDrawerView?: DrawerView;
   allTypes?: boolean;
+  extraHeader?: React.ReactNode;
+  activeTab: string;
 }
 
 const ProductBasePage: React.FC<ProductBasePageProps> = ({ 
@@ -48,6 +50,8 @@ const ProductBasePage: React.FC<ProductBasePageProps> = ({
   templateId, 
   defaultDrawerView = 'inventory', 
   allTypes = false,
+  extraHeader,
+  activeTab
 }) => {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [drawerView, setDrawerView] = useState<DrawerView>(defaultDrawerView);
@@ -98,37 +102,59 @@ const ProductBasePage: React.FC<ProductBasePageProps> = ({
     setIsLoading(true);
     try {
       let invTemplate = inventoryTemplate;
-      if (!invTemplate) {
-        // Use standard getTemplate API (singular) like Form Builder
-        const tId = templateId || templateName || 'inventory';
-        invTemplate = await getTemplate(tId);
+      const tIdToFetch = (templateId || templateName || (allTypes ? 'all' : 'inventory')).toString();
+      
+      // Force refresh if template context changed
+      if (invTemplate && 
+          invTemplate.formKey !== tIdToFetch && 
+          invTemplate.id?.toString() !== tIdToFetch) {
+        invTemplate = null;
+      }
 
+      // Fetch template if missing (except for "All" view where we use 'inventory' for filters)
+      if (!invTemplate) {
+        const fetchId = allTypes ? 'inventory' : tIdToFetch;
+        invTemplate = await getTemplate(fetchId);
         if (invTemplate) {
-          console.log("settting the inventory Template", invTemplate);
           setInventoryTemplate(invTemplate);
         }
       }
 
-      if (invTemplate) {
-        const dataRes = await getAllDynamicData({ 
-          ...(allTypes ? {} : { templateId: invTemplate.id }),
-          page: currentPage, 
-          limit, 
-          search: currentSearch,
-          ...activeFilters
-        });
+      // Fetch Data
+      const dataRes = await getAllDynamicData({ 
+        ...(allTypes ? {} : { templateId: invTemplate?.id }),
+        page: currentPage, 
+        limit, 
+        search: currentSearch,
+        ...activeFilters
+      });
+      
+      if (dataRes.success) {
+        const rawData = dataRes.data?.data || dataRes.data || [];
+        const rawMeta = dataRes.data?.meta || dataRes.meta || { total: rawData.length, totalPages: 1 };
         
-        if (dataRes.success) {
-          const rawData = dataRes.data?.data || dataRes.data || [];
-          const rawMeta = dataRes.data?.meta || dataRes.meta || { total: rawData.length, totalPages: 1 };
-          
-          if (rawData.length === 0 && !currentSearch && Object.keys(activeFilters).length === 0) {
-            setProducts([]);
-            setMeta({ total: 0, totalPages: 1 });
-          } else {
-            setProducts(rawData.reverse());
-            setMeta(rawMeta);
+        // Extract schema from first result if template is still missing or we want latest
+        if (rawData.length > 0 && !allTypes) {
+          const firstItem = rawData[0];
+          if (firstItem.template_schema && (!invTemplate || invTemplate.id !== firstItem.template_id)) {
+            const extracted = {
+              id: firstItem.template_id,
+              name: firstItem.template_name,
+              schema: firstItem.template_schema,
+              design: firstItem.template_design,
+              formKey: firstItem.form_key
+            };
+            setInventoryTemplate(extracted);
+            invTemplate = extracted;
           }
+        }
+
+        if (rawData.length === 0 && !currentSearch && Object.keys(activeFilters).length === 0) {
+          setProducts([]);
+          setMeta({ total: 0, totalPages: 1 });
+        } else {
+          setProducts(rawData.reverse());
+          setMeta(rawMeta);
         }
       }
     } catch (err) {
@@ -146,10 +172,6 @@ const ProductBasePage: React.FC<ProductBasePageProps> = ({
     isFirstRender.current = false;
     return () => clearTimeout(timer);
   }, [page, search, filters, templateId, templateName, allTypes]);
-
-  useEffect(() => {
-    setInventoryTemplate(null);
-  }, [templateId, templateName, allTypes]);
 
   // Sync state to URL without reloading the page
   useEffect(() => {
@@ -297,7 +319,7 @@ const ProductBasePage: React.FC<ProductBasePageProps> = ({
           </button>
         </div>
         
-        {title !== "Products" && <HeaderButton onClick={() => {
+        {title !== "Products" && activeTab !== "all" && <HeaderButton onClick={() => {
           setDrawerMode('create');
           setSelectedProduct(null);
           setIsDrawerOpen(true);
@@ -305,6 +327,12 @@ const ProductBasePage: React.FC<ProductBasePageProps> = ({
           <Plus size={18} /> Add New {title}
         </HeaderButton>}
       </div>
+
+      {extraHeader && (
+          <div className="animate-in fade-in slide-in-from-top-2 duration-500">
+            {extraHeader}
+          </div>
+        )}
 
       <div className="flex flex-col lg:flex-row gap-8 items-start">
         {isFullscreen && (
@@ -365,14 +393,16 @@ const ProductBasePage: React.FC<ProductBasePageProps> = ({
                         mapping: product.template_design?.cardMapping || product.template_design?.mapping || product.template_mapping || {},
                         name: product.template_name 
                       } : inventoryTemplate);
-                      const name = getRoleValue('title', product, template);
-                      const category = getRoleValue('category', product, template);
-                      const price = getRoleValue('price', product, template);
-                      const stock = getRoleValue('stock', product, template);
-                      const sku = getRoleValue('sku', product, template);
+
+                      // Use specialized fields if available, fallback to role lookup
+                      const name = product.name || getRoleValue('title', product, template);
+                      const category = product.category || getRoleValue('category', product, template);
+                      const price = product.price !== undefined ? product.price : getRoleValue('price', product, template);
+                      const stock = product.stock !== undefined ? product.stock : getRoleValue('stock', product, template);
+                      const sku = product.sku || getRoleValue('sku', product, template);
                       const barcode = getRoleValue('barcode', product, template);
-                      const image = getRoleValue('image', product, template);
-                      const imageUrl = resolveImageUrl(image[0]);
+                      const images = product.images || getRoleValue('image', product, template);
+                      const imageUrl = resolveImageUrl((Array.isArray(images) && images.length > 0) ? images[0] : images);
 
                       return (
                         <tr key={product.id} className="border-b border-glass-border last:border-0 hover:bg-glass-bg transition-colors">
@@ -430,7 +460,7 @@ const ProductBasePage: React.FC<ProductBasePageProps> = ({
                     mapping: product.template_design?.cardMapping || product.template_design?.mapping || product.template_mapping || {},
                     name: product.template_name 
                   } : inventoryTemplate)}
-                  onView={() => setLocation(`/products/view/${product.id}`)}
+                  onView={() => setLocation(`/products/${product.FormTemplate.formKey}/${product.dynamic_data_id}`)}
                   onEdit={() => { 
                     setDrawerMode('edit'); 
                     setSelectedProduct(product); 

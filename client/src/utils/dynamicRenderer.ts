@@ -158,101 +158,39 @@ export const isEmptyValue = (val: any): boolean => {
  * Supports nested fields and repeatable sections (e.g. Variants).
  */
 export const getRoleValue = (role: FieldRoleType, product: any, template: any, variantData?: any): any => {
-  const fieldId = findFieldByRole(role, template);
   const data = product?.data || product || {};
+  const fieldId = findFieldByRole(role, template);
+  
+  // 1. NON-FUZZY: Direct Specialized Column Access (Highest priority for core fields)
+  // We check for specific properties provided by our refined backend response
+  if (role === 'stock' && (product?.stock !== undefined && product?.stock !== null)) return product.stock;
+  if (role === 'sku' && product?.sku && product.sku !== '—') return product.sku;
+  if (role === 'title' && product?.name && product.name !== '—') return product.name;
+  if (role === 'category' && product?.category && product.category !== '—') return product.category;
+  if (role === 'price' && product?.price && product.price !== '—' && product.price !== 0) return product.price;
+  if (role === 'image' && product?.image && product.image !== '—' && product.image !== '') return product.image;
 
-  // 0. Variant Override (Highest priority if variant is selected)
+  // 2. Variant Override (Second priority if variant is selected)
   if (variantData) {
-    // A. Check if the globally mapped fieldId exists in this variant object
+    // Only check variantData for mapped IDs or role-named properties
     if (fieldId && !isEmptyValue(variantData[fieldId])) return variantData[fieldId];
-    
-    // B. Check for the role name directly (e.g. variantData.price)
     if (!isEmptyValue(variantData[role])) return variantData[role];
-    
-    // C. Perform localized search if we can identify a parent container
-    // This is useful if 'Price' in a variant is a different field ID than global 'Price'
-    // but we can identify it by label/keyword within the variant's section.
-    // However, findFieldByRole is an expensive traversal. We already did this in getNormalizedVariants.
-    
-    // Special image/price fallbacks for common naming patterns in variants
-    if (role === 'image' && !isEmptyValue(variantData.imageUrl)) return variantData.imageUrl;
     if (role === 'image' && !isEmptyValue(variantData.image)) return variantData.image;
     if (role === 'price' && !isEmptyValue(variantData.price)) return variantData.price;
     if (role === 'stock' && !isEmptyValue(variantData.variant_stock)) return variantData.variant_stock;
   }
   
-  if (!fieldId) {
-    // Falls back to direct property access if role matches key in data
-    // This is useful for templates using mock data without a full schema
-    if (!isEmptyValue(data[role])) return data[role];
-    
-    // Check for common naming variations in mock data
-    if (role === 'image' && !isEmptyValue(data.imageUrl)) return data.imageUrl;
-    if (role === 'colors' && !isEmptyValue(data.availableColors)) return data.availableColors;
-    if (role === 'sizes' && !isEmptyValue(data.availableSizes)) return data.availableSizes;
-    
-    return '—';
-  }
-
-  // 1. Try Top-Level Match (Skip if empty to allow deeper search)
-  if (!isEmptyValue(data[fieldId])) {
+  // 3. Custom Field Fallback (Look in dynamic data blob using mapped ID)
+  if (fieldId && !isEmptyValue(data[fieldId])) {
     return data[fieldId];
   }
 
-  // Fallback for previews: If fieldId is from a mapping but data[fieldId] is empty,
-  // try the role name itself as a key (e.g. data['title']). 
-  // This is essential for DesignTab previews where mock data uses role names.
+  // 4. Final Fallback (Check role as key directly in data)
   if (!isEmptyValue(data[role])) {
     return data[role];
   }
 
-  // --- HACK/FALLBACK FOR ORPHANED CATEGORY DATA ---
-  if (role === 'category') {
-    // If we're looking for category and it's missing from schema mapping,
-    // let's scan the data keys for common category-like values as a last resort.
-    // E.g. anything that is exactly "Clothing", "Electronics", "Books", etc.
-    const COMMON_CATEGORIES = ['clothing', 'electronics', 'books', 'beauty', 'home', 'sports'];
-    for (const key of Object.keys(data)) {
-      if (typeof data[key] === 'string' && COMMON_CATEGORIES.includes(data[key].toLowerCase())) {
-        return data[key];
-      }
-      if (Array.isArray(data[key]) && data[key].length > 0 && typeof data[key][0] === 'string' && COMMON_CATEGORIES.includes(data[key][0].toLowerCase())) {
-        return data[key][0];
-      }
-    }
-  }
-
-  // --- HACK/FALLBACK FOR ORPHANED SKU DATA ---
-  if (role === 'sku') {
-    for (const key of Object.keys(data)) {
-      if (typeof data[key] === 'string' && /^[A-Z0-9]+-[A-Z0-9]+$/i.test(data[key])) {
-        if (!data[key].includes(COMMON_CATEGORIES[0])) return data[key];
-      }
-      if (typeof data[key] === 'string' && data[key].toUpperCase().includes('PROD-')) {
-        return data[key];
-      }
-    }
-  }
-
-  // Check for common naming variations in mock data (even if fieldId exists)
-  if (role === 'image' && !isEmptyValue(data.imageUrl)) return data.imageUrl;
-  if (role === 'colors' && !isEmptyValue(data.availableColors)) return data.availableColors;
-  if (role === 'sizes' && !isEmptyValue(data.availableSizes)) return data.availableSizes;
-
-  // 2. Search deeper / collect from sections
-  // For stock, we want all values to sum them up, not just UNIQUE ones
-  const values = getRoleValues(role, product, template, role !== 'stock', variantData);
-  
-  // SPECIAL CASE: Stock Role (Aggregation across variants)
-  if (role === 'stock' && values.length > 0) {
-    const isNumeric = values.some(v => !isNaN(Number(v)));
-    if (isNumeric) {
-      return values.reduce((sum: number, v: any) => sum + (Number(v) || 0), 0);
-    }
-  }
-
-  // DEFAULT: Take from first non-empty item found in deeper search
-  return values.length > 0 ? values[0] : '—';
+  return '—';
 };
 
 /**

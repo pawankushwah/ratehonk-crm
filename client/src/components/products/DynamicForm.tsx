@@ -138,8 +138,8 @@ const normalizeInitialData = (data: Record<string, any>, schema: BuilderItem[]) 
           const newSectionObj: Record<string, any> = {};
           
           value.forEach((val, idx) => {
-            // Generate a unique sequential ID for each existing item
-            const id = `item_${idx}_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`;
+            // Use existing ID if available, otherwise generate a unique sequential ID
+            const id = (val && val.id) ? String(val.id) : `item_${idx}_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`;
             ids.push(id);
             newSectionObj[id] = { ...val };
             // Recursively normalize children of this instance
