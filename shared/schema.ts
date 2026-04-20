@@ -1389,23 +1389,15 @@ export const insertServiceProviderSchema = createInsertSchema(serviceProviders).
 
 // --- Dynamic Form Builder & Product Module Tables ---
 
-export const frontendForms = pgTable("frontend_forms", {
-  id: serial("id").primaryKey(),
-  name: text("name").notNull(),
-  formKey: text("form_key").notNull().unique(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
-
 export const formTemplates = pgTable("form_templates", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
+  formKey: text("form_key").notNull(), // e.g. "inventory", "non-inventory", "bundle", "service"
   schema: jsonb("schema").notNull(), // JSONB: Sections, Groups, Fields, Logic
   design: jsonb("design"), // JSONB: Studio Pro multi-page layout
   mapping: jsonb("mapping"), // JSONB: Field mappings to design slots
   userId: integer("user_id").notNull().references(() => users.id),
   tenantId: integer("tenant_id").notNull().references(() => tenants.id),
-  mappedTo: integer("mapped_to").notNull().references(() => frontendForms.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -1420,6 +1412,113 @@ export const dynamicData = pgTable("dynamic_data", {
   stock: integer("stock"), // Stores { total: number, variants: { [variantId]: number } }
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  deletedAt: timestamp("deleted_at"),
+});
+
+export const stocks = pgTable("stocks", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+  quantity: decimal("quantity", { precision: 10, scale: 2 }).notNull().default("0"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  deletedAt: timestamp("deleted_at"),
+});
+
+export const inventory = pgTable("inventory", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+  dynamicDataId: integer("dynamic_data_id").notNull().references(() => dynamicData.id),
+  name: text("name"),
+  sku: text("sku"),
+  category: text("category"),
+  taxInclusion: boolean("tax_inclusion").default(false),
+  salesTax: text("sales_tax"),
+  purchaseDescription: text("purchase_description"),
+  purchaseInclusion: boolean("purchase_inclusion").default(false),
+  purchaseTax: text("purchase_tax"),
+  incomeAccount: text("income_account"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  deletedAt: timestamp("deleted_at"),
+});
+
+export const inventoryVariants = pgTable("inventory_variants", {
+  id: serial("id").primaryKey(),
+  inventoryId: integer("inventory_id").notNull().references(() => inventory.id, { onDelete: "cascade" }),
+  stockId: integer("stock_id").notNull().references(() => stocks.id),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+  image: text("image"),
+  initialQuantity: decimal("initial_quantity", { precision: 10, scale: 2 }),
+  asOfDate: timestamp("as_of_date"),
+  reorderPoint: integer("reorder_point"),
+  cost: decimal("cost", { precision: 10, scale: 2 }),
+  expenseAccount: text("expense_account"),
+  modelNumber: text("model_number"),
+  size: text("size"),
+  salesPrice: decimal("sales_price", { precision: 10, scale: 2 }),
+  color: text("color"),
+  data: jsonb("data").notNull(), // Stores any other dynamic properties
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  deletedAt: timestamp("deleted_at"),
+});
+
+export const nonInventory = pgTable("non_inventory", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+  dynamicDataId: integer("dynamic_data_id").notNull().references(() => dynamicData.id),
+  stockId: integer("stock_id").notNull().references(() => stocks.id),
+  name: text("name"),
+  sku: text("sku"),
+  category: text("category"),
+  image: text("image"),
+  purchaseCost: decimal("purchase_cost", { precision: 10, scale: 2 }),
+  salesPrice: decimal("sales_price", { precision: 10, scale: 2 }),
+  description: text("description"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  deletedAt: timestamp("deleted_at"),
+});
+
+export const productBundles = pgTable("product_bundles", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+  dynamicDataId: integer("dynamic_data_id").notNull().references(() => dynamicData.id),
+  stockId: integer("stock_id").notNull().references(() => stocks.id),
+  name: text("name"),
+  sku: text("sku"),
+  description: text("description"),
+  image: text("image"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  deletedAt: timestamp("deleted_at"),
+});
+
+export const bundleItems = pgTable("bundle_items", {
+  id: serial("id").primaryKey(),
+  bundleId: integer("bundle_id").notNull().references(() => productBundles.id, { onDelete: "cascade" }),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+  targetDynamicDataId: integer("target_dynamic_data_id").notNull().references(() => dynamicData.id),
+  quantity: decimal("quantity", { precision: 10, scale: 2 }).notNull().default("1"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  deletedAt: timestamp("deleted_at"),
+});
+
+export const services = pgTable("services", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+  dynamicDataId: integer("dynamic_data_id").notNull().references(() => dynamicData.id),
+  stockId: integer("stock_id").notNull().references(() => stocks.id),
+  name: text("name"),
+  sku: text("sku"),
+  billingType: text("billing_type"),
+  rate: decimal("rate", { precision: 10, scale: 2 }),
+  description: text("description"),
+  image: text("image"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  deletedAt: timestamp("deleted_at"),
 });
 
 export const imageLogs = pgTable("image_logs", {
@@ -1461,12 +1560,6 @@ export const skuCounters = pgTable("sku_counters", {
 // --- End of schema.ts ---
 
 // Dynamic Form Builder & Product Module insert schemas
-export const insertFrontendFormSchema = createInsertSchema(frontendForms).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
-});
-
 export const insertFormTemplateSchema = createInsertSchema(formTemplates).omit({
   id: true,
   createdAt: true,
@@ -1477,6 +1570,56 @@ export const insertDynamicDataSchema = createInsertSchema(dynamicData).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
+  deletedAt: true,
+});
+
+export const insertStockSchema = createInsertSchema(stocks).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  deletedAt: true,
+});
+
+export const insertInventorySchema = createInsertSchema(inventory).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  deletedAt: true,
+});
+
+export const insertInventoryVariantSchema = createInsertSchema(inventoryVariants).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  deletedAt: true,
+});
+
+export const insertNonInventorySchema = createInsertSchema(nonInventory).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  deletedAt: true,
+});
+
+export const insertProductBundleSchema = createInsertSchema(productBundles).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  deletedAt: true,
+});
+
+export const insertBundleItemSchema = createInsertSchema(bundleItems).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  deletedAt: true,
+});
+
+export const insertServiceSchema = createInsertSchema(services).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  deletedAt: true,
 });
 
 export const insertImageLogSchema = createInsertSchema(imageLogs).omit({
@@ -1572,12 +1715,25 @@ export type Lead = typeof leads.$inferSelect;
 export type InsertLead = z.infer<typeof insertLeadSchema>;
 
 // Dynamic Form Builder & Product Module types
-export type FrontendForm = typeof frontendForms.$inferSelect;
-export type InsertFrontendForm = z.infer<typeof insertFrontendFormSchema>;
 export type FormTemplate = typeof formTemplates.$inferSelect;
 export type InsertFormTemplate = z.infer<typeof insertFormTemplateSchema>;
 export type DynamicData = typeof dynamicData.$inferSelect;
 export type InsertDynamicData = z.infer<typeof insertDynamicDataSchema>;
+
+export type Stock = typeof stocks.$inferSelect;
+export type InsertStock = z.infer<typeof insertStockSchema>;
+export type Inventory = typeof inventory.$inferSelect;
+export type InsertInventory = z.infer<typeof insertInventorySchema>;
+export type InventoryVariant = typeof inventoryVariants.$inferSelect;
+export type InsertInventoryVariant = z.infer<typeof insertInventoryVariantSchema>;
+export type NonInventory = typeof nonInventory.$inferSelect;
+export type InsertNonInventory = z.infer<typeof insertNonInventorySchema>;
+export type ProductBundle = typeof productBundles.$inferSelect;
+export type InsertProductBundle = z.infer<typeof insertProductBundleSchema>;
+export type BundleItem = typeof bundleItems.$inferSelect;
+export type InsertBundleItem = z.infer<typeof insertBundleItemSchema>;
+export type Service = typeof services.$inferSelect;
+export type InsertService = z.infer<typeof insertServiceSchema>;
 export type ImageLog = typeof imageLogs.$inferSelect;
 export type InsertImageLog = z.infer<typeof insertImageLogSchema>;
 export type DropdownSet = typeof dropdownSets.$inferSelect;

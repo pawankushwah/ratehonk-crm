@@ -18441,42 +18441,36 @@ async getDashboardMetrics(
 
   // --- Dynamic Form Builder & Product Module Operations ---
 
-  async getFrontendForms() {
-    return await sql`SELECT * FROM frontend_forms ORDER BY name ASC`;
-  }
-
-  async createFrontendForms(data: { name: string; formKey: string }) {
-    const [form] = await sql`
-      INSERT INTO frontend_forms (name, form_key, updated_at)
-      VALUES (${data.name}, ${data.formKey}, NOW())
-      RETURNING *`;
-    return form;
-  }
-
   async getFormTemplates(tenantId: number, resourceType?: string) {
     return await sql`
-      SELECT ft.*, ff.form_key as "formKey"
+      SELECT ft.*
       FROM form_templates ft
-      LEFT JOIN frontend_forms ff ON ft.mapped_to = ff.id
       WHERE ft.tenant_id = ${tenantId} 
       ORDER BY ft.name ASC
     `;
   }
   async getFormTemplatebyId(tenantId: number, id: number) {
     return await sql`
-      SELECT ft.*, ff.form_key as "formKey"
+      SELECT ft.*
       FROM form_templates ft
-      LEFT JOIN frontend_forms ff ON ft.mapped_to = ff.id
       WHERE ft.tenant_id = ${tenantId} AND ft.id = ${id}
+    `;
+  }
+
+  async getFormTemplateByKey(tenantId: number, formKey: string) {
+    return await sql`
+      SELECT ft.*
+      FROM form_templates ft
+      WHERE ft.tenant_id = ${tenantId} AND ft.form_key = ${formKey}
     `;
   }
 
   async createFormTemplate(data: any) {
     const [template] = await sql`
-      INSERT INTO form_templates (name, schema, design, user_id, tenant_id, mapped_to, updated_at)
-      VALUES (${data.name}, ${JSON.stringify(data.schema)}::jsonb, 
+      INSERT INTO form_templates (name, form_key, schema, design, user_id, tenant_id, updated_at)
+      VALUES (${data.name}, ${data.formKey}, ${JSON.stringify(data.schema)}::jsonb, 
               ${data.design ? JSON.stringify(data.design) : null}::jsonb, ${data.userId}, ${data.tenantId}, 
-              ${data.mappedTo}, NOW())
+              NOW())
       RETURNING *`;
     return template;
   }
@@ -18485,9 +18479,9 @@ async getDashboardMetrics(
     const [template] = await sql`
       UPDATE form_templates SET
         name = COALESCE(${data.name}, name),
+        form_key = COALESCE(${data.formKey}, form_key),
         schema = COALESCE(${data.schema ? JSON.stringify(data.schema) : null}::jsonb, schema),
         design = COALESCE(${data.design ? JSON.stringify(data.design) : null}::jsonb, design),
-        mapped_to = COALESCE(${data.mappedTo}, mapped_to),
         updated_at = NOW()
       WHERE id = ${id} AND tenant_id = ${tenantId}
       RETURNING *`;
@@ -18495,20 +18489,212 @@ async getDashboardMetrics(
   }
 
   async deleteFormTemplate(id: number, tenantId: number) {
-    await sql`DELETE FROM form_templates WHERE id = ${id} AND tenant_id = ${tenantId}`;
+    await sql`UPDATE form_templates SET deleted_at = NOW() WHERE id = ${id} AND tenant_id = ${tenantId}`;
   }
 
   async submitDynamicData(data: any) {
-    const [entry] = await sql`
-      INSERT INTO dynamic_data (template_id, tenant_id, user_id, data, updated_at)
-      VALUES (${data.templateId}, ${data.tenantId}, ${data.userId || null}, 
-              ${JSON.stringify(data.data)}::jsonb, NOW())
-      RETURNING *`;
-    return entry;
+    return await db.transaction(async (tx) => {
+      // Define mapping for static fields to columns
+      const fieldIdToColumn: Record<string, string> = {
+        // Inventory base
+        '1774592301953': 'sku',
+        '1774642468861': 'category',
+        '1774624701189': 'name',
+        '1774593958616': 'taxInclusion',
+        '1774594002449': 'salesTax',
+        '1774594031376': 'purchaseDescription',
+        '1774594098959': 'purchaseInclusion',
+        '1774594130965': 'purchaseTax',
+        '1774593482378': 'incomeAccount',
+        // Non-inventory
+        '1775280289375': 'image',
+        '1775120319964': 'name',
+        '1775120336580': 'sku',
+        '1775120364912': 'category',
+        '1775120403456': 'purchaseCost',
+        '1775120423797': 'salesPrice',
+        '1775120477038': 'description',
+        // Bundle
+        '1775120995358': 'name',
+        '1775121015947': 'sku',
+        '1775121037419': 'description',
+        '1775280254128': 'image',
+        // Service
+        '1775120577200': 'name',
+        '1775120594060': 'sku',
+        '1775120616150': 'billingType',
+        '1775120714619': 'rate',
+        '1775120742746': 'description',
+        '1775280310136': 'image',
+      };
+
+      const variantFieldIdToColumn: Record<string, string> = {
+        '1774607666147': 'image',
+        '1774592416416': 'initialQuantity',
+        '1774592484746': 'asOfDate',
+        '1774593290735': 'reorderPoint',
+        '1774593307729': 'cost',
+        '1774593326852': 'expenseAccount',
+        '1774593363843': 'modelNumber',
+        '1774593375945': 'size',
+        '1774593452328': 'salesPrice',
+        '1775625486949': 'color',
+      };
+
+      // Extract static fields from data
+      const extractedStatic: Record<string, any> = {};
+      const actualDynamicData: Record<string, any> = {};
+
+      for (const [key, value] of Object.entries(data.data || {})) {
+        if (fieldIdToColumn[key]) {
+          extractedStatic[fieldIdToColumn[key]] = value;
+        } else if (key !== 'variants' && key !== 'bundleItems') {
+          actualDynamicData[key] = value;
+        }
+      }
+
+      // 1. Insert into dynamic_data
+      const [entry] = await sql`
+        INSERT INTO dynamic_data (template_id, tenant_id, user_id, data, updated_at)
+        VALUES (${data.templateId}, ${data.tenantId}, ${data.userId || null}, 
+                ${JSON.stringify(actualDynamicData)}::jsonb, NOW())
+        RETURNING *`;
+
+      const dynamicDataId = entry.id;
+      const tenantId = data.tenantId;
+
+      // 2. Insert into specialized tables based on formKey
+      let formKey = null;
+      if (isNaN(Number(data.templateId))) {
+        formKey = data.templateId;
+      } else {
+        const [templateRes] = await sql`SELECT form_key FROM form_templates WHERE id = ${data.templateId}`;
+        formKey = templateRes?.form_key;
+      }
+
+      if (formKey === 'inventory') {
+        const [inv] = await sql`
+          INSERT INTO inventory (
+            tenant_id, dynamic_data_id, updated_at, 
+            name, sku, category,
+            tax_inclusion, sales_tax, purchase_description,
+            purchase_inclusion, purchase_tax, income_account
+          )
+          VALUES (
+            ${tenantId}, ${dynamicDataId}, NOW(), 
+            ${extractedStatic.name || null}, ${extractedStatic.sku || null}, ${extractedStatic.category || null},
+            ${extractedStatic.taxInclusion === true || (Array.isArray(extractedStatic.taxInclusion) && extractedStatic.taxInclusion.length > 0)},
+            ${extractedStatic.salesTax || null},
+            ${extractedStatic.purchaseDescription || null},
+            ${extractedStatic.purchaseInclusion === true || (Array.isArray(extractedStatic.purchaseInclusion) && extractedStatic.purchaseInclusion.length > 0)},
+            ${extractedStatic.purchaseTax || null},
+            ${extractedStatic.incomeAccount || null}
+          )
+          RETURNING id`;
+        
+        if (data.data.variants && Array.isArray(data.data.variants)) {
+          for (const variant of data.data.variants) {
+            const variantData = variant.properties || {};
+            const extractedVariant: Record<string, any> = {};
+            const actualVariantDynamic: Record<string, any> = {};
+
+            for (const [vKey, vVal] of Object.entries(variantData)) {
+              if (variantFieldIdToColumn[vKey]) {
+                extractedVariant[variantFieldIdToColumn[vKey]] = vVal;
+              } else {
+                actualVariantDynamic[vKey] = vVal;
+              }
+            }
+
+            const [stk] = await sql`
+              INSERT INTO stocks (tenant_id, quantity, updated_at)
+              VALUES (${tenantId}, ${extractedVariant.initialQuantity || 0}, NOW())
+              RETURNING id`;
+            
+            await sql`
+              INSERT INTO inventory_variants (
+                inventory_id, stock_id, tenant_id, updated_at,
+                image, initial_quantity, as_of_date, reorder_point, cost, 
+                expense_account, model_number, size, sales_price, color, data
+              )
+              VALUES (
+                ${inv.id}, ${stk.id}, ${tenantId}, NOW(),
+                ${extractedVariant.image || null}, ${extractedVariant.initialQuantity || null}, 
+                ${extractedVariant.asOfDate ? new Date(extractedVariant.asOfDate) : null}, 
+                ${extractedVariant.reorderPoint || null}, ${extractedVariant.cost || null},
+                ${extractedVariant.expenseAccount || null}, ${extractedVariant.modelNumber || null},
+                ${extractedVariant.size || null}, ${extractedVariant.salesPrice || null},
+                ${extractedVariant.color || null}, ${JSON.stringify(actualVariantDynamic)}::jsonb
+              )`;
+          }
+        }
+      } else if (formKey === 'non-inventory') {
+        const [stk] = await sql`
+          INSERT INTO stocks (tenant_id, quantity, updated_at)
+          VALUES (${tenantId}, ${extractedStatic.purchaseCost || 0}, NOW())
+          RETURNING id`;
+        
+        await sql`
+          INSERT INTO non_inventory (
+            tenant_id, dynamic_data_id, stock_id, updated_at,
+            name, sku, category, image, purchase_cost, sales_price, description
+          )
+          VALUES (
+            ${tenantId}, ${dynamicDataId}, ${stk.id}, NOW(),
+            ${extractedStatic.name || null}, ${extractedStatic.sku || null}, ${extractedStatic.category || null},
+            ${extractedStatic.image || null}, ${extractedStatic.purchaseCost || null},
+            ${extractedStatic.salesPrice || null}, ${extractedStatic.description || null}
+          )`;
+      } else if (formKey === 'bundle') {
+        const [stk] = await sql`
+          INSERT INTO stocks (tenant_id, quantity, updated_at)
+          VALUES (${tenantId}, 0, NOW())
+          RETURNING id`;
+        
+        const [bundle] = await sql`
+          INSERT INTO product_bundles (
+            tenant_id, dynamic_data_id, stock_id, updated_at,
+            name, sku, description, image
+          )
+          VALUES (
+            ${tenantId}, ${dynamicDataId}, ${stk.id}, NOW(),
+            ${extractedStatic.name || null}, ${extractedStatic.sku || null}, 
+            ${extractedStatic.description || null}, ${extractedStatic.image || null}
+          )
+          RETURNING id`;
+
+        if (data.data.bundleItems && Array.isArray(data.data.bundleItems)) {
+          for (const item of data.data.bundleItems) {
+            await sql`
+              INSERT INTO bundle_items (bundle_id, tenant_id, target_dynamic_data_id, quantity, updated_at)
+              VALUES (${bundle.id}, ${tenantId}, ${item.targetId}, ${item.quantity || 1}, NOW())`;
+          }
+        }
+      } else if (formKey === 'service') {
+        const [stk] = await sql`
+          INSERT INTO stocks (tenant_id, quantity, updated_at)
+          VALUES (${tenantId}, 0, NOW())
+          RETURNING id`;
+        
+        await sql`
+          INSERT INTO services (
+            tenant_id, dynamic_data_id, stock_id, updated_at,
+            name, sku, billing_type, rate, description, image
+          )
+          VALUES (
+            ${tenantId}, ${dynamicDataId}, ${stk.id}, NOW(),
+            ${extractedStatic.name || null}, ${extractedStatic.sku || null},
+            ${extractedStatic.billingType || null}, ${extractedStatic.rate || null},
+            ${extractedStatic.description || null}, ${extractedStatic.image || null}
+          )`;
+      }
+
+      return entry;
+    });
   }
 
-  async getDynamicDataEntries(tenantId: number, filters: any) {
-    let whereClause = sql`dd.tenant_id = ${tenantId}`;
+  async getDynamicDataEntries(tenantId: number, filters: any) {  
+    let whereClause = sql`dd.tenant_id = ${tenantId} AND dd.deleted_at IS NULL`;
 
     if (filters.templateId) {
       whereClause = sql`${whereClause} AND dd.template_id = ${filters.templateId}`;
@@ -18516,7 +18702,12 @@ async getDashboardMetrics(
     
     if (filters.search) {
       const searchTerm = `%${filters.search.toLowerCase()}%`;
-      whereClause = sql`${whereClause} AND LOWER(dd.data::text) LIKE ${searchTerm}`;
+      whereClause = sql`${whereClause} AND (LOWER(dd.data::text) LIKE ${searchTerm}
+        OR LOWER(inv.name) LIKE ${searchTerm} OR LOWER(inv.sku) LIKE ${searchTerm}
+        OR LOWER(ninv.name) LIKE ${searchTerm} OR LOWER(ninv.sku) LIKE ${searchTerm}
+        OR LOWER(pb.name) LIKE ${searchTerm} OR LOWER(pb.sku) LIKE ${searchTerm}
+        OR LOWER(srv.name) LIKE ${searchTerm} OR LOWER(srv.sku) LIKE ${searchTerm}
+      )`;
     }
 
     if (filters.jsonFilters) {
@@ -18532,21 +18723,75 @@ async getDashboardMetrics(
     const offset = filters.offset ? parseInt(filters.offset) : 0;
 
     const query = sql`
-      SELECT dd.*, ft.name as template_name, ft.schema as template_schema, ft.design as template_design, ft.mapping as template_mapping
+      SELECT dd.*, ft.name as template_name, ft.schema as template_schema, ft.design as template_design, ft.mapping as template_mapping, ft.form_key,
+        inv.name as inv_name, inv.sku as inv_sku, inv.category as inv_category,
+        inv.tax_inclusion as inv_tax_inclusion, inv.sales_tax as inv_sales_tax, inv.purchase_description as inv_purchase_description,
+        inv.purchase_inclusion as inv_purchase_inclusion, inv.purchase_tax as inv_purchase_tax, inv.income_account as inv_income_account,
+        ninv.name as ninv_name, ninv.sku as ninv_sku, ninv.category as ninv_category, ninv.image as ninv_image, ninv.purchase_cost as ninv_purchase_cost, ninv.sales_price as ninv_sales_price, ninv.description as ninv_description,
+        pb.name as pb_name, pb.sku as pb_sku, pb.description as pb_description, pb.image as pb_image,
+        srv.name as srv_name, srv.sku as srv_sku, srv.billing_type as srv_billing_type, srv.rate as srv_rate, srv.description as srv_description, srv.image as srv_image
       FROM dynamic_data dd
       JOIN form_templates ft ON dd.template_id = ft.id
+      LEFT JOIN inventory inv ON dd.id = inv.dynamic_data_id
+      LEFT JOIN non_inventory ninv ON dd.id = ninv.dynamic_data_id
+      LEFT JOIN product_bundles pb ON dd.id = pb.dynamic_data_id
+      LEFT JOIN services srv ON dd.id = srv.dynamic_data_id
       WHERE ${whereClause}
       ORDER BY dd.created_at DESC 
       LIMIT ${limit} OFFSET ${offset}
     `;
     
-    const results = await sql`${query}`;
+    const rawResults = await sql`${query}`;
+
+    // Merge static columns back into data for each entry
+    const results = rawResults.map(entry => {
+      const data = entry.data || {};
+      const formKey = entry.form_key;
+
+      if (formKey === 'inventory') {
+        if (entry.inv_name) data['1774624701189'] = entry.inv_name;
+        if (entry.inv_sku) data['1774592301953'] = entry.inv_sku;
+        if (entry.inv_category) data['1774642468861'] = entry.inv_category;
+        if (entry.inv_sales_tax) data['1774594002449'] = entry.inv_sales_tax;
+        if (entry.inv_purchase_description) data['1774594031376'] = entry.inv_purchase_description;
+        if (entry.inv_purchase_tax) data['1774594130965'] = entry.inv_purchase_tax;
+        if (entry.inv_income_account) data['1774593482378'] = entry.inv_income_account;
+        if (entry.inv_tax_inclusion) data['1774593958616'] = ["Inclusive of sales tax"];
+        if (entry.inv_purchase_inclusion) data['1774594098959'] = ["Inclusive of purchase tax"];
+      } else if (formKey === 'non-inventory') {
+        if (entry.ninv_name) data['1775120319964'] = entry.ninv_name;
+        if (entry.ninv_sku) data['1775120336580'] = entry.ninv_sku;
+        if (entry.ninv_category) data['1775120364912'] = entry.ninv_category;
+        if (entry.ninv_image) data['1775280289375'] = entry.ninv_image;
+        if (entry.ninv_purchase_cost) data['1775120403456'] = entry.ninv_purchase_cost;
+        if (entry.ninv_sales_price) data['1775120423797'] = entry.ninv_sales_price;
+        if (entry.ninv_description) data['1775120477038'] = entry.ninv_description;
+      } else if (formKey === 'bundle') {
+        if (entry.pb_name) data['1775120995358'] = entry.pb_name;
+        if (entry.pb_sku) data['1775121015947'] = entry.pb_sku;
+        if (entry.pb_description) data['1775121037419'] = entry.pb_description;
+        if (entry.pb_image) data['1775280254128'] = entry.pb_image;
+      } else if (formKey === 'service') {
+        if (entry.srv_name) data['1775120577200'] = entry.srv_name;
+        if (entry.srv_sku) data['1775120594060'] = entry.srv_sku;
+        if (entry.srv_billing_type) data['1775120616150'] = entry.srv_billing_type;
+        if (entry.srv_rate) data['1775120714619'] = entry.srv_rate;
+        if (entry.srv_description) data['1775120742746'] = entry.srv_description;
+        if (entry.srv_image) data['1775280310136'] = entry.srv_image;
+      }
+
+      return { ...entry, data };
+    });
     
     // Get total count for pagination
     const countResult = await sql`
       SELECT COUNT(*) as total
       FROM dynamic_data dd
       JOIN form_templates ft ON dd.template_id = ft.id
+      LEFT JOIN inventory inv ON dd.id = inv.dynamic_data_id
+      LEFT JOIN non_inventory ninv ON dd.id = ninv.dynamic_data_id
+      LEFT JOIN product_bundles pb ON dd.id = pb.dynamic_data_id
+      LEFT JOIN services srv ON dd.id = srv.dynamic_data_id
       WHERE ${whereClause}
     `;
 
@@ -18557,17 +18802,198 @@ async getDashboardMetrics(
   }
 
   async updateDynamicData(id: number, tenantId: number, data: any) {
-    const [entry] = await sql`
-      UPDATE dynamic_data SET
-        data = ${JSON.stringify(data)}::jsonb,
-        updated_at = NOW()
-      WHERE id = ${id} AND tenant_id = ${tenantId}
-      RETURNING *`;
-    return entry;
+    return await db.transaction(async (tx) => {
+      // Get necessary info first
+      const [entryWithKey] = await sql`
+        SELECT dd.*, ft.form_key 
+        FROM dynamic_data dd
+        JOIN form_templates ft ON dd.template_id = ft.id
+        WHERE dd.id = ${id} AND dd.tenant_id = ${tenantId}
+      `;
+      
+      if (!entryWithKey) return null;
+      const formKey = entryWithKey.form_key;
+
+      // Define mapping for static fields to columns (same as submission)
+      const fieldIdToColumn: Record<string, string> = {
+        '1774592301953': 'sku', '1774642468861': 'category', '1774624701189': 'name',
+        '1774593958616': 'taxInclusion', '1774594002449': 'salesTax', '1774594031376': 'purchaseDescription',
+        '1774594098959': 'purchaseInclusion', '1774594130965': 'purchaseTax', '1774593482378': 'incomeAccount',
+        '1775280289375': 'image', '1775120319964': 'name', '1775120336580': 'sku',
+        '1775120364912': 'category', '1775120403456': 'purchaseCost', '1775120423797': 'salesPrice',
+        '1775120477038': 'description', '1775120995358': 'name', '1775121015947': 'sku',
+        '1775121037419': 'description', '1775280254128': 'image', '1775120577200': 'name',
+        '1775120594060': 'sku', '1775120616150': 'billingType', '1775120714619': 'rate',
+        '1775120742746': 'description', '1775280310136': 'image',
+      };
+
+      const variantFieldIdToColumn: Record<string, string> = {
+        '1774607666147': 'image', '1774592416416': 'initialQuantity', '1774592484746': 'asOfDate',
+        '1774593290735': 'reorderPoint', '1774593307729': 'cost', '1774593326852': 'expenseAccount',
+        '1774593363843': 'modelNumber', '1774593375945': 'size', '1774593452328': 'salesPrice',
+        '1775625486949': 'color',
+      };
+
+      const extractedStatic: Record<string, any> = {};
+      const actualDynamicData: Record<string, any> = {};
+
+      for (const [key, value] of Object.entries(data || {})) {
+        if (fieldIdToColumn[key]) {
+          extractedStatic[fieldIdToColumn[key]] = value;
+        } else if (key !== 'variants' && key !== 'bundleItems') {
+          actualDynamicData[key] = value;
+        }
+      }
+
+      // Update specialized columns based on formKey
+      if (formKey === 'inventory') {
+        await sql`
+          UPDATE inventory SET
+            name = ${extractedStatic.name || null},
+            sku = ${extractedStatic.sku || null},
+            category = ${extractedStatic.category || null},
+            tax_inclusion = ${extractedStatic.taxInclusion === true || (Array.isArray(extractedStatic.taxInclusion) && extractedStatic.taxInclusion.length > 0)},
+            sales_tax = ${extractedStatic.salesTax || null},
+            purchase_description = ${extractedStatic.purchaseDescription || null},
+            purchase_inclusion = ${extractedStatic.purchaseInclusion === true || (Array.isArray(extractedStatic.purchaseInclusion) && extractedStatic.purchaseInclusion.length > 0)},
+            purchase_tax = ${extractedStatic.purchaseTax || null},
+            income_account = ${extractedStatic.incomeAccount || null},
+            updated_at = NOW()
+          WHERE dynamic_data_id = ${id}`;
+        
+        // Handling variants update: Re-insert approach (Simplest for complex repeatable)
+        if (data.variants && Array.isArray(data.variants)) {
+          const [inv] = await sql`SELECT id FROM inventory WHERE dynamic_data_id = ${id}`;
+          if (inv) {
+            // Soft delete old variants/stocks or hard delete depending on policy. 
+            // For now, let's keep it simple and just re-insert. 
+            // Better would be diffing, but user wants to "check if we can save simply".
+            await sql`DELETE FROM inventory_variants WHERE inventory_id = ${inv.id}`;
+            
+            for (const variant of data.variants) {
+              const variantData = variant.properties || {};
+              const extractedVariant: Record<string, any> = {};
+              const actualVariantDynamic: Record<string, any> = {};
+
+              for (const [vKey, vVal] of Object.entries(variantData)) {
+                if (variantFieldIdToColumn[vKey]) {
+                  extractedVariant[variantFieldIdToColumn[vKey]] = vVal;
+                } else {
+                  actualVariantDynamic[vKey] = vVal;
+                }
+              }
+
+              const [stk] = await sql`
+                INSERT INTO stocks (tenant_id, quantity, updated_at)
+                VALUES (${tenantId}, ${extractedVariant.initialQuantity || 0}, NOW())
+                RETURNING id`;
+              
+              await sql`
+                INSERT INTO inventory_variants (
+                  inventory_id, stock_id, tenant_id, updated_at,
+                  image, initial_quantity, as_of_date, reorder_point, cost, 
+                  expense_account, model_number, size, sales_price, color, data
+                )
+                VALUES (
+                  ${inv.id}, ${stk.id}, ${tenantId}, NOW(),
+                  ${extractedVariant.image || null}, ${extractedVariant.initialQuantity || null}, 
+                  ${extractedVariant.asOfDate ? new Date(extractedVariant.asOfDate) : null}, 
+                  ${extractedVariant.reorderPoint || null}, ${extractedVariant.cost || null},
+                  ${extractedVariant.expenseAccount || null}, ${extractedVariant.modelNumber || null},
+                  ${extractedVariant.size || null}, ${extractedVariant.salesPrice || null},
+                  ${extractedVariant.color || null}, ${JSON.stringify(actualVariantDynamic)}::jsonb
+                )`;
+            }
+          }
+        }
+      } else if (formKey === 'non-inventory') {
+        await sql`
+          UPDATE non_inventory SET
+            name = ${extractedStatic.name || null},
+            sku = ${extractedStatic.sku || null},
+            category = ${extractedStatic.category || null},
+            image = ${extractedStatic.image || null},
+            purchase_cost = ${extractedStatic.purchaseCost || null},
+            sales_price = ${extractedStatic.salesPrice || null},
+            description = ${extractedStatic.description || null},
+            updated_at = NOW()
+          WHERE dynamic_data_id = ${id}`;
+      } else if (formKey === 'bundle') {
+        const [bundle] = await sql`
+          UPDATE product_bundles SET
+            name = ${extractedStatic.name || null},
+            sku = ${extractedStatic.sku || null},
+            description = ${extractedStatic.description || null},
+            image = ${extractedStatic.image || null},
+            updated_at = NOW()
+          WHERE dynamic_data_id = ${id}
+          RETURNING id`;
+
+        if (bundle && data.bundleItems && Array.isArray(data.bundleItems)) {
+          await sql`DELETE FROM bundle_items WHERE bundle_id = ${bundle.id}`;
+          for (const item of data.bundleItems) {
+            await sql`
+              INSERT INTO bundle_items (bundle_id, tenant_id, target_dynamic_data_id, quantity, updated_at)
+              VALUES (${bundle.id}, ${tenantId}, ${item.targetId}, ${item.quantity || 1}, NOW())`;
+          }
+        }
+      } else if (formKey === 'service') {
+        await sql`
+          UPDATE services SET
+            name = ${extractedStatic.name || null},
+            sku = ${extractedStatic.sku || null},
+            billing_type = ${extractedStatic.billingType || null},
+            rate = ${extractedStatic.rate || null},
+            description = ${extractedStatic.description || null},
+            image = ${extractedStatic.image || null},
+            updated_at = NOW()
+          WHERE dynamic_data_id = ${id}`;
+      }
+
+      // Update dynamic_data core
+      const [entry] = await sql`
+        UPDATE dynamic_data SET
+          data = ${JSON.stringify(actualDynamicData)}::jsonb,
+          updated_at = NOW()
+        WHERE id = ${id} AND tenant_id = ${tenantId}
+        RETURNING *`;
+      return entry;
+    });
   }
 
   async deleteDynamicData(id: number, tenantId: number) {
-    await sql`DELETE FROM dynamic_data WHERE id = ${id} AND tenant_id = ${tenantId}`;
+    return await db.transaction(async (tx) => {
+      // Soft delete dynamic_data
+      await sql`UPDATE dynamic_data SET deleted_at = NOW() WHERE id = ${id} AND tenant_id = ${tenantId}`;
+
+      // Soft delete related stocks and specialized records (Cascading soft delete logic)
+      
+      // Since we don't have a direct link in all directions, we might need more queries.
+      // But based on the schema, specialized tables have dynamicDataId.
+      
+      // Update stocks related to this dynamicDataId (via specialized tables)
+      await sql`
+        UPDATE stocks SET deleted_at = NOW() 
+        WHERE id IN (
+          SELECT stock_id FROM non_inventory WHERE dynamic_data_id = ${id}
+          UNION
+          SELECT stock_id FROM product_bundles WHERE dynamic_data_id = ${id}
+          UNION
+          SELECT stock_id FROM services WHERE dynamic_data_id = ${id}
+          UNION
+          SELECT stock_id FROM inventory_variants iv 
+          JOIN inventory i ON iv.inventory_id = i.id 
+          WHERE i.dynamic_data_id = ${id}
+        )`;
+
+      // Soft delete specialized records
+      await sql`UPDATE inventory SET deleted_at = NOW() WHERE dynamic_data_id = ${id}`;
+      await sql`UPDATE non_inventory SET deleted_at = NOW() WHERE dynamic_data_id = ${id}`;
+      await sql`UPDATE product_bundles SET deleted_at = NOW() WHERE dynamic_data_id = ${id}`;
+      await sql`UPDATE services SET deleted_at = NOW() WHERE dynamic_data_id = ${id}`;
+      
+      return true;
+    });
   }
 
   async updateProductStock(tenantId: number, productId: number, quantityDelta: number) {
@@ -18701,11 +19127,94 @@ async getDashboardMetrics(
 
   async getDynamicData(id: number, tenantId: number) {
     const [entry] = await sql`
-      SELECT dd.*, ft.name as template_name, ft.schema as template_schema, ft.design as template_design, ft.mapping as template_mapping
+      SELECT dd.*, ft.name as template_name, ft.schema as template_schema, ft.design as template_design, ft.mapping as template_mapping, ft.form_key
       FROM dynamic_data dd
       JOIN form_templates ft ON dd.template_id = ft.id
       WHERE dd.id = ${id} AND dd.tenant_id = ${tenantId}`;
-    return entry;
+    
+    if (!entry) return null;
+
+    const formKey = entry.form_key;
+    const data = entry.data || {};
+
+    // Merge static columns back into data for frontend compatibility
+    if (formKey === 'inventory') {
+      const [inv] = await sql`SELECT * FROM inventory WHERE dynamic_data_id = ${id}`;
+      if (inv) {
+        if (inv.name) data['1774624701189'] = inv.name;
+        if (inv.sku) data['1774592301953'] = inv.sku;
+        if (inv.category) data['1774642468861'] = inv.category;
+        if (inv.sales_tax) data['1774594002449'] = inv.sales_tax;
+        if (inv.purchase_description) data['1774594031376'] = inv.purchase_description;
+        if (inv.purchase_tax) data['1774594130965'] = inv.purchase_tax;
+        if (inv.income_account) data['1774593482378'] = inv.income_account;
+        
+        // Handle checkboxes (stored as bool in column, expected as string[] or bool in UI)
+        if (inv.tax_inclusion) data['1774593958616'] = ["Inclusive of sales tax"];
+        if (inv.purchase_inclusion) data['1774594098959'] = ["Inclusive of purchase tax"];
+
+        // Merge variants
+        const variants = await sql`SELECT * FROM inventory_variants WHERE inventory_id = ${inv.id}`;
+        if (variants.length > 0) {
+          data['variants'] = variants.map(v => ({
+            id: v.id,
+            properties: {
+              ...(v.data || {}),
+              '1774607666147': v.image,
+              '1774592416416': v.initial_quantity,
+              '1774592484746': v.as_of_date,
+              '1774593290735': v.reorder_point,
+              '1774593307729': v.cost,
+              '1774593326852': v.expense_account,
+              '1774593363843': v.model_number,
+              '1774593375945': v.size,
+              '1774593452328': v.sales_price,
+              '1775625486949': v.color
+            }
+          }));
+        }
+      }
+    } else if (formKey === 'non-inventory') {
+      const [ninv] = await sql`SELECT * FROM non_inventory WHERE dynamic_data_id = ${id}`;
+      if (ninv) {
+        if (ninv.name) data['1775120319964'] = ninv.name;
+        if (ninv.sku) data['1775120336580'] = ninv.sku;
+        if (ninv.category) data['1775120364912'] = ninv.category;
+        if (ninv.image) data['1775280289375'] = ninv.image;
+        if (ninv.purchase_cost) data['1775120403456'] = ninv.purchase_cost;
+        if (ninv.sales_price) data['1775120423797'] = ninv.sales_price;
+        if (ninv.description) data['1775120477038'] = ninv.description;
+      }
+    } else if (formKey === 'bundle') {
+      const [bundle] = await sql`SELECT * FROM product_bundles WHERE dynamic_data_id = ${id}`;
+      if (bundle) {
+        if (bundle.name) data['1775120995358'] = bundle.name;
+        if (bundle.sku) data['1775121015947'] = bundle.sku;
+        if (bundle.description) data['1775121037419'] = bundle.description;
+        if (bundle.image) data['1775280254128'] = bundle.image;
+
+        // Merge bundle items
+        const items = await sql`SELECT * FROM bundle_items WHERE bundle_id = ${bundle.id}`;
+        if (items.length > 0) {
+          data['bundleItems'] = items.map(it => ({
+            targetId: it.target_dynamic_data_id,
+            quantity: it.quantity
+          }));
+        }
+      }
+    } else if (formKey === 'service') {
+      const [service] = await sql`SELECT * FROM services WHERE dynamic_data_id = ${id}`;
+      if (service) {
+        if (service.name) data['1775120577200'] = service.name;
+        if (service.sku) data['1775120594060'] = service.sku;
+        if (service.billing_type) data['1775120616150'] = service.billing_type;
+        if (service.rate) data['1775120714619'] = service.rate;
+        if (service.description) data['1775120742746'] = service.description;
+        if (service.image) data['1775280310136'] = service.image;
+      }
+    }
+
+    return { ...entry, data };
   }
 
   async createImageLog(data: { tenantId: number; url: string; filename?: string; data?: string; originalData?: string; mimeType?: string }) {

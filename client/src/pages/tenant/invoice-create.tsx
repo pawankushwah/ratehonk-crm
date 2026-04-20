@@ -120,6 +120,8 @@ export default function InvoiceCreate() {
       additionalCommissionPercentage: "",
       additionalCommission: "",
       productId: "",
+      variantId: "",
+      availableVariants: [] as any[],
       totalAmount: 0,
     },
   ]);
@@ -1538,73 +1540,160 @@ export default function InvoiceCreate() {
     } as typeof item;
   };
 
-  const getProductDetail = (product: any, detailKey: 'title' | 'price' | 'purchasePrice' | 'category') => {
-      const data = product.data || {};
-      const viewMapping = product.template_design?.viewMapping || {};
+  const getProductDetail = (product: any, detailKey: 'title' | 'price' | 'purchasePrice' | 'category', variantId?: string) => {
+    const data = product.data || {};
+    const templateDesign = product.template_design || product.FormTemplate?.template_design || {};
+    const viewMapping = templateDesign.viewMapping || {};
+    const schemaItems = product.FormTemplate?.form_schema?.items || product.template_schema?.items || product.template_schema || [];
+    
+    // If a variant is selected, we should prioritize looking into that variant's data
+    let variantData = null;
+    if (variantId) {
+      // Find the variants section ID and Name
+      let variantsSectionIdAndName = { id: viewMapping.variantsSection as string, name: '' };
       
-      let fieldId;
-      if (detailKey === 'title') fieldId = viewMapping.title;
-      if (detailKey === 'price') fieldId = viewMapping.price;
-      
-      if (fieldId && data[fieldId] !== undefined && data[fieldId] !== "") {
-        const val = data[fieldId];
-        if (Array.isArray(val)) return val[0];
-        return val;
-      }
-  
-      // Fallback: search schema recursively
-      const schemaItems = product.FormTemplate?.form_schema?.items || product.template_schema?.items || product.template_schema || [];
-      let foundId = '';
-  
-      const searchSchema = (items: any[]) => {
-        for (const item of items) {
-          const labelSafe = (item.label || item.name || '').toLowerCase();
-          
-          if (detailKey === 'title') {
-             if (labelSafe.includes('name') || labelSafe.includes('title')) {
-               foundId = item.id;
-               return;
-             }
-          } else if (detailKey === 'price') {
-             if (labelSafe.includes('sales price') || labelSafe.includes('selling') || labelSafe.includes('service rate') || labelSafe === 'price' || labelSafe === 'rate') {
-               foundId = item.id;
-               return;
-             }
-          } else if (detailKey === 'purchasePrice') {
-             if (labelSafe.includes('purchase cost') || labelSafe.includes('purchase price') || labelSafe === 'cost') {
-               foundId = item.id;
-               return;
-             }
-          } else if (detailKey === 'category') {
-             if (labelSafe.includes('category') || labelSafe.includes('type')) {
-               foundId = item.id;
-               return;
-             }
-          }
-          
-          if (item.items) searchSchema(item.items);
-          if (item.fields) searchSchema(item.fields);
-        }
-      };
-      if (Array.isArray(schemaItems)) searchSchema(schemaItems);
-  
-      if (foundId && data[foundId] !== undefined && data[foundId] !== "") {
-        const val = data[foundId];
-        if (Array.isArray(val)) {
-          return typeof val[0] === 'object' ? (val[0].label || val[0].value) : val[0];
-        }
-        return typeof val === 'object' ? (val.label || val.value) : val;
+      if (!variantsSectionIdAndName.id) {
+         // Try to find it in schema
+         const findVariantsGroup = (items: any[]): {id: string, name: string} | null => {
+           for (const item of items) {
+             const isVariantItem = (item.kind === 'group' || item.kind === 'section') && 
+                                  (item.isRepeatable || item.repeatable || 
+                                   item.label?.toLowerCase().includes('variant') || 
+                                   item.name?.toLowerCase().includes('variant'));
+             if (isVariantItem) return { id: item.id, name: item.name };
+             if (item.items) { const res = findVariantsGroup(item.items); if (res) return res; }
+           }
+           return null;
+         };
+         const found = findVariantsGroup(schemaItems);
+         if (found) variantsSectionIdAndName = found;
+      } else {
+        // Find name if we only have ID
+        const findName = (items: any[]): string => {
+           for (const item of items) {
+             if (item.id === variantsSectionIdAndName.id) return item.name || '';
+             if (item.items) { const res = findName(item.items); if (res) return res; }
+           }
+           return '';
+        };
+        variantsSectionIdAndName.name = findName(schemaItems);
       }
       
-      // Final fallback
-      if (detailKey === 'title') return data.name || data.productName || data.title || "Unnamed Product";
-      if (detailKey === 'price') return data.price || data.sellingPrice || data.serviceRate || data.salesPrice || "0";
-      if (detailKey === 'purchasePrice') return data.purchasePrice || data.purchaseCost || data.cost || "0";
-      if (detailKey === 'category') return data.category || data.type || "Unknown";
-  
-      return null;
+      const vSectionData = data[variantsSectionIdAndName.id] || (variantsSectionIdAndName.name ? data[variantsSectionIdAndName.name] : null);
+      if (Array.isArray(vSectionData)) {
+        // Find variant by ID or label
+        variantData = vSectionData.find((v: any) => 
+          (v.id?.toString() === variantId) || 
+          (v.label === variantId) || 
+          (v.value === variantId) ||
+          (v.title === variantId) ||
+          (v.name === variantId)
+        );
+      }
+    }
+
+    const resolveValue = (fid: string, fname: string | undefined, source: any) => {
+      if (!source) return null;
+      let val = fid ? source[fid] : undefined;
+      if ((val === undefined || val === null || val === "") && fname) val = source[fname];
+      
+      if (val === undefined || val === null || val === "") return null;
+      if (Array.isArray(val)) {
+        return typeof val[0] === 'object' ? (val[0].label || val[0].value) : val[0];
+      }
+      return typeof val === 'object' ? (val.label || val.value) : val;
     };
- // Get products options
+
+    // 1. Try View Mapping
+    let fieldId = '';
+    let fieldName = '';
+    if (detailKey === 'title') fieldId = viewMapping.title;
+    if (detailKey === 'price') fieldId = viewMapping.price;
+    if (detailKey === 'purchasePrice') fieldId = viewMapping.purchasePrice;
+    if (detailKey === 'category') fieldId = viewMapping.category;
+
+    if (fieldId) {
+      // Find name for the mapped fieldId
+      const findName = (items: any[]): string => {
+         for (const item of items) {
+           if (item.id === fieldId) return item.name || '';
+           if (item.items) { const res = findName(item.items); if (res) return res; }
+         }
+         return '';
+      };
+      fieldName = findName(schemaItems);
+    }
+
+    // Check variant first if applicable
+    if (variantData && (fieldId || fieldName)) {
+      const vVal = resolveValue(fieldId, fieldName, variantData);
+      if (vVal !== null) return vVal;
+    }
+
+    // Check top level
+    if (fieldId || fieldName) {
+      const tVal = resolveValue(fieldId, fieldName, data);
+      if (tVal !== null) return tVal;
+    }
+
+    // 2. Schema-based fallback search
+    let foundId = '';
+    let foundName = '';
+
+    const searchSchema = (items: any[]) => {
+      for (const item of items) {
+        if (foundId) return;
+        const labelSafe = (item.label || item.name || '').toLowerCase();
+        
+        const isMatch = () => {
+          if (detailKey === 'title') return labelSafe.includes('name') || labelSafe.includes('title');
+          if (detailKey === 'price') return item.id === '1774593452328' || labelSafe.includes('sales price') || labelSafe.includes('selling') || labelSafe.includes('service rate') || labelSafe === 'price' || labelSafe === 'rate' || labelSafe.includes('amount') || labelSafe === 'sales';
+          if (detailKey === 'purchasePrice') return item.id === '1774593307729' || labelSafe.includes('purchase cost') || labelSafe.includes('purchase price') || labelSafe === 'cost' || labelSafe.includes('purchase rate') || labelSafe.includes('unit cost');
+          if (detailKey === 'category') return labelSafe.includes('category') || labelSafe === 'type' || labelSafe === 'billing type';
+          return false;
+        };
+
+        if (isMatch()) {
+           foundId = item.id;
+           foundName = item.name;
+           return;
+        }
+        
+        if (foundId) return;
+        if (item.items) searchSchema(item.items);
+        if (item.fields) searchSchema(item.fields);
+      }
+    };
+    searchSchema(schemaItems);
+
+    if (foundId || foundName) {
+      if (variantData) {
+        const vVal = resolveValue(foundId, foundName, variantData);
+        if (vVal !== null) return vVal;
+      }
+      const tVal = resolveValue(foundId, foundName, data);
+      if (tVal !== null) return tVal;
+    }
+      
+    // 3. Final Fallbacks (Check variantData specific keys first)
+    if (detailKey === 'title') {
+       return (variantData ? (variantData.title || variantData.label || variantData.name || variantData.color || variantData.size) : null) || 
+              data.name || data.productName || data.title || product.name || "Unnamed Product";
+    }
+    if (detailKey === 'price') {
+       return (variantData ? (variantData.salesPrice || variantData.sellingPrice || variantData.price || variantData.rate || variantData.amount || variantData["Sales Price"]) : null) || 
+              data.price || data.sellingPrice || data.serviceRate || data.salesPrice || data["Sales Price"] || "0";
+    }
+    if (detailKey === 'purchasePrice') {
+       return (variantData ? (variantData.purchasePrice || variantData.purchaseCost || variantData.cost || variantData.unitCost || variantData.Cost) : null) || 
+              data.purchasePrice || data.purchaseCost || data.cost || data.Cost || "0";
+    }
+    if (detailKey === 'category') return data.category || data.type || "Unknown";
+
+    return null;
+  };
+
+  // Get products options
   const getProducts = (): AutocompleteOption[] => {
     return products.map((product: any) => {
       const name = getProductDetail(product, 'title') || "Unnamed Product";
@@ -1623,22 +1712,21 @@ export default function InvoiceCreate() {
       };
     });
   };
+
   // Handle product selection
   const handleProductSelection = (productId: string, index: number) => {
     const selectedProduct = products.find((p: any) => p.id.toString() === productId);
     if (!selectedProduct) return;
 
-    const name = getProductDetail(selectedProduct, 'title') || "Unnamed Product";
-    const price = getProductDetail(selectedProduct, 'price') || "0";
-    const purchasePrice = getProductDetail(selectedProduct, 'purchasePrice') || "0";
-
     // Find variants field dynamically
-    let availableVariants = [];
+    let availableVariants = [] as any[];
     const schemaItems = selectedProduct.FormTemplate?.form_schema?.items || selectedProduct.template_schema?.items || selectedProduct.template_schema || [];
     let variantsFieldId = '';
     const traverse = (items: any[]) => {
       for (const item of items) {
-         if (item.kind === 'group' && (item.label?.toLowerCase().includes('variant') || item.name?.toLowerCase().includes('variant'))) {
+         const isVariantItem = (item.kind === 'group' || item.kind === 'section') && 
+                              (item.label?.toLowerCase().includes('variant') || item.name?.toLowerCase().includes('variant'));
+         if (isVariantItem) {
            variantsFieldId = item.id;
            break;
          }
@@ -1647,9 +1735,24 @@ export default function InvoiceCreate() {
       }
     };
     if (Array.isArray(schemaItems)) traverse(schemaItems);
+    
     if (variantsFieldId) {
-      availableVariants = selectedProduct.data?.[variantsFieldId] || [];
+      const variantsData = selectedProduct.data?.[variantsFieldId];
+      if (Array.isArray(variantsData)) {
+        availableVariants = variantsData.map((v: any, i: number) => {
+          // Detect label from variant data
+          const label = v.label || v.title || v.name || v.color || v.size || (v.options && Object.values(v.options).join(' ')) || `Variant ${i+1}`;
+          const value = v.id?.toString() || v.value || label;
+          return { ...v, label, value };
+        });
+      }
     }
+
+    const name = getProductDetail(selectedProduct, 'title') || "Unnamed Product";
+    // If variants exist, we'll wait for variant selection to pick price, or pick the first one
+    const initialVariantId = availableVariants.length > 0 ? availableVariants[0].value : "";
+    const price = getProductDetail(selectedProduct, 'price', initialVariantId) || "0";
+    const purchasePrice = getProductDetail(selectedProduct, 'purchasePrice', initialVariantId) || "0";
 
     const updatedItems = [...lineItems];
     updatedItems[index] = calculateLineItemTotals({
@@ -1660,7 +1763,30 @@ export default function InvoiceCreate() {
       unitPrice: price.toString(),
       purchasePrice: purchasePrice.toString(),
       availableVariants,
-      variantId: "", // Reset variant on product change
+      variantId: initialVariantId,
+    });
+
+    setLineItems(updatedItems);
+  };
+
+  // Handle variant selection
+  const handleVariantSelection = (variantId: string, index: number) => {
+    const item = lineItems[index];
+    if (!item.productId) return;
+    
+    const selectedProduct = products.find((p: any) => p.id.toString() === item.productId);
+    if (!selectedProduct) return;
+
+    const price = getProductDetail(selectedProduct, 'price', variantId) || "0";
+    const purchasePrice = getProductDetail(selectedProduct, 'purchasePrice', variantId) || "0";
+
+    const updatedItems = [...lineItems];
+    updatedItems[index] = calculateLineItemTotals({
+      ...updatedItems[index],
+      variantId: variantId,
+      sellingPrice: price.toString(),
+      unitPrice: price.toString(),
+      purchasePrice: purchasePrice.toString(),
     });
 
     setLineItems(updatedItems);
@@ -1718,6 +1844,8 @@ export default function InvoiceCreate() {
         additionalCommissionPercentage: "",
         additionalCommission: "",
         productId: "",
+        variantId: "",
+        availableVariants: [] as any[],
         totalAmount: price,
       },
     ]);
@@ -1745,6 +1873,8 @@ export default function InvoiceCreate() {
         additionalCommissionPercentage: "",
         additionalCommission: "",
         productId: "",
+        variantId: "",
+        availableVariants: [] as any[],
         totalAmount: 0,
       },
     ]);
@@ -2652,32 +2782,34 @@ export default function InvoiceCreate() {
   // Calculate grid template columns dynamically (must be before any conditional returns)
   const gridTemplate = useMemo(() => {
     const columns = isProductInvoice ? [
-      '30px', // # column - smaller (fixed)
-      ...(isProductInvoice ? ['minmax(250px, 2fr)'] : []), // Product - only for product invoice
-      'minmax(80px, 1fr)', // Pax/Qty - small (flexible, min 60px)
-      ...(invoiceSettings?.showUnitPrice ? ['minmax(130px, 1fr)'] : []), // Unit Price - small (flexible, min 100px)
-      'minmax(130px, 1fr)', // Selling Price - small (flexible, min 100px)
-      'minmax(130px, 1fr)', // Purchase Price - small (flexible, min 100px)
-      ...(invoiceSettings?.showTax ? ['minmax(100px, 1fr)'] : []), // Tax - small (flexible, min 100px)
-      'minmax(100px, 1fr)', // Amount - small (flexible, min 100px)
-      ...(invoiceSettings?.showAdditionalCommission ? ['minmax(100px, 1fr)'] : []), // Additional Commission - small (flexible, min 100px)
-      ...(invoiceSettings?.showVoucherInvoice ? ['minmax(100px, 1fr)'] : []), // Invoice/Voucher - small (flexible, min 100px)
-      '50px', // Delete button - small (fixed)
+      '30px', // # column
+      'minmax(250px, 2fr)', // Product
+      'minmax(120px, 1fr)', // Variant
+      'minmax(200px, 2fr)', // Item Title
+      'minmax(80px, 1fr)', // Qty
+      ...(invoiceSettings?.showUnitPrice ? ['minmax(130px, 1fr)'] : []), // Unit Price
+      'minmax(130px, 1fr)', // Selling Price
+      'minmax(130px, 1fr)', // Purchase Price
+      ...(invoiceSettings?.showTax ? ['minmax(100px, 1fr)'] : []), // Tax
+      'minmax(100px, 1fr)', // Amount
+      ...(invoiceSettings?.showAdditionalCommission ? ['minmax(100px, 1fr)'] : []), // Additional Commission
+      ...(invoiceSettings?.showVoucherInvoice ? ['minmax(100px, 1fr)'] : []), // Invoice/Voucher
+      '50px', // Delete button
     ] : [
-      '30px', // # column - smaller (fixed)
-      'minmax(180px, 1.5fr)', // Category - reduced width (flexible, min 180px)
-      ...(invoiceSettings?.showVendor ? ['minmax(180px, 1.5fr)'] : []), // Vendor - hide for product invoice
-      ...(invoiceSettings?.showProvider ? ['minmax(180px, 1.5fr)'] : []), // Provider - hide for product invoice
-      ...(shouldShowPackageColumnForAnyItem ? ['minmax(180px, 1.5fr)'] : []), // Package - hide for product invoice
-      'minmax(80px, 1fr)', // Pax/Qty - small (flexible, min 60px)
-      ...(invoiceSettings?.showUnitPrice ? ['minmax(130px, 1fr)'] : []), // Unit Price - small (flexible, min 100px)
-      'minmax(130px, 1fr)', // Selling Price - small (flexible, min 100px)
-      'minmax(130px, 1fr)', // Purchase Price - small (flexible, min 100px)
-      ...(invoiceSettings?.showTax ? ['minmax(100px, 1fr)'] : []), // Tax - small (flexible, min 100px)
-      'minmax(100px, 1fr)', // Amount - small (flexible, min 100px)
-      ...(invoiceSettings?.showAdditionalCommission ? ['minmax(100px, 1fr)'] : []), // Additional Commission - small (flexible, min 100px)
-      ...(invoiceSettings?.showVoucherInvoice ? ['minmax(100px, 1fr)'] : []), // Invoice/Voucher - small (flexible, min 100px)
-      '50px', // Delete button - small (fixed)
+      '30px', // # column
+      'minmax(180px, 1.5fr)', // Category
+      ...(invoiceSettings?.showVendor ? ['minmax(180px, 1.5fr)'] : []), // Vendor
+      ...(invoiceSettings?.showProvider ? ['minmax(180px, 1.5fr)'] : []), // Provider
+      ...(shouldShowPackageColumnForAnyItem ? ['minmax(180px, 1.5fr)'] : []), // Package
+      'minmax(80px, 1fr)', // Pax/Qty
+      ...(invoiceSettings?.showUnitPrice ? ['minmax(130px, 1fr)'] : []), // Unit Price
+      'minmax(130px, 1fr)', // Selling Price
+      'minmax(130px, 1fr)', // Purchase Price
+      ...(invoiceSettings?.showTax ? ['minmax(100px, 1fr)'] : []), // Tax
+      'minmax(100px, 1fr)', // Amount
+      ...(invoiceSettings?.showAdditionalCommission ? ['minmax(100px, 1fr)'] : []), // Additional Commission
+      ...(invoiceSettings?.showVoucherInvoice ? ['minmax(100px, 1fr)'] : []), // Invoice/Voucher
+      '50px', // Delete button
     ];
     return columns.join(' ');
   }, [isProductInvoice, invoiceSettings?.showVendor, invoiceSettings?.showProvider, invoiceSettings?.showUnitPrice, invoiceSettings?.showTax, invoiceSettings?.showAdditionalCommission, invoiceSettings?.showVoucherInvoice, shouldShowPackageColumnForAnyItem]);
@@ -3031,8 +3163,21 @@ export default function InvoiceCreate() {
                     }}
                   >
                     <div className="text-center flex items-center justify-center">#</div>
-                    <div className="flex items-center">Product</div>
-                    <div className="flex items-center">Qty *</div>
+                    {isProductInvoice ? (
+                      <>
+                        <div className="flex items-center">Product</div>
+                        <div className="flex items-center">Variant</div>
+                        <div className="flex items-center">Title</div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex items-center">Category *</div>
+                        {invoiceSettings?.showVendor && <div className="flex items-center">Vendor</div>}
+                        {invoiceSettings?.showProvider && <div className="flex items-center">Provider</div>}
+                        {shouldShowPackageColumnForAnyItem && <div className="flex items-center">Package</div>}
+                      </>
+                    )}
+                    <div className="flex items-center">{isProductInvoice ? 'Qty *' : 'Pax *'}</div>
 
                     {invoiceSettings?.showUnitPrice && <div className="flex items-center">Unit Price ({currencySymbol}) *</div>}
                     <div className="flex items-center">Selling Price ({currencySymbol}) *</div>
@@ -3055,6 +3200,8 @@ export default function InvoiceCreate() {
                         <span className="font-medium text-sm">{index + 1}</span>
                       </div>
 
+                      {isProductInvoice ? (
+                        <>
                           <div className="flex items-center">
                             <AutocompleteInput
                               data-testid={`autocomplete-product-${index}`}
@@ -3067,6 +3214,98 @@ export default function InvoiceCreate() {
                               emptyText="No products found"
                             />
                           </div>
+                          <div className="flex items-center">
+                            <Select
+                              value={item.variantId}
+                              onValueChange={(value) => handleVariantSelection(value, index)}
+                              disabled={!item.productId || !item.availableVariants || item.availableVariants.length === 0}
+                            >
+                              <SelectTrigger className="h-9 border border-[#D9D9D9] focus:ring-1 focus:ring-[#1677FF]">
+                                <SelectValue placeholder={(!item.availableVariants || item.availableVariants.length === 0) ? "No variants" : "Variant..."} />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {item.availableVariants?.map((v: any, i: number) => (
+                                  <SelectItem key={i} value={v.value.toString()}>
+                                    {v.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="flex items-center">
+                              <Input
+                                data-testid={`input-title-${index}`}
+                                value={item.itemTitle}
+                                onChange={(e) =>
+                                  updateLineItem(index, "itemTitle", e.target.value)
+                                }
+                                placeholder="Item Title"
+                              />
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="flex items-center">
+                            <AutocompleteInput
+                              data-testid={`autocomplete-category-${index}`}
+                              suggestions={getTravelCategories()}
+                              value={item.travelCategory}
+                              onValueChange={(value) =>
+                                handleTravelCategorySelection(value, index)
+                              }
+                              placeholder="Select..."
+                              emptyText="No categories found"
+                            />
+                          </div>
+
+                          {invoiceSettings?.showVendor && (
+                            <div className="flex items-center">
+                              <AutocompleteInput
+                                data-testid={`autocomplete-vendor-${index}`}
+                                suggestions={getVendorOptions()}
+                                value={item.vendor}
+                                onValueChange={(value) =>
+                                  handleVendorSelection(value, index)
+                                }
+                                placeholder="Select..."
+                                emptyText="No vendors found"
+                              />
+                            </div>
+                          )}
+
+                          {invoiceSettings?.showProvider && (
+                            <div className="flex items-center">
+                              <AutocompleteInput
+                                data-testid={`autocomplete-service-provider-${index}`}
+                                suggestions={getServiceProviderOptions(
+                                  item.travelCategory,
+                                )}
+                                value={item.serviceProviderId}
+                                onValueChange={(value) =>
+                                  handleServiceProviderSelection(value, index)
+                                }
+                                placeholder="Select..."
+                                emptyText="No providers found"
+                              />
+                            </div>
+                          )}
+
+                          {shouldShowPackageColumn(item.travelCategory) && (
+                            <div className="flex items-center">
+                              <AutocompleteInput
+                                data-testid={`autocomplete-package-${index}`}
+                                suggestions={getPackageOptions()}
+                                value={item.packageId}
+                                onValueChange={(value) =>
+                                  updateLineItem(index, "packageId", value)
+                                }
+                                placeholder="Select..."
+                                emptyText="No packages found"
+                              />
+                            </div>
+                          )}
+                        </>
+                      )}
 
                       <div className="flex items-center">
                         <Input

@@ -49,9 +49,6 @@ import {
   getTemplate,
   createTemplate,
   updateTemplate,
-  getFrontendForms,
-  createFrontendForm,
-  type FrontendForm,
   uploadImage
 } from '@/lib/forms';
 import { getDropdowns, type Dropdown, type DropdownOption } from '@/lib/dropdowns';
@@ -194,7 +191,7 @@ const SidebarTreeItem = ({
           {label || (item.kind === 'field' ? 'Unnamed Field' : 'Untitled')}
         </span>
 
-        {onDelete && (
+        {onDelete && !item.locked && (
           <button 
             onClick={(e) => {
               e.stopPropagation();
@@ -330,6 +327,7 @@ const FieldItem = ({
             value={field.label}
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => onUpdate({ label: e.target.value })}
             className="space-y-1!"
+            disabled={field.disabledProperties?.includes('label')}
           />
           <CustomSelect
             label="Data Type"
@@ -352,6 +350,7 @@ const FieldItem = ({
             value={field.type}
             onChange={(val: string) => onUpdate({ type: val as any })}
             className="space-y-1!"
+            disabled={field.disabledProperties?.includes('type')}
           />
         </div>
         <div className="flex flex-wrap gap-2">
@@ -378,11 +377,11 @@ const FieldItem = ({
           <Button 
             variant="outline" 
             size="sm" 
-            className={`text-[10px] font-bold py-2 px-3 h-auto transition-all ${field.logic?.conditions.length ? 'bg-primary/20 border-primary text-primary' : 'bg-white/5 border-glass-border hover:border-yellow-500/40 text-text-muted hover:text-text-main'}`}
-            onClick={onEditLogic}
+            className={`text-[10px] font-bold py-2 px-3 h-auto transition-all ${field.logic?.conditions.length ? 'bg-primary/20 border-primary text-primary' : 'bg-white/5 border-glass-border hover:border-yellow-500/40 text-text-muted hover:text-text-main'} ${field.disabledProperties?.includes('logic') ? 'opacity-30 grayscale cursor-not-allowed pointer-events-none' : ''}`}
+            onClick={field.disabledProperties?.includes('logic') ? undefined : onEditLogic}
             icon={field.logic?.conditions.length ? Check : Info}
           >
-            {field.logic?.conditions.length ? `Logic Applied (${field.logic.conditions.length})` : 'Add Logic'}
+            {field.disabledProperties?.includes('logic') ? 'Logic Locked' : (field.logic?.conditions.length ? `Logic Applied (${field.logic.conditions.length})` : 'Add Logic')}
           </Button>
         </div>
       </div>
@@ -402,12 +401,14 @@ const FieldItem = ({
             <ChevronDown size={16} />
           </button>
         </div>
-        <button
-          onClick={onRemove}
-          className="p-2 text-text-muted hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover/field:opacity-100"
-        >
-          <Trash2 size={18} />
-        </button>
+        {!field.locked && (
+          <button
+            onClick={onRemove}
+            className="p-2 text-text-muted hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover/field:opacity-100"
+          >
+            <Trash2 size={18} />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -455,8 +456,7 @@ export default function FormBuilderPage() {
   const templateId = searchParams.get('id');
 
   const [formName, setFormName] = useState('New Form Template');
-  // const [resourceType, setResourceType] = useState<'product' | 'order' | 'customer'>('product');
-  const [mappedTo, setMappedTo] = useState<string | null>(null);
+  const [formKey, setFormKey] = useState<string | null>(null);
   const [builderItems, setBuilderItems] = useState<BuilderItem[]>([
     { kind: 'section', id: '1', name: 'General Information', isRepeatable: false, items: [] }
   ]);
@@ -466,7 +466,7 @@ export default function FormBuilderPage() {
   const [drawerMode, setDrawerMode] = useState<'options' | 'properties' | 'logic' | null>(null);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [availableDropdowns, setAvailableDropdowns] = useState<Dropdown[]>([]);
-  const [frontendForms, setFrontendForms] = useState<FrontendForm[]>([]);
+  const [mapping, setMapping] = useState<any>({});
   const [newOption, setNewOption] = useState('');
   const [activeTab, setActiveTab] = useState<'editor' | 'layout' | 'design' | 'design2' | 'preview'>((searchParams.get('tab') as any) || 'editor');
   // const [previousTab, setPreviousTab] = useState<'editor' | 'layout' | 'preview'>('editor');
@@ -475,8 +475,6 @@ export default function FormBuilderPage() {
   const [previewData, setPreviewData] = useState<Record<string, any>>({});
   const [previewErrors, setPreviewErrors] = useState<Record<string, string>>({});
   const [isNewMappingModalOpen, setIsNewMappingModalOpen] = useState(false);
-  const [newMapping, setNewMapping] = useState({ name: '', formKey: '' });
-  const [isCreatingMapping, setIsCreatingMapping] = useState(false);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set(['1'])); // '1' is the default section ID
   // const [activeSidebarDragId, setActiveSidebarDragId] = useState<string | null>(null);
   const sidebarRef = useRef<HTMLDivElement>(null);
@@ -530,14 +528,18 @@ export default function FormBuilderPage() {
         setIsLoading(true);
         try {
           const response = await getTemplate(templateId);
-          const data = response[0];
+          const data = Array.isArray(response) ? response[0] : response;
+          
+          if (!data) {
+            console.error('Template not found');
+            return;
+          }
+
           setFormName(data.name);
-          setMappedTo(data.mappedTo || null);
+          setFormKey(data.formKey || data.form_key || null);
           setBuilderItems(data.schema || []);
           if (data.design) setDesign(data.design);
-          const forms = await getFrontendForms();
-          console.log(forms, "forms");
-          setFrontendForms(forms);
+          if (data.mapping) setMapping(data.mapping);
         } catch (error) {
           console.error('Failed to load template:', error);
           showSnackbar('Failed to load template.', 'error');
@@ -559,17 +561,7 @@ export default function FormBuilderPage() {
       }
     };
 
-    const fetchFrontendForms = async () => {
-      try {
-        const data = await getFrontendForms();
-        setFrontendForms(data);
-      } catch (error) {
-        console.error('Failed to fetch frontend forms:', error);
-      }
-    };
-
     fetchDropdowns();
-    fetchFrontendForms();
   }, []);
 
   const handleSetTab = (tab: string) => {
@@ -585,13 +577,23 @@ export default function FormBuilderPage() {
       return;
     }
 
+    const sanitizeSchema = (items: any[]): any[] => {
+      return items.map(item => {
+        const sanitized = { ...item };
+        if (item.items) sanitized.items = sanitizeSchema(item.items);
+        if (item.fields) sanitized.fields = sanitizeSchema(item.fields);
+        return sanitized;
+      });
+    };
+
     setIsSaving(true);
     try {
       const payload: any = {
         name: formName,
-        mappedTo: mappedTo || null,
-        schema: builderItems,
-        design
+        formKey: formKey || (isNaN(Number(templateId)) ? templateId : null),
+        schema: sanitizeSchema(builderItems),
+        design,
+        mapping
       };
 
       if (templateId) {
@@ -945,22 +947,6 @@ export default function FormBuilderPage() {
     setBuilderItems(newItems);
   };
 
-  const handleCreateMapping = async () => {
-    if (!newMapping.name || !newMapping.formKey) return;
-    setIsCreatingMapping(true);
-    try {
-      const data = await createFrontendForm(newMapping);
-      setFrontendForms(prev => [...prev, data]);
-      setMappedTo(data.id);
-      setIsNewMappingModalOpen(false);
-      setNewMapping({ name: '', formKey: '' });
-    } catch (error) {
-       console.error('Failed to create mapping:', error);
-       showSnackbar('Failed to create mapping.', 'error');
-    } finally {
-      setIsCreatingMapping(false);
-    }
-  };
 
   const moveNestedItem = (parentId: string, index: number, direction: 'up' | 'down') => {
     const updateRecursive = (items: any[]): any[] => {
@@ -1146,28 +1132,14 @@ export default function FormBuilderPage() {
                     className="!space-y-1"
                   />
                 </div> */}
-                {!templateId && (
+                {/* {formKey && (
                   <div className="w-full sm:w-80 space-y-2">
-                    <CustomSelect
-                      label="Mapped to Frontend Form"
-                      options={[
-                        { label: 'Not Mapped', value: '' },
-                        ...frontendForms.map(f => ({ label: f.name, value: f.id }))
-                      ]}
-                      value={mappedTo || ''}
-                      onChange={(val: string) => setMappedTo(val || null)}
-                      className="!space-y-1"
-                    />
-                    {import.meta.env.DEV && (
-                      <button 
-                        onClick={() => setIsNewMappingModalOpen(true)}
-                        className="text-[10px] font-black uppercase tracking-widest text-primary hover:text-primary-light transition-colors flex items-center gap-1"
-                      >
-                        <Plus size={10} /> Create New Mapping (DEV ONLY)
-                      </button>
-                    )}
+                    <label className="text-xs font-black uppercase tracking-widest text-text-muted">Form Identity (Key)</label>
+                    <div className="p-3 rounded-xl bg-white/5 border border-glass-border font-bold text-primary">
+                      {formKey}
+                    </div>
                   </div>
-                )}
+                )} */}
               </div>
             </div>
 
@@ -1180,59 +1152,59 @@ export default function FormBuilderPage() {
                   </h3>
                   <div className="space-y-3">
                     <button
-                      className="w-full flex items-center gap-3 p-3 rounded-xl bg-secondary/5 border border-secondary/20 hover:bg-secondary/10 transition-all font-bold text-secondary text-sm group"
+                      className="w-full flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-glass-border hover:bg-white/10 transition-all font-bold text-text-main text-sm group"
                       onClick={addSection}
                     >
-                      <div className="w-8 h-8 rounded-lg bg-secondary/10 flex items-center justify-center group-hover:bg-secondary/20 transition-colors">
+                      <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center group-hover:bg-primary/20 transition-colors">
                         <Layout size={18} />
                       </div>
                       Section
                     </button>
                     
                     <button
-                      className="w-full flex items-center gap-3 p-3 rounded-xl bg-primary/5 border border-primary/20 hover:bg-primary/10 transition-all font-bold text-primary text-sm group"
+                      className="w-full flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-glass-border hover:bg-white/10 transition-all font-bold text-text-main text-sm group"
                       onClick={addTopLevelField}
                     >
-                      <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
+                      <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center group-hover:bg-primary/20 transition-colors">
                         <CheckSquare size={18} />
                       </div>
                       Field
                     </button>
 
                     <button
-                      className="w-full flex items-center gap-3 p-3 rounded-xl bg-blue-500/5 border border-blue-500/20 hover:bg-blue-500/10 transition-all font-bold text-blue-400 text-sm group"
+                      className="w-full flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-glass-border hover:bg-white/10 transition-all font-bold text-text-main text-sm group"
                       onClick={() => addGroup(null)}
                     >
-                      <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center group-hover:bg-blue-500/20 transition-colors">
+                      <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center group-hover:bg-primary/20 transition-colors">
                         <LayoutGrid size={18} />
                       </div>
                       Group
                     </button>
                     <button
-                      className="w-full flex items-center gap-3 p-3 rounded-xl bg-yellow-500/5 border border-yellow-500/20 hover:bg-yellow-500/10 transition-all font-bold text-yellow-500 text-sm group"
+                      className="w-full flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-glass-border hover:bg-white/10 transition-all font-bold text-text-main text-sm group"
                       onClick={() => insertAt('root', builderItems.length, 'field', 'key-value')}
                     >
-                      <div className="w-8 h-8 rounded-lg bg-yellow-500/10 flex items-center justify-center group-hover:bg-yellow-500/20 transition-colors">
+                      <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center group-hover:bg-primary/20 transition-colors">
                         <Grid size={18} />
                       </div>
                       Key Value
                     </button>
 
                     <button
-                      className="w-full flex items-center gap-3 p-3 rounded-xl bg-emerald-500/5 border border-emerald-500/20 hover:bg-emerald-500/10 transition-all font-bold text-emerald-500 text-sm group"
+                      className="w-full flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-glass-border hover:bg-white/10 transition-all font-bold text-text-main text-sm group"
                       onClick={() => insertAt('root', builderItems.length, 'field', 'accordion')}
                     >
-                      <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center group-hover:bg-emerald-500/20 transition-colors">
+                      <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center group-hover:bg-primary/20 transition-colors">
                         <ChevronDown size={18} />
                       </div>
                       Accordion
                     </button>
 
                     <button
-                      className="w-full flex items-center gap-3 p-3 rounded-xl bg-rose-500/5 border border-rose-500/20 hover:bg-rose-500/10 transition-all font-bold text-rose-500 text-sm group"
+                      className="w-full flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-glass-border hover:bg-white/10 transition-all font-bold text-text-main text-sm group"
                       onClick={() => insertAt('root', builderItems.length, 'field', 'offers')}
                     >
-                      <div className="w-8 h-8 rounded-lg bg-rose-500/10 flex items-center justify-center group-hover:bg-rose-500/20 transition-colors">
+                      <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center group-hover:bg-primary/20 transition-colors">
                         <Gift size={18} />
                       </div>
                       Offers
@@ -1410,19 +1382,21 @@ export default function FormBuilderPage() {
                         </div>
                       </div>
                       <div className="flex items-center gap-4">
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          className={`text-[10px] font-bold py-2 px-3 h-auto transition-all ${item.logic?.conditions.length ? 'bg-primary/20 border-primary text-primary' : 'bg-white/5 border-glass-border text-text-muted hover:text-text-main hover:border-yellow-500/40'}`}
-                          onClick={() => {
-                            setEditingItemId(item.id);
-                            setDrawerMode('logic');
-                            setIsDrawerOpen(true);
-                          }}
-                          icon={item.logic?.conditions.length ? Check : Info}
-                        >
-                          {item.logic?.conditions.length ? `Logic (${item.logic.conditions.length})` : 'Logic'}
-                        </Button>
+                        {!item.disabledProperties?.includes('logic') && (
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            className={`text-[10px] font-bold py-2 px-3 h-auto transition-all ${item.logic?.conditions.length ? 'bg-primary/20 border-primary text-primary' : 'bg-white/5 border-glass-border text-text-muted hover:text-text-main hover:border-yellow-500/40'}`}
+                            onClick={() => {
+                              setEditingItemId(item.id);
+                              setDrawerMode('logic');
+                              setIsDrawerOpen(true);
+                            }}
+                            icon={item.logic?.conditions.length ? Check : Info}
+                          >
+                            {item.logic?.conditions.length ? `Logic (${item.logic.conditions.length})` : 'Logic'}
+                          </Button>
+                        )}
                         <label className="flex items-center gap-2 cursor-pointer group">
                           <input
                             type="checkbox"
@@ -1432,12 +1406,14 @@ export default function FormBuilderPage() {
                           />
                           <span className="text-sm font-medium text-text-muted group-hover:text-text-main transition-colors">Repeatable</span>
                         </label>
-                        <button
-                          onClick={() => removeItem(item.id)}
-                          className="p-2 text-text-muted hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all"
-                        >
-                          <Trash2 size={18} />
-                        </button>
+                        {!item.locked && (
+                          <button
+                            onClick={() => removeItem(item.id)}
+                            className="p-2 text-text-muted hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        )}
                       </div>
                     </div>
 
@@ -1452,18 +1428,22 @@ export default function FormBuilderPage() {
                               <div className="flex items-center justify-between opacity-50 text-[10px] font-black uppercase tracking-widest text-text-muted">
                                 <div className="flex items-center gap-3">
                                   <span>Untitled Group</span>
-                                  <button 
-                                    onClick={() => {
-                                      setEditingItemId(subItem.id);
-                                      setDrawerMode('logic');
-                                      setIsDrawerOpen(true);
-                                    }}
-                                    className={`hover:text-primary transition-colors ${subItem.logic?.conditions.length ? 'text-primary font-black' : ''}`}
-                                  >
-                                    {subItem.logic?.conditions.length ? `(LOGIC: ${subItem.logic.conditions.length})` : '(SET LOGIC)'}
-                                  </button>
+                                  {!subItem.disabledProperties?.includes('logic') && (
+                                    <button 
+                                      onClick={() => {
+                                        setEditingItemId(subItem.id);
+                                        setDrawerMode('logic');
+                                        setIsDrawerOpen(true);
+                                      }}
+                                      className={`hover:text-primary transition-colors ${subItem.logic?.conditions.length ? 'text-primary font-black' : ''}`}
+                                    >
+                                      {subItem.logic?.conditions.length ? `(LOGIC: ${subItem.logic.conditions.length})` : '(SET LOGIC)'}
+                                    </button>
+                                  )}
                                 </div>
-                                <button onClick={() => removeItem(subItem.id)} className="hover:text-red-500"><X size={12} /></button>
+                                {!subItem.locked && (
+                                  <button onClick={() => removeItem(subItem.id)} className="hover:text-red-500"><X size={12} /></button>
+                                )}
                               </div>
                               <div className="space-y-4">
                                 <PlusSeparator containerId={subItem.id} index={0} allowedTypes={['field']} onInsert={insertAt} />
@@ -1554,18 +1534,22 @@ export default function FormBuilderPage() {
                     <div className="flex items-center justify-between opacity-50 text-[10px] font-black uppercase tracking-widest text-text-muted">
                       <div className="flex items-center gap-3">
                         <span>Untitled Group</span>
-                        <button 
-                          onClick={() => {
-                            setEditingItemId(item.id);
-                            setDrawerMode('logic');
-                            setIsDrawerOpen(true);
-                          }}
-                          className={`hover:text-primary transition-colors ${item.logic?.conditions.length ? 'text-primary font-black' : ''}`}
-                        >
-                          {item.logic?.conditions.length ? `(LOGIC: ${item.logic.conditions.length})` : '(SET LOGIC)'}
-                        </button>
+                        {!item.disabledProperties?.includes('logic') && (
+                          <button 
+                            onClick={() => {
+                              setEditingItemId(item.id);
+                              setDrawerMode('logic');
+                              setIsDrawerOpen(true);
+                            }}
+                            className={`hover:text-primary transition-colors ${item.logic?.conditions.length ? 'text-primary font-black' : ''}`}
+                          >
+                            {item.logic?.conditions.length ? `(LOGIC: ${item.logic.conditions.length})` : '(SET LOGIC)'}
+                          </button>
+                        )}
                       </div>
-                      <button onClick={() => removeItem(item.id)} className="hover:text-red-500"><X size={12} /></button>
+                      {!item.locked && (
+                        <button onClick={() => removeItem(item.id)} className="hover:text-red-500"><X size={12} /></button>
+                      )}
                     </div>
                     <div className="space-y-2">
                       <PlusSeparator containerId={item.id} index={0} allowedTypes={['field']} onInsert={insertAt} />
@@ -2480,6 +2464,7 @@ export default function FormBuilderPage() {
                         onChange={(e: any) => updateFieldProperty(activeItem.id, 'prefix', e.target.value)}
                         placeholder="e.g., RATE-..."
                         className="h-11! border-glass-border"
+                        disabled={activeItem.disabledProperties?.includes('prefix')}
                       />
                     </div>
                     <label className="flex items-center gap-3 p-4 rounded-xl bg-white/5 border border-glass-border cursor-pointer hover:bg-white/10 transition-all group">
@@ -2519,6 +2504,7 @@ export default function FormBuilderPage() {
                             }
                           }}
                           className="border-glass-border"
+                          disabled={activeItem.disabledProperties?.includes('aspectRatio')}
                         />
                       </div>
                       {(!['1:1', '4:3', '3:4', '16:9', '9:16', 'Free', 'custom'].includes(activeItem.properties?.aspectRatio || '1:1') || activeItem.properties?.aspectRatio === 'custom') && (
@@ -2529,6 +2515,7 @@ export default function FormBuilderPage() {
                             onChange={(e: any) => updateFieldProperty(activeItem.id, 'aspectRatio', e.target.value)}
                             placeholder="e.g., 21:9"
                             className="h-11! border-glass-border"
+                            disabled={activeItem.disabledProperties?.includes('aspectRatio')}
                           />
                           <p className="text-[9px] text-text-muted italic">Type width and height separated by colon (e.g. 21:9)</p>
                         </div>
@@ -2781,6 +2768,7 @@ export default function FormBuilderPage() {
                         checked={activeItem.properties?.required || false}
                         onChange={(e) => updateFieldProperty(activeItem.id, 'required', e.target.checked)}
                         className="w-5 h-5 rounded border-glass-border text-primary focus:ring-primary/50 bg-white/10 checkbox-custom"
+                        disabled={activeItem.disabledProperties?.includes('required')}
                       />
                     </label>
                   </div>
@@ -2914,43 +2902,6 @@ export default function FormBuilderPage() {
         </div>
       </Drawer>
       {/* New Mapping Modal (DEV ONLY) */}
-      <Drawer
-        isOpen={isNewMappingModalOpen}
-        onClose={() => setIsNewMappingModalOpen(false)}
-        title="Create New Form Mapping"
-        widthClassName="max-w-2xl"
-      >
-        <div className="space-y-6">
-          <Input 
-            label="Form Name (Display Name)"
-            placeholder="e.g. Add Product Inventory"
-            value={newMapping.name}
-            onChange={(e: any) => setNewMapping(prev => ({ ...prev, name: e.target.value }))}
-          />
-          <Input 
-            label="Form Key (Unique Identifier)"
-            placeholder="e.g. add-inventory"
-            value={newMapping.formKey}
-            onChange={(e: any) => setNewMapping(prev => ({ ...prev, formKey: e.target.value }))}
-          />
-          <div className="flex gap-4 pt-4">
-            <Button 
-               className="flex-1"
-               onClick={handleCreateMapping}
-               disabled={isCreatingMapping}
-            >
-              {isCreatingMapping ? 'Creating...' : 'Create Mapping'}
-            </Button>
-            <Button 
-               variant="outline"
-               className="flex-1"
-               onClick={() => setIsNewMappingModalOpen(false)}
-            >
-              Cancel
-            </Button>
-          </div>
-        </div>
-      </Drawer>
   </DashboardLayout>
 );
 };

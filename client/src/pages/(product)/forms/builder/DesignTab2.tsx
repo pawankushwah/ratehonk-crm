@@ -271,10 +271,10 @@ export default function DesignTab2({ builderItems, design, setDesign }: DesignTa
           </button>
         </div>
       </div>
-
+<div className={`flex ${activeMode === 'card' ? 'flex-row-reverse' : 'flex-col'} gap-5`}>
       {/* WIREFRAME: PREVIEW AREA */}
-      <div className={`w-full flex-1 border ${borderColor} ${itemBg} rounded-2xl flex flex-col ${activeMode === 'card' ? 'items-center justify-center' : 'items-stretch'} p-8 shadow-sm mb-6 min-h-[500px]`}>
-        <div className={`w-full ${activeMode === 'view' ? 'max-w-5xl mx-auto' : ''}`}>
+      <div className={`w-full flex-1 border ${borderColor} ${itemBg} rounded-2xl flex flex-col ${activeMode === 'card' ? 'items-center' : 'items-stretch'} p-8 shadow-sm mb-6`}>
+        <div className={`w-full h-fit ${activeMode === 'view' ? 'max-w-5xl mx-auto' : ''}`}>
           {(() => {
             const allTemplates = [...VERTICAL_TEMPLATES, ...HORIZONTAL_TEMPLATES, ...DETAIL_TEMPLATES];
             const currentTemplate = allTemplates.find(
@@ -298,7 +298,7 @@ export default function DesignTab2({ builderItems, design, setDesign }: DesignTa
       </div>
 
       {/* WIREFRAME: MAPPING AREA */}
-      <div className={`w-full border ${borderColor} ${itemBg} rounded-2xl p-8 shadow-sm mb-20`}>
+      <div className={`w-full h-full border ${borderColor} ${itemBg} rounded-2xl p-8 shadow-sm mb-20`}>
         <div className="flex items-center justify-between mb-8 pb-4 border-b border-glass-border">
           <div className="flex items-center gap-3">
              <div className="p-2 rounded-lg bg-primary/10 text-primary">
@@ -366,7 +366,24 @@ export default function DesignTab2({ builderItems, design, setDesign }: DesignTa
 
                 {isSelected && (
                   <div className="mt-4 pt-4 border-t border-glass-border animate-in slide-in-from-top-2 duration-200">
-                    {!slot.noMapping ? (
+                    {slot.noMapping ? (
+                       <div className="flex items-center gap-2 py-2">
+                         <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                         <p className="text-[10px] font-black uppercase tracking-widest text-emerald-500">
+                           Standard Component — No mapping required
+                         </p>
+                       </div>
+                    ) : mappedField?.locked ? (
+                      <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 space-y-2">
+                        <div className="flex items-center gap-2">
+                           <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                           <p className="text-[10px] font-black uppercase tracking-widest text-emerald-500">Already Mapped by Default</p>
+                        </div>
+                        <p className={`text-[9px] font-medium leading-relaxed ${textMuted}`}>
+                          This slot is connected to the static <strong>{mappedField.label}</strong> field which is part of the core product definition.
+                        </p>
+                      </div>
+                    ) : (
                       <>
                         <CustomSelect
                           options={[
@@ -386,13 +403,6 @@ export default function DesignTab2({ builderItems, design, setDesign }: DesignTa
                           </p>
                         )}
                       </>
-                    ) : (
-                      <div className="flex items-center gap-2 py-2">
-                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                        <p className="text-[10px] font-black uppercase tracking-widest text-emerald-500">
-                          Standard Component — No mapping required
-                        </p>
-                      </div>
                     )}
                   </div>
                 )}
@@ -400,6 +410,7 @@ export default function DesignTab2({ builderItems, design, setDesign }: DesignTa
             );
           })}
         </div>
+      </div>
       </div>
 
       {/* WIREFRAME: TEMPLATE GALLERY DRAWER */}
@@ -456,7 +467,7 @@ export default function DesignTab2({ builderItems, design, setDesign }: DesignTa
                       <div className={`w-full aspect-4/3 rounded-xl border ${borderColor} overflow-hidden  bg-black/5 flex items-center justify-center relative`}>
                         <div className='h-60 overflow-hidden flex justify-center items-center'>
                         <div className={`transition-all opacity-80 group-hover:opacity-100 pointer-events-none h-[200%] ${tmpl.type === 'detail' ? 'scale-[0.1]' : tmpl.type === 'card' ? 'scale-[0.55]' : 'w-[600px] h-full scale-[0.55]'}`}>
-                          <CardRenderer 
+                          <CardRenderer  
                             mode={activeMode}
                             data={tmpl.mockData}
                             design={{ ...currentDesign, templateId: tmpl.id, viewTemplateId: tmpl.id }}

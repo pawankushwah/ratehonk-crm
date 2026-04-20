@@ -33,6 +33,8 @@ export interface FormField {
     accordionStyle?: 'key-value' | 'bullets';
     isStock?: boolean;
   };
+  locked?: boolean;
+  disabledProperties?: string[];
   logic?: ConditionalLogic;
   layout?: {
     colSpan?: number | 'full';
@@ -43,6 +45,7 @@ export interface FormGroup {
   kind: 'group';
   id: string;
   fields: FormField[];
+  locked?: boolean;
   logic?: ConditionalLogic;
   layout?: {
     gridCols?: number;
@@ -56,6 +59,7 @@ export interface FormSection {
   name: string;
   isRepeatable: boolean;
   items: (FormField | FormGroup)[];
+  locked?: boolean;
   logic?: ConditionalLogic;
   layout?: {
     gridCols?: number;

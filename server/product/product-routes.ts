@@ -2,7 +2,6 @@ import { Express } from "express";
 import * as dropdownController from "./dropdown.controller.js";
 import * as dynamicDataController from "./dynamic-data.controller.js";
 import * as formController from "./form.controller.js";
-import * as frontendFormController from "./frontend-form.controller.js";
 import * as imageController from "./image.controller.js";
 import * as skuController from "./sku.controller.js";
 
@@ -23,9 +22,6 @@ export const registerProductRoutes = (app: Express, authenticate: any, checkTena
   app.patch("/api/form-templates/:id", authenticate, formController.updateTemplate);
   app.delete("/api/form-templates/:id", authenticate, formController.deleteTemplate);
 
-  // Frontend Forms
-  app.get("/api/frontend-forms", authenticate, frontendFormController.getForms);
-  app.post("/api/frontend-forms", authenticate, frontendFormController.createForms);
 
   // Dynamic Data
   app.get("/api/resources/data/all", authenticate, dynamicDataController.getAllData);

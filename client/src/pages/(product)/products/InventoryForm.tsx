@@ -19,6 +19,7 @@ interface InventoryFormProps {
   mode?: 'create' | 'edit' | 'view';
   templateName?: string;
   templateId?: string;
+  template?: any;
 }
 
 const InventoryForm = ({ 
@@ -27,7 +28,8 @@ const InventoryForm = ({
   initialData = {}, 
   mode = 'create',
   templateName,
-  templateId
+  templateId,
+  template: propTemplate
 }: InventoryFormProps) => {
   const [schema, setSchema] = useState<BuilderItem[] | null>(null);
   const [targetTemplateId, setTargetTemplateId] = useState<string | null>(null);
@@ -42,19 +44,17 @@ const InventoryForm = ({
 
   useEffect(() => {
     const fetchTargetTemplate = async () => {
+      if (propTemplate) {
+        setSchema(propTemplate.schema);
+        setTargetTemplateId(propTemplate.id);
+        setIsLoading(false);
+        return;
+      }
+
       try {
-        const response = await getTemplates();
-        const templates = response || [];
-        
-        let targetTemplate;
-        if (templateId) {
-          targetTemplate = templates.find((t: any) => t.id === templateId);
-        } else if (templateName) {
-          targetTemplate = templates.find((t: any) => t.name.toLowerCase() === templateName.toLowerCase());
-        } else {
-          // Default logic
-          targetTemplate = templates.find((t: any) => t.name.toLowerCase() === 'inventory');
-        }
+        // Use standard getTemplate API (singular) like ProductBasePage
+        const tId = templateId || templateName || 'inventory';
+        const targetTemplate = await getTemplate(tId);
 
         if (targetTemplate) {
           setSchema(targetTemplate.schema);

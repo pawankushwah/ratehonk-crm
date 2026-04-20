@@ -26,7 +26,7 @@ import HeaderButton from '@/components/products/Button';
 import GlassCard from '@/components/products/GlassCard';
 import Drawer from '@/components/products/Drawer';
 import ExceptInventoryForms from '@/components/products/ExceptInventoryForms';
-import { getTemplates, getAllDynamicData, deleteDynamicData } from '@/lib/forms';
+import { getTemplate, getTemplates, getAllDynamicData, deleteDynamicData } from '@/lib/forms';
 import ProductFilters from '@/components/products/ProductFilters';
 import { getRoleValue, formatDisplayValue, resolveImageUrl } from '@/utils/dynamicRenderer';
 import UniversalCard from '@/components/products/UniversalCard';
@@ -99,18 +99,9 @@ const ProductBasePage: React.FC<ProductBasePageProps> = ({
     try {
       let invTemplate = inventoryTemplate;
       if (!invTemplate) {
-        const templates = await getTemplates();
-
-        console.log(templates);
-        
-        if (templateName) {
-          invTemplate = templates.find((t: any) => t.name.toLowerCase() === templateName.toLowerCase());
-        } else {
-          // Default logic from original ProductsPage
-          invTemplate = templates.find((t: any) => t.id === '019d2ecf-5291-7cce-b37c-50c6c5f27d1b') ||
-                        templates.find((t: any) => t.name.toLowerCase() === 'inventory' || t.resource_type === 'product') ||
-                        templates[0];
-        }
+        // Use standard getTemplate API (singular) like Form Builder
+        const tId = templateId || templateName || 'inventory';
+        invTemplate = await getTemplate(tId);
 
         if (invTemplate) {
           console.log("settting the inventory Template", invTemplate);
@@ -154,7 +145,11 @@ const ProductBasePage: React.FC<ProductBasePageProps> = ({
 
     isFirstRender.current = false;
     return () => clearTimeout(timer);
-  }, [page, search, filters]);
+  }, [page, search, filters, templateId, templateName, allTypes]);
+
+  useEffect(() => {
+    setInventoryTemplate(null);
+  }, [templateId, templateName, allTypes]);
 
   // Sync state to URL without reloading the page
   useEffect(() => {
@@ -475,20 +470,31 @@ const ProductBasePage: React.FC<ProductBasePageProps> = ({
         title={`${drawerMode === 'edit' ? 'Edit' : drawerMode === 'view' ? 'View' : 'Item'} Details`}
         size="xl"
       >
-        <div className="h-full flex flex-col">
-          {drawerView === 'inventory' ? (
-             <InventoryForm onCancel={handleCloseDrawer} onSave={handleSave} initialData={selectedProduct} mode={drawerMode} templateName={templateName} templateId={templateId} />
-          ) : (
-             <ExceptInventoryForms 
-               onCancel={handleCloseDrawer} 
-               onSave={handleSave} 
-               initialData={selectedProduct} 
-               mode={drawerMode} 
-               itemType={drawerView as any}
-               templateId={templateId}
-             />
-          )}
-        </div>
+        {isDrawerOpen && (
+          <div className="h-full flex flex-col">
+            {drawerView === 'inventory' ? (
+               <InventoryForm 
+                 onCancel={handleCloseDrawer} 
+                 onSave={handleSave} 
+                 initialData={selectedProduct} 
+                 mode={drawerMode} 
+                 templateName={templateName} 
+                 templateId={templateId} 
+                 template={inventoryTemplate}
+               />
+            ) : (
+               <ExceptInventoryForms 
+                 onCancel={handleCloseDrawer} 
+                 onSave={handleSave} 
+                 initialData={selectedProduct} 
+                 mode={drawerMode} 
+                 itemType={drawerView as any}
+                 templateId={templateId}
+                 template={inventoryTemplate}
+               />
+            )}
+          </div>
+        )}
       </Drawer>
 
       <Drawer isOpen={isFilterDrawerOpen} onClose={() => setIsFilterDrawerOpen(false)} title="Filter Items" side={isFullscreen ? 'left' : 'right'}>

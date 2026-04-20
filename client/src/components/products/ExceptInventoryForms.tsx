@@ -9,7 +9,7 @@ import {
 import Button from './Button';
 import { DynamicForm } from './DynamicForm';
 import { type BuilderItem } from '@/types/form';
-import { getTemplates, uploadImage, submitFormData, updateDynamicData } from '@/lib/forms';
+import { getTemplate, getTemplates, uploadImage, submitFormData, updateDynamicData } from '@/lib/forms';
 import { compressImage } from '@/utils/imageCompressor';
 
 interface NonInventoryFormProps {
@@ -19,6 +19,7 @@ interface NonInventoryFormProps {
   mode?: 'create' | 'edit' | 'view';
   templateId?: string;
   itemType?: ItemType;
+  template?: any;
 }
 
 type ItemType = 'non-inventory' | 'service' | 'bundle';
@@ -29,7 +30,8 @@ const ExceptInventoryForms = ({
   initialData = {}, 
   mode = 'create',
   templateId,
-  itemType: propItemType
+  itemType: propItemType,
+  template: propTemplate
 }: NonInventoryFormProps) => {
   const [itemType] = useState<ItemType>(propItemType || (initialData?.data?.itemType as ItemType) || 'non-inventory');
   const [schema, setSchema] = useState<BuilderItem[] | null>(null);
@@ -48,35 +50,25 @@ const ExceptInventoryForms = ({
 
   useEffect(() => {
     const fetchTargetTemplate = async () => {
+      if (propTemplate) {
+        setSchema(propTemplate.schema);
+        setTargetTemplateId(propTemplate.id);
+        setIsLoading(false);
+        return;
+      }
+
       setIsLoading(true);
       setError(null);
       try {
-        const response = await getTemplates();
-        const templates = Array.isArray(response) ? response : (response.data || []);
-        
-        const currentFormKey = getFormKey(itemType);
-        console.log(currentFormKey, "cuurrenkdf;alskdj", templates, templateId, "templateId")
-        let targetTemplate;
-        if (templateId) {
-          console.log("templateId")
-          targetTemplate = templates.find((t: any) => t.id === templateId);
-        } else {
-          console.log("templateIdkjlkkjklkjl")
+        // Use standard getTemplate API (singular) like ProductBasePage
+        const tId = templateId || getFormKey(itemType);
+        const targetTemplate = await getTemplate(tId);
 
-          // Find by formKey or name
-          targetTemplate = templates.find((t: any) => 
-            (t.formKey && t.formKey.toLowerCase() === currentFormKey) ||
-            t.name.toLowerCase() === currentFormKey.replace('-', ' ') ||
-            t.name.toLowerCase() === currentFormKey
-          );
-        }
-
-        console.log(targetTemplate, "targetTemplate")
         if (targetTemplate) {
           setSchema(targetTemplate.schema);
           setTargetTemplateId(targetTemplate.id);
         } else {
-          setError(`Template for "${itemType}" (key: ${currentFormKey}) not found. Please create one with this formKey in the Form Builder.`);
+          setError(`Template for "${itemType}" (key: ${tId}) not found. Please create one with this formKey in the Form Builder.`);
         }
       } catch (err) {
         console.error('Failed to fetch template:', err);
@@ -241,7 +233,7 @@ const ExceptInventoryForms = ({
             </div>
           </div>
           <button 
-            onClick={() => window.location.href = `/dashboard/forms/builder?id=${targetTemplateId}`}
+            onClick={() => window.location.href = `/forms/builder?id=${targetTemplateId}`}
             className="px-4 py-2 rounded-xl bg-primary text-white text-[10px] font-black uppercase tracking-widest hover:bg-primary/90 transition-all shadow-lg shadow-primary/20"
           >
             Edit Template

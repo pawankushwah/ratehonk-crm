@@ -5,7 +5,6 @@ export interface FormTemplateData {
   // resource_type: 'product' | 'order' | 'customer';
   schema: any;
   design?: any;
-  mappedTo?: string; // UUID of FrontendForm
 }
 
 export interface FrontendForm {
@@ -173,30 +172,6 @@ export const getAllDynamicDataPublic = async (options: {
   return res;
 };
 
-// Frontend Forms CRUD (Development)
-export const getFrontendForms = async () => {
-  const response = await apiRequest('GET', '/api/frontend-forms');
-  const res = await response.json();
-  return res.data;
-};
-
-export const createFrontendForm = async (data: { name: string; formKey: string }) => {
-  const response = await apiRequest('POST', '/api/frontend-forms', data);
-  const res = await response.json();
-  return res.data;
-};
-
-export const updateFrontendForm = async (id: string, data: { name: string; formKey: string }) => {
-  const response = await apiRequest('PATCH', `/api/frontend-forms/${id}`, data);
-  const res = await response.json();
-  return res.data;
-};
-
-export const deleteFrontendForm = async (id: string) => {
-  const response = await apiRequest('DELETE', `/api/frontend-forms/${id}`);
-  const res = await response.json();
-  return res.data;
-};
 
 // Dynamic Data CRUD (Standardized)
 export const updateDynamicData = async (id: string, data: any) => {

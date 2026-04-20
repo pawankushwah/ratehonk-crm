@@ -1,5 +1,7 @@
 import { Request, Response } from "express";
 import { simpleStorage } from "../simple-storage.js";
+import { STATIC_TEMPLATES } from "./static-templates.js";
+import { mergeTemplate } from "./template-merger.js";
 
 export const submitData = async (req: any, res: Response) => {
   try {
@@ -8,26 +10,59 @@ export const submitData = async (req: any, res: Response) => {
     const userId = req.user?.id;
     const tenantId = req.user?.tenantId;
 
-    const template = await simpleStorage.getFormTemplates(Number(template_id), tenantId);
+    let template;
+    if (isNaN(Number(template_id))) {
+      const results = await simpleStorage.getFormTemplateByKey(Number(tenantId), template_id);
+      const dbT = results[0];
+      const staticT = STATIC_TEMPLATES.find(t => t.formKey === template_id);
+      
+      if (dbT && staticT) {
+        template = mergeTemplate(staticT, dbT);
+      } else {
+        template = dbT || staticT;
+      }
+    } else {
+      const results = await simpleStorage.getFormTemplatebyId(Number(tenantId), Number(template_id));
+      template = results[0];
+      if (template && template.formKey) {
+        const staticT = STATIC_TEMPLATES.find(st => st.formKey === template.formKey);
+        if (staticT) {
+          template = mergeTemplate(staticT, template);
+        }
+      }
+    }
+
     if (!template) return res.status(404).json({ success: false, message: "Template not found" });
 
-    // SKU Generation Logic
+    // SKU Generation Logic (same as before)
     const groups = (template.schema as any)?.groups || [];
-    for (const group of groups) {
-      for (const field of group.fields) {
-        if (field.type === "sku") {
-          const fieldId = field.id;
-          if (!data[fieldId]) {
-            const prefix = field.properties?.prefix || "SKU";
-            const finalSku = await simpleStorage.generateNextSku(tenantId, prefix);
-            data[fieldId] = finalSku;
-          }
+    // Also handle flat items list if schema is array
+    const allFields: any[] = [];
+    const traverse = (items: any[]) => (items || []).forEach(it => {
+        if (it.kind === 'field') allFields.push(it);
+        if (it.items) traverse(it.items);
+        if (it.fields) traverse(it.fields);
+    });
+    
+    if (Array.isArray(template.schema)) {
+      traverse(template.schema);
+    } else {
+      traverse((template.schema as any)?.groups || []);
+    }
+
+    for (const field of allFields) {
+      if (field.type === "sku") {
+        const fieldId = field.id;
+        if (!data[fieldId]) {
+          const prefix = field.properties?.prefix || "SKU";
+          const finalSku = await simpleStorage.generateNextSku(tenantId, prefix);
+          data[fieldId] = finalSku;
         }
       }
     }
 
     const entry = await simpleStorage.submitDynamicData({
-      templateId: Number(template_id),
+      templateId: template.id || template_id, // If static, it might not have numeric ID yet
       ownerId: res_id as string,
       tenantId,
       userId,
@@ -45,8 +80,17 @@ export const getData = async (req: any, res: Response) => {
   try {
     const { res_id } = req.params;
     const tenantId = req.user.tenantId;
-    const data = await simpleStorage.getDynamicData(Number(res_id), tenantId);
+    const data = await simpleStorage.getDynamicData(Number(res_id), Number(tenantId));
     if (!data) return res.status(404).json({ success: false, message: "Data not found" });
+
+    // Merge template if it exists
+    if (data.FormTemplate && data.FormTemplate.formKey) {
+      const staticT = STATIC_TEMPLATES.find(st => st.formKey === data.FormTemplate.formKey);
+      if (staticT) {
+        data.FormTemplate = mergeTemplate(staticT, data.FormTemplate);
+      }
+    }
+
     return res.json({ success: true, data, message: "Data fetched successfully" });
   } catch (error) {
     return res.status(500).json({ success: false, message: "Failed to fetch data", error });
@@ -59,6 +103,15 @@ export const getDataPublic = async (req: any, res: Response) => {
     const { user: tenantId } = req.query;
     const data = await simpleStorage.getDynamicData(Number(res_id), tenantId);
     if (!data) return res.status(404).json({ success: false, message: "Data not found" });
+
+    // Merge template if it exists
+    if (data.FormTemplate && data.FormTemplate.formKey) {
+      const staticT = STATIC_TEMPLATES.find(st => st.formKey === data.FormTemplate.formKey);
+      if (staticT) {
+        data.FormTemplate = mergeTemplate(staticT, data.FormTemplate);
+      }
+    }
+
     return res.json({ success: true, data, message: "Data fetched successfully" });
   } catch (error) {
     return res.status(500).json({ success: false, message: "Failed to fetch data", error });
@@ -80,9 +133,20 @@ export const getAllData = async (req: any, res: Response) => {
 
     const { data: rows, total } = await simpleStorage.getDynamicDataEntries(tenantId, filters);
 
+    // Merge templates for all rows
+    const mergedRows = (rows || []).map(row => {
+      if (row.FormTemplate && row.FormTemplate.formKey) {
+        const staticT = STATIC_TEMPLATES.find(st => st.formKey === row.FormTemplate.formKey);
+        if (staticT) {
+          row.FormTemplate = mergeTemplate(staticT, row.FormTemplate);
+        }
+      }
+      return row;
+    });
+
     return res.json({
       success: true,
-      data: rows,
+      data: mergedRows,
       meta: {
         total,
         page: Number(page),
@@ -111,9 +175,20 @@ export const getAllDataPublic = async (req: any, res: Response) => {
 
     const { data: rows, total } = await simpleStorage.getDynamicDataEntries(tenantId, filters);
 
+    // Merge templates for all rows
+    const mergedRows = (rows || []).map(row => {
+      if (row.FormTemplate && row.FormTemplate.formKey) {
+        const staticT = STATIC_TEMPLATES.find(st => st.formKey === row.FormTemplate.formKey);
+        if (staticT) {
+          row.FormTemplate = mergeTemplate(staticT, row.FormTemplate);
+        }
+      }
+      return row;
+    });
+
     return res.json({
       success: true,
-      data: rows,
+      data: mergedRows,
       meta: {
         total,
         page: Number(page),

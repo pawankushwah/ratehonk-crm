@@ -48,20 +48,18 @@ const FormsListPage = () => {
   //   setTitle('Form Builder');
   // }, [setTitle]);
 
+  const STATIC_TEMPLATES: Template[] = [
+    { id: 'inventory', name: 'Inventory', resource_type: 'Product', updatedAt: new Date().toISOString() },
+    { id: 'non-inventory', name: 'Non-inventory', resource_type: 'Product', updatedAt: new Date().toISOString() },
+    { id: 'bundle', name: 'Bundle', resource_type: 'Pack', updatedAt: new Date().toISOString() },
+    { id: 'service', name: 'Service', resource_type: 'Service', updatedAt: new Date().toISOString() },
+  ];
+
   useEffect(() => {
-    const fetchTemplates = async () => {
-      try {
-        const response = await getTemplates();
-        setTemplates(response || []);
-      } catch (error) {
-        console.error('Failed to fetch templates:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    fetchTemplates();
+    // We now use static templates, so we just set them directly
+    setTemplates(STATIC_TEMPLATES);
+    setIsLoading(false);
   }, []);
-  console.log(templates[0], "updated date")
 
   return (
     <Layout>

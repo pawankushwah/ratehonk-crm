@@ -83,7 +83,7 @@ const FlowbiteDetailTemplate: React.FC<TemplateProps> = ({
     ? activeVariant.images
     : (allImages.length > 0 ? allImages : [imageUrl || "/src/assets/images/default-product-1.png"].flat().filter(Boolean));
 
-  const images = displayImages || [];
+  const images = displayImages && Array.isArray(displayImages) ? displayImages : [];
   console.log("http://localhost:5001/api/images/"+images[0], "images")
 
   // Highlights Resolution
