@@ -42,15 +42,15 @@ interface CardRendererProps {
 }
 
 const CardRenderer: React.FC<CardRendererProps> = ({ 
-  design, 
-  data, 
-  template,
+  design = {}, 
+  data = {}, 
+  template = {},
   onSlotClick, 
   activeSlot, 
   mode = 'card',
   selectedVariant: propSelectedVariant,
   isPreview = false,
-  wholeData
+  wholeData = {}
 }) => {
   console.log("whole Data", wholeData)
   const [localVariantIndex, setLocalVariantIndex] = useState(0);
@@ -91,9 +91,8 @@ const CardRenderer: React.FC<CardRendererProps> = ({
   const designWithContext = { ...design, mapping: currentMapping, visibility: currentVisibility };
 
   // Calculate variants early to support variant-aware resolution
-  const variants = wholeData.variants || [];
+  const variants = wholeData?.variants || [];
   const activeVariant = variants[localVariantIndex];
-  console.log(variants, "variants", activeVariant, "activeVariant")
   
   const radiusClass = (registryRadiusMap as any)[design.styles?.borderRadius || 'lg'] || 'rounded-lg';
   const shadowClass = (registryShadowMap as any)[design.styles?.shadow || 'lg'] || 'shadow-lg';
@@ -108,53 +107,53 @@ const CardRenderer: React.FC<CardRendererProps> = ({
   let category = '—';
   let images = [];
 
-  const fKey = wholeData.FormTemplate.formKey;
+  const fKey = wholeData?.FormTemplate?.formKey || 'inventory';
   console.log(wholeData, "wholeData")
   
   if (fKey === 'inventory') {
-    title = wholeData.name || '—';
-    category = wholeData.category || '—';
+    title = wholeData?.name || '—';
+    category = wholeData?.category || '—';
     if (activeVariant) {
       price = activeVariant.sales_price ?? '—';
       sku = activeVariant.model_number || activeVariant.sku || '—';
       stock = activeVariant.variant_stock ?? '—';
       images = activeVariant.images || [];
     } else {
-      price = wholeData.sales_price ?? '—';
-      sku = wholeData.sku || '—';
-      stock = wholeData.stock ?? '—';
-      images = wholeData.images || [];
+      price = wholeData?.sales_price ?? '—';
+      sku = wholeData?.sku || '—';
+      stock = wholeData?.stock ?? '—';
+      images = wholeData?.images || [];
     }
     console.log(images, "images")
   } else if (fKey === 'non-inventory') {
-    title = wholeData.name || '—';
-    price = wholeData.sales_price ?? '—';
-    sku = wholeData.sku || '—';
-    stock = wholeData.stock ?? '—';
-    category = wholeData.category || '—';
-    images = wholeData.images || [];
+    title = wholeData?.name || '—';
+    price = wholeData?.sales_price ?? '—';
+    sku = wholeData?.sku || '—';
+    stock = wholeData?.stock ?? '—';
+    category = wholeData?.category || '—';
+    images = wholeData?.images || [];
   } else if (fKey === 'service') {
-    title = wholeData.name || '—';
-    price = wholeData.rate ?? '—';
-    sku = wholeData.sku || '—';
-    images = wholeData.images || [];
+    title = wholeData?.name || '—';
+    price = wholeData?.rate ?? '—';
+    sku = wholeData?.sku || '—';
+    images = wholeData?.images || [];
   } else if (fKey === 'bundle') {
-    title = wholeData.name || '—';
-    sku = wholeData.sku || '—';
-    stock = wholeData.stock ?? '—';
-    images = wholeData.images || [];
+    title = wholeData?.name || '—';
+    sku = wholeData?.sku || '—';
+    stock = wholeData?.stock ?? '—';
+    images = wholeData?.images || [];
   } else {
     // Fallback for other data types
-    title = wholeData.name || getRoleValue('title', wholeData, designWithContext, activeVariant) || '—';
-    price = wholeData.sales_price || wholeData.rate || getRoleValue('price', wholeData, designWithContext, activeVariant) || '—';
-    sku = wholeData.sku || getRoleValue('sku', wholeData, designWithContext, activeVariant) || '—';
-    stock = wholeData.stock ?? getRoleValue('stock', wholeData, designWithContext, activeVariant) ?? '—';
-    images = wholeData.images || [];
+    title = wholeData?.name || getRoleValue('title', wholeData, designWithContext, activeVariant) || '—';
+    price = wholeData?.sales_price || wholeData?.rate || getRoleValue('price', wholeData, designWithContext, activeVariant) || '—';
+    sku = wholeData?.sku || getRoleValue('sku', wholeData, designWithContext, activeVariant) || '—';
+    stock = wholeData?.stock ?? getRoleValue('stock', wholeData, designWithContext, activeVariant) ?? '—';
+    images = wholeData?.images || [];
   }
 
   const imageUrl = resolveUrl(images.length > 0 ? images[0] : null) || defaultProductImage;
-  const barcode = wholeData.barcode || wholeData.data?.barcode || '—';
-  const keyValue = wholeData.keyValue || wholeData.data?.keyValue || '—';
+  const barcode = wholeData?.barcode || wholeData?.data?.barcode || '—';
+  const keyValue = wholeData?.keyValue || wholeData?.data?.keyValue || '—';
   const allImages = images;
   const accentColor = design.styles?.primaryColor || '#ec4899';
 
@@ -200,7 +199,7 @@ const CardRenderer: React.FC<CardRendererProps> = ({
             availableSizes,
             allImages,
             variants,
-            bundleItems: wholeData.bundleItems || []
+            bundleItems: wholeData?.bundleItems || []
           }}
           imageBaseURL={isPreview ? "" : "/api/images/"}
           visibility={currentVisibility}

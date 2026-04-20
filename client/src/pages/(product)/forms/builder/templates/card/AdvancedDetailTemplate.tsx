@@ -198,7 +198,9 @@ const AdvancedDetailTemplate: React.FC<TemplateProps> = ({
 };
 
 export const mockData = {
+  name: 'Keychron Q1 Max QMK/VIA Wireless Custom Mechanical Keyboard',
   title: 'Keychron Q1 Max QMK/VIA Wireless Custom Mechanical Keyboard',
+  sales_price: 209,
   price: 209,
   category: 'Keyboards',
   sku: 'KC-Q1M-BRWN',
@@ -206,7 +208,8 @@ export const mockData = {
   rating: 5.0,
   reviewCount: 320,
   description: 'A 75% layout wireless mechanical keyboard with double-gasket mount design and full CNC aluminum body.',
-  imageUrl: [defaultProductImage],
+  allImages: [defaultProductImage],
+  imageUrl: defaultProductImage,
   availableColors: ['#1f2937', '#6b7280', '#9ca3af'],
   availableSizes: ['Red Switch', 'Brown Switch', 'Blue Switch'],
 };

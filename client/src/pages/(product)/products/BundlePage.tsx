@@ -4,8 +4,9 @@ const BundlePage = () => {
   return (
     <ProductBasePage 
       title="Bundle" 
-      templateName="Bundle"
+      templateName="bundle"
       defaultDrawerView="bundle"
+      activeTab="bundle"
     />
   );
 };

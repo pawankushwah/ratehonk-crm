@@ -212,7 +212,9 @@ const CarouselTemplate: React.FC<TemplateProps> = ({
 };
 
 export const mockData = {
+  name: 'PlayStation 5 Console - Slim Edition',
   title: 'PlayStation 5 Console - Slim Edition',
+  sales_price: 499,
   price: 499,
   category: 'Consoles',
   sku: 'PS5-SLIM-WHT',
@@ -220,7 +222,8 @@ export const mockData = {
   rating: 4.8,
   reviewCount: 2400,
   description: 'Experience lightning fast loading with an ultra-high speed SSD, deeper immersion with support for haptic feedback and 3D Audio.',
-  imageUrl: [defaultProductImage,defaultProductImage2,defaultProductImage3,defaultProductImage4],
+  allImages: [defaultProductImage,defaultProductImage2,defaultProductImage3,defaultProductImage4],
+  imageUrl: defaultProductImage,
   availableColors: ['#ffffff', '#000000', '#2563eb'],
   availableSizes: ['Disc Edition', 'Digital Edition'],
 };

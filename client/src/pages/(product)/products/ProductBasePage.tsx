@@ -41,7 +41,7 @@ interface ProductBasePageProps {
   defaultDrawerView?: DrawerView;
   allTypes?: boolean;
   extraHeader?: React.ReactNode;
-  activeTab: string;
+  activeTab?: string;
 }
 
 const ProductBasePage: React.FC<ProductBasePageProps> = ({ 

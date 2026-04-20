@@ -15,7 +15,8 @@ import {
   Star, 
   Scan, 
   Maximize, 
-  Gift
+  Gift,
+  Package
 } from 'lucide-react';
 import CardRenderer from '@/components/products/CardRenderer';
 import { 
@@ -129,7 +130,8 @@ export default function DesignTab2({ builderItems, design, setDesign }: DesignTa
     { id: 'highlights', label: 'Feature Highlights', icon: GridIcon, allowedTypes: ['text', 'textarea', 'list', 'richtext', 'array', 'key-value'] },
     { id: 'promotions', label: 'Promotional Offers', icon: Gift, noMapping: true },
     { id: 'variantsSection', label: 'Variants Section', icon: Layers, allowedTypes: ['section', 'array', 'group'] },
-    { id: 'actions', label: 'Actions', icon: MousePointer2, noMapping: true }
+    { id: 'actions', label: 'Actions', icon: MousePointer2, noMapping: true },
+    { id: 'bundleItems', label: 'Bundle Items', icon: Package, allowedTypes: ['bundle-items'] },
   ];
 
   const currentTemplate = useMemo(() => {
@@ -287,6 +289,11 @@ export default function DesignTab2({ builderItems, design, setDesign }: DesignTa
                 design={currentDesign}
                 data={{ ...currentMockData, imageUrl: currentMockData.imageUrl || DEFAULT_PREVIEW_IMAGE }}
                 template={{ form_schema: { items: builderItems }, design: currentDesign }}
+                wholeData={{ 
+                  ...currentMockData, 
+                  FormTemplate: { formKey: currentMockData.formKey || (activeMode === 'view' && currentTemplate?.id === 'immersive_bundle' ? 'bundle' : 'inventory') },
+                  bundleItems: currentMockData.bundleItems || []
+                }}
                 mode={activeMode}
                 onSlotClick={(slot) => setSelectedSlot(slot)}
                 activeSlot={selectedSlot}

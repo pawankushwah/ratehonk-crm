@@ -1,278 +1,250 @@
-import React, { useState, useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import type { TemplateProps } from '../card/common';
 import { SlotWrapper } from '../card/common';
 import { formatDisplayValue, resolveImageUrl } from '@/utils/dynamicRenderer';
-import { Package, Star, Info, ChevronDown, Check, Tag, ArrowRight, ShieldCheck, Zap } from 'lucide-react';
 import defaultProductImage from '@/assets/images/default-product-1.png';
+import { Package, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const InteractiveBundleTemplate: React.FC<TemplateProps> = ({
   data,
   visibility,
-  accentColor,
+  accentColor = '#6366f1',
   bgBase,
   textMain,
   textMuted,
   activeSlot,
   onSlotClick,
-  isDark,
-  context,
+  context, // The parent template context
   imageBaseURL
 }) => {
-  const d = data as any;
-  const [selectedImage, setSelectedImage] = useState(0);
-
-  const title = d.title || "Premium Bundle Pack";
-  const price = d.price || 0;
-  const bundleItems = d.bundleItems || [];
-  const imageUrl = d.imageUrl || d.image;
-  const description = d.description || "A comprehensive collection of high-quality products curated for maximum value and performance.";
+  const [activeImageIndex, setActiveImageIndex] = useState(0);
+  const d = (data || {}) as any;
+  const title = d?.title || "Product Bundle";
+  const price = Number(d?.price || 0);
+  const description = d?.description || "";
   
-  const allImages = useMemo(() => {
-    const imgs = d.allImages || [imageUrl];
-    return imgs.flat().filter(Boolean);
-  }, [d.allImages, imageUrl]);
+  // ROBUST DATA RESOLUTION for Bundle Items
+  const bundleItems = useMemo(() => {
+    // 1. Try directly passed bundleItems (from CardRenderer/Success join)
+    if (d?.bundleItems && Array.isArray(d.bundleItems) && d.bundleItems.length > 0) {
+      return d.bundleItems;
+    }
+    
+    // 2. Try to find the field of type 'bundle-items' in the schema
+    const schemaItems = context?.form_schema?.items || context?.schema || [];
+    
+    // Check for explicit mapping first
+    const mappedId = context?.mapping?.bundleItems;
+    if (mappedId && d[mappedId] && Array.isArray(d[mappedId])) {
+      return d[mappedId];
+    }
 
-  // Calculate savings
-  const totalMarketValue = useMemo(() => {
-    return bundleItems.reduce((acc: number, item: any) => acc + (Number(item.market_price || 0) * Number(item.quantity || 1)), 0);
+    const bundleField = schemaItems.find((it: any) => it.type === 'bundle-items' || it.type === 'bundle' || it.role === 'bundleItems' || it.role === 'bundle-items');
+    if (bundleField && d[bundleField.id] && Array.isArray(d[bundleField.id])) {
+      return d[bundleField.id];
+    }
+
+    // 3. Last resort: check common IDs
+    const fallbackId = '1775121053564';
+    if (d?.[fallbackId] && Array.isArray(d[fallbackId])) {
+      return d[fallbackId];
+    }
+
+    return [];
+  }, [d, context]);
+
+  const allImages = (d.allImages || d.images || [d.imageUrl || d.image || defaultProductImage]).flat().filter(Boolean);
+
+  const subtotal = useMemo(() => {
+    return bundleItems.reduce((acc: number, item: any) => acc + (Number(item.market_price || item.currentPrice || item.price || 0) * Number(item.quantity || 1)), 0);
   }, [bundleItems]);
 
-  const savings = totalMarketValue > price ? totalMarketValue - price : 0;
-  const savingsPercent = totalMarketValue > 0 ? Math.round((savings / totalMarketValue) * 100) : 0;
+  // const discount = subtotal > price ? subtotal - price : 0;
+
+  // Safe Image Resolver that doesn't double-prefix
+  const safeResolve = (url: any) => {
+    if (!url) return defaultProductImage;
+    if (url.startsWith('http') || url.startsWith('blob:') || url.startsWith('data:') || url.startsWith('/api/images/')) return url;
+    return `${imageBaseURL || '/api/images/'}${url}`;
+  };
 
   return (
-    <div className={`w-full mx-auto flex flex-col ${bgBase} ${textMain} rounded-3xl overflow-hidden border border-white/5 shadow-2xl`}>
-      {/* HERO SECTION */}
-      <div className="flex flex-col lg:flex-row gap-0 border-b border-white/5">
-        {/* LEFT: VISUALS */}
-        <div className={`lg:w-5/12 p-8 lg:p-12 space-y-8 lg:border-r border-white/5 ${isDark ? 'bg-black/20' : 'bg-slate-50'}`}>
-          {visibility.image && (
-            <SlotWrapper
-              slot="image"
-              className="space-y-8"
-              activeSlot={activeSlot}
-              onSlotClick={onSlotClick}
-              accentColor={accentColor}
-            >
-              <div className="aspect-square relative flex items-center justify-center p-8 bg-white/5 rounded-3xl overflow-hidden group">
-                <img
-                  src={imageBaseURL + (allImages[selectedImage] || '')}
-                  alt={title}
-                  className="max-w-full max-h-full object-contain transition-all duration-700 group-hover:scale-105"
-                  onError={(e) => (e.currentTarget.src = defaultProductImage)}
-                />
-                
-                {savingsPercent > 0 && (
-                  <div className="absolute top-6 right-6 px-4 py-2 bg-emerald-500 rounded-2xl text-[10px] font-black uppercase tracking-widest text-white shadow-xl shadow-emerald-500/20 animate-bounce">
-                    Save {savingsPercent}%
-                  </div>
-                )}
-              </div>
-
-              {/* THUMBNAILS */}
-              <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2">
-                {allImages.map((img: string, idx: number) => (
-                  <button
-                    key={idx}
-                    onClick={() => setSelectedImage(idx)}
-                    className={`w-16 h-16 rounded-xl border-2 transition-all p-1 shrink-0 ${selectedImage === idx ? 'scale-110 shadow-lg' : 'opacity-40 hover:opacity-100'} bg-white/5`}
-                    style={{ borderColor: selectedImage === idx ? accentColor : 'transparent' }}
+    <div className={`w-full max-w-3xl mx-auto p-6 md:p-12 flex flex-col gap-12 font-sans ${bgBase} ${textMain}`}>
+      
+      {/* 1. HERO: IMAGE CAROUSEL & TITLE */}
+      <div className="flex flex-col items-center text-center gap-8">
+        {visibility.image && (
+          <SlotWrapper slot="image" activeSlot={activeSlot} onSlotClick={onSlotClick} accentColor={accentColor}>
+            <div className="relative group w-full max-w-md aspect-square flex items-center justify-center bg-current/5 rounded-3xl overflow-hidden shadow-2xl shadow-current/5">
+              <img
+                src={safeResolve(allImages[activeImageIndex])}
+                alt={title}
+                className="w-full h-full object-contain transition-transform duration-700 group-hover:scale-105"
+                onError={(e) => (e.currentTarget.src = defaultProductImage)}
+              />
+              
+              {allImages.length > 1 && (
+                <>
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); setActiveImageIndex(prev => (prev === 0 ? allImages.length - 1 : prev - 1)); }}
+                    className="absolute left-4 top-1/2 -translate-y-1/2 p-2 rounded-full bg-black/80 backdrop-blur-md border border-white/20 text-white opacity-0 group-hover:opacity-100 transition-all hover:bg-black/80"
                   >
-                    <img src={imageBaseURL + img} className="w-full h-full object-contain" alt={`View ${idx}`} />
+                    <ChevronLeft size={20} />
                   </button>
-                ))}
-              </div>
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); setActiveImageIndex(prev => (prev === allImages.length - 1 ? 0 : prev + 1)); }}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 p-2 rounded-full bg-black/80 backdrop-blur-md border border-white/20 text-white opacity-0 group-hover:opacity-100 transition-all hover:bg-black/80"
+                  >
+                    <ChevronRight size={20} />
+                  </button>
+                  <div className="absolute bottom-6 flex gap-1.5 justify-center w-full">
+                    {allImages.map((_: any, i: number) => (
+                      <div 
+                        key={i} 
+                        className={`h-1 rounded-full transition-all duration-300 ${i === activeImageIndex ? 'w-8 bg-white' : 'w-2 bg-white/30'}`} 
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          </SlotWrapper>
+        )}
+
+        <div className="space-y-4">
+          {visibility.title && (
+            <SlotWrapper slot="title" activeSlot={activeSlot} onSlotClick={onSlotClick} accentColor={accentColor}>
+              <h1 className="text-4xl font-bold tracking-tight uppercase">
+                {title}
+              </h1>
+            </SlotWrapper>
+          )}
+          {visibility.description && description && (
+            <SlotWrapper slot="description" activeSlot={activeSlot} onSlotClick={onSlotClick} accentColor={accentColor}>
+              <p className={`text-sm opacity-60 leading-relaxed max-w-lg mx-auto ${textMuted}`}>
+                {description}
+              </p>
             </SlotWrapper>
           )}
         </div>
+      </div>
 
-        {/* RIGHT: BUNDLE SUMMARY */}
-        <div className={`lg:w-7/12 p-8 lg:p-16 flex flex-col justify-center space-y-10 ${isDark ? 'bg-white/5' : 'bg-white'}`}>
+      {/* 2. ITEM LIST: MINIMAL ROWS WITH INTEGRATED PRICING */}
+      <div className="space-y-6">
+        <SlotWrapper slot="bundleItems" activeSlot={activeSlot} onSlotClick={onSlotClick} accentColor={accentColor}>
           <div className="space-y-6">
-            <div className="flex items-center gap-3">
-              <div className="px-3 py-1 bg-primary/10 rounded-lg text-primary text-[10px] font-black uppercase tracking-widest" style={{ color: accentColor, backgroundColor: `${accentColor}20` }}>
-                Curated Bundle
-              </div>
-              <div className="flex items-center gap-1">
-                {[1, 2, 3, 4, 5].map((i) => (
-                  <Star key={i} size={12} className="text-yellow-400 fill-current" />
-                ))}
-              </div>
-            </div>
-
-            {visibility.title && (
-              <SlotWrapper slot="title" activeSlot={activeSlot} onSlotClick={onSlotClick} accentColor={accentColor}>
-                <h1 className="text-3xl lg:text-5xl font-black tracking-tight leading-[1.1]">
-                  {title}
-                </h1>
-              </SlotWrapper>
-            )}
-
-            <div className="flex flex-col gap-2">
-               {visibility.price && (
-                <SlotWrapper slot="price" activeSlot={activeSlot} onSlotClick={onSlotClick} accentColor={accentColor}>
-                  <div className="flex items-end gap-4">
-                    <span className="text-4xl lg:text-6xl font-black tracking-tighter" style={{ color: accentColor }}>
-                      {formatDisplayValue(price, 'price')}
-                    </span>
-                    {totalMarketValue > price && (
-                      <div className="flex flex-col mb-1.5 opacity-60">
-                         <span className="text-sm line-through decoration-rose-500 decoration-2">
-                           {formatDisplayValue(totalMarketValue, 'price')}
-                         </span>
-                         <span className="text-[10px] font-black uppercase tracking-widest text-emerald-500">
-                           Bundle Value
-                         </span>
+            <h2 className="text-[10px] font-black uppercase tracking-[0.4em] opacity-30 border-b border-current pb-3">Included Contents</h2>
+            <div className="divide-y divide-current/5">
+              {bundleItems.length > 0 ? (
+                bundleItems.map((item: any, idx: number) => (
+                  <div key={idx} className="py-5 flex items-center justify-between gap-4 group/item">
+                    <div className="flex items-center gap-5">
+                      <div className="w-14 h-14 rounded-2xl bg-current/5 flex items-center justify-center p-2 opacity-80 group-hover/item:opacity-100 transition-opacity">
+                        <img 
+                          src={safeResolve(item.imageUrl || item.item_image || item.image)} 
+                          alt="" 
+                          className="max-w-full max-h-full object-contain"
+                          onError={(e) => (e.currentTarget.src = defaultProductImage)}
+                        />
                       </div>
-                    )}
-                  </div>
-                </SlotWrapper>
-              )}
-            </div>
-
-            {visibility.description && (
-              <SlotWrapper slot="description" activeSlot={activeSlot} onSlotClick={onSlotClick} accentColor={accentColor}>
-                <p className={`text-sm leading-relaxed max-w-xl ${textMuted}`}>
-                  {description}
-                </p>
-              </SlotWrapper>
-            )}
-          </div>
-
-          <div className="flex flex-wrap gap-6 pt-6 border-t border-white/5">
-             <div className="flex items-center gap-3">
-                <div className="p-3 rounded-2xl bg-emerald-500/10 text-emerald-500">
-                   <ShieldCheck size={20} />
-                </div>
-                <div className="flex flex-col">
-                   <span className="text-[10px] font-black uppercase tracking-widest opacity-40">Warranty</span>
-                   <span className="text-xs font-bold">1 Year Protection</span>
-                </div>
-             </div>
-             <div className="flex items-center gap-3">
-                <div className="p-3 rounded-2xl bg-amber-500/10 text-amber-500">
-                   <Zap size={20} />
-                </div>
-                <div className="flex flex-col">
-                   <span className="text-[10px] font-black uppercase tracking-widest opacity-40">Delivery</span>
-                   <span className="text-xs font-bold">Priority Shipping</span>
-                </div>
-             </div>
-          </div>
-
-          <button 
-            className="w-full lg:w-fit px-12 py-5 rounded-2xl bg-primary text-white font-black uppercase tracking-widest shadow-2xl shadow-primary/40 hover:brightness-110 active:scale-95 transition-all flex items-center justify-center gap-3"
-            style={{ backgroundColor: accentColor }}
-          >
-            Claim This Bundle <ArrowRight size={18} />
-          </button>
-        </div>
-      </div>
-
-      {/* BUNDLE CONTENTS GRID */}
-      <div className="p-8 lg:p-16 space-y-12">
-        <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 pb-6 border-b border-white/5">
-          <div className="space-y-4">
-             <div className="flex items-center gap-2">
-                <Package size={20} className="text-primary" style={{ color: accentColor }} />
-                <h2 className="text-xl lg:text-3xl font-black uppercase tracking-widest italic">Inside the Pack</h2>
-             </div>
-             <p className={`text-xs opacity-60 font-medium max-w-lg ${textMuted}`}>
-               Every item in this bundle has been carefully selected to ensure perfect synergy and performance. Here is what you get:
-             </p>
-          </div>
-          {savings > 0 && (
-            <div className="p-6 rounded-3xl bg-emerald-500 text-white shadow-xl shadow-emerald-500/20 flex flex-col items-center justify-center text-center">
-               <span className="text-[10px] font-black uppercase tracking-widest opacity-80">Instant Saving</span>
-               <span className="text-2xl font-black tracking-tighter">{formatDisplayValue(savings, 'price')} OFF</span>
-            </div>
-          )}
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-          {bundleItems.map((item: any, idx: number) => (
-            <div 
-              key={idx} 
-              className={`group flex flex-col p-6 rounded-3xl border ${isDark ? 'border-white/5 bg-white/5' : 'border-slate-100 bg-slate-50/50'} hover:border-primary/30 transition-all hover:shadow-2xl hover:shadow-primary/5`}
-            >
-              <div className="flex items-center gap-6 mb-4">
-                <div className="w-20 h-20 rounded-2xl bg-white flex items-center justify-center p-3 shadow-inner overflow-hidden flex-shrink-0">
-                  <img 
-                    src={imageBaseURL + (item.item_image || item.imageUrl)} 
-                    alt={item.display_name} 
-                    className="max-w-full max-h-full object-contain transition-transform duration-500 group-hover:scale-110"
-                    onError={(e) => (e.currentTarget.src = defaultProductImage)}
-                  />
-                </div>
-                <div className="flex-1 min-w-0">
-                   <div className="flex items-center gap-1.5 mb-1">
-                      <span className="px-2 py-0.5 rounded-md text-[8px] font-black uppercase bg-primary/10 text-primary" style={{ color: accentColor, backgroundColor: `${accentColor}10` }}>
-                        {item.typeLabel || 'Item'}
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-sm font-bold tracking-tight">{item.name || item.display_name || item.label}</span>
+                        <span className="text-[10px] opacity-40 uppercase tracking-[0.1em] font-black">QTY: {Number(item.quantity || 1)}</span>
+                      </div>
+                    </div>
+                    <div className="flex flex-col items-end">
+                      <span className="text-sm font-bold opacity-40 group-hover/item:opacity-70 transition-opacity italic">
+                        {formatDisplayValue(item.price || item.unit_price || item.market_price || 0, 'price')}
                       </span>
-                      <span className="text-[10px] font-black opacity-40">× {Number(item.quantity || 1)}</span>
-                   </div>
-                   <h3 className="text-sm font-black tracking-tight truncate leading-tight mb-1">{item.display_name || item.label}</h3>
-                   <div className="flex items-center gap-1.5">
-                      <Tag size={10} className="opacity-40" />
-                      <span className="text-[10px] font-bold opacity-40 tracking-wider truncate">{item.item_sku || 'REF: ...'}</span>
-                   </div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="py-16 flex flex-col items-center justify-center opacity-10 italic gap-4">
+                  <Package size={40} strokeWidth={1} />
+                  <p className="text-[10px] font-black uppercase tracking-[0.3em]">No items assigned to bundle</p>
+                </div>
+              )}
+
+              {/* PROFESSIONAL PRICING SUMMARY */}
+              <div className="pt-12 mt-4 space-y-6 border-t border-current/5">
+                <div className="flex justify-between items-baseline">
+                  {/* <span className="text-[15px] font-bold uppercase tracking-[0.25em] opacity-40">Individual Total</span> */}
+                  <span className="text-[15px] font-bold uppercase tracking-[0.25em] opacity-40">Total</span>
+                  <span className="text-sm font-medium opacity-60 tabular-nums">
+                    {formatDisplayValue(subtotal, 'price')}
+                  </span>
+                </div>
+                
+                {/* {discount > 0 && (
+                  <div className="flex justify-between items-baseline">
+                    <div className="flex flex-col">
+                      <span className="text-[10px] font-bold uppercase tracking-[0.25em] text-emerald-500">Bundle Savings</span>
+                    </div>
+                    <span className="text-sm font-bold text-emerald-500 tabular-nums">
+                      -{formatDisplayValue(discount, 'price')}
+                    </span>
+                  </div>
+                )} */}
+
+                <div className="flex flex-col gap-2 pt-6">
+                  <div className="flex justify-between items-end">
+                    {/* <div className="flex flex-col">
+                      <span className="text-[11px] font-black uppercase tracking-[0.3em] opacity-30">Final Bundle Price</span>
+                      <span className="text-5xl font-black tracking-tighter tabular-nums" style={{ color: accentColor }}>
+                        {formatDisplayValue(price, 'price')}
+                      </span>
+                    </div> */}
+                    {/* {discount > 0 && (
+                      <div className="mb-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                        <span className="text-[10px] font-black uppercase tracking-widest text-emerald-500">
+                          Save {Math.round((discount / subtotal) * 100)}%
+                        </span>
+                      </div>
+                    )} */}
+                  </div>
                 </div>
               </div>
-
-              <div className="mt-auto pt-4 border-t border-white/5 flex items-center justify-between">
-                 <div className="flex flex-col">
-                    <span className="text-[9px] font-black uppercase tracking-widest opacity-40 mb-1">Single Value</span>
-                    <span className="text-xs font-bold">{formatDisplayValue(item.market_price || item.unit_price, 'price')}</span>
-                 </div>
-                 <div className="flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-emerald-500">
-                    <Check size={12} /> Included
-                 </div>
-              </div>
             </div>
-          ))}
+          </div>
+        </SlotWrapper>
 
-          {/* Placeholder for small bundles */}
-          {bundleItems.length > 0 && bundleItems.length < 3 && Array.from({ length: 3 - bundleItems.length }).map((_, i) => (
-             <div key={`empty-${i}`} className="hidden lg:flex flex-col items-center justify-center p-6 rounded-3xl border-2 border-dashed border-white/5 opacity-20">
-                <Package size={32} />
-             </div>
-          ))}
-        </div>
+        {/* <button 
+          className="w-full mt-10 py-7 rounded-[2rem] font-black uppercase tracking-[0.3em] text-[10px] text-white shadow-2xl transition-all hover:scale-[1.02] active:scale-[0.98] brightness-110"
+          style={{ 
+            backgroundColor: accentColor,
+            boxShadow: `0 20px 40px -12px ${accentColor}40` 
+          }}
+        >
+          Proceed to Order Bundle
+        </button> */}
       </div>
+
     </div>
   );
 };
 
 export const mockData = {
-  title: 'Ultimate Creative Studio Bundle',
-  price: 5499,
-  category: 'Workspace Solutions',
-  imageUrl: [defaultProductImage],
-  description: 'Elevate your creative workflow with the ultimate hardware synergy. This curated bundle includes all the essentials for professional content creation at an unbeatable value.',
+  title: 'Minimalist Tech Set',
+  price: 1299,
+  category: 'Essentials',
+  images: [defaultProductImage],
+  description: 'A curated selection of high-performance tools for your daily workflow.',
   bundleItems: [
     {
-      display_name: 'Mac Studio M2 Ultra',
-      item_sku: 'MAC-ST-M2U',
+      display_name: 'Wireless Keyboard',
       quantity: 1,
-      market_price: 3999,
-      typeLabel: 'Inventory',
-      item_image: defaultProductImage
+      market_price: 199,
     },
     {
-       display_name: 'Studio Display Nano-Texture',
-       item_sku: 'SD-NANO',
+       display_name: 'Precision Mouse',
        quantity: 1,
-       market_price: 1899,
-       typeLabel: 'Inventory',
-       item_image: defaultProductImage
+       market_price: 99,
     },
     {
-       display_name: 'Magic Keyboard with Touch ID',
-       item_sku: 'MAGIC-KB',
+       display_name: 'Ultra HDR Monitor',
        quantity: 1,
-       market_price: 199,
-       typeLabel: 'Inventory',
-       item_image: defaultProductImage
+       market_price: 1100,
     }
   ]
 };

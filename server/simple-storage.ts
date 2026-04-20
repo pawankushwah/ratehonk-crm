@@ -93,6 +93,23 @@ const processImages = (imgVal: any): string[] => {
   return [imgVal.toString()];
 };
 
+const resolveImageUrl = (val: any): string | null => {
+  if (!val) return null;
+  if (typeof val !== 'string') return val;
+  const first = val.split(',')[0].trim();
+  return first;
+};
+
+const getProductTypeTag = (key: string) => {
+  switch (key) {
+    case 'inventory': return { label: 'Inventory', color: '#6366f1' };
+    case 'non-inventory': return { label: 'Non-Inventory', color: '#ec4899' };
+    case 'service': return { label: 'Service', color: '#eab308' };
+    case 'bundle': return { label: 'Bundle', color: '#14b8a6' };
+    default: return { label: 'Item', color: '#94a3b8' };
+  }
+};
+
 export class SimpleStorage {
   async getUserByEmail(email: string) {
     try {

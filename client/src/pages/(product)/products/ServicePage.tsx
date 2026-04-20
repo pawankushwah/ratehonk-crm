@@ -4,10 +4,11 @@ const ServicePage = () => {
   return (
     <ProductBasePage 
       title="Service" 
-      templateName="Service"
+      templateName="service"
       defaultDrawerView="service"
     />
   );
 };
 
 export default ServicePage;
+  

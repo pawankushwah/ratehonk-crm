@@ -9,6 +9,7 @@ import HorizontalUniversalTemplate, { mockData as HorizontalUniversalMock } from
 import HorizontalAdvancedTemplate, { mockData as HorizontalAdvancedMock } from './card/HorizontalAdvancedTemplate';
 import FlowbiteDetailTemplate, { mockData as FlowbitePDPMock } from './detail/FlowbiteDetailTemplate';
 import FlowbiteAdvancedDetailTemplate, { mockData as AdvancedPDPMock } from './detail/FlowbiteAdvancedDetailTemplate';
+import InteractiveBundleTemplate, { mockData as BundlePDPMock } from './detail/InteractiveBundleTemplate';
 
 export type TemplateId = 
   | 'simple'
@@ -21,7 +22,8 @@ export type TemplateId =
   | 'horizontal_universal'
   | 'horizontal_advanced'
   | 'immersive_flowbite'
-  | 'immersive_advanced';
+  | 'immersive_advanced'
+  | 'immersive_bundle';
 
 export const VERTICAL_TEMPLATES = [
   { 
@@ -109,6 +111,14 @@ export const DETAIL_TEMPLATES = [
     supportedSlots: ['image', 'title', 'price', 'rating', 'description', 'colors', 'variantsSection','sizes', 'stock', 'sku', 'highlights', 'promotions'],
     mockData: AdvancedPDPMock
   },
+  { 
+    id: 'immersive_bundle', 
+    name: 'Interactive Bundle', 
+    type: 'detail', 
+    description: 'High-density Bundle view with contents grid.',
+    supportedSlots: ['image', 'title', 'price', 'description', 'stock', 'bundleItems'],
+    mockData: BundlePDPMock
+  },
 ];
 
 // Unified registry for the renderer
@@ -124,6 +134,7 @@ export const TemplateRegistry: Record<TemplateId, React.FC<any>> = {
   horizontal_advanced: HorizontalAdvancedTemplate,
   immersive_flowbite: FlowbiteDetailTemplate,
   immersive_advanced: FlowbiteAdvancedDetailTemplate,
+  immersive_bundle: InteractiveBundleTemplate,
 };
 
 export const radiusMap = {

@@ -906,7 +906,9 @@ export const UniversalTemplateView: React.FC<TemplateProps> = ({
 };
 
 export const mockData = {
+  name: 'Apple iMac 27", 1TTB HDD, Retina 5K Display, M3 Max',
   title: 'Apple iMac 27", 1TB HDD, Retina 5K Display, M3 Max',
+  sales_price: 1699,
   price: 1699,
   category: 'Desktop PC',
   sku: 'RH-IMAC-2024',
@@ -915,19 +917,23 @@ export const mockData = {
   reviewCount: 1240,
   promo: 'Best Seller',
   description: 'Experience the ultimate desktop performance with the new iMac. Featuring a stunning 5K Retina display and the powerful M3 Max chip for professionals.',
-  imageUrl: [image1],
+  allImages: [image1],
+  images: [image1],
   availableColors: ['#F5276C', '#F54927', '#F59E27', '#F5D127', '#F5F5F5'],
   availableSizes: ['XS', 'S', 'M', 'L', 'XL'],
   highlights: [
-    { key: 'Brand', value: 'Apple' },
-    { key: 'Model', value: 'iMac 2024' },
-    { key: 'Processor', value: 'M3 Max' },
-    { key: 'Display', value: 'Retina 5K' }
+    { label: 'Brand', value: 'Apple' },
+    { label: 'Model', value: 'iMac 2024' },
+    { label: 'Processor', value: 'M3 Max' },
+    { label: 'Display', value: 'Retina 5K' }
   ],
   promotions: [
     { label: 'Free Shipping', type: 'shipping' },
     { label: '10% Off with RH-PROMO', type: 'discount' }
   ],
+  FormTemplate: {
+    formKey: 'inventory'
+  }
 };
 
 export default UniversalTemplate;
