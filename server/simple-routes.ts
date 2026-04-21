@@ -1390,6 +1390,28 @@ export async function registerSimpleRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/invoices-v2/:id/fulfill", authenticateToken, async (req, res) => {
+    try {
+      const invoiceId = parseInt(req.params.id);
+      const { tenantId } = req.body;
+
+      if (!tenantId) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Tenant ID required" });
+      }
+
+      const result = await simpleStorage.fulfillInvoiceItems(
+        parseInt(tenantId),
+        invoiceId
+      );
+      return res.json(result);
+    } catch (error) {
+      console.error("Fulfill invoice error:", error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
   // Payment Installments Routes
   app.post("/api/payment-installments", authenticateToken, async (req, res) => {
     try {

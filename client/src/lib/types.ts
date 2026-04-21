@@ -3,6 +3,12 @@ export interface DashboardMetrics {
   activeBookings: number;
   customers: number;
   leads: number;
+  lowStock: number;
+  topSellingProducts: Array<{
+    id: number;
+    name: string;
+    sold: number;
+  }>;
 }
 
 export interface DashboardData {

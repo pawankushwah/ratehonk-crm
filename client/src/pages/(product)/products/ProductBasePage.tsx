@@ -315,7 +315,8 @@ const ProductBasePage: React.FC<ProductBasePageProps> = ({
             className="flex items-center justify-center w-11 h-11 rounded-xl bg-glass-bg border border-glass-border text-text-muted hover:text-primary hover:border-primary/50 transition-all group active:scale-95"
             title="Fullscreen"
           >
-            {isFullscreen ? <Minimize size={18} /> : <Maximize size={18} />}
+            {/* {isFullscreen ? <Minimize size={18} /> : <Maximize size={18} />} */}
+            filter
           </button>
         </div>
         

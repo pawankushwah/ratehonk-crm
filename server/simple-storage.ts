@@ -6159,6 +6159,7 @@ async getAllLeadsByTenant(
           description: item.description,
           itemTitle: item.description,
           quantity: item.quantity || 1,
+          fulfilledQuantity: item.fulfilled_quantity || 0,
           unitPrice: parseFloat(item.unit_price || 0),
           sellingPrice: parseFloat(item.unit_price || 0),
           tax: 0,
@@ -6228,6 +6229,7 @@ async getAllLeadsByTenant(
           }
         })() : null,
         paymentTerms: invoice.payment_terms || null,
+        isPartial: invoice.is_partial || false,
         isTaxInclusive: invoice.is_tax_inclusive || false,
         notes: invoice.notes || null,
         additionalNotes: invoice.additional_notes || null,
@@ -6722,6 +6724,7 @@ async getAllLeadsByTenant(
             notes: invoice.notes,
             tags: tags,
             lineItems: lineItems,
+            isPartial: invoice.is_partial || false,
             createdAt: invoice.created_at,
             customerName: customerName,
             customerEmail: customerEmail,
@@ -7265,47 +7268,68 @@ async getAllLeadsByTenant(
       console.log("✅ Invoice created with ID:", newInvoice.id);
       console.log("📋 Invoice data expenses:", invoiceData.expenses?.length || 0, "expenses");
 
-      // Handle line items - check both lineItems and items for compatibility
+      // 2. Insert line items and handle stock
       const lineItems = invoiceData.lineItems || invoiceData.items || [];
       const newInvoiceId = newInvoice.id;
+      let isPartial = false;
+      const fulfilledMap = new Map<number, number>();
 
       if (lineItems.length > 0) {
         // Handle stock updates if enabled
         if (tenantSettings?.stockUpdate) {
-          for (const item of lineItems) {
+          for (let i = 0; i < lineItems.length; i++) {
+            const item = lineItems[i];
             const productId = item.productId || null;
+            const requested = parseInt(item.quantity?.toString() || "1");
+            
             if (productId && !isNaN(parseInt(productId.toString()))) {
               console.log(`📦 Updating stock for product ${productId}...`);
               try {
-                await this.updateProductStock(
+                const fulfilled = await this.updateProductStock(
                   invoiceData.tenantId,
                   parseInt(productId.toString()),
-                  parseInt(item.quantity?.toString() || "1")
+                  requested,
+                  item.variantId
                 );
+                fulfilledMap.set(i, fulfilled);
+                if (fulfilled < requested) {
+                  isPartial = true;
+                  console.log(`⚠️ Partial fulfillment for item ${i}: ${fulfilled} / ${requested}`);
+                }
               } catch (stockError) {
                 console.error(`⚠️ Failed to update stock for product ${productId}:`, stockError);
-                // Continue with invoice creation even if stock update fails
+                fulfilledMap.set(i, 0); // Assume 0 fulfilled if error? Or keep as requested? 
+                // Given "Stock Guard", we should probably assume 0 if we can't verify stock.
+                isPartial = true;
               }
+            } else {
+              // Non-product item (service, manual description, etc.) - always fulfilled
+              fulfilledMap.set(i, requested);
             }
+          }
+        } else {
+          // Stock updates disabled - everything is "fulfilled" immediately
+          for (let i = 0; i < lineItems.length; i++) {
+            fulfilledMap.set(i, parseInt(lineItems[i].quantity?.toString() || "1"));
           }
         }
 
-        for (const item of lineItems) {
-          // Build description from available fields
-          const description = item.itemTitle || item.description || item.travelCategory || "Item";
+        // Insert items and update local JSON structure
+        const updatedLineItemsJson = [...lineItems];
+        for (let i = 0; i < lineItems.length; i++) {
+          const item = lineItems[i];
+          const fulfilled = fulfilledMap.get(i) ?? 0;
+          updatedLineItemsJson[i] = { ...item, fulfilledQuantity: fulfilled };
 
-          // Calculate unit price and total price
+          const description = item.itemTitle || item.description || item.travelCategory || "Item";
           const unitPrice = parseFloat(item.sellingPrice?.toString() || item.unitPrice?.toString() || "0");
           const quantity = parseInt(item.quantity?.toString() || "1");
           const tax = parseFloat(item.tax?.toString() || "0");
           const totalPrice = parseFloat(item.totalAmount?.toString() || item.totalPrice?.toString() || (unitPrice * quantity + tax).toString());
 
-          // Store line item with basic fields
-          // Additional fields (travelCategory, vendor, serviceProviderId, purchasePrice, taxRateId, etc.) 
-          // can be stored in a JSON column if needed, or in a separate table
           await sql`
             INSERT INTO invoice_items (
-              invoice_id, description, quantity, unit_price, total_price, package_id, product_id
+              invoice_id, description, quantity, unit_price, total_price, package_id, product_id, fulfilled_quantity
             ) VALUES (
               ${newInvoiceId},
               ${description},
@@ -7313,8 +7337,26 @@ async getAllLeadsByTenant(
               ${unitPrice},
               ${totalPrice},
               ${item.packageId || null},
-              ${item.productId || null}
+              ${item.productId || null},
+              ${fulfilled}
             )
+          `;
+        }
+
+        // Update invoice flag and refreshed JSON
+        if (isPartial) {
+          await sql`
+            UPDATE invoices SET 
+              is_partial = true, 
+              line_items = ${JSON.stringify(updatedLineItemsJson)}::jsonb 
+            WHERE id = ${newInvoiceId}
+          `;
+          console.log(`🏷️ Invoice ${newInvoiceId} tagged as PARTIAL`);
+        } else {
+           await sql`
+            UPDATE invoices SET 
+              line_items = ${JSON.stringify(updatedLineItemsJson)}::jsonb 
+            WHERE id = ${newInvoiceId}
           `;
         }
       }
@@ -7606,6 +7648,68 @@ async getAllLeadsByTenant(
       };
     } catch (error) {
       console.error("Invoice creation error:", error);
+      throw error;
+    }
+  }
+
+  async fulfillInvoiceItems(tenantId: number, invoiceId: number) {
+    try {
+      const [invoice] = await sql`
+        SELECT * FROM invoices WHERE id = ${invoiceId} AND tenant_id = ${tenantId}
+      `;
+      if (!invoice) throw new Error("Invoice not found");
+
+      const items = await sql`
+        SELECT * FROM invoice_items WHERE invoice_id = ${invoiceId}
+      `;
+
+      let allFulfilled = true;
+      const updatedLineItemsJson = Array.isArray(invoice.line_items) ? [...invoice.line_items] : [];
+
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const requested = item.quantity;
+        const currentFulfilled = item.fulfilled_quantity || 0;
+        const remainingNeeded = requested - currentFulfilled;
+
+        if (remainingNeeded > 0 && item.product_id) {
+          const actualFulfilledNow = await this.updateProductStock(
+            tenantId,
+            item.product_id,
+            remainingNeeded,
+            updatedLineItemsJson[i]?.variantId 
+          );
+
+          if (actualFulfilledNow > 0) {
+            const newTotalFulfilled = currentFulfilled + actualFulfilledNow;
+            await sql`
+              UPDATE invoice_items 
+              SET fulfilled_quantity = ${newTotalFulfilled} 
+              WHERE id = ${item.id}
+            `;
+            if (updatedLineItemsJson[i]) {
+              updatedLineItemsJson[i].fulfilledQuantity = newTotalFulfilled;
+            }
+          }
+
+          if (currentFulfilled + actualFulfilledNow < requested) {
+            allFulfilled = false;
+          }
+        } else if (remainingNeeded > 0) {
+          allFulfilled = false;
+        }
+      }
+
+      await sql`
+        UPDATE invoices SET 
+          is_partial = ${!allFulfilled},
+          line_items = ${JSON.stringify(updatedLineItemsJson)}::jsonb
+        WHERE id = ${invoiceId}
+      `;
+
+      return { success: true, allFulfilled };
+    } catch (error) {
+      console.error("fulfillInvoiceItems error:", error);
       throw error;
     }
   }
@@ -15732,7 +15836,38 @@ async getDashboardMetrics(
       WHERE ${leadsFilter} AND ${dateFilter}
     `;
 
-   
+    // LOW STOCK KPI
+    const [lowStockResult] = await sql`
+      SELECT COUNT(DISTINCT iv.id) as low_stock_count
+      FROM inventory_variants iv
+      JOIN inventory inv ON iv.inventory_id = inv.id
+      JOIN stocks s ON iv.stock_id = s.id
+      WHERE inv.tenant_id = ${tenantId} 
+        AND inv.deleted_at IS NULL 
+        AND iv.deleted_at IS NULL
+        AND (
+          (iv.reorder_point > 0 AND s.quantity <= iv.reorder_point)
+          OR (s.quantity <= 0)
+        )
+    `;
+
+    // TOP SELLING PRODUCTS KPI
+    const topSellingProducts = await sql`
+      SELECT 
+        ii.product_id, 
+        ii.product_name,
+        SUM(ii.quantity) as total_sold
+      FROM invoice_items ii
+      JOIN invoices i ON ii.invoice_id = i.id
+      WHERE i.tenant_id = ${tenantId} 
+        AND i.status NOT IN ('void', 'cancelled')
+        AND i.deleted_at IS NULL
+        AND ${dateFilter}
+      GROUP BY ii.product_id, ii.product_name
+      ORDER BY total_sold DESC
+      LIMIT 5
+    `;
+
     // MONTHLY REVENUE 
     
     const monthlyRevenue = await sql`
@@ -15788,6 +15923,12 @@ async getDashboardMetrics(
       activeBookings: parseInt(invoicesResult.total_invoices) || 0, // Changed to invoice count
       customers: parseInt(customersResult.customers) || 0,
       leads: parseInt(leadsResult.leads) || 0,
+      lowStock: parseInt(lowStockResult.low_stock_count) || 0,
+      topSellingProducts: topSellingProducts.map(p => ({
+        id: p.product_id,
+        name: p.product_name,
+        sold: parseFloat(p.total_sold) || 0
+      }))
     };
 
     console.log(`📊 STORAGE: Dashboard metrics calculated:`, metrics);
@@ -18889,6 +19030,7 @@ async getDashboardMetrics(
             COALESCE(iv.image, ninv.image, pb_inner.image, srv.image) as item_image,
             iv.color as item_color,
             COALESCE(iv.sales_price, ninv.sales_price, srv.rate, 0) as market_price,
+            COALESCE(iv.cost, ninv.purchase_cost, 0) as actual_cost,
             ft_inner.form_key
           FROM bundle_items bi
           LEFT JOIN dynamic_data d ON bi.target_dynamic_data_id = d.id
@@ -18910,7 +19052,17 @@ async getDashboardMetrics(
           const items = itemsByBundle[pb.id] || [];
           if (items.length > 0) {
             const currentData = specializedDataMap.get(pb.dynamic_data_id);
-            specializedDataMap.set(pb.dynamic_data_id, { ...currentData, bundleItems: items });
+            const salesPrice = items.reduce((acc, item) => acc + (Number(item.unit_price || 0) * Number(item.quantity || 1)), 0);
+            const purchasePrice = items.reduce((acc, item) => acc + (Number(item.actual_cost || 0) * Number(item.quantity || 1)), 0);
+            
+            specializedDataMap.set(pb.dynamic_data_id, { 
+              ...currentData, 
+              bundleItems: items,
+              price: salesPrice,
+              sales_price: salesPrice,
+              purchase_price: purchasePrice,
+              cost: purchasePrice
+            });
           }
         });
       }
@@ -19189,27 +19341,165 @@ async getDashboardMetrics(
     });
   }
 
-  async updateProductStock(tenantId: number, productId: number, quantityDelta: number) {
+  async updateProductStock(tenantId: number, productId: number, quantityDelta: number, variantId?: string | number): Promise<number> {
     try {
-      const [product] = await sql`
-        SELECT stock FROM dynamic_data WHERE id = ${productId} AND tenant_id = ${tenantId}
+      console.log(`📦 Stock Update: Product ${productId}, Variant ${variantId || 'none'}, Delta -${quantityDelta}`);
+
+      // 1. Get product type from its template
+      const [productInfo] = await sql`
+        SELECT dd.id, ft.form_key 
+        FROM dynamic_data dd
+        JOIN form_templates ft ON dd.template_id = ft.id
+        WHERE dd.id = ${productId} AND dd.tenant_id = ${tenantId}
       `;
 
-      if (!product) return null;
+      if (!productInfo) {
+        console.warn(`⚠️ Product ${productId} not found for stock update`);
+        return 0;
+      }
 
-      const newQty = product.stock - quantityDelta || 0;
+      const formKey = productInfo.form_key;
 
-      const [updated] = await sql`
-        UPDATE dynamic_data SET 
-          stock = ${newQty},
-          updated_at = NOW()
-        WHERE id = ${productId} AND tenant_id = ${tenantId}
-        RETURNING *
-      `;
-      return updated;
+      // 2. Handle Bundles (Recursive sub-item updates)
+      if (formKey === 'bundle') {
+        const [bundle] = await sql`SELECT id FROM product_bundles WHERE dynamic_data_id = ${productId} AND tenant_id = ${tenantId}`;
+        if (!bundle) return 0;
+
+        const items = await sql`SELECT target_dynamic_data_id, variant_id, quantity FROM bundle_items WHERE bundle_id = ${bundle.id}`;
+        if (items.length === 0) return quantityDelta; // Nothing to decrement, so fully fulfilled?
+
+        // For independent component fulfillment in bundles: 
+        // We calculate how many full bundles can be fulfilled based on the scarcest component.
+        let maxFullBundlesPossible = quantityDelta;
+
+        for (const item of items) {
+          const itemQtyNeededPerBundle = parseFloat(item.quantity?.toString() || "1");
+          const totalNeeded = quantityDelta * itemQtyNeededPerBundle;
+          
+          // Check available stock for this component
+          // This is a "dry run" or we just peek at the stock
+          const available = await this.getProductStock(tenantId, item.target_dynamic_data_id, item.variant_id);
+          const possibleBundlesForThisComponent = Math.floor(available / itemQtyNeededPerBundle);
+          
+          maxFullBundlesPossible = Math.min(maxFullBundlesPossible, possibleBundlesForThisComponent);
+        }
+
+        const actualBundlesToFulfill = Math.max(0, maxFullBundlesPossible);
+        
+        if (actualBundlesToFulfill > 0) {
+          console.log(`📦 Bundle ${productId}: Fulfilling ${actualBundlesToFulfill} out of ${quantityDelta} requested`);
+          for (const item of items) {
+            const itemQtyPerBundle = parseFloat(item.quantity?.toString() || "1");
+            const subQtyToDecrement = actualBundlesToFulfill * itemQtyPerBundle;
+            await this.updateProductStock(tenantId, item.target_dynamic_data_id, subQtyToDecrement, item.variant_id);
+          }
+        }
+
+        return actualBundlesToFulfill;
+      }
+
+      // 3. Resolve specialized stock_id if available
+      let stockId: number | null = null;
+
+      // Check variant stock first (Inventory only)
+      if (formKey === 'inventory' && variantId) {
+        const [variant] = await sql`
+          SELECT stock_id FROM inventory_variants 
+          WHERE inventory_id = (SELECT id FROM inventory WHERE dynamic_data_id = ${productId} LIMIT 1)
+          AND (id::text = ${variantId.toString()} OR data->>'value' = ${variantId.toString()} OR color = ${variantId.toString()} OR size = ${variantId.toString()})
+          AND tenant_id = ${tenantId}
+          LIMIT 1
+        `;
+        if (variant) stockId = variant.stock_id;
+      }
+
+      // Check product-level specialized stock
+      if (!stockId) {
+        if (formKey === 'non-inventory') {
+          const [ni] = await sql`SELECT stock_id FROM non_inventory WHERE dynamic_data_id = ${productId} AND tenant_id = ${tenantId}`;
+          if (ni) stockId = ni.stock_id;
+        } else if (formKey === 'service') {
+          const [svc] = await sql`SELECT stock_id FROM services WHERE dynamic_data_id = ${productId} AND tenant_id = ${tenantId}`;
+          if (svc) stockId = svc.stock_id;
+        } else if (formKey === 'inventory') {
+          const [inv] = await sql`SELECT stock_id FROM inventory WHERE dynamic_data_id = ${productId} AND tenant_id = ${tenantId}`;
+          if (inv) stockId = inv.stock_id;
+        }
+      }
+
+      // 4. Update the quantity if specialized stock_id resolved
+      if (stockId) {
+        // Fetch current stock to implement Zero-Floor logic
+        const [stockRecord] = await sql`SELECT quantity FROM stocks WHERE id = ${stockId} AND tenant_id = ${tenantId}`;
+        const currentStock = parseFloat(stockRecord?.quantity?.toString() || "0");
+        
+        const amountToFulfill = Math.max(0, Math.min(quantityDelta, currentStock));
+        
+        if (amountToFulfill > 0) {
+          console.log(`📦 Updating specialized stock (stock_id: ${stockId}): Fulfilling ${amountToFulfill} / ${quantityDelta}`);
+          await sql`
+            UPDATE stocks SET 
+              quantity = quantity - ${amountToFulfill},
+              updated_at = NOW()
+            WHERE id = ${stockId} AND tenant_id = ${tenantId}
+          `;
+        } else {
+          console.warn(`⚠️ Insufficient stock for product ${productId} (requested ${quantityDelta}, available ${currentStock})`);
+        }
+        
+        return amountToFulfill;
+      }
+
+      console.warn(`⚠️ No specialized stock record found for product ${productId} (type: ${formKey})`);
+      return 0;
     } catch (error) {
       console.error("updateProductStock error:", error);
       throw error;
+    }
+  }
+
+  async getProductStock(tenantId: number, productId: number, variantId?: string | number): Promise<number> {
+    try {
+      // Logic to get current stock for any product type/variant
+      const [productInfo] = await sql`
+        SELECT dd.id, ft.form_key 
+        FROM dynamic_data dd
+        JOIN form_templates ft ON dd.template_id = ft.id
+        WHERE dd.id = ${productId} AND dd.tenant_id = ${tenantId}
+      `;
+      if (!productInfo) return 0;
+      
+      let stockId: number | null = null;
+      if (productInfo.form_key === 'inventory' && variantId) {
+        const [variant] = await sql`
+          SELECT stock_id FROM inventory_variants 
+          WHERE inventory_id = (SELECT id FROM inventory WHERE dynamic_data_id = ${productId} LIMIT 1)
+          AND (id::text = ${variantId.toString()} OR data->>'value' = ${variantId.toString()} OR color = ${variantId.toString()} OR size = ${variantId.toString()})
+          AND tenant_id = ${tenantId}
+        `;
+        if (variant) stockId = variant.stock_id;
+      }
+      
+      if (!stockId) {
+        const specializedTableMap: Record<string, string> = {
+          'inventory': 'inventory',
+          'non-inventory': 'non_inventory',
+          'service': 'services'
+        };
+        const table = specializedTableMap[productInfo.form_key];
+        if (table) {
+          const [record] = await sql.unsafe(`SELECT stock_id FROM ${table} WHERE dynamic_data_id = $1 AND tenant_id = $2`, [productId, tenantId]);
+          if (record) stockId = record.stock_id;
+        }
+      }
+      
+      if (stockId) {
+        const [stock] = await sql`SELECT quantity FROM stocks WHERE id = ${stockId}`;
+        return parseFloat(stock?.quantity?.toString() || "0");
+      }
+      return 0;
+    } catch (e) {
+      return 0;
     }
   }
 
@@ -19388,6 +19678,7 @@ async getDashboardMetrics(
             COALESCE(iv.image, ninv.image, pb_inner.image, srv.image) as item_image,
             iv.color as item_color,
             COALESCE(iv.sales_price, ninv.sales_price, srv.rate, 0) as market_price,
+            COALESCE(iv.cost, ninv.purchase_cost, 0) as actual_cost,
             COALESCE(inv.dynamic_data_id, ninv.dynamic_data_id, pb_inner.dynamic_data_id, srv.dynamic_data_id) as target_id,
             ft_inner.form_key
           FROM bundle_items bi
@@ -19426,7 +19717,14 @@ async getDashboardMetrics(
           };
         });
 
-        specialized = { ...bundle, bundleItems: processedItems };
+        specialized = { 
+          ...bundle, 
+          bundleItems: processedItems,
+          price: processedItems.reduce((acc, item) => acc + (Number(item.price || 0) * Number(item.quantity || 1)), 0),
+          sales_price: processedItems.reduce((acc, item) => acc + (Number(item.price || 0) * Number(item.quantity || 1)), 0),
+          purchase_price: processedItems.reduce((acc, item) => acc + (Number(item.actual_cost || 0) * Number(item.quantity || 1)), 0),
+          cost: processedItems.reduce((acc, item) => acc + (Number(item.actual_cost || 0) * Number(item.quantity || 1)), 0),
+        };
       }
     } else if (formKey === 'service') {
       const [srv] = await sql`

@@ -20,6 +20,7 @@ import {
   ChevronRight,
   X,
   Zap,
+  Package,
 } from "lucide-react";
 import { useAuth } from "@/components/auth/auth-provider";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -479,6 +480,8 @@ export default function TenantDashboard() {
     activeBookings: 0,
     customers: 0,
     leads: 0,
+    lowStock: 0,
+    topSellingProducts: [],
   };
   const { data: chartDataResponse, isLoading: chartLoading } = useQuery({
     queryKey: [`/api/dashboard/chart-data`, businessMetricsQueryParams],
@@ -759,6 +762,22 @@ export default function TenantDashboard() {
                     </Link>
                   </div>
                 )}
+                {canViewComponent("dashboard", "inventory") && (
+                  <div data-testid="metric-card-low-stock">
+                    <Link href={`/inventory`}>
+                      <MetricCard
+                        title="Low Stock Items"
+                        value={metrics.lowStock}
+                        icon={Package}
+                        trend="0"
+                        previousMonth={0}
+                        currentMonth={metrics.lowStock}
+                        isPositive={metrics.lowStock === 0}
+                        bgColor="#FFF4E6"
+                      />
+                    </Link>
+                  </div>
+                )}
               </div>
               
               {/* Shortcuts Link */}
@@ -782,6 +801,36 @@ export default function TenantDashboard() {
                 >
                   {canViewComponent("dashboard.revenue-chart") && <RevenueChart />}
                   {canViewComponent("dashboard.profit-loss") && <ProfitLossCard />}
+                </div>
+              )}
+
+              {/* Top Selling Products - New Section */}
+              {canViewComponent("dashboard", "top-selling") && metrics.topSellingProducts.length > 0 && (
+                <div className="mt-6 lg:mt-10 bg-white dark:bg-gray-800 rounded-2xl p-6 shadow-sm border border-gray-100 dark:border-gray-700">
+                  <div className="flex items-center justify-between mb-6">
+                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Top Selling Products</h3>
+                    <Link href="/products">
+                      <button className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1">
+                        View All <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </Link>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+                    {metrics.topSellingProducts.map((product, index) => (
+                      <div key={product.id} className="p-4 rounded-xl border border-gray-50 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/50 hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors">
+                        <div className="flex flex-col gap-1">
+                          <span className="text-xs font-semibold text-blue-600 dark:text-blue-400">Rank #{index + 1}</span>
+                          <span className="text-sm font-medium text-gray-900 dark:text-white truncate" title={product.name}>
+                            {product.name}
+                          </span>
+                          <div className="flex items-center justify-between mt-2">
+                            <span className="text-xs text-gray-500 dark:text-gray-400">Units Sold</span>
+                            <span className="text-sm font-bold text-gray-900 dark:text-white">{product.sold}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
               

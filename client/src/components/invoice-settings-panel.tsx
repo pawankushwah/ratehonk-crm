@@ -35,8 +35,6 @@ interface InvoiceSettings {
   showDiscount: boolean;
   showNotes: boolean;
   showVoucherInvoice: boolean;
-  showProvider: boolean;
-  showVendor: boolean;
   showUnitPrice: boolean;
   showAdditionalCommission: boolean;
   sendInvoiceViaEmail: boolean;
@@ -63,8 +61,6 @@ export function InvoiceSettingsPanel({ tenantId }: InvoiceSettingsPanelProps) {
     showDiscount: true,
     showNotes: true,
     showVoucherInvoice: true,
-    showProvider: true,
-    showVendor: true,
     showUnitPrice: true,
     showAdditionalCommission: false,
     sendInvoiceViaEmail: true,
@@ -391,33 +387,6 @@ export function InvoiceSettingsPanel({ tenantId }: InvoiceSettingsPanelProps) {
                 />
               </div>
 
-              <div className="flex items-center justify-between">
-                <Label htmlFor="showProvider" className="cursor-pointer">
-                  Provider
-                </Label>
-                <Switch
-                  id="showProvider"
-                  checked={settings.showProvider}
-                  onCheckedChange={(checked) =>
-                    setSettings({ ...settings, showProvider: checked })
-                  }
-                  data-testid="switch-show-provider"
-                />
-              </div>
-
-              <div className="flex items-center justify-between">
-                <Label htmlFor="showVendor" className="cursor-pointer">
-                  Vendor
-                </Label>
-                <Switch
-                  id="showVendor"
-                  checked={settings.showVendor}
-                  onCheckedChange={(checked) =>
-                    setSettings({ ...settings, showVendor: checked })
-                  }
-                  data-testid="switch-show-vendor"
-                />
-              </div>
 
               <div className="flex items-center justify-between">
                 <Label htmlFor="showUnitPrice" className="cursor-pointer">

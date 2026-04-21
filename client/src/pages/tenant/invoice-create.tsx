@@ -103,14 +103,8 @@ export default function InvoiceCreate() {
 
   const [lineItems, setLineItems] = useState([
     {
-      travelCategory: "",
-      vendor: "",
-      serviceProviderId: "",
-      packageId: "",
-      itineraryId: "",
       itemTitle: "",
       invoiceNumber: "",
-      voucherNumber: "",
       quantity: "1",
       unitPrice: "",
       sellingPrice: "",
@@ -122,6 +116,7 @@ export default function InvoiceCreate() {
       productId: "",
       variantId: "",
       availableVariants: [] as any[],
+      productTypeFilter: "all",
       totalAmount: 0,
     },
   ]);
@@ -129,13 +124,6 @@ export default function InvoiceCreate() {
   const { data: systemData, isLoading: systemLoading } = useQuery({
     queryKey: ["/api/system/settings"],
   });
-  const [isProductInvoice, setIsProductInvoice] = useState(null);
-  useEffect(()=>{
-    if(systemData){
-      setIsProductInvoice(systemData.productInvoice ?? true);
-    }
-  }, [systemData]);
-
   const [selectedBookingId, setSelectedBookingId] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
   const [customerSearch, setCustomerSearch] = useState("");
@@ -155,9 +143,6 @@ export default function InvoiceCreate() {
   const [dueDate, setDueDate] = useState(
     formatLocalDate(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000))
   );
-  const [travelDate, setTravelDate] = useState("");
-  const [departureDate, setDepartureDate] = useState("");
-  const [arrivalDate, setArrivalDate] = useState("");
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [invoiceNumberOnly, setInvoiceNumberOnly] = useState(""); // Just the number part without prefix
 
@@ -209,6 +194,29 @@ export default function InvoiceCreate() {
   // Preview state
   const [showPreview, setShowPreview] = useState(false);
   const [previewInvoiceData, setPreviewInvoiceData] = useState<InvoiceData | null>(null);
+
+  const getTravelCategories = () => {
+    const categories = (leadTypes || []).map((type: any) => ({
+      value: type.name || type.type_name || type.typeName || "",
+      label: type.name || type.type_name || type.typeName || "",
+    }));
+    return [
+      ...categories,
+      { value: "create_new", label: "+ Create New Category" },
+    ];
+  };
+
+  const getVendorOptions = () => {
+    const options = (vendors || []).map((v: any) => ({
+      value: v.id.toString(),
+      label: v.name || v.vendorName || "Unknown Vendor",
+    }));
+    return [
+      ...options,
+      { value: "create_new", label: "+ Create New Vendor" },
+    ];
+  };
+
 
   // Fetch invoice settings
   const { data: invoiceSettings = { 
@@ -966,6 +974,7 @@ export default function InvoiceCreate() {
           additionalCommissionPercentage: item.additionalCommissionPercentage?.toString() || "",
           additionalCommission: item.additionalCommission?.toString() || "",
           productId: item.productId?.toString() || item.product_id?.toString() || "",
+          productTypeFilter: "all",
           totalAmount: parseFloat(item.totalAmount?.toString() || item.totalPrice?.toString() || "0"),
         })));
       }
@@ -1285,39 +1294,6 @@ export default function InvoiceCreate() {
     }
   };
 
-  // Get travel categories from lead types
-  const getTravelCategories = (): AutocompleteOption[] => {
-    const leadTypeCategories = leadTypes.map((lt: any) => ({
-      value: lt.name || lt.type_name || lt.typeName || `Lead Type ${lt.id}`,
-      label: lt.name || lt.type_name || lt.typeName || `Lead Type ${lt.id}`,
-    }));
-
-    const defaultCategory = isProductInvoice ? [
-      { value: "Electronics", label: "Electronics" },
-      { value: "Clothing", label: "Clothing" }
-    ] : [
-      { value: "Flight", label: "Flight" },
-      { value: "Hotel", label: "Hotel" },
-      { value: "Transport", label: "Transport" },
-      { value: "Tour Package", label: "Tour Package" },
-      { value: "Itinerary", label: "Itinerary" },
-      { value: "Visa Services", label: "Visa Services" },
-      { value: "Insurance", label: "Insurance" },
-      { value: "Meals", label: "Meals" },
-      { value: "Activities", label: "Activities" },
-      { value: "Other Services", label: "Other Services" },
-    ];
-
-    const defaultCategories =
-      leadTypeCategories.length === 0
-        ? defaultCategory
-        : leadTypeCategories;
-
-    return [
-      { value: "create_new", label: "➕ New" },
-      ...defaultCategories,
-    ];
-  };
 
   // Get customer options
   const getCustomerOptions = (): AutocompleteOption[] => {
@@ -1351,97 +1327,10 @@ export default function InvoiceCreate() {
     ];
   };
 
-  // Get vendor options
-  const getVendorOptions = (): AutocompleteOption[] => {
-    return [
-      { value: "create_new", label: "➕ New" },
-      // { value: "none", label: "No vendor selected" },
-      ...vendors.map((vendor: any) => ({
-        value: vendor.id.toString(),
-        label: vendor.companyName || vendor.name || "Unnamed Vendor",
-      })),
-    ];
-  };
 
-  // Check if category has lead_type_category of 3, 8, or 4
-  const shouldShowPackageColumn = (categoryName: string): boolean => {
-    try {
-      if (!categoryName || !leadTypes || leadTypes.length === 0) return false;
-      const leadType = leadTypes.find(
-        (lt: any) => (lt.name || lt.type_name || lt.typeName) === categoryName,
-      );
-      if (!leadType || leadType.lead_type_category === undefined || leadType.lead_type_category === null) return false;
-      
-      // Convert to number for comparison (handles both string and number)
-      const categoryId = typeof leadType.lead_type_category === 'string' 
-        ? parseInt(leadType.lead_type_category, 10) 
-        : leadType.lead_type_category;
-      
-      // Check if categoryId is 3, 8, or 4
-      return categoryId === 3 || categoryId === 8 || categoryId === 4;
-    } catch (error) {
-      console.error("Error checking package column:", error);
-      return false;
-    }
-  };
 
-  // Check if any line item should show package column
-  const shouldShowPackageColumnForAnyItem = useMemo(() => {
-    if (!lineItems || lineItems.length === 0) return false;
-    return lineItems.some((item) => 
-      item.travelCategory && shouldShowPackageColumn(item.travelCategory)
-    );
-  }, [lineItems, leadTypes]);
 
-  // Get package options
-  const getPackageOptions = (): AutocompleteOption[] => {
-    if (!packages || !Array.isArray(packages) || packages.length === 0) {
-      return [{ value: "", label: "Select..." }];
-    }
-    try {
-      return [
-        { value: "", label: "Select..." },
-        ...packages.map((pkg: any) => ({
-          value: pkg.id?.toString() || "",
-          label: pkg.name || `Package ${pkg.id || ""}`,
-        })),
-      ];
-    } catch (error) {
-      console.error("Error getting package options:", error);
-      return [{ value: "", label: "Select..." }];
-    }
-  };
 
-  // Get service provider options filtered by lead type
-  const getServiceProviderOptions = (
-    leadTypeName: string,
-  ): AutocompleteOption[] => {
-    // Find the lead type ID by name
-    const leadType = leadTypes.find(
-      (lt: any) => (lt.name || lt.type_name || lt.typeName) === leadTypeName,
-    );
-
-    if (!leadType) {
-      return [
-        { value: "create_new", label: "➕ New" },
-        // { value: "none", label: "Select lead type first" },
-      ];
-    }
-
-    // Filter service providers by lead type ID
-    const filteredProviders = serviceProviders.filter(
-      (sp: any) => sp.leadTypeId === leadType.id,
-    );
-
-    return [
-      { value: "create_new", label: "➕ New" },
-      // { value: "none", label: "No service provider" },
-      ...filteredProviders.map((sp: any) => ({
-        value: sp.id.toString(),
-        label: sp.name,
-      })),
-    ];
-  };
   // Get payment status options
   // Hide cancelled, void, and overdue when creating new invoice
   // Show all options when editing existing invoice
@@ -1541,154 +1430,40 @@ export default function InvoiceCreate() {
   };
 
   const getProductDetail = (product: any, detailKey: 'title' | 'price' | 'purchasePrice' | 'category', variantId?: string) => {
-    const data = product.data || {};
-    const templateDesign = product.template_design || product.FormTemplate?.template_design || {};
-    const viewMapping = templateDesign.viewMapping || {};
-    const schemaItems = product.FormTemplate?.form_schema?.items || product.template_schema?.items || product.template_schema || [];
+    if (!product) return null;
     
-    // If a variant is selected, we should prioritize looking into that variant's data
-    let variantData = null;
-    if (variantId) {
-      // Find the variants section ID and Name
-      let variantsSectionIdAndName = { id: viewMapping.variantsSection as string, name: '' };
-      
-      if (!variantsSectionIdAndName.id) {
-         // Try to find it in schema
-         const findVariantsGroup = (items: any[]): {id: string, name: string} | null => {
-           for (const item of items) {
-             const isVariantItem = (item.kind === 'group' || item.kind === 'section') && 
-                                  (item.isRepeatable || item.repeatable || 
-                                   item.label?.toLowerCase().includes('variant') || 
-                                   item.name?.toLowerCase().includes('variant'));
-             if (isVariantItem) return { id: item.id, name: item.name };
-             if (item.items) { const res = findVariantsGroup(item.items); if (res) return res; }
-           }
-           return null;
-         };
-         const found = findVariantsGroup(schemaItems);
-         if (found) variantsSectionIdAndName = found;
-      } else {
-        // Find name if we only have ID
-        const findName = (items: any[]): string => {
-           for (const item of items) {
-             if (item.id === variantsSectionIdAndName.id) return item.name || '';
-             if (item.items) { const res = findName(item.items); if (res) return res; }
-           }
-           return '';
-        };
-        variantsSectionIdAndName.name = findName(schemaItems);
-      }
-      
-      const vSectionData = data[variantsSectionIdAndName.id] || (variantsSectionIdAndName.name ? data[variantsSectionIdAndName.name] : null);
-      if (Array.isArray(vSectionData)) {
-        // Find variant by ID or label
-        variantData = vSectionData.find((v: any) => 
-          (v.id?.toString() === variantId) || 
-          (v.label === variantId) || 
-          (v.value === variantId) ||
-          (v.title === variantId) ||
-          (v.name === variantId)
-        );
-      }
-    }
+    const fKey = product.FormTemplate?.formKey || 'inventory';
+    const variants = product.variants || [];
+    const activeVariant = variantId ? variants.find((v: any) => v.id?.toString() === variantId || v.value === variantId) : null;
 
-    const resolveValue = (fid: string, fname: string | undefined, source: any) => {
-      if (!source) return null;
-      let val = fid ? source[fid] : undefined;
-      if ((val === undefined || val === null || val === "") && fname) val = source[fname];
-      
-      if (val === undefined || val === null || val === "") return null;
-      if (Array.isArray(val)) {
-        return typeof val[0] === 'object' ? (val[0].label || val[0].value) : val[0];
-      }
-      return typeof val === 'object' ? (val.label || val.value) : val;
-    };
-
-    // 1. Try View Mapping
-    let fieldId = '';
-    let fieldName = '';
-    if (detailKey === 'title') fieldId = viewMapping.title;
-    if (detailKey === 'price') fieldId = viewMapping.price;
-    if (detailKey === 'purchasePrice') fieldId = viewMapping.purchasePrice;
-    if (detailKey === 'category') fieldId = viewMapping.category;
-
-    if (fieldId) {
-      // Find name for the mapped fieldId
-      const findName = (items: any[]): string => {
-         for (const item of items) {
-           if (item.id === fieldId) return item.name || '';
-           if (item.items) { const res = findName(item.items); if (res) return res; }
-         }
-         return '';
-      };
-      fieldName = findName(schemaItems);
-    }
-
-    // Check variant first if applicable
-    if (variantData && (fieldId || fieldName)) {
-      const vVal = resolveValue(fieldId, fieldName, variantData);
-      if (vVal !== null) return vVal;
-    }
-
-    // Check top level
-    if (fieldId || fieldName) {
-      const tVal = resolveValue(fieldId, fieldName, data);
-      if (tVal !== null) return tVal;
-    }
-
-    // 2. Schema-based fallback search
-    let foundId = '';
-    let foundName = '';
-
-    const searchSchema = (items: any[]) => {
-      for (const item of items) {
-        if (foundId) return;
-        const labelSafe = (item.label || item.name || '').toLowerCase();
-        
-        const isMatch = () => {
-          if (detailKey === 'title') return labelSafe.includes('name') || labelSafe.includes('title');
-          if (detailKey === 'price') return item.id === '1774593452328' || labelSafe.includes('sales price') || labelSafe.includes('selling') || labelSafe.includes('service rate') || labelSafe === 'price' || labelSafe === 'rate' || labelSafe.includes('amount') || labelSafe === 'sales';
-          if (detailKey === 'purchasePrice') return item.id === '1774593307729' || labelSafe.includes('purchase cost') || labelSafe.includes('purchase price') || labelSafe === 'cost' || labelSafe.includes('purchase rate') || labelSafe.includes('unit cost');
-          if (detailKey === 'category') return labelSafe.includes('category') || labelSafe === 'type' || labelSafe === 'billing type';
-          return false;
-        };
-
-        if (isMatch()) {
-           foundId = item.id;
-           foundName = item.name;
-           return;
-        }
-        
-        if (foundId) return;
-        if (item.items) searchSchema(item.items);
-        if (item.fields) searchSchema(item.fields);
-      }
-    };
-    searchSchema(schemaItems);
-
-    if (foundId || foundName) {
-      if (variantData) {
-        const vVal = resolveValue(foundId, foundName, variantData);
-        if (vVal !== null) return vVal;
-      }
-      const tVal = resolveValue(foundId, foundName, data);
-      if (tVal !== null) return tVal;
-    }
-      
-    // 3. Final Fallbacks (Check variantData specific keys first)
     if (detailKey === 'title') {
-       return (variantData ? (variantData.title || variantData.label || variantData.name || variantData.color || variantData.size) : null) || 
-              data.name || data.productName || data.title || product.name || "Unnamed Product";
+      return product.name || "Unnamed Product";
     }
+
+    if (detailKey === 'category') {
+      return product.category || fKey || "Product";
+    }
+
     if (detailKey === 'price') {
-       return (variantData ? (variantData.salesPrice || variantData.sellingPrice || variantData.price || variantData.rate || variantData.amount || variantData["Sales Price"]) : null) || 
-              data.price || data.sellingPrice || data.serviceRate || data.salesPrice || data["Sales Price"] || "0";
+      if (fKey === 'inventory') {
+        return (activeVariant?.sales_price ?? product.sales_price ?? "0").toString();
+      } else if (fKey === 'service') {
+        return (product.rate ?? "0").toString();
+      } else {
+        // non-inventory, bundle, etc
+        return (product.sales_price ?? "0").toString();
+      }
     }
+
     if (detailKey === 'purchasePrice') {
-       return (variantData ? (variantData.purchasePrice || variantData.purchaseCost || variantData.cost || variantData.unitCost || variantData.Cost) : null) || 
-              data.purchasePrice || data.purchaseCost || data.cost || data.Cost || "0";
+      if (fKey === 'inventory') {
+        return (activeVariant?.purchase_price ?? activeVariant?.cost ?? product.purchase_price ?? product.cost ?? "0").toString();
+      } else if (fKey === 'non-inventory') {
+        return (product.purchase_cost ?? "0").toString();
+      } else {
+        return (product.purchase_price ?? product.cost ?? "0").toString();
+      }
     }
-    if (detailKey === 'category') return data.category || data.type || "Unknown";
 
     return null;
   };
@@ -1696,19 +1471,13 @@ export default function InvoiceCreate() {
   // Get products options
   const getProducts = (): AutocompleteOption[] => {
     return products.map((product: any) => {
-      const name = getProductDetail(product, 'title') || "Unnamed Product";
-      const category = getProductDetail(product, 'category');
-      const templateName = product.FormTemplate?.name || product.template_name || "";
-      let typeDisplay = "Product";
-      if (category && category !== "Unknown") {
-        typeDisplay = category;
-      } else if (templateName) {
-        typeDisplay = templateName;
-      }
+      const name = product.name || "Unnamed Product";
+      const fKey = product.FormTemplate?.formKey || 'inventory';
+      const category = product.category || fKey;
       
       return {
         value: product.id.toString(),
-        label: `${name} (${typeDisplay})`,
+        label: `${name} (${category})`,
       };
     });
   };
@@ -1718,37 +1487,15 @@ export default function InvoiceCreate() {
     const selectedProduct = products.find((p: any) => p.id.toString() === productId);
     if (!selectedProduct) return;
 
-    // Find variants field dynamically
-    let availableVariants = [] as any[];
-    const schemaItems = selectedProduct.FormTemplate?.form_schema?.items || selectedProduct.template_schema?.items || selectedProduct.template_schema || [];
-    let variantsFieldId = '';
-    const traverse = (items: any[]) => {
-      for (const item of items) {
-         const isVariantItem = (item.kind === 'group' || item.kind === 'section') && 
-                              (item.label?.toLowerCase().includes('variant') || item.name?.toLowerCase().includes('variant'));
-         if (isVariantItem) {
-           variantsFieldId = item.id;
-           break;
-         }
-         if (item.items) traverse(item.items);
-         if (item.fields) traverse(item.fields);
-      }
-    };
-    if (Array.isArray(schemaItems)) traverse(schemaItems);
-    
-    if (variantsFieldId) {
-      const variantsData = selectedProduct.data?.[variantsFieldId];
-      if (Array.isArray(variantsData)) {
-        availableVariants = variantsData.map((v: any, i: number) => {
-          // Detect label from variant data
-          const label = v.label || v.title || v.name || v.color || v.size || (v.options && Object.values(v.options).join(' ')) || `Variant ${i+1}`;
-          const value = v.id?.toString() || v.value || label;
-          return { ...v, label, value };
-        });
-      }
-    }
+    // Get variants directly from the product object
+    const variantsData = selectedProduct.variants || [];
+    const availableVariants = variantsData.map((v: any, i: number) => {
+      const label = v.label || v.title || v.name || v.color || v.size || (v.options && Object.values(v.options).join(' ')) || `Variant ${i+1}`;
+      const value = v.id?.toString() || v.value || label;
+      return { ...v, label, value };
+    });
 
-    const name = getProductDetail(selectedProduct, 'title') || "Unnamed Product";
+    const name = selectedProduct.name || "Unnamed Product";
     // If variants exist, we'll wait for variant selection to pick price, or pick the first one
     const initialVariantId = availableVariants.length > 0 ? availableVariants[0].value : "";
     const price = getProductDetail(selectedProduct, 'price', initialVariantId) || "0";
@@ -1846,6 +1593,7 @@ export default function InvoiceCreate() {
         productId: "",
         variantId: "",
         availableVariants: [] as any[],
+        productTypeFilter: "all",
         totalAmount: price,
       },
     ]);
@@ -1875,6 +1623,7 @@ export default function InvoiceCreate() {
         productId: "",
         variantId: "",
         availableVariants: [] as any[],
+        productTypeFilter: "all",
         totalAmount: 0,
       },
     ]);
@@ -2175,48 +1924,6 @@ export default function InvoiceCreate() {
     }
   };
 
-  // Handle travel category selection
-  const handleTravelCategorySelection = (value: string, index: number) => {
-    if (value === "create_new") {
-      setCurrentItemIndex(index);
-      setIsLeadTypePanelOpen(true);
-    } else {
-      // Find the lead type by name to get its ID
-      const selectedLeadType = leadTypes.find((lt: any) => 
-        (lt.name || lt.type_name || lt.typeName) === value
-      );
-      const packageId = selectedLeadType ? selectedLeadType.id.toString() : "";
-      
-      // Update both travelCategory (for display) and packageId (for lead_type_id) in a single update
-      const updatedItems = [...lineItems];
-      updatedItems[index] = calculateLineItemTotals({
-        ...updatedItems[index],
-        travelCategory: value,
-        packageId: packageId,
-      });
-      setLineItems(updatedItems);
-    }
-  };
-
-  // Handle vendor selection
-  const handleVendorSelection = (value: string, index: number) => {
-    if (value === "create_new") {
-      setCurrentItemIndex(index);
-      setIsVendorPanelOpen(true);
-    } else {
-      updateLineItem(index, "vendor", value);
-    }
-  };
-
-  // Handle service provider selection
-  const handleServiceProviderSelection = (value: string, index: number) => {
-    if (value === "create_new") {
-      setCurrentItemIndex(index);
-      setIsServiceProviderPanelOpen(true);
-    } else {
-      updateLineItem(index, "serviceProviderId", value);
-    }
-  };
 
   // Handle booking selection
   const handleBookingSelection = (bookingId: string) => {
@@ -2250,7 +1957,6 @@ export default function InvoiceCreate() {
         const newLineItems = [...lineItems];
         newLineItems[0] = {
           ...newLineItems[0],
-          travelCategory: getTravelCategories()[1]?.value || "Tour Package",
           itemTitle:
             bookingPackage ||
             `Booking ${selectedBooking.bookingNumber || selectedBooking.booking_number || selectedBooking.id}`,
@@ -2262,10 +1968,6 @@ export default function InvoiceCreate() {
             selectedBooking.bookingNumber ||
             selectedBooking.booking_number ||
             `BK-${selectedBooking.id}`,
-          voucherNumber:
-            selectedBooking.voucherNumber ||
-            selectedBooking.voucher_number ||
-            `V-${selectedBooking.id}`,
           tax: taxAmount.toString(),
           totalAmount: totalAmount,
         };
@@ -2393,10 +2095,7 @@ export default function InvoiceCreate() {
             // Try to get lead type name from packageId
             const leadTypeId = item.packageId ? parseInt(item.packageId) : null;
             const leadType = leadTypes.find((lt: any) => lt.id === leadTypeId);
-            description = leadType ? (leadType.name || leadType.type_name || leadType.typeName) : item.travelCategory;
-          }
-          if (!description && item.travelCategory) {
-            description = item.travelCategory;
+            description = leadType ? (leadType.name || leadType.type_name || leadType.typeName) : `Item ${originalIndex + 1}`;
           }
           if (!description) {
             description = `Item ${originalIndex + 1}`;
@@ -2430,9 +2129,6 @@ export default function InvoiceCreate() {
         dueDate: inst.dueDate,
         amount: inst.amount,
       })) : undefined,
-      travelDate: travelDate || undefined,
-      departureDate: departureDate || undefined,
-      arrivalDate: arrivalDate || undefined,
     };
 
     return invoiceData;
@@ -2597,10 +2293,6 @@ export default function InvoiceCreate() {
       enableReminder,
       reminderFrequency: enableReminder ? reminderFrequency : null,
       reminderSpecificDate: enableReminder && reminderFrequency === "specific_date" ? reminderSpecificDate : null,
-      // Add travel dates
-      travelDate: travelDate || undefined,
-      departureDate: departureDate || undefined,
-      arrivalDate: arrivalDate || undefined,
       lineItems: lineItems.map((item) => ({
         ...item,
         quantity: parseInt(item.quantity || "1"),
@@ -2781,27 +2473,13 @@ export default function InvoiceCreate() {
 
   // Calculate grid template columns dynamically (must be before any conditional returns)
   const gridTemplate = useMemo(() => {
-    const columns = isProductInvoice ? [
+    const columns = [
       '30px', // # column
+      'minmax(120px, 1fr)', // Product Type
       'minmax(250px, 2fr)', // Product
       'minmax(120px, 1fr)', // Variant
-      'minmax(200px, 2fr)', // Item Title
+      'minmax(100px, 1fr)', // Stock
       'minmax(80px, 1fr)', // Qty
-      ...(invoiceSettings?.showUnitPrice ? ['minmax(130px, 1fr)'] : []), // Unit Price
-      'minmax(130px, 1fr)', // Selling Price
-      'minmax(130px, 1fr)', // Purchase Price
-      ...(invoiceSettings?.showTax ? ['minmax(100px, 1fr)'] : []), // Tax
-      'minmax(100px, 1fr)', // Amount
-      ...(invoiceSettings?.showAdditionalCommission ? ['minmax(100px, 1fr)'] : []), // Additional Commission
-      ...(invoiceSettings?.showVoucherInvoice ? ['minmax(100px, 1fr)'] : []), // Invoice/Voucher
-      '50px', // Delete button
-    ] : [
-      '30px', // # column
-      'minmax(180px, 1.5fr)', // Category
-      ...(invoiceSettings?.showVendor ? ['minmax(180px, 1.5fr)'] : []), // Vendor
-      ...(invoiceSettings?.showProvider ? ['minmax(180px, 1.5fr)'] : []), // Provider
-      ...(shouldShowPackageColumnForAnyItem ? ['minmax(180px, 1.5fr)'] : []), // Package
-      'minmax(80px, 1fr)', // Pax/Qty
       ...(invoiceSettings?.showUnitPrice ? ['minmax(130px, 1fr)'] : []), // Unit Price
       'minmax(130px, 1fr)', // Selling Price
       'minmax(130px, 1fr)', // Purchase Price
@@ -2812,7 +2490,7 @@ export default function InvoiceCreate() {
       '50px', // Delete button
     ];
     return columns.join(' ');
-  }, [isProductInvoice, invoiceSettings?.showVendor, invoiceSettings?.showProvider, invoiceSettings?.showUnitPrice, invoiceSettings?.showTax, invoiceSettings?.showAdditionalCommission, invoiceSettings?.showVoucherInvoice, shouldShowPackageColumnForAnyItem]);
+  }, [invoiceSettings?.showVendor, invoiceSettings?.showProvider, invoiceSettings?.showUnitPrice, invoiceSettings?.showTax, invoiceSettings?.showAdditionalCommission, invoiceSettings?.showVoucherInvoice]);
 
   // Grid template for expense table
   const expenseGridTemplate = useMemo(() => {
@@ -2913,14 +2591,6 @@ export default function InvoiceCreate() {
                 <div></div>
                 <div></div>
                   <div className="flex items-center gap-2 h-full">
-                    {/* <span className="text-sm text-muted-foreground">Travel</span>
-                    <Switch
-                      id="isProductinvoice"
-                      checked={isProductInvoice}
-                      onCheckedChange={setIsProductInvoice}
-                      data-testid="switch-is-product-invoice"
-                    />
-                    <span className="text-sm text-muted-foreground">Product</span> */}
                   </div>
                 <div>
                   <Label htmlFor="invoiceNumber">Invoice Number *</Label>
@@ -3131,16 +2801,23 @@ export default function InvoiceCreate() {
                   </Select>
                 </div>
 
-                {/* Travel Date field hidden */}
-                <div className="hidden">
-                  <Label htmlFor="travelDate">Travel Date</Label>
-                  <DatePicker
-                    value={travelDate}
-                    onChange={setTravelDate}
-                    placeholder="Select travel date"
-                    className="w-full"
-                  />
-                  <input type="hidden" name="travelDate" value={travelDate} />
+                <div className="lg:col-span-1">
+                  <Label htmlFor="paymentStatus">Payment Status *</Label>
+                  <Select
+                    value={paymentStatus}
+                    onValueChange={setPaymentStatus}
+                  >
+                    <SelectTrigger data-testid="select-payment-status">
+                      <SelectValue placeholder="Select status..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {getPaymentStatusOptions().map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
 
               </div>
@@ -3163,21 +2840,11 @@ export default function InvoiceCreate() {
                     }}
                   >
                     <div className="text-center flex items-center justify-center">#</div>
-                    {isProductInvoice ? (
-                      <>
-                        <div className="flex items-center">Product</div>
-                        <div className="flex items-center">Variant</div>
-                        <div className="flex items-center">Title</div>
-                      </>
-                    ) : (
-                      <>
-                        <div className="flex items-center">Category *</div>
-                        {invoiceSettings?.showVendor && <div className="flex items-center">Vendor</div>}
-                        {invoiceSettings?.showProvider && <div className="flex items-center">Provider</div>}
-                        {shouldShowPackageColumnForAnyItem && <div className="flex items-center">Package</div>}
-                      </>
-                    )}
-                    <div className="flex items-center">{isProductInvoice ? 'Qty *' : 'Pax *'}</div>
+                    <div className="flex items-center">Product Type</div>
+                    <div className="flex items-center">Product</div>
+                    <div className="flex items-center">Variant</div>
+                    <div className="flex items-center">Stock</div>
+                    <div className="flex items-center">Qty *</div>
 
                     {invoiceSettings?.showUnitPrice && <div className="flex items-center">Unit Price ({currencySymbol}) *</div>}
                     <div className="flex items-center">Selling Price ({currencySymbol}) *</div>
@@ -3200,112 +2867,116 @@ export default function InvoiceCreate() {
                         <span className="font-medium text-sm">{index + 1}</span>
                       </div>
 
-                      {isProductInvoice ? (
-                        <>
-                          <div className="flex items-center">
-                            <AutocompleteInput
-                              data-testid={`autocomplete-product-${index}`}
-                              suggestions={getProducts()}
-                              value={item.productId}
-                              onValueChange={(value) =>
-                                handleProductSelection(value, index)
+                      <div className="flex items-center justify-center">
+                        <Select
+                          value={item.productTypeFilter}
+                          onValueChange={(value) => {
+                            updateLineItem(index, "productTypeFilter", value);
+                            // Clear product if it doesn't match the new filter (unless "all")
+                            if (value !== "all") {
+                              const product = products.find((p: any) => p.id.toString() === item.productId);
+                              if (product && product.FormTemplate?.formKey !== value) {
+                                handleProductSelection("", index);
                               }
-                              placeholder="Product..."
-                              emptyText="No products found"
-                            />
-                          </div>
-                          <div className="flex items-center">
-                            <Select
-                              value={item.variantId}
-                              onValueChange={(value) => handleVariantSelection(value, index)}
-                              disabled={!item.productId || !item.availableVariants || item.availableVariants.length === 0}
-                            >
-                              <SelectTrigger className="h-9 border border-[#D9D9D9] focus:ring-1 focus:ring-[#1677FF]">
-                                <SelectValue placeholder={(!item.availableVariants || item.availableVariants.length === 0) ? "No variants" : "Variant..."} />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {item.availableVariants?.map((v: any, i: number) => (
-                                  <SelectItem key={i} value={v.value.toString()}>
-                                    {v.label}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <div className="flex items-center">
-                              <Input
-                                data-testid={`input-title-${index}`}
-                                value={item.itemTitle}
-                                onChange={(e) =>
-                                  updateLineItem(index, "itemTitle", e.target.value)
-                                }
-                                placeholder="Item Title"
-                              />
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <div className="flex items-center">
-                            <AutocompleteInput
-                              data-testid={`autocomplete-category-${index}`}
-                              suggestions={getTravelCategories()}
-                              value={item.travelCategory}
-                              onValueChange={(value) =>
-                                handleTravelCategorySelection(value, index)
-                              }
-                              placeholder="Select..."
-                              emptyText="No categories found"
-                            />
-                          </div>
+                            }
+                          }}
+                        >
+                          <SelectTrigger className="w-full h-10">
+                            <SelectValue placeholder="All" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All</SelectItem>
+                            <SelectItem value="inventory">Inventory</SelectItem>
+                            <SelectItem value="non-inventory">Non-Inventory</SelectItem>
+                            <SelectItem value="bundle">Bundle</SelectItem>
+                            <SelectItem value="service">Service</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex items-center">
+                        <Select
+                          value={item.productId}
+                          onValueChange={(value) => handleProductSelection(value, index)}
+                        >
+                          <SelectTrigger className="w-full h-10">
+                            <SelectValue placeholder="Select Product..." />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-[300px]">
+                            {products
+                              .filter((p: any) => item.productTypeFilter === "all" || p.FormTemplate?.formKey === item.productTypeFilter)
+                              .map((p: any) => (
+                                <SelectItem key={p.id} value={p.id.toString()}>
+                                  {p.name || "Unnamed Product"}
+                                </SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex items-center justify-center min-h-[36px]">
+                        {(() => {
+                           const product = products.find((p: any) => p.id.toString() === item.productId);
+                           if (!product) return <span className="text-gray-400">-</span>;
+                           
+                           const fKey = product.FormTemplate?.formKey || "";
+                           
+                           const canHaveVariants = fKey === 'inventory' || fKey === 'non-inventory';
+                           
+                           if (!canHaveVariants) return <span className="text-gray-400 text-lg font-medium">-</span>;
 
-                          {invoiceSettings?.showVendor && (
-                            <div className="flex items-center">
-                              <AutocompleteInput
-                                data-testid={`autocomplete-vendor-${index}`}
-                                suggestions={getVendorOptions()}
-                                value={item.vendor}
-                                onValueChange={(value) =>
-                                  handleVendorSelection(value, index)
-                                }
-                                placeholder="Select..."
-                                emptyText="No vendors found"
-                              />
-                            </div>
-                          )}
+                           const selectedVariant = item.availableVariants?.find((v: any) => v.value === item.variantId);
 
-                          {invoiceSettings?.showProvider && (
-                            <div className="flex items-center">
-                              <AutocompleteInput
-                                data-testid={`autocomplete-service-provider-${index}`}
-                                suggestions={getServiceProviderOptions(
-                                  item.travelCategory,
-                                )}
-                                value={item.serviceProviderId}
-                                onValueChange={(value) =>
-                                  handleServiceProviderSelection(value, index)
-                                }
-                                placeholder="Select..."
-                                emptyText="No providers found"
-                              />
-                            </div>
-                          )}
+                           return (
+                             <Select
+                               value={item.variantId}
+                               onValueChange={(value) => handleVariantSelection(value, index)}
+                               disabled={!item.productId || !item.availableVariants || item.availableVariants.length === 0}
+                             >
+                               <SelectTrigger className="h-9 border border-[#D9D9D9] focus:ring-1 focus:ring-[#1677FF]">
+                                 <div className="flex items-center gap-2">
+                                   {selectedVariant?.color && (
+                                     <div 
+                                       className="w-3 h-3 rounded-full border border-gray-200" 
+                                       style={{ backgroundColor: selectedVariant.color }}
+                                     />
+                                   )}
+                                   <SelectValue placeholder={(!item.availableVariants || item.availableVariants.length === 0) ? "No variants" : "Variant..."} />
+                                 </div>
+                               </SelectTrigger>
+                               <SelectContent>
+                                 {item.availableVariants?.map((v: any, i: number) => (
+                                   <SelectItem key={i} value={v.value.toString()}>
+                                     <div className="flex items-center gap-2">
+                                       {v.color && (
+                                         <div 
+                                           className="w-3 h-3 rounded-full border border-gray-200" 
+                                           style={{ backgroundColor: v.color }}
+                                         />
+                                       )}
+                                       <span>{v.label}</span>
+                                     </div>
+                                   </SelectItem>
+                                 ))}
+                               </SelectContent>
+                             </Select>
+                           );
+                        })()}
+                      </div>
 
-                          {shouldShowPackageColumn(item.travelCategory) && (
-                            <div className="flex items-center">
-                              <AutocompleteInput
-                                data-testid={`autocomplete-package-${index}`}
-                                suggestions={getPackageOptions()}
-                                value={item.packageId}
-                                onValueChange={(value) =>
-                                  updateLineItem(index, "packageId", value)
-                                }
-                                placeholder="Select..."
-                                emptyText="No packages found"
-                              />
-                            </div>
-                          )}
-                        </>
-                      )}
+                      <div className="flex flex-col items-center justify-center h-full px-2">
+                        {(() => {
+                          const product = products.find((p: any) => p.id?.toString() === item.productId?.toString());
+                          let stock = product?.stock || 0;
+                          if (item.variantId && product?.variants) {
+                            const variant = product.variants.find((v: any) => v.id?.toString() === item.variantId?.toString());
+                            if (variant) stock = variant.variant_stock || 0;
+                          }
+                          return (
+                            <span className={`text-sm font-medium ${stock <= 0 ? 'text-red-500' : 'text-green-600'}`}>
+                              {stock}
+                            </span>
+                          );
+                        })()}
+                      </div>
 
                       <div className="flex items-center">
                         <Input
@@ -3793,7 +3464,6 @@ export default function InvoiceCreate() {
                           {/* Installment Preview */}
                           {calculateInstallments().length > 0 && (
                             <div className="mt-4">
-                              <h4 className="text-sm font-semibold mb-2">Installment Plan Preview</h4>
                               <div className="bg-white dark:bg-gray-800 rounded-lg p-3 max-h-48 overflow-y-auto">
                                 <table className="w-full text-sm">
                                   <thead>
@@ -4669,18 +4339,17 @@ export default function InvoiceCreate() {
           <SheetHeader>
             <SheetTitle>Create New Vendor</SheetTitle>
             <SheetDescription className="sr-only">
-              Form to create a new vendor for the invoice line items.
+              Form to create a new vendor for the invoice expenses.
             </SheetDescription>
           </SheetHeader>
           <div className="mt-6">
             <VendorCreateForm
               onSuccess={(vendor) => {
                 queryClient.invalidateQueries({ queryKey: ["/api/vendors"] });
-                updateLineItem(
-                  currentItemIndex,
-                  "vendor",
-                  vendor.id?.toString() || "",
-                );
+                // If we're updating a manual expense, update it there
+                if (currentItemIndex >= 0 && manualExpenses[currentItemIndex]) {
+                  updateManualExpense(currentItemIndex, "vendorId", vendor.id?.toString() || "");
+                }
                 setIsVendorPanelOpen(false);
                 toast({
                   title: "Success",
@@ -4688,84 +4357,6 @@ export default function InvoiceCreate() {
                 });
               }}
               onCancel={() => setIsVendorPanelOpen(false)}
-            />
-          </div>
-        </SheetContent>
-      </Sheet>
-
-      {/* Lead Type Create Slide Panel */}
-      <Sheet open={isLeadTypePanelOpen} onOpenChange={setIsLeadTypePanelOpen}>
-        <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
-          <SheetHeader>
-            <SheetTitle>Create New Travel Category</SheetTitle>
-            <SheetDescription className="sr-only">
-              Form to create a new travel category for the invoice line items.
-            </SheetDescription>
-          </SheetHeader>
-          <div className="mt-6">
-            <LeadTypeCreateForm
-              onSuccess={(leadType) => {
-                queryClient.invalidateQueries({
-                  queryKey: [`/api/tenants/${tenant?.id}/lead-types`],
-                });
-                updateLineItem(
-                  currentItemIndex,
-                  "travelCategory",
-                  leadType.name || "",
-                );
-                setIsLeadTypePanelOpen(false);
-                toast({
-                  title: "Success",
-                  description: "Travel category created and selected",
-                });
-              }}
-              onCancel={() => setIsLeadTypePanelOpen(false)}
-            />
-          </div>
-        </SheetContent>
-      </Sheet>
-
-      {/* Service Provider Create Slide Panel */}
-      <Sheet
-        open={isServiceProviderPanelOpen}
-        onOpenChange={setIsServiceProviderPanelOpen}
-      >
-        <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
-          <SheetHeader>
-            <SheetTitle>Create New Service Provider</SheetTitle>
-            <SheetDescription className="sr-only">
-              Form to create a new service provider for the invoice line items.
-            </SheetDescription>
-          </SheetHeader>
-          <div className="mt-6">
-            <ServiceProviderCreateForm
-              preselectedLeadTypeId={
-                lineItems[currentItemIndex]?.travelCategory
-                  ? leadTypes
-                    .find(
-                      (lt: any) =>
-                        lt.name ===
-                        lineItems[currentItemIndex].travelCategory,
-                    )
-                    ?.id.toString()
-                  : undefined
-              }
-              onSuccess={(provider) => {
-                queryClient.invalidateQueries({
-                  queryKey: [`/api/service-providers`, tenant?.id],
-                });
-                updateLineItem(
-                  currentItemIndex,
-                  "serviceProviderId",
-                  provider.id?.toString() || "",
-                );
-                setIsServiceProviderPanelOpen(false);
-                toast({
-                  title: "Success",
-                  description: "Service provider created and selected",
-                });
-              }}
-              onCancel={() => setIsServiceProviderPanelOpen(false)}
             />
           </div>
         </SheetContent>

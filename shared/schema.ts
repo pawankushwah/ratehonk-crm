@@ -479,6 +479,7 @@ export const invoices = pgTable("invoices", {
   
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  isPartial: boolean("is_partial").default(false),
 });
 
 // Invoice items/line items
@@ -491,6 +492,7 @@ export const invoiceItems = pgTable("invoice_items", {
   totalPrice: decimal("total_price", { precision: 10, scale: 2 }).notNull(),
   packageId: integer("package_id"),
   productId: integer("product_id"),
+  fulfilledQuantity: integer("fulfilled_quantity").notNull().default(0),
 });
 
 // Payment Installments - For splitting invoice payments
@@ -1409,7 +1411,6 @@ export const dynamicData = pgTable("dynamic_data", {
   tenantId: integer("tenant_id").notNull().references(() => tenants.id),
   userId: integer("user_id").references(() => users.id),
   data: jsonb("data").notNull(),
-  stock: integer("stock"), // Stores { total: number, variants: { [variantId]: number } }
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
   deletedAt: timestamp("deleted_at"),
@@ -1418,7 +1419,7 @@ export const dynamicData = pgTable("dynamic_data", {
 export const stocks = pgTable("stocks", {
   id: serial("id").primaryKey(),
   tenantId: integer("tenant_id").notNull().references(() => tenants.id),
-  quantity: decimal("quantity", { precision: 10, scale: 2 }).notNull().default("0"),
+  quantity: decimal("quantity", { precision: 10, scale: 0 }).notNull().default("0"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
   deletedAt: timestamp("deleted_at"),
