@@ -29,6 +29,9 @@ import {
 import {
   Plus,
   Trash2,
+  Copy,
+  Split,
+  Scissors,
   ArrowLeft,
   Receipt,
   Bell,
@@ -41,6 +44,7 @@ import {
   File,
   FileText,
   Image as ImageIcon,
+  CheckCircle2,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -56,7 +60,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useLocation, useRoute } from "wouter";
 import { useDebounce } from "@/hooks/use-debounce";
 import { directCustomersApi } from "@/lib/direct-customers-api";
-import { formatLocalDate, parseLocalDate } from "@/lib/utils";
+import { formatLocalDate, parseLocalDate, formatLocalDateTime } from "@/lib/utils";
 import { CustomerCreateForm } from "@/components/forms/customer-create-form";
 import { VendorCreateForm } from "@/components/forms/vendor-create-form";
 import { LeadTypeCreateForm } from "@/components/forms/lead-type-create-form";
@@ -103,6 +107,7 @@ export default function InvoiceCreate() {
 
   const [lineItems, setLineItems] = useState([
     {
+      date: formatLocalDateTime(new Date()),
       itemTitle: "",
       invoiceNumber: "",
       quantity: "1",
@@ -117,6 +122,8 @@ export default function InvoiceCreate() {
       variantId: "",
       availableVariants: [] as any[],
       productTypeFilter: "all",
+      isUnfulfilled: false,
+      pendingQuantity: 0,
       totalAmount: 0,
     },
   ]);
@@ -1391,7 +1398,7 @@ export default function InvoiceCreate() {
 
   const calculateLineItemTotals = (item: typeof lineItems[number]) => {
     const sellingPrice = parseFloat(item.sellingPrice || "0");
-    const quantity = parseInt(item.quantity || "1");
+    const quantity = parseInt(item.quantity || "0");
     const subtotal = sellingPrice * quantity;
     let taxAmount = 0;
     let totalAmount = subtotal;
@@ -1430,42 +1437,26 @@ export default function InvoiceCreate() {
   };
 
   const getProductDetail = (product: any, detailKey: 'title' | 'price' | 'purchasePrice' | 'category', variantId?: string) => {
-    if (!product) return null;
-    
-    const fKey = product.FormTemplate?.formKey || 'inventory';
-    const variants = product.variants || [];
-    const activeVariant = variantId ? variants.find((v: any) => v.id?.toString() === variantId || v.value === variantId) : null;
+    if (!product) return "";
 
-    if (detailKey === 'title') {
-      return product.name || "Unnamed Product";
-    }
-
-    if (detailKey === 'category') {
-      return product.category || fKey || "Product";
-    }
-
-    if (detailKey === 'price') {
-      if (fKey === 'inventory') {
-        return (activeVariant?.sales_price ?? product.sales_price ?? "0").toString();
-      } else if (fKey === 'service') {
-        return (product.rate ?? "0").toString();
-      } else {
-        // non-inventory, bundle, etc
-        return (product.sales_price ?? "0").toString();
+    // If variantId is provided, look into variants
+    if (variantId && product.variants && Array.isArray(product.variants)) {
+      const variant = product.variants.find((v: any) => v.id.toString() === variantId);
+      if (variant) {
+        if (detailKey === 'title') return variant.title || variant.label || variant.name || "";
+        if (detailKey === 'price') return variant.price || variant.sellingPrice || variant.selling_price || variant.sales_price || "";
+        if (detailKey === 'purchasePrice') return variant.purchasePrice || variant.purchase_price || variant.cost || "";
       }
     }
 
-    if (detailKey === 'purchasePrice') {
-      if (fKey === 'inventory') {
-        return (activeVariant?.purchase_price ?? activeVariant?.cost ?? product.purchase_price ?? product.cost ?? "0").toString();
-      } else if (fKey === 'non-inventory') {
-        return (product.purchase_cost ?? "0").toString();
-      } else {
-        return (product.purchase_price ?? product.cost ?? "0").toString();
-      }
-    }
+    // Fallback to top-level or product.data
+    const data = product.data || {};
+    if (detailKey === 'title') return product.title || product.name || data.title || data.name || "";
+    if (detailKey === 'category') return product.category || product.productType || data.category || data.productType || "";
+    if (detailKey === 'price') return product.price || product.sellingPrice || product.selling_price || product.sales_price || data.price || data.sellingPrice || data.selling_price || data.sales_price || "";
+    if (detailKey === 'purchasePrice') return product.purchasePrice || product.purchase_price || product.cost || data.purchasePrice || data.purchase_price || data.cost || "";
 
-    return null;
+    return "";
   };
 
   // Get products options
@@ -1542,13 +1533,58 @@ export default function InvoiceCreate() {
   // Update line item
   const updateLineItem = (index: number, field: string, value: any) => {
     const updatedItems = [...lineItems];
-    updatedItems[index] = calculateLineItemTotals({
-      ...updatedItems[index],
+    const currentItem = updatedItems[index];
+
+    // Calculate new item state
+    const newItem = calculateLineItemTotals({
+      ...currentItem,
       [field]: value,
     });
 
+    // Splitting logic for quantity (only for normal rows, unfulfilled rows split via button)
+    if (field === 'quantity' && newItem.productId && !newItem.isUnfulfilled) {
+      const product = products.find((p: any) => p.id.toString() === newItem.productId);
+      if (product) {
+        let stock = product.stock || 0;
+        if (newItem.variantId && product.variants) {
+          const variant = product.variants.find((v: any) => v.id?.toString() === newItem.variantId?.toString());
+          if (variant) stock = parseInt(variant.variant_stock || "0");
+        }
+      }
+    }
+
+    updatedItems[index] = newItem;
     setLineItems(updatedItems);
   };
+
+  const handleQuantityBlur = (index: number, value: string) => {
+    // No automatic splitting on create page as per user request to remove fulfillment UI
+  };
+
+  const getAvailableStock = (productId: string, variantId: any, currentIndex: number) => {
+    const product = products.find((p: any) => p.id?.toString() === productId?.toString());
+    if (!product) return 0;
+    
+    let totalStock = parseInt(product.stock || "0");
+    if (variantId && product.variants) {
+      const variant = product.variants.find((v: any) => v.id?.toString() === variantId?.toString());
+      if (variant) totalStock = parseInt(variant.variant_stock || "0");
+    }
+    
+    // Subtract already allocated quantities in previous fulfilled rows
+    const allocated = lineItems.slice(0, currentIndex).reduce((sum, item) => {
+      if (item.productId?.toString() === productId?.toString() && 
+          item.variantId?.toString() === variantId?.toString() &&
+          !item.isUnfulfilled) {
+        return sum + parseInt(item.quantity || "0");
+      }
+      return sum;
+    }, 0);
+    
+    return Math.max(0, totalStock - allocated);
+  };
+
+
 
   useEffect(() => {
     setLineItems((prev) => prev.map((item) => calculateLineItemTotals(item)));
@@ -1601,14 +1637,13 @@ export default function InvoiceCreate() {
 
   // Add line item
   const addLineItem = () => {
-    setLineItems([
-      ...lineItems,
-      {
+    const newItem = {
         travelCategory: "other",
         vendor: "",
         serviceProviderId: "",
         packageId: "",
         itineraryId: "",
+        date: formatLocalDateTime(new Date()),
         itemTitle: "",
         invoiceNumber: "",
         voucherNumber: "",
@@ -1624,9 +1659,163 @@ export default function InvoiceCreate() {
         variantId: "",
         availableVariants: [] as any[],
         productTypeFilter: "all",
+        isUnfulfilled: false,
+        pendingQuantity: 0,
         totalAmount: 0,
-      },
-    ]);
+      };
+
+    const newItems = [...lineItems, newItem];
+    newItems.sort((a, b) => {
+      const dateA = new Date(a.date || "").getTime();
+      const dateB = new Date(b.date || "").getTime();
+      return dateA - dateB;
+    });
+    setLineItems(newItems);
+  };
+
+  // Attempt to fulfill an unfulfilled row
+  const fulfillUnfulfilledRow = (index: number) => {
+    const updatedItems = [...lineItems];
+    const item = { ...updatedItems[index] };
+    
+    if (!item.productId) return;
+
+    const qtyToFulfill = parseInt(item.quantity || "0");
+    if (qtyToFulfill <= 0) {
+      toast({
+        title: "Invalid Quantity",
+        description: "Please enter a quantity greater than zero to fulfill.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    const stock = getAvailableStock(item.productId, item.variantId, index);
+
+    if (stock < qtyToFulfill) {
+      toast({
+        title: "Insufficient Stock",
+        description: `Only ${stock} items available, but you requested ${qtyToFulfill}.`,
+        variant: "destructive"
+      });
+      return;
+    }
+
+    const totalUnfulfilled = item.pendingQuantity || parseInt(item.quantity || "0");
+    const remainingUnfulfilled = totalUnfulfilled - qtyToFulfill;
+
+    // Update current row to fulfilled
+    updatedItems[index] = calculateLineItemTotals({
+      ...updatedItems[index],
+      quantity: qtyToFulfill.toString(),
+      isUnfulfilled: false,
+      pendingQuantity: 0
+    });
+
+    if (remainingUnfulfilled > 0) {
+      // Create new row for remaining unfulfilled
+      const newItem = calculateLineItemTotals({
+        ...item,
+        clientId: Math.random().toString(36).substring(7),
+        quantity: remainingUnfulfilled.toString(),
+        isUnfulfilled: true,
+        fulfilledQuantity: 0,
+        pendingQuantity: remainingUnfulfilled
+      });
+      updatedItems.splice(index + 1, 0, newItem);
+    }
+
+    const sorted = [...updatedItems].sort((a, b) => {
+      const dateA = new Date(a.date || "").getTime();
+      const dateB = new Date(b.date || "").getTime();
+      return dateA - dateB;
+    });
+    setLineItems(sorted);
+    setPaymentStatus("partial");
+    
+    toast({
+      title: "Row Fulfilled",
+      description: `Fulfilled ${qtyToFulfill} items. Invoice marked as partial.`,
+    });
+  };
+
+  // Split row into fulfilled and unfulfilled based on stock
+  const splitRemainingStock = (index: number) => {
+    const updatedItems = [...lineItems];
+    const item = { ...updatedItems[index] };
+    
+    if (!item.productId) {
+      toast({
+        title: "Cannot Split",
+        description: "Please select a product first.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    const stock = getAvailableStock(item.productId, item.variantId, index);
+    const qty = parseInt(item.quantity || "0");
+
+    if (qty > stock && stock > 0) {
+      // Set current row to available stock
+      updatedItems[index] = calculateLineItemTotals({
+        ...updatedItems[index],
+        quantity: stock.toString(),
+        isUnfulfilled: false,
+        pendingQuantity: 0
+      });
+      
+      // Create new row for remaining
+      const remainingQty = qty - stock;
+      const newItem = calculateLineItemTotals({
+        ...item,
+        clientId: Math.random().toString(36).substring(7),
+        quantity: remainingQty.toString(),
+        isUnfulfilled: true,
+        fulfilledQuantity: 0,
+        pendingQuantity: remainingQty
+      });
+      
+      updatedItems.splice(index + 1, 0, newItem);
+      
+      const sorted = [...updatedItems].sort((a, b) => {
+        const dateA = new Date(a.date || "").getTime();
+        const dateB = new Date(b.date || "").getTime();
+        return dateA - dateB;
+      });
+      setLineItems(sorted);
+      setPaymentStatus("partial");
+      
+      toast({
+        title: "Row Split",
+        description: `Split into ${stock} fulfilled and ${remainingQty} unfulfilled items. Invoice marked as partial.`,
+      });
+    } else if (qty > 0 && stock <= 0) {
+       // Mark whole row as unfulfilled if no stock
+       updatedItems[index] = calculateLineItemTotals({
+         ...updatedItems[index],
+         isUnfulfilled: true,
+         pendingQuantity: qty
+       });
+       
+       const sorted = [...updatedItems].sort((a, b) => {
+         const dateA = new Date(a.date || "").getTime();
+         const dateB = new Date(b.date || "").getTime();
+         return dateA - dateB;
+       });
+       setLineItems(sorted);
+       setPaymentStatus("partial");
+       toast({
+        title: "Row Marked Unfulfilled",
+        description: `No stock available. Row marked as unfulfilled. Invoice marked as partial.`,
+      });
+    } else {
+        toast({
+            title: "Cannot Split",
+            description: qty <= stock ? "Quantity does not exceed available stock." : "Invalid quantity.",
+            variant: "destructive"
+        });
+    }
   };
 
   // Remove line item
@@ -1634,6 +1823,33 @@ export default function InvoiceCreate() {
     if (lineItems.length > 1) {
       setLineItems(lineItems.filter((_, i) => i !== index));
     }
+  };
+
+  // Duplicate line item
+  const duplicateLineItem = (index: number) => {
+    const itemToDuplicate = lineItems[index];
+    const duplicatedItem = {
+      ...itemToDuplicate,
+      date: formatLocalDateTime(new Date()),
+      quantity: "", // Clear quantity for the duplicated item
+      // Reset fulfillment status for duplicated items
+      isUnfulfilled: false,
+      fulfilledQuantity: 0,
+      pendingQuantity: 0,
+      clientId: Math.random().toString(36).substring(7),
+    };
+    
+    const updatedItems = [...lineItems];
+    updatedItems.splice(index + 1, 0, duplicatedItem);
+    
+    // Sort items by date
+    updatedItems.sort((a, b) => {
+      const dateA = new Date(a.date || "").getTime();
+      const dateB = new Date(b.date || "").getTime();
+      return dateA - dateB;
+    });
+    
+    setLineItems(updatedItems);
   };
 
   // Calculate subtotal (without tax)
@@ -2030,7 +2246,7 @@ export default function InvoiceCreate() {
   };
 
   // Prepare invoice data for preview
-  const prepareInvoiceData = (): InvoiceData | null => {
+  const prepareInvoiceData = (forPreview = false): InvoiceData | null => {
     const form = document.querySelector('form') as HTMLFormElement;
     if (!form) return null;
     
@@ -2075,6 +2291,7 @@ export default function InvoiceCreate() {
       companyAddress: tenant?.address || "",
       companyLogo: (tenant as any)?.logo && typeof (tenant as any).logo === "string" && (tenant as any).logo.trim() !== "" ? (tenant as any).logo : undefined,
       items: lineItems
+        .filter(item => !forPreview || !item.isUnfulfilled) // Filter out unfulfilled items for preview
         .map((item, originalIndex) => {
           const sellingPrice = parseFloat(item.sellingPrice || "0");
           const quantity = parseInt(item.quantity || "1");
@@ -2106,9 +2323,10 @@ export default function InvoiceCreate() {
             quantity: quantity || 1,
             unitPrice: sellingPrice,
             totalPrice: totalAmount > 0 ? totalAmount : (sellingPrice * quantity),
+            date: item.date,
           };
         })
-        .filter((item) => item !== null) as { description: string; quantity: number; unitPrice: number; totalPrice: number; }[],
+        .filter((item) => item !== null) as { description: string; quantity: number; unitPrice: number; totalPrice: number; date?: string; }[],
       subtotal: subtotal,
       taxAmount: tax,
       discountAmount: discount,
@@ -2134,10 +2352,15 @@ export default function InvoiceCreate() {
     return invoiceData;
   };
 
-  // Handle preview button click
-  const handlePreview = (e: React.FormEvent<HTMLFormElement>) => {
+  // Handle save directly
+  const handleCreateInvoice = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const invoiceData = prepareInvoiceData();
+    handlePreview();
+  };
+
+  // Handle preview button click
+  const handlePreview = () => {
+    const invoiceData = prepareInvoiceData(true); // Flag to exclude unfulfilled items from preview
     if (invoiceData) {
       setPreviewInvoiceData(invoiceData);
       setShowPreview(true);
@@ -2475,11 +2698,12 @@ export default function InvoiceCreate() {
   const gridTemplate = useMemo(() => {
     const columns = [
       '30px', // # column
+      'minmax(250px, 1fr)', // Date
       'minmax(120px, 1fr)', // Product Type
       'minmax(250px, 2fr)', // Product
       'minmax(120px, 1fr)', // Variant
       'minmax(100px, 1fr)', // Stock
-      'minmax(80px, 1fr)', // Qty
+      'minmax(120px, 1.2fr)', // Qty
       ...(invoiceSettings?.showUnitPrice ? ['minmax(130px, 1fr)'] : []), // Unit Price
       'minmax(130px, 1fr)', // Selling Price
       'minmax(130px, 1fr)', // Purchase Price
@@ -2487,7 +2711,7 @@ export default function InvoiceCreate() {
       'minmax(100px, 1fr)', // Amount
       ...(invoiceSettings?.showAdditionalCommission ? ['minmax(100px, 1fr)'] : []), // Additional Commission
       ...(invoiceSettings?.showVoucherInvoice ? ['minmax(100px, 1fr)'] : []), // Invoice/Voucher
-      '50px', // Delete button
+      '80px', // Actions button
     ];
     return columns.join(' ');
   }, [invoiceSettings?.showVendor, invoiceSettings?.showProvider, invoiceSettings?.showUnitPrice, invoiceSettings?.showTax, invoiceSettings?.showAdditionalCommission, invoiceSettings?.showVoucherInvoice]);
@@ -2496,13 +2720,11 @@ export default function InvoiceCreate() {
   const expenseGridTemplate = useMemo(() => {
     const columns = [
       '30px', // # column
-      'minmax(180px, 2fr)', // Title
-      'minmax(150px, 1.5fr)', // Category
-      'minmax(150px, 1.5fr)', // Vendor
-      'minmax(60px, 1fr)', // Qty
-      'minmax(130px, 1fr)', // Purchase Price
-      'minmax(130px, 1fr)', // Amount
-      '50px', // Delete button
+      'minmax(250px, 2fr)', // Title
+      'minmax(100px, 1fr)', // Qty
+      'minmax(150px, 1.2fr)', // Purchase Price
+      'minmax(150px, 1.2fr)', // Amount
+      '80px', // Action column
     ];
     return columns.join(' ');
   }, []);
@@ -2575,7 +2797,7 @@ export default function InvoiceCreate() {
           </div>
         </div>
 
-        <form onSubmit={handlePreview}>
+        <form onSubmit={handleCreateInvoice}>
           <Card>
             <CardContent className="p-3 sm:p-4 md:p-6 space-y-4 sm:space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
@@ -2801,25 +3023,6 @@ export default function InvoiceCreate() {
                   </Select>
                 </div>
 
-                <div className="lg:col-span-1">
-                  <Label htmlFor="paymentStatus">Payment Status *</Label>
-                  <Select
-                    value={paymentStatus}
-                    onValueChange={setPaymentStatus}
-                  >
-                    <SelectTrigger data-testid="select-payment-status">
-                      <SelectValue placeholder="Select status..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {getPaymentStatusOptions().map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
               </div>
 
               {/* Line Items */}
@@ -2840,6 +3043,7 @@ export default function InvoiceCreate() {
                     }}
                   >
                     <div className="text-center flex items-center justify-center">#</div>
+                    <div className="flex items-center">Date</div>
                     <div className="flex items-center">Product Type</div>
                     <div className="flex items-center">Product</div>
                     <div className="flex items-center">Variant</div>
@@ -2860,11 +3064,20 @@ export default function InvoiceCreate() {
                   {lineItems.map((item, index) => (
                     <div
                       key={index}
-                      className="grid gap-2 p-3 border-b last:border-b-0"
+                      className={`grid gap-2 p-3 border-b last:border-b-0 ${item.isUnfulfilled ? "bg-amber-50/50 dark:bg-amber-900/10" : ""}`}
                       style={{ gridTemplateColumns: gridTemplate }}
                     >
                       <div className="flex items-center justify-center">
                         <span className="font-medium text-sm">{index + 1}</span>
+                      </div>
+
+                      <div className="flex items-center justify-center">
+                        <Input
+                          type="datetime-local"
+                          value={item.date}
+                          onChange={(e) => updateLineItem(index, "date", e.target.value)}
+                          className="w-full h-10 text-xs"
+                        />
                       </div>
 
                       <div className="flex items-center justify-center">
@@ -2964,30 +3177,69 @@ export default function InvoiceCreate() {
 
                       <div className="flex flex-col items-center justify-center h-full px-2">
                         {(() => {
-                          const product = products.find((p: any) => p.id?.toString() === item.productId?.toString());
-                          let stock = product?.stock || 0;
-                          if (item.variantId && product?.variants) {
-                            const variant = product.variants.find((v: any) => v.id?.toString() === item.variantId?.toString());
-                            if (variant) stock = variant.variant_stock || 0;
-                          }
+                          const stock = getAvailableStock(item.productId, item.variantId, index);
                           return (
                             <span className={`text-sm font-medium ${stock <= 0 ? 'text-red-500' : 'text-green-600'}`}>
-                              {stock}
+                              {parseInt(stock.toString())}
                             </span>
                           );
                         })()}
                       </div>
 
-                      <div className="flex items-center">
-                        <Input
-                          data-testid={`input-quantity-${index}`}
-                          value={item.quantity}
-                          onChange={(e) =>
-                            updateLineItem(index, "quantity", e.target.value)
-                          }
-                          onKeyPress={handleNumericKeyPress}
-                          placeholder="1"
-                        />
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-1">
+                          <Input
+                            data-testid={`input-quantity-${index}`}
+                            value={item.quantity}
+                            onChange={(e) =>
+                              updateLineItem(index, "quantity", e.target.value)
+                            }
+                            onBlur={(e) => handleQuantityBlur(index, e.target.value)}
+                            onKeyPress={handleNumericKeyPress}
+                            placeholder="1"
+                            className={item.isUnfulfilled ? "border-amber-300 focus-visible:ring-amber-500" : ""}
+                          />
+                          <div className="flex items-center gap-0.5 flex-shrink-0">
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="ghost"
+                              className={`h-6 w-6 text-green-500 hover:text-green-700 hover:bg-green-50 flex-shrink-0 ${!item.isUnfulfilled ? "invisible pointer-events-none" : ""}`}
+                              onClick={() => fulfillUnfulfilledRow(index)}
+                              title="Fulfill Qty"
+                            >
+                              <CheckCircle2 className="h-3 w-3" />
+                            </Button>
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="ghost"
+                              className="h-6 w-6 text-amber-500 hover:text-amber-700 hover:bg-amber-50 flex-shrink-0"
+                              onClick={() => splitRemainingStock(index)}
+                              title="Split Unfulfilled"
+                            >
+                              <Scissors className="h-3 w-3" />
+                            </Button>
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="ghost"
+                              className="h-6 w-6 text-blue-500 hover:text-blue-700 hover:bg-blue-50 flex-shrink-0"
+                              onClick={() => duplicateLineItem(index)}
+                              title="Add More"
+                            >
+                              <Plus className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        </div>
+                        {item.isUnfulfilled && (
+                          <div className="mt-1">
+                            <span className="text-[10px] text-amber-600 font-bold uppercase tracking-wider bg-amber-100 px-1.5 py-0.5 rounded flex items-center gap-1 w-fit">
+                              <Split className="h-2.5 w-2.5" />
+                              Unfulfilled: {item.quantity}
+                            </span>
+                          </div>
+                        )}
                       </div>
 
                       {invoiceSettings?.showUnitPrice && (
@@ -3066,9 +3318,10 @@ export default function InvoiceCreate() {
                             </SelectContent>
                           </Select>
                           {item.tax && (
-                            <p className="text-xs text-muted-foreground mt-1">
-                              Tax: {currencySymbol}{parseFloat(item.tax).toFixed(2)}
-                            </p>
+                            <div className="flex items-center gap-1 mt-1.5 px-2 py-0.5 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-md border border-blue-100 dark:border-blue-800 w-fit">
+                              <span className="text-[10px] font-bold uppercase tracking-wider">Tax</span>
+                              <span className="text-xs font-semibold">{currencySymbol}{parseFloat(item.tax).toFixed(2)}</span>
+                            </div>
                           )}
                         </div>
                       )}
@@ -3124,9 +3377,10 @@ export default function InvoiceCreate() {
                             variant="ghost"
                             size="sm"
                             onClick={() => removeLineItem(index)}
+                            className="text-red-600 hover:text-red-700 hover:bg-red-50"
                             data-testid={`button-remove-item-${index}`}
                           >
-                            <Trash2 className="h-4 w-4 text-gray-900 dark:text-white" />
+                            <Trash2 className="h-4 w-4" />
                           </Button>
                         )}
                       </div>
@@ -3848,10 +4102,8 @@ export default function InvoiceCreate() {
                             className="grid gap-2 border-b p-3 font-medium text-sm bg-gray-50 dark:bg-gray-800"
                             style={{ gridTemplateColumns: expenseGridTemplate }}
                           >
-                            <div className="text-center flex items-center justify-center">#</div>
+                            <div className="flex items-center justify-center text-center">#</div>
                             <div className="flex items-center">Title</div>
-                            <div className="flex items-center">Category</div>
-                            <div className="flex items-center">Vendor</div>
                             <div className="flex items-center">Qty</div>
                             <div className="flex items-center">Purchase Price ({currencySymbol})</div>
                             <div className="flex items-center">Amount ({currencySymbol})</div>
@@ -3889,36 +4141,7 @@ export default function InvoiceCreate() {
                                         className="text-sm"
                                       />
                                     </div>
-                                    <div className="flex items-center">
-                                      <AutocompleteInput
-                                        suggestions={getTravelCategories().filter((cat) => cat.value !== "create_new")}
-                                        value={displayItem.category}
-                                        onValueChange={(value) => {
-                                          const updated = { ...displayItem, category: value };
-                                          setEditedExpenseLineItems((prev) => {
-                                            const newMap = new Map(prev);
-                                            newMap.set(expense.id, updated);
-                                            return newMap;
-                                          });
-                                        }}
-                                        placeholder="Category"
-                                      />
-                                    </div>
-                                    <div className="flex items-center">
-                                      <AutocompleteInput
-                                        suggestions={getVendorOptions().filter((v) => v.value !== "create_new")}
-                                        value={displayItem.vendorId || ""}
-                                        onValueChange={(value) => {
-                                          const updated = { ...displayItem, vendorId: value };
-                                          setEditedExpenseLineItems((prev) => {
-                                            const newMap = new Map(prev);
-                                            newMap.set(expense.id, updated);
-                                            return newMap;
-                                          });
-                                        }}
-                                        placeholder="Vendor"
-                                      />
-                                    </div>
+
                                     <div className="flex items-center">
                                       <Input
                                         value={displayItem.quantity}
@@ -4033,58 +4256,7 @@ export default function InvoiceCreate() {
                                       className="text-sm"
                                     />
                                   </div>
-                                  <div className="flex items-center">
-                                    <AutocompleteInput
-                                      suggestions={getTravelCategories().filter((cat) => cat.value !== "create_new")}
-                                      value={expense.category || ""}
-                                      onValueChange={(value) => {
-                                        if (manualExpenseIdx >= 0) {
-                                          updateManualExpense(manualExpenseIdx, "category", value);
-                                          // Also update packageId for manual expenses
-                                          const selectedLeadType = leadTypes.find((lt: any) => 
-                                            (lt.name || lt.type_name || lt.typeName) === value
-                                          );
-                                          const packageId = selectedLeadType ? selectedLeadType.id.toString() : "";
-                                          updateManualExpense(manualExpenseIdx, "packageId", packageId);
-                                        } else if (isNewAutoGenerated) {
-                                          const lineItemIdx = lineItems.findIndex((li: any) => 
-                                            li.itemTitle === expense.title || 
-                                            (li.purchasePrice && parseFloat(li.purchasePrice) === parseFloat(expense.purchasePrice || "0"))
-                                          );
-                                          if (lineItemIdx >= 0) {
-                                            // Find lead type and update both travelCategory and packageId
-                                            const selectedLeadType = leadTypes.find((lt: any) => 
-                                              (lt.name || lt.type_name || lt.typeName) === value
-                                            );
-                                            const packageId = selectedLeadType ? selectedLeadType.id.toString() : "";
-                                            updateLineItem(lineItemIdx, "travelCategory", value);
-                                            updateLineItem(lineItemIdx, "packageId", packageId);
-                                          }
-                                        }
-                                      }}
-                                      placeholder="Category"
-                                    />
-                                  </div>
-                                  <div className="flex items-center">
-                                    <AutocompleteInput
-                                      suggestions={getVendorOptions().filter((v) => v.value !== "create_new")}
-                                      value={expense.vendorId || ""}
-                                      onValueChange={(value) => {
-                                        if (manualExpenseIdx >= 0) {
-                                          updateManualExpense(manualExpenseIdx, "vendorId", value);
-                                        } else if (isNewAutoGenerated) {
-                                          const lineItemIdx = lineItems.findIndex((li: any) => 
-                                            li.itemTitle === expense.title || 
-                                            (li.purchasePrice && parseFloat(li.purchasePrice) === parseFloat(expense.purchasePrice || "0"))
-                                          );
-                                          if (lineItemIdx >= 0) {
-                                            updateLineItem(lineItemIdx, "vendor", value);
-                                          }
-                                        }
-                                      }}
-                                      placeholder="Vendor"
-                                    />
-                                  </div>
+
                                   <div className="flex items-center">
                                     <Input
                                       value={expense.quantity}
@@ -4248,6 +4420,7 @@ export default function InvoiceCreate() {
                 >
                   Cancel
                 </Button>
+
                 <Button
                   type="submit"
                   disabled={createInvoiceMutation.isPending}

@@ -21,6 +21,7 @@ export interface InvoiceData {
     totalPrice: number;
     invoiceNumber?: string;
     voucherNumber?: string;
+    date?: string;
   }[];
   subtotal: number;
   taxAmount: number;
@@ -107,6 +108,11 @@ export const ModernTemplate: React.FC<InvoiceTemplateProps> = ({ data }) => (
             <tr key={index} className="border-b border-gray-200">
               <td className="p-3">
                 <div>{item.description}</div>
+                {item.date && (
+                  <div className="text-xs text-gray-500 mt-1">
+                    Date: {format(new Date(item.date), 'MMM dd, yyyy HH:mm')}
+                  </div>
+                )}
                 {(item.invoiceNumber || item.voucherNumber) && (
                   <div className="text-xs text-gray-500 mt-1">
                     {item.invoiceNumber && <span>Invoice: {item.invoiceNumber}</span>}
@@ -333,7 +339,14 @@ export const CorporateTemplate: React.FC<InvoiceTemplateProps> = ({ data }) => (
         <tbody>
           {data.items.map((item, index) => (
             <tr key={index} className={index % 2 === 0 ? "bg-gray-50" : "bg-white"}>
-              <td className="p-4 border-b">{item.description}</td>
+              <td className="p-4 border-b">
+                <div>{item.description}</div>
+                {item.date && (
+                  <div className="text-xs text-gray-500 mt-1 italic">
+                    {format(new Date(item.date), 'MMMM dd, yyyy HH:mm')}
+                  </div>
+                )}
+              </td>
               <td className="p-4 text-center border-b">{item.quantity}</td>
               <td className="p-4 text-right border-b">{data.currency} {item.unitPrice.toFixed(2)}</td>
               <td className="p-4 text-right border-b font-medium">{data.currency} {item.totalPrice.toFixed(2)}</td>
@@ -446,6 +459,11 @@ export const CreativeTemplate: React.FC<InvoiceTemplateProps> = ({ data }) => (
             <div className="flex justify-between items-center">
               <div className="flex-1">
                 <p className="font-medium">{item.description}</p>
+                {item.date && (
+                  <p className="text-xs text-gray-500 mt-1 italic">
+                    {format(new Date(item.date), 'MMM dd, yyyy HH:mm')}
+                  </p>
+                )}
                 <p className="text-sm text-gray-600">{item.quantity} × {data.currency} {item.unitPrice.toFixed(2)}</p>
               </div>
               <div className="text-right">
@@ -562,7 +580,14 @@ export const ClassicTemplate: React.FC<InvoiceTemplateProps> = ({ data }) => (
         <tbody>
           {data.items.map((item, index) => (
             <tr key={index}>
-              <td className="border border-gray-400 p-3">{item.description}</td>
+              <td className="border border-gray-400 p-3">
+                <div>{item.description}</div>
+                {item.date && (
+                  <div className="text-xs text-gray-500 mt-1 italic font-serif">
+                    {format(new Date(item.date), 'MMMM dd, yyyy HH:mm')}
+                  </div>
+                )}
+              </td>
               <td className="border border-gray-400 p-3 text-center">{item.quantity}</td>
               <td className="border border-gray-400 p-3 text-center">{data.currency} {item.unitPrice.toFixed(2)}</td>
               <td className="border border-gray-400 p-3 text-center font-medium">{data.currency} {item.totalPrice.toFixed(2)}</td>

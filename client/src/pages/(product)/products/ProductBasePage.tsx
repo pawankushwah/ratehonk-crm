@@ -16,7 +16,8 @@ import {
   Maximize,
   Minimize,
   Trash2,
-  Check
+  Check,
+  FilterIcon
 } from 'lucide-react';
 import React from 'react';
 import { useLocation } from 'wouter';
@@ -312,15 +313,15 @@ const ProductBasePage: React.FC<ProductBasePageProps> = ({
 
           <button 
             onClick={() => setIsFullscreen(!isFullscreen)}
-            className="flex items-center justify-center w-11 h-11 rounded-xl bg-glass-bg border border-glass-border text-text-muted hover:text-primary hover:border-primary/50 transition-all group active:scale-95"
+            className="flex items-center justify-center w-11 h-11 px-10 rounded-xl bg-glass-bg border border-glass-border text-text-muted hover:text-primary hover:border-primary/50 transition-all group active:scale-95"
             title="Fullscreen"
           >
             {/* {isFullscreen ? <Minimize size={18} /> : <Maximize size={18} />} */}
-            filter
+            <FilterIcon size={18} /> Filter
           </button>
         </div>
         
-        {title !== "Products" && activeTab !== "all" && <HeaderButton onClick={() => {
+        {!activeTab && <HeaderButton onClick={() => {
           setDrawerMode('create');
           setSelectedProduct(null);
           setIsDrawerOpen(true);

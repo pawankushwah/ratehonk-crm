@@ -570,12 +570,34 @@ export default function Invoices() {
   const [discountAmount, setDiscountAmount] = useState(0);
   const [amountPaid, setAmountPaid] = useState(0);
   const [paymentStatus, setPaymentStatus] = useState("pending");
+ 
+   // Auto-set amount paid to full total when payment status is "paid" for NEW invoice
+   useEffect(() => {
+     if (paymentStatus === "paid") {
+       const totalAmount = lineItems.reduce((total, item) => total + (item.totalAmount || 0), 0);
+       const finalAmount = totalAmount - (discountAmount || 0);
+       setAmountPaid(finalAmount > 0 ? finalAmount : 0);
+     } else if (paymentStatus === "pending") {
+       setAmountPaid(0);
+     }
+   }, [paymentStatus, lineItems, discountAmount]);
 
   // Edit form states
   const [editLineItems, setEditLineItems] = useState<any[]>([]);
   const [editDiscountAmount, setEditDiscountAmount] = useState(0);
   const [editAmountPaid, setEditAmountPaid] = useState(0);
   const [editPaymentStatus, setEditPaymentStatus] = useState("pending");
+
+  // Auto-set amount paid to full total when payment status is "paid" for EDIT invoice
+  useEffect(() => {
+    if (editPaymentStatus === "paid") {
+      const totalAmount = editLineItems.reduce((total, item) => total + (item.totalAmount || 0), 0);
+      const finalAmount = totalAmount - (editDiscountAmount || 0);
+      setEditAmountPaid(finalAmount > 0 ? finalAmount : 0);
+    } else if (editPaymentStatus === "pending") {
+      setEditAmountPaid(0);
+    }
+  }, [editPaymentStatus, editLineItems, editDiscountAmount]);
 
   // Handle adding new line item
   const addLineItem = () => {
@@ -2214,16 +2236,23 @@ export default function Invoices() {
                 setCancellationChargeNotes("");
                 setShowCancellationChargeFields(false);
               } else {
-                // Check if changing from "paid" to "draft" - reset paidAmount to 0
+                // Determine if we should update paidAmount based on status change
                 const invoiceData = invoice as any;
-                const currentStatus = displayStatus || invoiceData.status || invoice.status;
-                const shouldResetPaidAmount = currentStatus === "paid" && newStatus === "draft";
+                const totalAmount = parseFloat(invoiceData.totalAmount?.toString() || "0");
+                
+                let updatedPaidAmount: number | undefined = undefined;
+                
+                if (newStatus === "paid") {
+                  updatedPaidAmount = totalAmount;
+                } else if (newStatus === "pending" || newStatus === "draft") {
+                  updatedPaidAmount = 0;
+                }
                 
                 // For other status changes, update directly
                 updateStatusMutation.mutate({
                   invoiceId: invoice.id,
                   status: newStatus,
-                  paidAmount: shouldResetPaidAmount ? 0 : undefined,
+                  paidAmount: updatedPaidAmount,
                 });
               }
             }}

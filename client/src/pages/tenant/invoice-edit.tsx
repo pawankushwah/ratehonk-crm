@@ -28,6 +28,9 @@ import {
 import {
   Plus,
   Trash2,
+  Copy,
+  Split,
+  Scissors,
   ArrowLeft,
   Receipt,
   Bell,
@@ -40,6 +43,8 @@ import {
   File,
   FileText,
   Image as ImageIcon,
+  Edit2,
+  CheckCircle2,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -51,11 +56,11 @@ import {
 } from "@/components/ui/select";
 import { useAuth } from "@/components/auth/auth-provider";
 import { auth } from "@/lib/auth";
-import { useToast } from "@/hooks/use-toast";
+import { toast, useToast } from "@/hooks/use-toast";
 import { useLocation, useRoute } from "wouter";
 import { useDebounce } from "@/hooks/use-debounce";
 import { directCustomersApi } from "@/lib/direct-customers-api";
-import { formatLocalDate, parseLocalDate } from "@/lib/utils";
+import { formatLocalDate, parseLocalDate, formatLocalDateTime } from "@/lib/utils";
 import { CustomerCreateForm } from "@/components/forms/customer-create-form";
 import { VendorCreateForm } from "@/components/forms/vendor-create-form";
 import { LeadTypeCreateForm } from "@/components/forms/lead-type-create-form";
@@ -65,6 +70,7 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ModernTemplate, InvoiceData } from "@/components/invoices/invoice-templates";
+import { getAllDynamicData } from "@/lib/forms";
 import type { UploadResult } from "@uppy/core";
 
 export default function InvoiceEdit() {
@@ -98,6 +104,8 @@ export default function InvoiceEdit() {
 
   const [lineItems, setLineItems] = useState([
     {
+      clientId: Math.random().toString(36).substring(7),
+      date: formatLocalDateTime(new Date()),
       itemTitle: "",
       invoiceNumber: "",
       quantity: "1",
@@ -111,10 +119,12 @@ export default function InvoiceEdit() {
       variantId: "",
       availableVariants: [] as any[],
       productTypeFilter: "all",
+      isUnfulfilled: false,
+      pendingQuantity: 0,
       totalAmount: 0,
     },
   ]);
-  
+
   // Track the count of line items that were previously created (loaded from invoice)
   // This is used internally to distinguish between existing and new line items
   // Items at indices < previouslyCreatedLineItemCount are previously created
@@ -135,14 +145,13 @@ export default function InvoiceEdit() {
   const [paymentMethod, setPaymentMethod] = useState<string[]>([]);
   const [paymentTerms, setPaymentTerms] = useState("30");
   const [customDays, setCustomDays] = useState("");
-  const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split("T")[0]);
+  const [invoiceDate, setInvoiceDate] = useState(formatLocalDate(new Date()));
   const [dueDate, setDueDate] = useState(
     new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
   );
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [invoiceNumberOnly, setInvoiceNumberOnly] = useState(""); // Just the number part without prefix
-  const [isPartial, setIsPartial] = useState(false);
-  const [isFulfilling, setIsFulfilling] = useState(false);
+  const [editableRows, setEditableRows] = useState<Set<string>>(new Set());
 
   // Payment reminder states
   const [enableReminder, setEnableReminder] = useState(false);
@@ -169,13 +178,13 @@ export default function InvoiceEdit() {
 
   // Manual expenses state
   const [manualExpenses, setManualExpenses] = useState<any[]>([]);
-  
+
   // Store expenses grouped by expense ID for display
   const [groupedExpenses, setGroupedExpenses] = useState<Map<number, any>>(new Map());
-  
+
   // Store edited expense line items (from API) - keyed by lineItem.id
   const [editedExpenseLineItems, setEditedExpenseLineItems] = useState<Map<number, any>>(new Map());
-  
+
   // Store deleted expense line item IDs (to exclude from save)
   const [deletedExpenseLineItemIds, setDeletedExpenseLineItemIds] = useState<Set<number>>(new Set());
 
@@ -283,13 +292,13 @@ export default function InvoiceEdit() {
     const params = new URLSearchParams(window.location.search);
     const customerIdParam = params.get("customerId");
     const redirectToParam = params.get("redirectTo");
-    
+
     // In create mode, auto-select customer from URL
     if (!isEditMode && customerIdParam) {
       console.log("🔍 Auto-selecting customer from URL:", customerIdParam);
       setSelectedCustomerId(customerIdParam);
     }
-    
+
     // Always read redirectTo from URL (for both create and edit mode)
     if (redirectToParam) {
       console.log("🔍 Storing redirect URL:", redirectToParam);
@@ -316,11 +325,11 @@ export default function InvoiceEdit() {
   const generateNextInvoiceNumber = useMemo(() => {
     const startNumber = invoiceSettings?.invoiceNumberStart || 1;
     const prefix = invoiceSettings?.invoiceNumberPrefix || "INV";
-    
+
     console.log("🔢 Generating invoice number - invoices count:", invoices?.length, "startNumber:", startNumber, "prefix:", prefix);
     console.log("🔢 Invoice settings:", invoiceSettings);
     console.log("🔢 Invoices data:", invoices);
-    
+
     if (!invoices || invoices.length === 0) {
       // No existing invoices, use starting number from settings
       const generated = `${prefix}${String(startNumber).padStart(3, '0')}`;
@@ -337,9 +346,9 @@ export default function InvoiceEdit() {
           console.log(`🔢 Invoice ${index} has no invoice number`);
           return 0;
         }
-        
+
         console.log(`🔢 Processing invoice ${index}: "${invNum}"`);
-        
+
         // Try to extract number - handle multiple formats
         // Pattern 1: PREFIX-NUMBER (e.g., INV-001, BILL-123)
         const matchWithDash = invNum.match(/^[A-Za-z0-9]+[\s-]+(\d+)/);
@@ -348,7 +357,7 @@ export default function InvoiceEdit() {
           console.log(`🔢 Matched with dash pattern: ${num}`);
           return num;
         }
-        
+
         // Pattern 2: PREFIXNUMBER (e.g., INV001, BILL123)
         const matchNoDash = invNum.match(/^[A-Za-z]+(\d+)/);
         if (matchNoDash) {
@@ -356,7 +365,7 @@ export default function InvoiceEdit() {
           console.log(`🔢 Matched no dash pattern: ${num}`);
           return num;
         }
-        
+
         // Pattern 3: Just numbers (extract first number sequence)
         const matchNumbers = invNum.match(/(\d+)/);
         if (matchNumbers) {
@@ -364,7 +373,7 @@ export default function InvoiceEdit() {
           console.log(`🔢 Matched numbers pattern: ${num}`);
           return num;
         }
-        
+
         console.log(`🔢 No pattern matched for: "${invNum}"`);
         return 0;
       })
@@ -373,8 +382,8 @@ export default function InvoiceEdit() {
     console.log("🔢 Extracted invoice numbers:", invoiceNumbers);
 
     // Find the highest number from existing invoices
-    const maxNumber = invoiceNumbers.length > 0 
-      ? Math.max(...invoiceNumbers) 
+    const maxNumber = invoiceNumbers.length > 0
+      ? Math.max(...invoiceNumbers)
       : 0;
 
     console.log("🔢 Max number from existing invoices:", maxNumber, "Start number from settings:", startNumber);
@@ -393,7 +402,7 @@ export default function InvoiceEdit() {
       nextNumber = Math.max(maxNumber + 1, startNumber);
       console.log("🔢 Incrementing from max number:", maxNumber, "-> next:", nextNumber);
     }
-    
+
     // Return without dash: INV001 instead of INV-001
     const generated = `${prefix}${String(nextNumber).padStart(3, '0')}`;
     console.log("🔢 Final generated invoice number:", generated);
@@ -418,22 +427,22 @@ export default function InvoiceEdit() {
   // Auto-generate invoice number when invoices/settings are loaded
   useEffect(() => {
     if (isEditMode) return; // Don't auto-generate in edit mode
-    
+
     const currentStartNumber = invoiceSettings?.invoiceNumberStart || 1;
     const prefix = invoiceSettings?.invoiceNumberPrefix || "INV";
-    
+
     // Wait for both invoices and settings to be loaded
     if (generateNextInvoiceNumber && invoiceSettings && (invoices !== undefined)) {
       // Check if starting number changed
-      const startingNumberChanged = lastStartingNumber.current !== null && 
-                                    lastStartingNumber.current !== currentStartNumber;
-      
+      const startingNumberChanged = lastStartingNumber.current !== null &&
+        lastStartingNumber.current !== currentStartNumber;
+
       // On first initialization, always update (even if field has a value)
       // After that, update if field is empty OR starting number changed
-      const shouldUpdate = !hasInitialized.current || 
-                          !invoiceNumber || 
-                          startingNumberChanged;
-      
+      const shouldUpdate = !hasInitialized.current ||
+        !invoiceNumber ||
+        startingNumberChanged;
+
       if (shouldUpdate) {
         lastStartingNumber.current = currentStartNumber;
         hasInitialized.current = true;
@@ -475,17 +484,17 @@ export default function InvoiceEdit() {
           search: debouncedCustomerSearch || undefined,
           limit: debouncedCustomerSearch ? 50 : 20, // Limit initial results, more when searching
         });
-        
+
         // Handle paginated response
         if (result && typeof result === "object" && "data" in result) {
           return result.data;
         }
-        
+
         // Handle direct array response
         if (Array.isArray(result)) {
           return result;
         }
-        
+
         return [];
       } catch (error) {
         console.error("Error fetching customers:", error);
@@ -509,7 +518,7 @@ export default function InvoiceEdit() {
       try {
         const customerId = parseInt(selectedCustomerId);
         if (isNaN(customerId)) return null;
-        
+
         const response = await fetch(`/api/tenants/${tenant?.id}/customers/${customerId}`, {
           method: "GET",
           headers: {
@@ -517,7 +526,7 @@ export default function InvoiceEdit() {
             "Content-Type": "application/json",
           },
         });
-        
+
         if (!response.ok) return null;
         const result = await response.json();
         return result.customer || result.data || result;
@@ -531,10 +540,10 @@ export default function InvoiceEdit() {
   // Merge selected customer into customers list if it exists and is not already there
   const allCustomers = useMemo(() => {
     if (!selectedCustomer) return customers;
-    
+
     const customerExists = customers.some((c: any) => c.id?.toString() === selectedCustomerId);
     if (customerExists) return customers;
-    
+
     return [selectedCustomer, ...customers];
   }, [customers, selectedCustomer, selectedCustomerId]);
 
@@ -632,15 +641,9 @@ export default function InvoiceEdit() {
   });
   // Fetch products (dynamic data)
   const { data: productsData } = useQuery({
-    queryKey: ["/api/resources/data/all"],
+    queryKey: ["/api/resources/data/all", { includeVariants: true }],
     enabled: !!tenant?.id,
-    queryFn: async () => {
-      const response = await fetch(`/api/resources/data/all`, {
-        headers: { Authorization: `Bearer ${auth.getToken()}` },
-      });
-      if (!response.ok) return { data: [] };
-      return await response.json();
-    },
+    queryFn: () => getAllDynamicData({ includeVariants: true, limit: 1000 })
   });
 
   const products = useMemo(() => {
@@ -659,20 +662,20 @@ export default function InvoiceEdit() {
       // Add timestamp to URL to prevent 304 cached responses
       const url = `/api/tenants/${tenant?.id}/invoices/${invoiceId}?t=${Date.now()}`;
       const response = await fetch(url, {
-        headers: { 
+        headers: {
           Authorization: `Bearer ${token}`,
           'Cache-Control': 'no-cache',
           'Pragma': 'no-cache',
         },
         cache: 'no-store', // Bypass browser cache completely
       });
-      
+
       // Handle 304 Not Modified - force a fresh request (fallback)
       if (response.status === 304) {
         console.warn("Received 304, forcing fresh fetch with new timestamp...");
         const freshUrl = `/api/tenants/${tenant?.id}/invoices/${invoiceId}?t=${Date.now()}`;
         const freshResponse = await fetch(freshUrl, {
-          headers: { 
+          headers: {
             Authorization: `Bearer ${token}`,
             'Cache-Control': 'no-cache',
             'Pragma': 'no-cache',
@@ -687,7 +690,7 @@ export default function InvoiceEdit() {
         console.log("Invoice data fetched (raw, after 304 retry):", result);
         return result.invoice || result.data || result;
       }
-      
+
       if (!response.ok) throw new Error("Failed to fetch invoice");
       const result = await response.json();
       console.log("Invoice data fetched (raw):", result);
@@ -712,7 +715,7 @@ export default function InvoiceEdit() {
       // Add timestamp to prevent caching
       const url = `/api/expenses?invoiceId=${invoiceId}&limit=1000&page=1&t=${Date.now()}`;
       const response = await fetch(url, {
-        headers: { 
+        headers: {
           Authorization: `Bearer ${token}`,
           'Cache-Control': 'no-cache',
           'Pragma': 'no-cache',
@@ -728,7 +731,7 @@ export default function InvoiceEdit() {
       } else if (Array.isArray(result)) {
         expenses = result;
       }
-      
+
       // Return ALL expenses linked to the invoice (both auto-generated and manual)
       console.log("📦 Fetched expenses from API:", expenses.length, expenses);
       return expenses;
@@ -750,7 +753,7 @@ export default function InvoiceEdit() {
       const token = auth.getToken();
       const url = `/api/expenses?invoiceId=${invoiceId}&limit=1000&page=1`;
       const response = await fetch(url, {
-        headers: { 
+        headers: {
           Authorization: `Bearer ${token}`,
         },
       });
@@ -763,7 +766,7 @@ export default function InvoiceEdit() {
       } else if (Array.isArray(result)) {
         expenses = result;
       }
-      
+
       // Return ALL expenses (both auto-generated and from expense page) for profit calculation
       return expenses;
     },
@@ -785,34 +788,34 @@ export default function InvoiceEdit() {
           }, 100);
         }
       }
-      } else {
-        // Reset when not in edit mode
-        invoiceDataLoadedRef.current = null;
-      }
-    }, [invoiceId, isEditMode, refetchInvoice, refetchExpenses]);
+    } else {
+      // Reset when not in edit mode
+      invoiceDataLoadedRef.current = null;
+    }
+  }, [invoiceId, isEditMode, refetchInvoice, refetchExpenses]);
 
   // Populate form fields when invoice data loads
   useEffect(() => {
     // Validate that we have valid invoice data
     const invoice = existingInvoice as any;
-    const hasValidData = invoice && 
-                        typeof invoice === 'object' && 
-                        Object.keys(invoice).length > 0 &&
-                        (invoice.id || invoice.invoiceNumber || invoice.totalAmount !== undefined);
-    
+    const hasValidData = invoice &&
+      typeof invoice === 'object' &&
+      Object.keys(invoice).length > 0 &&
+      (invoice.id || invoice.invoiceNumber || invoice.totalAmount !== undefined);
+
     // Check if lineItems are empty or don't have the expected data
-    const lineItemsEmpty = !invoice?.lineItems || 
-                          (Array.isArray(invoice.lineItems) && invoice.lineItems.length === 0) ||
-                          (lineItems.length === 0 && invoice?.lineItems?.length > 0);
-    
+    const lineItemsEmpty = !invoice?.lineItems ||
+      (Array.isArray(invoice.lineItems) && invoice.lineItems.length === 0) ||
+      (lineItems.length === 0 && invoice?.lineItems?.length > 0);
+
     // Only load if we have valid data, not loading, and either:
     // 1. Haven't loaded this invoice yet (ref doesn't match), OR
     // 2. Line items are empty even though we have data (fallback case)
-    const shouldLoad = isEditMode && 
-                      hasValidData && 
-                      !isLoadingInvoice && 
-                      (invoiceDataLoadedRef.current !== invoiceId || lineItemsEmpty);
-    
+    const shouldLoad = isEditMode &&
+      hasValidData &&
+      !isLoadingInvoice &&
+      (invoiceDataLoadedRef.current !== invoiceId || lineItemsEmpty);
+
     console.log("🔍 Invoice data loading check:", {
       isEditMode,
       hasValidData,
@@ -826,11 +829,11 @@ export default function InvoiceEdit() {
       formLineItemsLength: lineItems.length,
       dataLineItemsLength: invoice?.lineItems?.length || 0,
     });
-    
+
     if (shouldLoad) {
       invoiceDataLoadedRef.current = invoiceId; // Mark as loaded BEFORE setting data
       console.log("🔄 Loading invoice data into form:", invoice);
-      
+
       // Set basic fields
       setSelectedCustomerId(invoice.customerId?.toString() || "");
       setSelectedBookingId(invoice.bookingId?.toString() || "none");
@@ -846,11 +849,11 @@ export default function InvoiceEdit() {
       const hasCharge = invoice.hasCancellationCharge || invoice.has_cancellation_charge || false;
       const chargeAmount = invoice.cancellationChargeAmount || invoice.cancellation_charge_amount || 0;
       const chargeNotes = invoice.cancellationChargeNotes || invoice.cancellation_charge_notes || "";
-      
+
       // Auto-enable if there's a charge amount > 0
       const chargeAmountNum = parseFloat(chargeAmount?.toString() || "0");
       const shouldEnable = hasCharge || chargeAmountNum > 0;
-      
+
       console.log("🔍 Loading cancellation charge data:", {
         hasCharge,
         chargeAmount,
@@ -859,7 +862,7 @@ export default function InvoiceEdit() {
         shouldEnable,
         invoiceKeys: Object.keys(invoice).filter(k => k.toLowerCase().includes('cancel')),
       });
-      
+
       setHasCancellationCharge(shouldEnable);
       setCancellationChargeAmount(chargeAmountNum > 0 ? chargeAmountNum.toString() : "0");
       setCancellationChargeNotes(chargeNotes);
@@ -881,9 +884,8 @@ export default function InvoiceEdit() {
         setInvoiceNumberOnly(numberPart);
       }
       setIsTaxInclusive(invoice.isTaxInclusive || false);
-      setIsPartial(invoice.isPartial || invoice.is_partial || false);
-      
-      
+
+
       // Parse notes and extract attachments (links in HTML) - keep for backward compatibility
       const notesHtml = invoice.notes || "";
       const notesAttachmentsFound: Array<{ id: string; name: string; url: string }> = [];
@@ -896,7 +898,7 @@ export default function InvoiceEdit() {
         return '';
       }).trim();
       setNotesContent(notesWithoutAttachments);
-      
+
       // Parse additional notes and extract attachments - keep for backward compatibility
       const additionalNotesHtml = invoice.additionalNotes || "";
       const additionalNotesAttachmentsFound: Array<{ id: string; name: string; url: string }> = [];
@@ -909,37 +911,37 @@ export default function InvoiceEdit() {
         return '';
       }).trim();
       setAdditionalNotesContent(additionalNotesWithoutAttachments);
-      
+
       // Load attachments from invoice data (new system - from invoice.attachments)
       const invoiceAttachmentsData = invoice.attachments || [];
-      const invoiceAttachmentsParsed = Array.isArray(invoiceAttachmentsData) 
+      const invoiceAttachmentsParsed = Array.isArray(invoiceAttachmentsData)
         ? invoiceAttachmentsData.map((att: any, index: number) => ({
-            id: `uploaded-${index}`,
-            name: att.name || att.fileName || `Attachment ${index + 1}`,
-            url: att.url || att.publicUrl || att.objectPath || att.location || "",
-            type: att.type || att.contentType || "application/octet-stream",
-          }))
+          id: `uploaded-${index}`,
+          name: att.name || att.fileName || `Attachment ${index + 1}`,
+          url: att.url || att.publicUrl || att.objectPath || att.location || "",
+          type: att.type || att.contentType || "application/octet-stream",
+        }))
         : [];
-      
+
       // Set uploaded attachments (already uploaded, read-only)
       setUploadedAttachments(invoiceAttachmentsParsed);
-      
+
       // Load internal attachments from invoice data
       const internalAttachmentsData = (invoice as any).internalAttachments || (invoice as any).internal_attachments || [];
       const internalAttachmentsParsed = Array.isArray(internalAttachmentsData)
         ? internalAttachmentsData.map((att: any, index: number) => ({
-            id: att.id || `internal-${index}`,
-            name: att.name || att.fileName || `Internal ${index + 1}`,
-            url: att.url || att.publicUrl || att.objectPath || att.location || '',
-            type: att.type || att.contentType || 'application/octet-stream',
-          }))
+          id: att.id || `internal-${index}`,
+          name: att.name || att.fileName || `Internal ${index + 1}`,
+          url: att.url || att.publicUrl || att.objectPath || att.location || '',
+          type: att.type || att.contentType || 'application/octet-stream',
+        }))
         : [];
       setUploadedInternalAttachments(internalAttachmentsParsed);
-      
+
       // Clear any new file attachments (they will be uploaded on save)
       setInvoiceAttachments([]);
       setInternalAttachments([]);
-      
+
       setEnableReminder(invoice.enableReminder || false);
       setReminderFrequency(invoice.reminderFrequency || "weekly");
       setReminderSpecificDate(invoice.reminderSpecificDate || "");
@@ -980,17 +982,18 @@ export default function InvoiceEdit() {
       }
 
       if (parsedLineItems.length > 0) {
-        const loadedLineItems = parsedLineItems.map((item: any) => {
+        const loadedLineItems = parsedLineItems.map((item: any, idx: number) => {
           const productId = item.productId?.toString() || item.product_id?.toString() || "";
-          
+
           let availableVariants = [] as any[];
           if (productId && products.length > 0) {
             const selectedProduct = products.find((p: any) => p.id.toString() === productId);
+            console.log(`[InvoiceEdit] Loading item ${idx}: productId=${productId}, productFound=${!!selectedProduct}`);
             if (selectedProduct) {
               // Get variants directly from the product object (API returns flattened variants array)
               const variantsData = selectedProduct.variants || [];
               availableVariants = variantsData.map((v: any, i: number) => {
-                const label = v.label || v.title || v.name || v.color || v.size || (v.options && Object.values(v.options).join(' ')) || `Variant ${i+1}`;
+                const label = v.label || v.title || v.name || v.color || v.size || (v.options && Object.values(v.options).join(' ')) || `Variant ${i + 1}`;
                 const value = v.id?.toString() || v.value || label;
                 return { ...v, label, value };
               });
@@ -998,6 +1001,7 @@ export default function InvoiceEdit() {
           }
 
           return {
+            date: item.date || invoice.issueDate || invoice.invoiceDate || new Date().toISOString().split("T")[0],
             itemTitle: item.itemTitle || item.description || "",
             invoiceNumber: item.invoiceNumber || "",
             quantity: item.quantity?.toString() || "1",
@@ -1008,21 +1012,23 @@ export default function InvoiceEdit() {
             tax: item.tax?.toString() || "0",
             taxRateId: item.taxRateId?.toString() || "",
             productId: productId,
-            variantId: item.variantId?.toString() || "",
+            variantId: item.variantId?.toString() || item.variant_id?.toString() || "",
             availableVariants: availableVariants,
             productTypeFilter: "all",
             totalAmount: parseFloat(item.totalAmount?.toString() || item.totalPrice?.toString() || "0"),
+            isPersisted: true,
+            clientId: item.id?.toString() || Math.random().toString(36).substring(7),
           };
         });
-        
+
         setLineItems(loadedLineItems);
-        
+
         // Mark the count of previously created line items (code level only, not shown on frontend)
         // All items at indices < this count are previously created
         setPreviouslyCreatedLineItemCount(loadedLineItems.length);
         console.log("✅ Marked", loadedLineItems.length, "line items as previously created (code level only)");
       }
-      
+
       console.log("✅ Invoice data loaded successfully");
       console.log("✅ Line items count:", lineItems.length);
     } else {
@@ -1037,7 +1043,7 @@ export default function InvoiceEdit() {
         invoiceDataKeys: existingInvoice ? Object.keys(existingInvoice).length : 0,
       };
       console.log("⏭️ Skipping invoice data load:", skipReason);
-      
+
       // If we're in edit mode but data isn't loading and we don't have data, try to refetch
       if (isEditMode && !isLoadingInvoice && !existingInvoice && invoiceId && invoiceDataLoadedRef.current !== invoiceId) {
         console.log("🔄 No data available, attempting to refetch...");
@@ -1047,7 +1053,7 @@ export default function InvoiceEdit() {
           }
         }, 500);
       }
-      
+
       // If we have data but lineItems are empty, force reload
       if (isEditMode && existingInvoice && !isLoadingInvoice && lineItems.length === 0 && (existingInvoice as any).lineItems?.length > 0) {
         console.log("⚠️ Line items are empty but data exists, forcing reload...");
@@ -1059,25 +1065,25 @@ export default function InvoiceEdit() {
         }, 100);
       }
     }
-  }, [existingInvoice, isEditMode, isLoadingInvoice, invoiceId, tenant?.id, refetchInvoice, lineItems.length]);
+  }, [existingInvoice, isEditMode, isLoadingInvoice, invoiceId, tenant?.id, refetchInvoice, lineItems.length, products]);
 
   // Load existing auto-generated expenses linked to this invoice from API
   // Only auto-generated expenses (auto_generated = 1) are shown on invoice update page
   useEffect(() => {
     if (isEditMode && existingExpenses && existingExpenses.length > 0 && !isLoadingExpenses) {
       console.log("📦 Loading expenses from API:", existingExpenses);
-      
+
       // Group expenses by expense ID
       const expensesMap = new Map<number, any>();
-      
+
       existingExpenses.forEach((exp: any) => {
         // Process ALL expenses linked to the invoice (both auto-generated and manual)
         console.log("📦 Processing expense:", exp.id, "auto_generated:", exp.auto_generated, "with lineItems:", exp.lineItems);
-        
+
         // Get line items from expense - API should include lineItems array
         const lineItems = exp.lineItems || [];
         console.log("📦 Expense lineItems count:", lineItems.length);
-        
+
         // Process line items - ALL existing line items should be shown
         const processedLineItems = lineItems.map((lineItem: any) => {
           // Handle different field names from API
@@ -1085,13 +1091,13 @@ export default function InvoiceEdit() {
           const quantity = parseInt(lineItem.quantity || "1");
           // Calculate purchase price per unit
           const purchasePrice = quantity > 0 ? (amount / quantity).toFixed(2) : amount.toFixed(2);
-          
+
           // Get lead_type_id from line item
           const leadTypeId = lineItem.lead_type_id || lineItem.leadTypeId || null;
           // Find the lead type by ID to get its name for the category field
           const leadType = leadTypes.find((lt: any) => lt.id === leadTypeId);
           const categoryValue = leadType ? (leadType.name || leadType.type_name || leadType.typeName || "other") : "other";
-          
+
           const lineItemData = {
             id: lineItem.id,
             expenseId: exp.id,
@@ -1108,7 +1114,7 @@ export default function InvoiceEdit() {
             isLineItem: true,
             isExisting: true, // Mark as existing line item
           };
-          
+
           // Initialize edited line items map with original data
           setEditedExpenseLineItems((prev) => {
             const newMap = new Map(prev);
@@ -1117,10 +1123,10 @@ export default function InvoiceEdit() {
             }
             return newMap;
           });
-          
+
           return lineItemData;
         });
-        
+
         // If no line items in expense, create one from the expense itself
         // This handles expenses that were created without line items
         if (processedLineItems.length === 0) {
@@ -1128,13 +1134,13 @@ export default function InvoiceEdit() {
           const amount = parseFloat(exp.amount || "0");
           const quantity = parseInt(exp.quantity || "1");
           const purchasePrice = quantity > 0 ? (amount / quantity).toFixed(2) : amount.toFixed(2);
-          
+
           // Get lead_type_id from expense
           const leadTypeId = exp.lead_type_id || exp.leadTypeId || null;
           // Find the lead type by ID to get its name for the category field
           const leadType = leadTypes.find((lt: any) => lt.id === leadTypeId);
           const categoryValue = leadType ? (leadType.name || leadType.type_name || leadType.typeName || "other") : "other";
-          
+
           // Create a line item from the expense itself when no line items exist
           // Use a negative ID to distinguish from actual line item IDs
           processedLineItems.push({
@@ -1154,7 +1160,7 @@ export default function InvoiceEdit() {
             isExisting: true,
           });
         }
-        
+
         expensesMap.set(exp.id, {
           id: exp.id,
           title: exp.title || "Expense",
@@ -1162,10 +1168,10 @@ export default function InvoiceEdit() {
           isFromInvoiceCreation: true, // All auto-generated expenses are from invoice
           lineItems: processedLineItems,
         });
-        
+
         console.log("✅ Processed expense", exp.id, "with", processedLineItems.length, "line items");
       });
-      
+
       console.log("✅ Loaded", expensesMap.size, "expenses with line items from API");
       console.log("✅ Expenses map details:", Array.from(expensesMap.entries()).map(([id, exp]) => ({
         expenseId: id,
@@ -1379,7 +1385,7 @@ export default function InvoiceEdit() {
 
   const calculateLineItemTotals = (item: typeof lineItems[number]) => {
     const sellingPrice = parseFloat(item.sellingPrice || "0");
-    const quantity = parseInt(item.quantity || "1");
+    const quantity = parseInt(item.quantity || "0");
     const subtotal = sellingPrice * quantity;
     let taxAmount = 0;
     let totalAmount = subtotal;
@@ -1419,42 +1425,26 @@ export default function InvoiceEdit() {
 
   // Helper to extract product details using viewMapping or fallback searches
   const getProductDetail = (product: any, detailKey: 'title' | 'price' | 'purchasePrice' | 'category', variantId?: string) => {
-    if (!product) return null;
-    
-    const fKey = product.FormTemplate?.formKey || 'inventory';
-    const variants = product.variants || [];
-    const activeVariant = variantId ? variants.find((v: any) => v.id?.toString() === variantId || v.value === variantId) : null;
+    if (!product) return "";
 
-    if (detailKey === 'title') {
-      return product.name || "Unnamed Product";
-    }
-
-    if (detailKey === 'category') {
-      return product.category || fKey || "Product";
-    }
-
-    if (detailKey === 'price') {
-      if (fKey === 'inventory') {
-        return (activeVariant?.sales_price ?? product.sales_price ?? "0").toString();
-      } else if (fKey === 'service') {
-        return (product.rate ?? "0").toString();
-      } else {
-        // non-inventory, bundle, etc
-        return (product.sales_price ?? "0").toString();
+    // If variantId is provided, look into variants
+    if (variantId && product.variants && Array.isArray(product.variants)) {
+      const variant = product.variants.find((v: any) => v.id.toString() === variantId);
+      if (variant) {
+        if (detailKey === 'title') return variant.title || variant.label || variant.name || "";
+        if (detailKey === 'price') return variant.price || variant.sellingPrice || variant.selling_price || variant.sales_price || "";
+        if (detailKey === 'purchasePrice') return variant.purchasePrice || variant.purchase_price || variant.cost || "";
       }
     }
 
-    if (detailKey === 'purchasePrice') {
-      if (fKey === 'inventory') {
-        return (activeVariant?.purchase_price ?? activeVariant?.cost ?? product.purchase_price ?? product.cost ?? "0").toString();
-      } else if (fKey === 'non-inventory') {
-        return (product.purchase_cost ?? "0").toString();
-      } else {
-        return (product.purchase_price ?? product.cost ?? "0").toString();
-      }
-    }
+    // Fallback to top-level or product.data
+    const data = product.data || {};
+    if (detailKey === 'title') return product.title || product.name || data.title || data.name || "";
+    if (detailKey === 'category') return product.category || product.productType || data.category || data.productType || "";
+    if (detailKey === 'price') return product.price || product.sellingPrice || product.selling_price || product.sales_price || data.price || data.sellingPrice || data.selling_price || data.sales_price || "";
+    if (detailKey === 'purchasePrice') return product.purchasePrice || product.purchase_price || product.cost || data.purchasePrice || data.purchase_price || data.cost || "";
 
-    return null;
+    return "";
   };
 
   // Get products options
@@ -1463,7 +1453,7 @@ export default function InvoiceEdit() {
       const name = product.name || "Unnamed Product";
       const fKey = product.FormTemplate?.formKey || 'inventory';
       const category = product.category || fKey;
-      
+
       return {
         value: product.id.toString(),
         label: `${name} (${category})`,
@@ -1479,7 +1469,7 @@ export default function InvoiceEdit() {
     // Get variants directly from the product object
     const variantsData = selectedProduct.variants || [];
     const availableVariants = variantsData.map((v: any, i: number) => {
-      const label = v.label || v.title || v.name || v.color || v.size || (v.options && Object.values(v.options).join(' ')) || `Variant ${i+1}`;
+      const label = v.label || v.title || v.name || v.color || v.size || (v.options && Object.values(v.options).join(' ')) || `Variant ${i + 1}`;
       const value = v.id?.toString() || v.value || label;
       return { ...v, label, value };
     });
@@ -1509,7 +1499,7 @@ export default function InvoiceEdit() {
   const handleVariantSelection = (variantId: string, index: number) => {
     const item = lineItems[index];
     if (!item.productId) return;
-    
+
     const selectedProduct = products.find((p: any) => p.id.toString() === item.productId);
     if (!selectedProduct) return;
 
@@ -1531,13 +1521,65 @@ export default function InvoiceEdit() {
   // Update line item
   const updateLineItem = (index: number, field: string, value: any) => {
     const updatedItems = [...lineItems];
-    updatedItems[index] = calculateLineItemTotals({
-      ...updatedItems[index],
+    const currentItem = updatedItems[index];
+
+    // Calculate new item state
+    const newItem = calculateLineItemTotals({
+      ...currentItem,
       [field]: value,
     });
 
+    // Splitting logic for quantity (only for normal rows, unfulfilled rows split via button)
+    if (field === 'quantity' && newItem.productId && !newItem.isUnfulfilled) {
+      const product = products.find((p: any) => p.id.toString() === newItem.productId);
+      if (product) {
+        let stock = product.stock || 0;
+        if (newItem.variantId && product.variants) {
+          const variant = product.variants.find((v: any) => v.id?.toString() === newItem.variantId?.toString());
+          if (variant) stock = parseInt(variant.variant_stock || "0");
+        }
+      }
+    }
+
+    updatedItems[index] = newItem;
     setLineItems(updatedItems);
   };
+
+  const handleQuantityBlur = (index: number, value: string) => {
+    // No automatic splitting as per user request to remove fulfillment UI
+  };
+
+  const getAvailableStock = (productId: string, variantId: any, currentIndex: number) => {
+    const product = products.find((p: any) => p.id?.toString() === productId?.toString());
+    if (!product) return 0;
+    
+    let totalStock = parseInt(product.stock || "0");
+    if (variantId && product.variants) {
+      const variant = product.variants.find((v: any) => v.id?.toString() === variantId?.toString());
+      if (variant) totalStock = parseInt(variant.variant_stock || "0");
+    }
+    
+    // Check if the current row is persisted
+    const currentItem = lineItems[currentIndex];
+    if (currentItem && currentItem.isPersisted) {
+      return totalStock;
+    }
+
+    // Subtract already allocated quantities in previous NEW (not persisted) rows
+    const allocated = lineItems.slice(0, currentIndex).reduce((sum, item) => {
+      if (item.productId?.toString() === productId?.toString() && 
+          item.variantId?.toString() === variantId?.toString() &&
+          !item.isUnfulfilled &&
+          !item.isPersisted) { // Only subtract if it's a NEW row
+        return sum + parseInt(item.quantity || "0");
+      }
+      return sum;
+    }, 0);
+    
+    return Math.max(0, totalStock - allocated);
+  };
+
+
 
   useEffect(() => {
     setLineItems((prev) => prev.map((item) => calculateLineItemTotals(item)));
@@ -1559,9 +1601,8 @@ export default function InvoiceEdit() {
 
   // Add line item
   const addLineItem = () => {
-    setLineItems([
-      ...lineItems,
-      {
+    const newItem = {
+        date: formatLocalDateTime(new Date()),
         travelCategory: "other",
         vendor: "",
         serviceProviderId: "",
@@ -1582,8 +1623,15 @@ export default function InvoiceEdit() {
         additionalCommission: "",
         productTypeFilter: "all",
         totalAmount: 0,
-      },
-    ]);
+      };
+
+    const newItems = [...lineItems, newItem];
+    newItems.sort((a, b) => {
+      const dateA = new Date(a.date || "").getTime();
+      const dateB = new Date(b.date || "").getTime();
+      return dateA - dateB;
+    });
+    setLineItems(newItems);
   };
 
   // Remove line item
@@ -1591,6 +1639,194 @@ export default function InvoiceEdit() {
     if (lineItems.length > 1) {
       setLineItems(lineItems.filter((_, i) => i !== index));
     }
+  };
+
+  // Attempt to fulfill an unfulfilled row
+  const fulfillUnfulfilledRow = (index: number) => {
+    const updatedItems = [...lineItems];
+    const item = { ...updatedItems[index] };
+    
+    if (!item.productId) return;
+
+    const qtyToFulfill = parseInt(item.quantity || "0");
+    if (qtyToFulfill <= 0) {
+      toast({
+        title: "Invalid Quantity",
+        description: "Please enter a quantity greater than zero to fulfill.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    const stock = getAvailableStock(item.productId, item.variantId, index);
+
+    if (stock < qtyToFulfill) {
+      toast({
+        title: "Insufficient Stock",
+        description: `Only ${stock} items available, but you requested ${qtyToFulfill}.`,
+        variant: "destructive"
+      });
+      return;
+    }
+
+    const totalUnfulfilled = item.pendingQuantity || parseInt(item.quantity || "0");
+    const remainingUnfulfilled = totalUnfulfilled - qtyToFulfill;
+
+    // Update current row to fulfilled
+    updatedItems[index] = calculateLineItemTotals({
+      ...updatedItems[index],
+      quantity: qtyToFulfill.toString(),
+      isUnfulfilled: false,
+      pendingQuantity: 0
+    });
+
+    if (remainingUnfulfilled > 0) {
+      // Create new row for remaining unfulfilled
+      const newItem = calculateLineItemTotals({
+        ...item,
+        clientId: Math.random().toString(36).substring(7),
+        quantity: remainingUnfulfilled.toString(),
+        isUnfulfilled: true,
+        isPersisted: false,
+        fulfilledQuantity: 0,
+        pendingQuantity: remainingUnfulfilled
+      });
+      updatedItems.splice(index + 1, 0, newItem);
+    }
+
+    const finalItems = [...updatedItems].sort((a, b) => {
+      const dateA = new Date(a.date || "").getTime();
+      const dateB = new Date(b.date || "").getTime();
+      return dateA - dateB;
+    });
+
+    setLineItems(finalItems);
+    setPaymentStatus("partial");
+    
+    toast({
+      title: "Row Fulfilled",
+      description: `Fulfilled ${qtyToFulfill} items. Invoice marked as partial.`,
+    });
+  };
+
+  // Split row into fulfilled and unfulfilled based on stock
+  const splitRemainingStock = (index: number) => {
+    const updatedItems = [...lineItems];
+    const item = { ...updatedItems[index] };
+    
+    if (!item.productId) {
+      toast({
+        title: "Cannot Split",
+        description: "Please select a product first.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    const stock = getAvailableStock(item.productId, item.variantId, index);
+    const qty = parseInt(item.quantity || "0");
+
+    if (qty > stock && stock > 0) {
+      // Set current row to available stock
+      updatedItems[index] = calculateLineItemTotals({
+        ...updatedItems[index],
+        quantity: stock.toString(),
+        isUnfulfilled: false,
+        pendingQuantity: 0
+      });
+      
+      // Create new row for remaining
+      const remainingQty = qty - stock;
+      const newItem = calculateLineItemTotals({
+        ...item,
+        clientId: Math.random().toString(36).substring(7),
+        quantity: remainingQty.toString(),
+        isUnfulfilled: true,
+        isPersisted: false,
+        fulfilledQuantity: 0,
+        pendingQuantity: remainingQty
+      });
+      
+      updatedItems.splice(index + 1, 0, newItem);
+      
+      const finalItems = [...updatedItems].sort((a, b) => {
+        const dateA = new Date(a.date || "").getTime();
+        const dateB = new Date(b.date || "").getTime();
+        return dateA - dateB;
+      });
+
+      setLineItems(finalItems);
+      setPaymentStatus("partial");
+      
+      toast({
+        title: "Row Split",
+        description: `Split into ${stock} fulfilled and ${remainingQty} unfulfilled items. Invoice marked as partial.`,
+      });
+    } else if (qty > 0 && stock <= 0) {
+       // Mark whole row as unfulfilled if no stock
+       updatedItems[index] = calculateLineItemTotals({
+         ...updatedItems[index],
+         isUnfulfilled: true,
+         pendingQuantity: qty
+       });
+       const finalItems = [...updatedItems].sort((a, b) => {
+         const dateA = new Date(a.date || "").getTime();
+         const dateB = new Date(b.date || "").getTime();
+         return dateA - dateB;
+       });
+       setLineItems(finalItems);
+       setPaymentStatus("partial");
+       toast({
+        title: "Row Marked Unfulfilled",
+        description: `No stock available. Row marked as unfulfilled. Invoice marked as partial.`,
+      });
+    } else {
+        toast({
+            title: "Cannot Split",
+            description: qty <= stock ? "Quantity does not exceed available stock." : "Invalid quantity.",
+            variant: "destructive"
+        });
+    }
+  };
+
+  // Duplicate line item
+  const duplicateLineItem = (index: number) => {
+    const itemToDuplicate = lineItems[index];
+    const duplicatedItem = {
+      ...itemToDuplicate,
+      clientId: Math.random().toString(36).substring(7),
+      date: formatLocalDateTime(new Date()),
+      quantity: "", // Clear quantity for the duplicated item
+      // Reset fulfillment status for duplicated items to avoid confusion
+      isUnfulfilled: false,
+      fulfilledQuantity: 0,
+      pendingQuantity: 0,
+      isPersisted: false, // New row should be editable
+    };
+    
+    const updatedItems = [...lineItems];
+    updatedItems.splice(index + 1, 0, duplicatedItem);
+    
+    updatedItems.sort((a, b) => {
+      const dateA = new Date(a.date || "").getTime();
+      const dateB = new Date(b.date || "").getTime();
+      return dateA - dateB;
+    });
+
+    setLineItems(updatedItems);
+  };
+
+  // Sort line items by date and time
+  const sortLineItems = () => {
+    setLineItems((prev) => {
+      return [...prev].sort((a, b) => {
+        const dateA = new Date(a.date).getTime();
+        const dateB = new Date(b.date).getTime();
+        if (isNaN(dateA)) return 1;
+        if (isNaN(dateB)) return -1;
+        return dateA - dateB;
+      });
+    });
   };
 
   // Calculate subtotal (without tax)
@@ -1636,7 +1872,7 @@ export default function InvoiceEdit() {
     const totalAmount = calculateGrandTotal();
     const paidAmount = paymentStatus === "paid"
       ? totalAmount // Full payment when status is "paid"
-      : isEditMode 
+      : isEditMode
         ? existingPaidAmount + parseFloat(amountPaid || "0") // Add new payment to existing
         : parseFloat(amountPaid || "0");
     const pendingAmount = totalAmount - paidAmount;
@@ -1685,9 +1921,7 @@ export default function InvoiceEdit() {
       .filter((item, index) => {
         // Only include line items that have purchase price AND are NOT previously created
         const hasPurchasePrice = item.purchasePrice && parseFloat(item.purchasePrice) > 0;
-        // Check if this line item was previously created (code level check)
-        // Items at indices < previouslyCreatedLineItemCount are previously created
-        const isPreviouslyCreated = index < previouslyCreatedLineItemCount;
+        const isPreviouslyCreated = item.isPersisted;
         return hasPurchasePrice && !isPreviouslyCreated;
       })
       .map((item, index) => {
@@ -1702,11 +1936,11 @@ export default function InvoiceEdit() {
 
         const purchasePrice = parseFloat(item.purchasePrice || "0");
         const quantity = parseInt(item.quantity || "1");
-        
+
         // Get lead type ID from packageId (packageId is the lead_type_id)
         const leadTypeId = item.packageId && item.packageId !== "" ? parseInt(item.packageId) : null;
         const selectedLeadType = leadTypes.find((lt: any) => lt.id === leadTypeId);
-        
+
         return {
           itemIndex: index,
           title: item.itemTitle || `Expense for ${item.travelCategory || "other"}`,
@@ -1747,14 +1981,14 @@ export default function InvoiceEdit() {
   const updateManualExpense = (index: number, field: string, value: any) => {
     const updated = [...manualExpenses];
     updated[index] = { ...updated[index], [field]: value };
-    
+
     // Calculate amount when purchasePrice or quantity changes
     if (field === "purchasePrice" || field === "quantity") {
       const purchasePrice = parseFloat(updated[index].purchasePrice || "0");
       const quantity = parseInt(updated[index].quantity || "1");
       updated[index].amount = (purchasePrice * quantity).toFixed(2);
     }
-    
+
     setManualExpenses(updated);
   };
 
@@ -1767,7 +2001,7 @@ export default function InvoiceEdit() {
   const getExistingExpenseLineItems = () => {
     const allLineItems: any[] = [];
     console.log("🔍 getExistingExpenseLineItems - groupedExpenses size:", groupedExpenses.size);
-    
+
     groupedExpenses.forEach((expenseGroup, expenseId) => {
       console.log(`🔍 Processing expense ${expenseId}, lineItems count:`, expenseGroup.lineItems?.length || 0);
       if (expenseGroup.lineItems && Array.isArray(expenseGroup.lineItems)) {
@@ -1784,7 +2018,7 @@ export default function InvoiceEdit() {
         });
       }
     });
-    
+
     console.log("🔍 getExistingExpenseLineItems - returning", allLineItems.length, "line items");
     return allLineItems;
   };
@@ -1793,16 +2027,16 @@ export default function InvoiceEdit() {
   const getNewAutoGeneratedExpenses = () => {
     const existingLineItems = getExistingExpenseLineItems();
     const autoExpenses = generateExpenses();
-    
+
     // Filter out expenses that already exist in API
     // Match by title and purchase price to avoid duplicates
     return autoExpenses.filter((autoExp: any) => {
       // Check if this expense already exists in API expenses
       const exists = existingLineItems.some((existing: any) => {
         // Match by title and purchase price (with some tolerance for floating point)
-        const titleMatch = existing.title === autoExp.title || 
-                          (existing.title && autoExp.title && 
-                           existing.title.toLowerCase().includes(autoExp.title.toLowerCase()));
+        const titleMatch = existing.title === autoExp.title ||
+          (existing.title && autoExp.title &&
+            existing.title.toLowerCase().includes(autoExp.title.toLowerCase()));
         const priceMatch = Math.abs(parseFloat(existing.purchasePrice || "0") - parseFloat(autoExp.purchasePrice || "0")) < 0.01;
         return titleMatch && priceMatch;
       });
@@ -1839,7 +2073,7 @@ export default function InvoiceEdit() {
         const purchasePrice = parseFloat(exp.purchasePrice || "0");
         const quantity = parseInt(exp.quantity || "1");
         const amount = purchasePrice * quantity;
-        
+
         return {
           ...exp,
           itemIndex: `M-${idx + 1}`,
@@ -1868,13 +2102,13 @@ export default function InvoiceEdit() {
       const amount = parseFloat(lineItem.amount || lineItem.total_amount || "0");
       return sum + amount;
     }, 0);
-    
+
     // Add new expenses from line items (not yet in API)
     const newExpensesFromLineItems = getNewAutoGeneratedExpenses();
     const totalFromNewLineItems = newExpensesFromLineItems.reduce((sum, exp) => {
       return sum + (parseFloat(exp.amount) || 0);
     }, 0);
-    
+
     // Add manual expenses
     const totalFromManual = manualExpenses.reduce((sum, exp) => {
       const purchasePrice = parseFloat(exp.purchasePrice || "0");
@@ -1882,7 +2116,7 @@ export default function InvoiceEdit() {
       const amount = purchasePrice * quantity;
       return sum + amount;
     }, 0);
-    
+
     const total = totalFromAPI + totalFromNewLineItems + totalFromManual;
     console.log("🔍 getTotalExpensesForProfit:", {
       totalFromAPI,
@@ -1892,7 +2126,7 @@ export default function InvoiceEdit() {
       newExpensesCount: newExpensesFromLineItems.length,
       existingLineItemsCount: existingLineItems.length
     });
-    
+
     return total;
   };
 
@@ -2007,13 +2241,13 @@ export default function InvoiceEdit() {
   };
 
   // Prepare invoice data for preview
-  const prepareInvoiceData = (): InvoiceData | null => {
+  const prepareInvoiceData = (forPreview = false): InvoiceData | null => {
     const form = document.querySelector('form') as HTMLFormElement;
     if (!form) return null;
-    
+
     const formData = new FormData(form);
     const selectedCustomer = allCustomers.find((c: any) => c.id.toString() === selectedCustomerId);
-    
+
     if (!selectedCustomer) {
       toast({
         title: "Error",
@@ -2052,6 +2286,7 @@ export default function InvoiceEdit() {
       companyAddress: tenant?.address || "",
       companyLogo: (tenant as any)?.logo && typeof (tenant as any).logo === "string" && (tenant as any).logo.trim() !== "" ? (tenant as any).logo : undefined,
       items: lineItems
+        .filter(item => !forPreview || !item.isUnfulfilled) // Filter out unfulfilled items for preview
         .map((item, originalIndex) => {
           const sellingPrice = parseFloat(item.sellingPrice || "0");
           const quantity = parseInt(item.quantity || "1");
@@ -2060,12 +2295,12 @@ export default function InvoiceEdit() {
           const hasPrice = sellingPrice > 0;
           const hasTotal = totalAmount > 0;
           const hasLeadType = item.packageId && item.packageId.trim() !== "";
-          
+
           // Include items that have any meaningful data (title, price, total, or lead_type_id)
           if (!hasTitle && !hasPrice && !hasTotal && !hasLeadType) {
             return null;
           }
-          
+
           // Build description from available data
           let description = item.itemTitle?.trim();
           if (!description && hasLeadType) {
@@ -2077,15 +2312,16 @@ export default function InvoiceEdit() {
           if (!description) {
             description = `Item ${originalIndex + 1}`;
           }
-          
+
           return {
             description: description,
             quantity: quantity || 1,
             unitPrice: sellingPrice,
             totalPrice: totalAmount > 0 ? totalAmount : (sellingPrice * quantity),
+            date: item.date,
           };
         })
-        .filter((item) => item !== null) as { description: string; quantity: number; unitPrice: number; totalPrice: number; }[],
+        .filter((item) => item !== null) as { description: string; quantity: number; unitPrice: number; totalPrice: number; date?: string; }[],
       subtotal: subtotal,
       taxAmount: tax,
       discountAmount: discount,
@@ -2098,7 +2334,7 @@ export default function InvoiceEdit() {
       paymentStatus: paymentStatus,
       paidAmount: paymentStatus === "paid"
         ? calculateGrandTotal() // Full payment when status is "paid"
-        : isEditMode 
+        : isEditMode
           ? existingPaidAmount + parseFloat(amountPaid || "0") // Add new payment to existing
           : parseFloat(amountPaid || "0"),
       installments: enableInstallments ? calculateInstallments().map(inst => ({
@@ -2111,9 +2347,14 @@ export default function InvoiceEdit() {
     return invoiceData;
   };
 
-  // Handle preview button click
-  const handlePreview = (e: React.FormEvent<HTMLFormElement>) => {
+  // Handle update invoice directly
+  const handleUpdateInvoice = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    handlePreview();
+  };
+
+  // Handle preview button click (manual trigger)
+  const handlePreview = () => {
     const invoiceData = prepareInvoiceData();
     if (invoiceData) {
       setPreviewInvoiceData(invoiceData);
@@ -2127,7 +2368,7 @@ export default function InvoiceEdit() {
 
     const form = document.querySelector('form') as HTMLFormElement;
     if (!form) return;
-    
+
     const formData = new FormData(form);
 
     const grandTotal = calculateGrandTotal();
@@ -2139,12 +2380,12 @@ export default function InvoiceEdit() {
     // 1. New expenses (to be consolidated into invoice expense)
     // 2. Existing expenses from expense create page (to be kept as separate expenses)
     const invoiceNumber = formData.get("invoiceNumber") as string;
-    
+
     // Auto-generated expenses from line items
     const autoExpenses = generateExpenses().map((expense, index) => {
       const totalAmount = expense.amount || 0;
       const expenseNumber = expense.invoiceNumber || expense.voucherNumber || `${invoiceNumber}-EXP-${index + 1}`;
-      
+
       return {
         title: expense.title,
         amount: totalAmount,
@@ -2170,11 +2411,11 @@ export default function InvoiceEdit() {
     // Include edited expense line items from API (excluding deleted ones)
     // Group edited line items by their expense ID
     const expensesWithLineItems: Map<number, any> = new Map();
-    
+
     // First, add all existing expenses with their line items from groupedExpenses
     groupedExpenses.forEach((expenseGroup, expenseId) => {
       const lineItemsForExpense: any[] = [];
-      
+
       // Process line items if they exist
       if (expenseGroup.lineItems && Array.isArray(expenseGroup.lineItems)) {
         expenseGroup.lineItems.forEach((lineItem: any) => {
@@ -2187,7 +2428,7 @@ export default function InvoiceEdit() {
             const purchasePrice = parseFloat(editedData.purchasePrice || "0");
             const quantity = parseInt(editedData.quantity || "1");
             const amount = purchasePrice * quantity;
-            
+
             lineItemsForExpense.push({
               id: lineItemId, // Actual line item ID from database (not expense ID)
               expenseId: expenseId, // Include expense ID for reference
@@ -2216,7 +2457,7 @@ export default function InvoiceEdit() {
             const purchasePrice = parseFloat(editedData.purchasePrice || "0");
             const quantity = parseInt(editedData.quantity || "1");
             const amount = purchasePrice * quantity;
-            
+
             // New line item for existing expense - no ID but include expenseId
             lineItemsForExpense.push({
               // No id - new line item to be created
@@ -2242,13 +2483,13 @@ export default function InvoiceEdit() {
           }
         });
       }
-      
+
       // Always include the expense, even if no line items (to preserve the expense)
       // Calculate total amount for the expense
-      const totalAmount = lineItemsForExpense.length > 0 
+      const totalAmount = lineItemsForExpense.length > 0
         ? lineItemsForExpense.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0)
         : parseFloat(expenseGroup.amount || "0") || 0;
-      
+
       expensesWithLineItems.set(expenseId, {
         id: expenseId, // Include expense ID for updates
         title: expenseGroup.title || "Expense",
@@ -2274,7 +2515,7 @@ export default function InvoiceEdit() {
         lineItems: lineItemsForExpense, // Always include line items array (even if empty)
       });
     });
-    
+
     // Also add any expenses from existingExpenses that might not be in groupedExpenses
     // This handles cases where expenses exist but weren't properly loaded into groupedExpenses
     existingExpenses.forEach((exp: any) => {
@@ -2283,14 +2524,14 @@ export default function InvoiceEdit() {
       if (!expensesWithLineItems.has(expenseId)) {
         const lineItems = exp.lineItems || [];
         const lineItemsForExpense: any[] = [];
-        
+
         // Process line items
         lineItems.forEach((lineItem: any) => {
           if (lineItem.id && !deletedExpenseLineItemIds.has(lineItem.id)) {
             const editedData = editedExpenseLineItems.get(lineItem.id) || lineItem;
             const amount = parseFloat(lineItem.total_amount || lineItem.amount || lineItem.totalAmount || "0");
             const quantity = parseInt(lineItem.quantity || "1");
-            
+
             lineItemsForExpense.push({
               id: lineItem.id, // Actual line item ID
               expenseId: expenseId, // Include expense ID for reference
@@ -2314,11 +2555,11 @@ export default function InvoiceEdit() {
             });
           }
         });
-        
+
         const totalAmount = lineItemsForExpense.length > 0
           ? lineItemsForExpense.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0)
           : parseFloat(exp.amount || "0") || 0;
-        
+
         expensesWithLineItems.set(expenseId, {
           id: expenseId,
           title: exp.title || "Expense",
@@ -2345,7 +2586,7 @@ export default function InvoiceEdit() {
         });
       }
     });
-    
+
     // Add new expenses from line items (without expense ID - will be created)
     autoExpenses.forEach((expense, index) => {
       // Use a temporary negative ID to mark as new (will be removed before sending)
@@ -2388,22 +2629,22 @@ export default function InvoiceEdit() {
         }],
       });
     });
-    
+
     // Process manual expenses - if there's an existing expense for this invoice, add manual expenses as line items to it
     // Otherwise, create new expenses
     const newManualExpenses: any[] = [];
-    
+
     // Check if there's an existing expense for this invoice (after processing existing expenses)
-    const existingExpenseId = expensesWithLineItems.size > 0 
+    const existingExpenseId = expensesWithLineItems.size > 0
       ? Array.from(expensesWithLineItems.keys()).find(id => id > 0) // Find first positive (existing) expense ID
       : null;
-    
+
     // Only include expenses that are NOT from API (new expenses being added)
     manualExpenses.filter((expense) => !expense.isFromAPI).forEach((expense) => {
       const purchasePrice = parseFloat(expense.purchasePrice || "0");
       const quantity = parseInt(expense.quantity || "1");
       const amount = purchasePrice * quantity;
-      
+
       // If there's an existing expense, add this as a line item to it instead of creating a new expense
       if (existingExpenseId && existingExpenseId > 0) {
         const existingExpense = expensesWithLineItems.get(existingExpenseId);
@@ -2430,22 +2671,22 @@ export default function InvoiceEdit() {
             status: "pending",
             notes: `Manual expense from invoice ${invoiceNumber}`,
           };
-          
+
           // Add to existing expense's line items
           existingExpense.lineItems = existingExpense.lineItems || [];
           existingExpense.lineItems.push(newLineItem);
-          
+
           // Update the expense amount to include the new line item
           existingExpense.amount = (parseFloat(existingExpense.amount?.toString() || "0") || 0) + amount;
-          
+
           // Update the expense in the map
           expensesWithLineItems.set(existingExpenseId, existingExpense);
-          
+
           console.log(`📦 Added manual expense as line item to existing expense ${existingExpenseId}`);
           return; // Skip adding as new expense
         }
       }
-      
+
       // If no existing expense, create a new expense
       newManualExpenses.push({
         title: expense.title || "Manual Expense",
@@ -2531,7 +2772,7 @@ export default function InvoiceEdit() {
       }
       return exp;
     });
-    
+
     console.log("📦 Expenses payload for update:", expenses.map(exp => ({
       id: exp.id || "NEW",
       title: exp.title,
@@ -2545,12 +2786,12 @@ export default function InvoiceEdit() {
     if (invoiceAttachments.length > 0) {
       try {
         const uploadedUrls: Array<{ name: string; url: string; type?: string }> = [];
-        
+
         for (const attachment of invoiceAttachments) {
           const token = auth.getToken();
           // Encode filename to handle special characters (non-ISO-8859-1)
           const encodedFilename = encodeURIComponent(attachment.name);
-          
+
           const uploadResponse = await fetch('/api/objects/store', {
             method: 'PUT',
             headers: {
@@ -2560,15 +2801,15 @@ export default function InvoiceEdit() {
             },
             body: attachment.file,
           });
-          
+
           if (!uploadResponse.ok) {
             const errorText = await uploadResponse.text();
             throw new Error(`Failed to upload ${attachment.name}: ${errorText}`);
           }
-          
+
           const uploadResult = await uploadResponse.json();
           const fileUrl = uploadResult.publicUrl || uploadResult.objectPath || uploadResult.url || uploadResult.location;
-          
+
           if (fileUrl) {
             uploadedUrls.push({
               name: attachment.name,
@@ -2577,11 +2818,11 @@ export default function InvoiceEdit() {
             });
           }
         }
-        
+
         // Combine existing uploaded attachments with newly uploaded ones
         const existingAttachments = uploadedAttachments.map(a => ({ name: a.name, url: a.url, type: a.type }));
         allAttachments = [...existingAttachments, ...uploadedUrls];
-        
+
         if (uploadedUrls.length > 0) {
           toast({
             title: "Files Uploaded",
@@ -2662,7 +2903,7 @@ export default function InvoiceEdit() {
       totalAmount: finalAmount,
       paidAmount: paymentStatus === "paid"
         ? calculateGrandTotal() // Full payment when status is "paid"
-        : isEditMode 
+        : isEditMode
           ? existingPaidAmount + parseFloat(amountPaid || "0") // Add new payment to existing
           : parseFloat(amountPaid || "0"),
       subtotal: grandTotal,
@@ -2753,60 +2994,18 @@ export default function InvoiceEdit() {
     { value: "other", label: "Other" },
   ];
 
-  const handleFulfillInvoice = async () => {
-    if (!invoiceId || !tenant?.id) return;
-    
-    setIsFulfilling(true);
-    try {
-      const token = auth.getToken();
-      const response = await fetch(`/api/invoices-v2/${invoiceId}/fulfill`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({ tenantId: tenant.id })
-      });
-      
-      const result = await response.json();
-      if (response.ok) {
-        toast({
-          title: result.allFulfilled ? "Full Fulfillment Complete" : "Partial Fulfillment Updated",
-          description: result.allFulfilled 
-            ? "All items have been fully fulfilled." 
-            : "Some items were fulfilled, but some are still pending due to stock.",
-        });
-        // Reset the load ref to force the useEffect to re-sync query data into local state
-        invoiceDataLoadedRef.current = null;
-        // Refetch invoice data to update UI
-        if (refetchInvoice) refetchInvoice();
-      } else {
-        toast({
-          title: "Fulfillment Failed",
-          description: result.message || "An error occurred during fulfillment.",
-          variant: "destructive",
-        });
-      }
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message || "Failed to fulfill items",
-        variant: "destructive",
-      });
-    } finally {
-      setIsFulfilling(false);
-    }
-  };
+
 
   // Calculate grid template columns dynamically (must be before any conditional returns)
   const gridTemplate = useMemo(() => {
     const columns = [
       '30px', // # column
+      'minmax(250px, 1fr)', // Date
       'minmax(120px, 1fr)', // Product Type
       'minmax(250px, 2fr)', // Product
       'minmax(120px, 1fr)', // Variant
       'minmax(100px, 1fr)', // Stock
-      'minmax(80px, 1fr)', // Qty
+      'minmax(120px, 1.2fr)', // Qty
       ...(invoiceSettings?.showUnitPrice ? ['minmax(130px, 1fr)'] : []), // Unit Price
       'minmax(130px, 1fr)', // Selling Price
       'minmax(130px, 1fr)', // Purchase Price
@@ -2814,7 +3013,7 @@ export default function InvoiceEdit() {
       'minmax(100px, 1fr)', // Amount
       ...(invoiceSettings?.showAdditionalCommission ? ['minmax(100px, 1fr)'] : []), // Additional Commission
       ...(invoiceSettings?.showVoucherInvoice ? ['minmax(100px, 1fr)'] : []), // Invoice/Voucher
-      '50px', // Delete button
+      '80px', // Actions button
     ];
     return columns.join(' ');
   }, [invoiceSettings?.showVendor, invoiceSettings?.showProvider, invoiceSettings?.showUnitPrice, invoiceSettings?.showTax, invoiceSettings?.showAdditionalCommission, invoiceSettings?.showVoucherInvoice]);
@@ -2823,12 +3022,10 @@ export default function InvoiceEdit() {
   const expenseGridTemplate = useMemo(() => {
     const columns = [
       '30px', // # column
-      'minmax(180px, 2fr)', // Title
-      'minmax(150px, 1.5fr)', // Category
-      'minmax(150px, 1.5fr)', // Vendor
-      'minmax(60px, 1fr)', // Qty
-      'minmax(130px, 1fr)', // Purchase Price
-      'minmax(130px, 1fr)', // Amount
+      'minmax(250px, 2fr)', // Title
+      'minmax(100px, 1fr)', // Qty
+      'minmax(150px, 1.2fr)', // Purchase Price
+      'minmax(150px, 1.2fr)', // Amount
       '50px', // Delete button
     ];
     return columns.join(' ');
@@ -2884,10 +3081,10 @@ export default function InvoiceEdit() {
                   style={{ width: "8rem" }}
                   className="h-10 flex items-center justify-center rounded-lg border border-gray-200 bg-white shadow-sm"
                 > */}
-                  {/* <Bell className="h-5 w-5 text-gray-600" /> */}
+                {/* <Bell className="h-5 w-5 text-gray-600" /> */}
 
-                  {/* <Label htmlFor="currency">Currency *</Label> */}
-                  {/* <AutocompleteInput
+                {/* <Label htmlFor="currency">Currency *</Label> */}
+                {/* <AutocompleteInput
                     data-testid="autocomplete-currency"
                     suggestions={getCurrencyOptions()}
                     value={currency}
@@ -2895,14 +3092,14 @@ export default function InvoiceEdit() {
                     placeholder="Select currency..."
                     emptyText="No currency found"
                   /> */}
-                  <input type="hidden" name="currency" value={currency} />
+                <input type="hidden" name="currency" value={currency} />
                 {/* </div> */}
               </div>
             </div>
           </div>
         </div>
 
-        <form onSubmit={handlePreview}>
+        <form onSubmit={handleUpdateInvoice}>
           <Card>
             <CardContent className="p-3 sm:p-4 md:p-6 space-y-4 sm:space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
@@ -2914,19 +3111,6 @@ export default function InvoiceEdit() {
                     Update invoice details and save changes
                   </p>
                 </div>
-                {/* {isPartial && (
-                  <div className="lg:col-span-3 flex items-center p-3 bg-orange-50 border border-orange-200 rounded-lg dark:bg-orange-900/20 dark:border-orange-800">
-                    <Bell className="h-5 w-5 text-orange-500 mr-3 flex-shrink-0" />
-                    <div>
-                      <p className="text-sm font-semibold text-orange-800 dark:text-orange-200">
-                        Partial Fulfillment
-                      </p>
-                      <p className="text-xs text-orange-700 dark:text-orange-300">
-                        Some items are awaiting stock. Click "Fulfill Remaining" to update status once stock is added.
-                      </p>
-                    </div>
-                  </div>
-                )} */}
                 <div></div>
                 <div></div>
                 <div></div>
@@ -3064,8 +3248,8 @@ export default function InvoiceEdit() {
                           {paymentMethod.length === 0
                             ? "Select methods..."
                             : paymentMethod.length === 1
-                            ? paymentMethodOptions.find((opt) => opt.value === paymentMethod[0])?.label || paymentMethod[0]
-                            : `${paymentMethod.length} methods selected`}
+                              ? paymentMethodOptions.find((opt) => opt.value === paymentMethod[0])?.label || paymentMethod[0]
+                              : `${paymentMethod.length} methods selected`}
                         </span>
                         <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                       </Button>
@@ -3087,11 +3271,10 @@ export default function InvoiceEdit() {
                               }}
                             >
                               <div
-                                className={`flex h-4 w-4 items-center justify-center rounded border ${
-                                  isSelected
+                                className={`flex h-4 w-4 items-center justify-center rounded border ${isSelected
                                     ? "bg-blue-600 border-blue-600"
                                     : "border-gray-300"
-                                }`}
+                                  }`}
                               >
                                 {isSelected && <Check className="h-3 w-3 text-white" />}
                               </div>
@@ -3146,9 +3329,9 @@ export default function InvoiceEdit() {
               <div className="border rounded-lg overflow-x-auto">
                 <div className="min-w-[2200px]">
                   {/* Table Header */}
-                  <div 
+                  <div
                     className="top-0 z-[100] grid gap-2 border-b p-3 font-medium text-sm bg-gray-50 dark:bg-gray-800"
-                    style={{ 
+                    style={{
                       gridTemplateColumns: gridTemplate,
                       backgroundColor: 'rgb(249, 250, 251)',
                       // position: 'sticky',
@@ -3158,325 +3341,392 @@ export default function InvoiceEdit() {
                       width: '100%',
                       willChange: 'transform'
                     }}
-                    >
-                      <div className="text-center flex items-center justify-center">#</div>
-                      <div className="flex items-center">Product Type</div>
-                      <div className="flex items-center">Product</div>
-                      <div className="flex items-center">Variant</div>
-                      <div className="flex items-center">Stock</div>
-                      <div className="flex items-center gap-2">
-                        <span>Qty *</span>
-                        {isPartial && (
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              handleFulfillInvoice();
-                            }}
-                            disabled={isFulfilling}
-                            size="sm"
-                            className="h-7 px-2 text-[10px] bg-orange-100 text-orange-700 hover:bg-orange-200 border-orange-200"
-                          >
-                            {isFulfilling ? "Fulfilling..." : "Fulfill Remaining"}
-                          </Button>
-                        )}
-                      </div>
-                      {invoiceSettings?.showUnitPrice && <div className="flex items-center">Unit Price ({currencySymbol}) *</div>}
-                      <div className="flex items-center">Selling Price ({currencySymbol}) *</div>
+                  >
+                    <div className="text-center flex items-center justify-center">#</div>
+                    <div className="flex items-center">Date</div>
+                    <div className="flex items-center">Product Type</div>
+                    <div className="flex items-center">Product</div>
+                    <div className="flex items-center">Variant</div>
+                    <div className="flex items-center">Stock</div>
+                    <div className="flex items-center gap-2">
+                      <span>Qty *</span>
+                    </div>
+                    {invoiceSettings?.showUnitPrice && <div className="flex items-center">Unit Price ({currencySymbol}) *</div>}
+                    <div className="flex items-center">Selling Price ({currencySymbol}) *</div>
                     <div className="flex items-center">Purchase Price ({currencySymbol}) *</div>
                     {invoiceSettings?.showTax && <div className="flex items-center">Tax ({currencySymbol})</div>}
                     <div className="flex items-center">Amount ({currencySymbol})</div>
                     {invoiceSettings?.showAdditionalCommission && <div className="flex items-center">Commission ({currencySymbol})</div>}
                     {invoiceSettings?.showVoucherInvoice && <div className="flex items-center">Invoice/Voucher</div>}
-                    <div className="flex items-center"></div>
+                    <div className="flex items-center">Actions</div>
                   </div>
 
                   {/* Table Body */}
                   {lineItems.map((item, index) => (
                     <div
                       key={index}
-                      className="grid gap-2 p-3 border-b last:border-b-0"
+                      className={`grid gap-2 p-3 border-b last:border-b-0 ${item.isUnfulfilled ? "bg-amber-50/50 dark:bg-amber-900/10" : ""}`}
                       style={{ gridTemplateColumns: gridTemplate }}
                     >
                       <div className="flex items-center justify-center">
                         <span className="font-medium text-sm">{index + 1}</span>
                       </div>
 
-                      <div className="flex items-center justify-center">
-                        <Select
-                          value={item.productTypeFilter}
-                          onValueChange={(value) => {
-                            updateLineItem(index, "productTypeFilter", value);
-                            // Clear product if it doesn't match the new filter (unless "all")
-                            if (value !== "all") {
-                              const product = products.find((p: any) => p.id.toString() === item.productId);
-                              if (product && product.FormTemplate?.formKey !== value) {
-                                handleProductSelection("", index);
-                              }
-                            }
-                          }}
-                        >
-                          <SelectTrigger className="w-full h-10">
-                            <SelectValue placeholder="All" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="all">All</SelectItem>
-                            <SelectItem value="inventory">Inventory</SelectItem>
-                            <SelectItem value="non-inventory">Non-Inventory</SelectItem>
-                            <SelectItem value="bundle">Bundle</SelectItem>
-                            <SelectItem value="service">Service</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="flex items-center">
-                        <Select
-                          value={item.productId}
-                          onValueChange={(value) => handleProductSelection(value, index)}
-                        >
-                          <SelectTrigger className="w-full h-10">
-                            <SelectValue placeholder="Select Product..." />
-                          </SelectTrigger>
-                          <SelectContent className="max-h-[300px]">
-                            {products
-                              .filter((p: any) => item.productTypeFilter === "all" || p.FormTemplate?.formKey === item.productTypeFilter)
-                              .map((p: any) => (
-                                <SelectItem key={p.id} value={p.id.toString()}>
-                                  {p.name || "Unnamed Product"}
-                                </SelectItem>
-                              ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="flex items-center justify-center min-h-[36px]">
-                        {(() => {
-                           const product = products.find((p: any) => p.id.toString() === item.productId);
-                           if (!product) return <span className="text-gray-400">-</span>;
-                           
-                           const fKey = product.FormTemplate?.formKey || "";
-                           
-                           const canHaveVariants = fKey === 'inventory' || fKey === 'non-inventory';
-                           
-                           if (!canHaveVariants) return <span className="text-gray-400 text-lg font-medium">-</span>;
+                      {(() => {
+                        const isRowDisabled = isEditMode && item.isPersisted && !editableRows.has(item.clientId);
+                        return (
+                          <>
+                            <div className="flex items-center justify-center">
+                              <Input
+                                type="datetime-local"
+                                value={item.date}
+                                onChange={(e) => updateLineItem(index, "date", e.target.value)}
+                                onBlur={() => sortLineItems()}
+                                disabled={isRowDisabled}
+                                className="w-full h-10 text-xs"
+                              />
+                            </div>
 
-                           const selectedVariant = item.availableVariants?.find((v: any) => v.value === item.variantId);
+                            <div className="flex items-center justify-center">
+                              <Select
+                                value={item.productTypeFilter}
+                                disabled={isRowDisabled}
+                                onValueChange={(value) => {
+                                  updateLineItem(index, "productTypeFilter", value);
+                                  if (value !== "all") {
+                                    const product = products.find((p: any) => p.id.toString() === item.productId);
+                                    if (product && product.FormTemplate?.formKey !== value) {
+                                      handleProductSelection("", index);
+                                    }
+                                  }
+                                }}
+                              >
+                                <SelectTrigger className="w-full h-10">
+                                  <SelectValue placeholder="All" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="all">All</SelectItem>
+                                  <SelectItem value="inventory">Inventory</SelectItem>
+                                  <SelectItem value="non-inventory">Non-Inventory</SelectItem>
+                                  <SelectItem value="bundle">Bundle</SelectItem>
+                                  <SelectItem value="service">Service</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="flex items-center">
+                              <Select
+                                value={item.productId}
+                                disabled={isRowDisabled}
+                                onValueChange={(value) => handleProductSelection(value, index)}
+                              >
+                                <SelectTrigger className="w-full h-10">
+                                  <SelectValue placeholder="Select Product..." />
+                                </SelectTrigger>
+                                <SelectContent className="max-h-[300px]">
+                                  {products
+                                    .filter((p: any) => item.productTypeFilter === "all" || p.FormTemplate?.formKey === item.productTypeFilter)
+                                    .map((p: any) => (
+                                      <SelectItem key={p.id} value={p.id.toString()}>
+                                        {p.name || "Unnamed Product"}
+                                      </SelectItem>
+                                    ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
 
-                           return (
-                             <Select
-                               value={item.variantId}
-                               onValueChange={(value) => handleVariantSelection(value, index)}
-                               disabled={!item.productId || !item.availableVariants || item.availableVariants.length === 0}
-                             >
-                               <SelectTrigger className="h-9 border border-[#D9D9D9] focus:ring-1 focus:ring-[#1677FF]">
-                                 <div className="flex items-center gap-2">
-                                   {selectedVariant?.color && (
-                                     <div 
-                                       className="w-3 h-3 rounded-full border border-gray-200" 
-                                       style={{ backgroundColor: selectedVariant.color }}
-                                     />
-                                   )}
-                                   <SelectValue placeholder={(!item.availableVariants || item.availableVariants.length === 0) ? "No variants" : "Variant..."} />
-                                 </div>
-                               </SelectTrigger>
-                               <SelectContent>
-                                 {item.availableVariants?.map((v: any, i: number) => (
-                                   <SelectItem key={i} value={v.value.toString()}>
-                                     <div className="flex items-center gap-2">
-                                       {v.color && (
-                                         <div 
-                                           className="w-3 h-3 rounded-full border border-gray-200" 
-                                           style={{ backgroundColor: v.color }}
-                                         />
-                                       )}
-                                       <span>{v.label}</span>
-                                     </div>
-                                   </SelectItem>
-                                 ))}
-                               </SelectContent>
-                             </Select>
-                           );
-                        })()}
-                      </div>
+                            <div className="flex items-center justify-center min-h-[36px]">
+                              {(() => {
+                                const product = products.find((p: any) => p.id.toString() === item.productId);
+                                if (!product) return <span className="text-gray-400">-</span>;
 
-                      <div className="flex flex-col items-center justify-center h-full px-2">
-                        {(() => {
-                          const product = products.find(p => p.id?.toString() === item.productId?.toString());
-                          let stock = product?.stock || 0;
-                          if (item.variantId && product?.variants) {
-                            const variant = product.variants.find(v => v.id?.toString() === item.variantId?.toString());
-                            if (variant) stock = variant.variant_stock || 0;
-                          }
-                          return (
-                            <span className={`text-sm font-medium ${stock <= 0 ? 'text-red-500' : 'text-green-600'}`}>
-                              {parseInt(stock)}
-                            </span>
-                          );
-                        })()}
-                      </div>
+                                const fKey = product.FormTemplate?.formKey || "";
 
-                      <div className="flex flex-col gap-1">
-                        <Input
-                          data-testid={`input-quantity-${index}`}
-                          value={item.quantity}
-                          onChange={(e) =>
-                            updateLineItem(index, "quantity", e.target.value)
-                          }
-                          onKeyPress={handleNumericKeyPress}
-                          placeholder="1"
-                        />
-                        {isEditMode && item.fulfilledQuantity !== undefined && (
-                          <div className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${parseFloat(item.fulfilledQuantity.toString()) < parseFloat(item.quantity?.toString() || "0") ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700'}`}>
-                            Fulfilled: {item.fulfilledQuantity} / {item.quantity}
-                          </div>
-                        )}
-                      </div>
+                                const canHaveVariants = fKey === 'inventory' || fKey === 'non-inventory';
 
-                      {invoiceSettings?.showUnitPrice && (
-                        <div className="flex items-center">
-                          <Input
-                            data-testid={`input-unit-price-${index}`}
-                            value={item.unitPrice}
-                            onChange={(e) =>
-                              updateLineItem(index, "unitPrice", e.target.value)
-                            }
-                            onKeyPress={handleNumericKeyPress}
-                            placeholder="0"
-                          />
-                        </div>
-                      )}
+                                if (!canHaveVariants) return <span className="text-gray-400 text-lg font-medium">-</span>;
 
-                      <div className="flex items-center">
-                        <Input
-                          data-testid={`input-selling-price-${index}`}
-                          value={item.sellingPrice}
-                          onChange={(e) =>
-                            updateLineItem(
-                              index,
-                              "sellingPrice",
-                              e.target.value,
-                            )
-                          }
-                          onKeyPress={handleNumericKeyPress}
-                          placeholder="0"
-                        />
-                      </div>
+                                const selectedVariant = item.availableVariants?.find((v: any) => v.value === item.variantId);
 
-                      <div className="flex items-center">
-                        <Input
-                          data-testid={`input-purchase-price-${index}`}
-                          value={item.purchasePrice}
-                          onChange={(e) =>
-                            updateLineItem(
-                              index,
-                              "purchasePrice",
-                              e.target.value,
-                            )
-                          }
-                          onKeyPress={handleNumericKeyPress}
-                          placeholder="0"
-                        />
-                      </div>
-
-                      {invoiceSettings?.showTax && (
-                        <div className="flex items-center">
-                          <Select
-                            value={item.taxRateId || "none"}
-                            onValueChange={(value) =>
-                              updateLineItem(index, "taxRateId", value === "none" ? "" : value)
-                            }
-                            disabled={!selectedTaxSettingId || selectedTaxSettingId === "none" || gstRates.length === 0}
-                          >
-                            <SelectTrigger data-testid={`select-tax-rate-${index}`}>
-                              <SelectValue placeholder={
-                                !selectedTaxSettingId || selectedTaxSettingId === "none" 
-                                  ? "Select tax setting first" 
-                                  : gstRates.length === 0 
-                                  ? "No rates available"
-                                  : "Select tax rate"
-                              } />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="none">No Tax</SelectItem>
-                              {gstRates
-                                .filter((rate: any) => rate.isActive)
-                                .map((rate: any) => (
-                                  <SelectItem key={rate.id} value={rate.id.toString()}>
-                                    {rate.rateName} ({rate.ratePercentage}%)
-                                  </SelectItem>
-                                ))}
-                            </SelectContent>
-                          </Select>
-                          {item.tax && (
-                            <p className="text-xs text-muted-foreground mt-1">
-                              Tax: {currencySymbol}{parseFloat(item.tax).toFixed(2)}
-                            </p>
-                          )}
-                        </div>
-                      )}
-
-                      <div className="flex items-center">
-                        <Input
-                          data-testid={`input-total-amount-${index}`}
-                          value={item.totalAmount.toFixed(2)}
-                          readOnly
-                          className="bg-transparent"
-                        />
-                      </div>
-
-                      {invoiceSettings?.showAdditionalCommission && (
-                        <div className="flex items-center">
-                          <Input
-                            data-testid={`input-additional-commission-${index}`}
-                            type="text"
-                            value={item.additionalCommission || ""}
-                            onChange={(e) => {
-                              // Allow numeric input with decimals (same as unit price and selling price)
-                              const value = e.target.value;
-                              // Allow numbers, decimal point, and empty string
-                              if (value === "" || /^\d*\.?\d*$/.test(value)) {
-                                updateLineItem(
-                                  index,
-                                  "additionalCommission",
-                                  value,
+                                return (
+                                  <Select
+                                    value={item.variantId}
+                                    onValueChange={(value) => handleVariantSelection(value, index)}
+                                    disabled={isRowDisabled || !item.productId || !item.availableVariants || item.availableVariants.length === 0}
+                                  >
+                                    <SelectTrigger className="h-9 border border-[#D9D9D9] focus:ring-1 focus:ring-[#1677FF]">
+                                      <div className="flex items-center gap-2">
+                                        {selectedVariant?.color && (
+                                          <div
+                                            className="w-3 h-3 rounded-full border border-gray-200"
+                                            style={{ backgroundColor: selectedVariant.color }}
+                                          />
+                                        )}
+                                        <SelectValue placeholder={(!item.availableVariants || item.availableVariants.length === 0) ? "No variants" : "Variant..."} />
+                                      </div>
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {item.availableVariants?.map((v: any, i: number) => (
+                                        <SelectItem key={i} value={v.value.toString()}>
+                                          <div className="flex items-center gap-2">
+                                            {v.color && (
+                                              <div
+                                                className="w-3 h-3 rounded-full border border-gray-200"
+                                                style={{ backgroundColor: v.color }}
+                                              />
+                                            )}
+                                            <span>{v.label}</span>
+                                          </div>
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
                                 );
-                              }
-                            }}
-                            onKeyPress={handleNumericKeyPress}
-                            placeholder="0.00"
-                          />
-                        </div>
-                      )}
+                              })()}
+                            </div>
 
-                      {invoiceSettings?.showVoucherInvoice && (
-                        <div className="flex items-center">
-                          <Input
-                            data-testid={`input-line-invoice-number-${index}`}
-                            value={item.invoiceNumber}
-                            onChange={(e) =>
-                              updateLineItem(
-                                index,
-                                "invoiceNumber",
-                                e.target.value,
-                              )
-                            }
-                            placeholder="#"
-                          />
-                        </div>
-                      )}
+                            <div className="flex flex-col items-center justify-center h-full px-2">
+                              {(() => {
+                                const stock = getAvailableStock(item.productId, item.variantId, index);
+                                return (
+                                  <span className={`text-sm font-medium ${stock <= 0 ? 'text-red-500' : 'text-green-600'}`}>
+                                    {parseInt(stock.toString())}
+                                  </span>
+                                );
+                              })()}
+                            </div>
 
-                      <div className="flex items-center justify-center">
-                        {lineItems.length > 1 && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => removeLineItem(index)}
-                            data-testid={`button-remove-item-${index}`}
-                          >
-                            <Trash2 className="h-4 w-4 text-gray-900 dark:text-white" />
-                          </Button>
-                        )}
-                      </div>
+                            <div className="flex flex-col gap-1">
+                              <div className="flex items-center gap-1">
+                                <Input
+                                  data-testid={`input-quantity-${index}`}
+                                  value={item.quantity}
+                                  disabled={isRowDisabled}
+                                  onChange={(e) =>
+                                    updateLineItem(index, "quantity", e.target.value)
+                                  }
+                                  onBlur={(e) => handleQuantityBlur(index, e.target.value)}
+                                  onKeyPress={handleNumericKeyPress}
+                                  placeholder="1"
+                                  className={item.isUnfulfilled ? "border-amber-300 focus-visible:ring-amber-500" : ""}
+                                />
+                                 <div className="flex items-center gap-0.5 flex-shrink-0">
+                                   <Button
+                                      type="button"
+                                      size="icon"
+                                      variant="ghost"
+                                      className={`h-6 w-6 text-green-500 hover:text-green-700 hover:bg-green-50 flex-shrink-0 ${!item.isUnfulfilled ? "invisible pointer-events-none" : ""}`}
+                                      onClick={() => fulfillUnfulfilledRow(index)}
+                                      title="Fulfill Qty"
+                                    >
+                                      <CheckCircle2 className="h-3 w-3" />
+                                    </Button>
+                                   <Button
+                                      type="button"
+                                      size="icon"
+                                      variant="ghost"
+                                      className="h-6 w-6 text-amber-500 hover:text-amber-700 hover:bg-amber-50 flex-shrink-0"
+                                      onClick={() => splitRemainingStock(index)}
+                                      title="Split Unfulfilled"
+                                    >
+                                      <Scissors className="h-3 w-3" />
+                                    </Button>
+                                   <Button
+                                      type="button"
+                                      size="icon"
+                                      variant="ghost"
+                                      className="h-6 w-6 text-blue-500 hover:text-blue-700 hover:bg-blue-50 flex-shrink-0"
+                                      onClick={() => duplicateLineItem(index)}
+                                      title="Add More"
+                                    >
+                                      <Plus className="h-3 w-3" />
+                                    </Button>
+                                 </div>
+                              </div>
+                              {item.isUnfulfilled && (
+                                <div className="mt-1">
+                                  <span className="text-[10px] text-amber-600 font-bold uppercase tracking-wider bg-amber-100 px-1.5 py-0.5 rounded flex items-center gap-1 w-fit">
+                                    <Split className="h-2.5 w-2.5" />
+                                    Unfulfilled: {item.quantity}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+
+                            {invoiceSettings?.showUnitPrice && (
+                              <div className="flex items-center">
+                                <Input
+                                  data-testid={`input-unit-price-${index}`}
+                                  value={item.unitPrice}
+                                  disabled={isRowDisabled}
+                                  onChange={(e) =>
+                                    updateLineItem(index, "unitPrice", e.target.value)
+                                  }
+                                  onKeyPress={handleNumericKeyPress}
+                                  placeholder="0"
+                                />
+                              </div>
+                            )}
+
+                            <div className="flex items-center">
+                              <Input
+                                data-testid={`input-selling-price-${index}`}
+                                value={item.sellingPrice}
+                                disabled={isRowDisabled}
+                                onChange={(e) =>
+                                  updateLineItem(
+                                    index,
+                                    "sellingPrice",
+                                    e.target.value,
+                                  )
+                                }
+                                onKeyPress={handleNumericKeyPress}
+                                placeholder="0"
+                              />
+                            </div>
+
+                            <div className="flex items-center">
+                              <Input
+                                data-testid={`input-purchase-price-${index}`}
+                                value={item.purchasePrice}
+                                disabled={isRowDisabled}
+                                onChange={(e) =>
+                                  updateLineItem(
+                                    index,
+                                    "purchasePrice",
+                                    e.target.value,
+                                  )
+                                }
+                                onKeyPress={handleNumericKeyPress}
+                                placeholder="0"
+                              />
+                            </div>
+
+                            {invoiceSettings?.showTax && (
+                              <div className="flex items-center">
+                                <Select
+                                  value={item.taxRateId || "none"}
+                                  onValueChange={(value) =>
+                                    updateLineItem(index, "taxRateId", value === "none" ? "" : value)
+                                  }
+                                  disabled={isRowDisabled || !selectedTaxSettingId || selectedTaxSettingId === "none" || gstRates.length === 0}
+                                >
+                                  <SelectTrigger data-testid={`select-tax-rate-${index}`}>
+                                    <SelectValue placeholder={
+                                      !selectedTaxSettingId || selectedTaxSettingId === "none"
+                                        ? "Select tax setting first"
+                                        : gstRates.length === 0
+                                          ? "No rates available"
+                                          : "Select tax rate"
+                                    } />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="none">No Tax</SelectItem>
+                                    {gstRates
+                                      .filter((rate: any) => rate.isActive)
+                                      .map((rate: any) => (
+                                        <SelectItem key={rate.id} value={rate.id.toString()}>
+                                          {rate.rateName} ({rate.ratePercentage}%)
+                                        </SelectItem>
+                                      ))}
+                                  </SelectContent>
+                                  </Select>
+                                  {item.tax && (
+                                    <div className="flex items-center gap-1 mt-1.5 px-2 py-0.5 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-md border border-blue-100 dark:border-blue-800 w-fit">
+                                      <span className="text-[10px] font-bold uppercase tracking-wider">Tax</span>
+                                      <span className="text-xs font-semibold">{currencySymbol}{parseFloat(item.tax || "0").toFixed(2)}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                            <div className="flex items-center">
+                              <Input
+                                data-testid={`input-total-amount-${index}`}
+                                value={item.totalAmount.toFixed(2)}
+                                readOnly
+                                className="bg-transparent"
+                              />
+                            </div>
+
+                            {invoiceSettings?.showAdditionalCommission && (
+                              <div className="flex items-center">
+                                <Input
+                                  data-testid={`input-additional-commission-${index}`}
+                                  type="text"
+                                  value={item.additionalCommission || ""}
+                                  disabled={isRowDisabled}
+                                  onChange={(e) => {
+                                    // Allow numeric input with decimals (same as unit price and selling price)
+                                    const value = e.target.value;
+                                    // Allow numbers, decimal point, and empty string
+                                    if (value === "" || /^\d*\.?\d*$/.test(value)) {
+                                      updateLineItem(
+                                        index,
+                                        "additionalCommission",
+                                        value,
+                                      );
+                                    }
+                                  }}
+                                  onKeyPress={handleNumericKeyPress}
+                                  placeholder="0.00"
+                                />
+                              </div>
+                            )}
+
+                            {invoiceSettings?.showVoucherInvoice && (
+                              <div className="flex items-center">
+                                <Input
+                                  data-testid={`input-line-invoice-number-${index}`}
+                                  value={item.invoiceNumber}
+                                  disabled={isRowDisabled}
+                                  onChange={(e) =>
+                                    updateLineItem(
+                                      index,
+                                      "invoiceNumber",
+                                      e.target.value,
+                                    )
+                                  }
+                                  placeholder="#"
+                                />
+                              </div>
+                            )}
+
+                            <div className="flex items-center justify-center gap-1">
+                              {isEditMode && item.isPersisted && (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => {
+                                    const newEditable = new Set(editableRows);
+                                    if (newEditable.has(item.clientId)) {
+                                      newEditable.delete(item.clientId);
+                                    } else {
+                                      newEditable.add(item.clientId);
+                                    }
+                                    setEditableRows(newEditable);
+                                  }}
+                                  className={`h-8 w-8 ${editableRows.has(item.clientId) ? 'text-blue-600 bg-blue-50' : 'text-gray-400'}`}
+                                  title={editableRows.has(item.clientId) ? "Lock Row" : "Edit Row"}
+                                >
+                                  <Edit2 className="h-4 w-4" />
+                                </Button>
+                              )}
+                              {lineItems.length > 1 && (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => removeLineItem(index)}
+                                  className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              )}
+                            </div>
+                          </>
+                        );
+                      })()}
                     </div>
                   ))}
                 </div>
@@ -3821,7 +4071,7 @@ export default function InvoiceEdit() {
                                   <span>Total Pending:</span>
                                   <span className="text-gray-900 dark:text-white">
                                     {currencySymbol}{(
-                                      calculateGrandTotal() - 
+                                      calculateGrandTotal() -
                                       (isEditMode ? existingPaidAmount + parseFloat(amountPaid || "0") : parseFloat(amountPaid || "0"))
                                     ).toFixed(2)}
                                   </span>
@@ -3847,12 +4097,12 @@ export default function InvoiceEdit() {
                       <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-2 sm:mb-3">
                         Add notes for the invoice.
                       </p>
-                       <div className="bg-white dark:bg-gray-900 rounded-lg" data-testid="rich-text-editor-notes">
-                         <ReactQuill
-                           theme="snow"
-                           value={notesContent}
-                           onChange={setNotesContent}
-                           className="h-40"
+                      <div className="bg-white dark:bg-gray-900 rounded-lg" data-testid="rich-text-editor-notes">
+                        <ReactQuill
+                          theme="snow"
+                          value={notesContent}
+                          onChange={setNotesContent}
+                          className="h-40"
                           modules={{
                             toolbar: [
                               ['bold', 'italic', 'underline'],
@@ -3874,10 +4124,10 @@ export default function InvoiceEdit() {
 
                     <div className="rounded-lg p-2 sm:p-4">
                       <Label htmlFor="notes" className="text-base sm:text-lg font-semibold mb-2 sm:mb-3 block">
-                        Additional Notes 
+                        Additional Notes
                       </Label>
                       <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-2 sm:mb-3">
-                         It will be hidden to the invoice .
+                        It will be hidden to the invoice .
                       </p>
                       <div className="bg-white dark:bg-gray-900 rounded-lg" data-testid="rich-text-editor-additional-notes">
                         <ReactQuill
@@ -3904,285 +4154,285 @@ export default function InvoiceEdit() {
                       <input type="hidden" name="notes" value={additionalNotesContent} />
                     </div>
                   </div>
-                  
+
                   {/* Attachments and Internal Attachments - Same Row */}
                   <div className="mt-6 pt-6 border-t grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  <div>
-                    <Label className="text-base sm:text-lg font-semibold mb-3 block">
-                      Attachments
-                    </Label>
-                    <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-4">
-                      Upload files and images to attach to this invoice.
-                    </p>
-                    
-                    {/* Display previously uploaded attachments (read-only) */}
-                    {uploadedAttachments.length > 0 && (
-                      <div className="mb-4">
-                        <Label className="text-sm font-medium mb-2 block">Previously Uploaded Files</Label>
-                        <div className="flex flex-wrap gap-2">
-                          {uploadedAttachments.map((attachment) => (
-                            <a
-                              key={attachment.id}
-                              href={attachment.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-2 px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-sm"
-                            >
-                              {attachment.type?.startsWith('image/') ? (
-                                <ImageIcon className="h-4 w-4" />
-                              ) : attachment.name.toLowerCase().endsWith('.pdf') ? (
-                                <FileText className="h-4 w-4" />
-                              ) : (
-                                <File className="h-4 w-4" />
-                              )}
-                              <span className="truncate max-w-[200px]">{attachment.name}</span>
-                            </a>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* Display selected files (not uploaded yet) */}
-                    {invoiceAttachments.length > 0 && (
-                      <div className="mb-4">
-                        <Label className="text-sm font-medium mb-2 block">Selected Files (will be uploaded on save)</Label>
-                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                          {invoiceAttachments.map((attachment) => {
-                            const fileUrl = URL.createObjectURL(attachment.file);
-                            return (
-                              <div
+                    <div>
+                      <Label className="text-base sm:text-lg font-semibold mb-3 block">
+                        Attachments
+                      </Label>
+                      <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-4">
+                        Upload files and images to attach to this invoice.
+                      </p>
+
+                      {/* Display previously uploaded attachments (read-only) */}
+                      {uploadedAttachments.length > 0 && (
+                        <div className="mb-4">
+                          <Label className="text-sm font-medium mb-2 block">Previously Uploaded Files</Label>
+                          <div className="flex flex-wrap gap-2">
+                            {uploadedAttachments.map((attachment) => (
+                              <a
                                 key={attachment.id}
-                                className="relative group border rounded-lg overflow-hidden bg-gray-50 dark:bg-gray-800"
+                                href={attachment.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-2 px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-sm"
                               >
                                 {attachment.type?.startsWith('image/') ? (
-                                  <div className="aspect-square">
-                                    <img
-                                      src={fileUrl}
-                                      alt={attachment.name}
-                                      className="w-full h-full object-cover"
-                                      onLoad={() => URL.revokeObjectURL(fileUrl)}
-                                    />
-                                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-50 transition-opacity flex items-center justify-center">
+                                  <ImageIcon className="h-4 w-4" />
+                                ) : attachment.name.toLowerCase().endsWith('.pdf') ? (
+                                  <FileText className="h-4 w-4" />
+                                ) : (
+                                  <File className="h-4 w-4" />
+                                )}
+                                <span className="truncate max-w-[200px]">{attachment.name}</span>
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Display selected files (not uploaded yet) */}
+                      {invoiceAttachments.length > 0 && (
+                        <div className="mb-4">
+                          <Label className="text-sm font-medium mb-2 block">Selected Files (will be uploaded on save)</Label>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                            {invoiceAttachments.map((attachment) => {
+                              const fileUrl = URL.createObjectURL(attachment.file);
+                              return (
+                                <div
+                                  key={attachment.id}
+                                  className="relative group border rounded-lg overflow-hidden bg-gray-50 dark:bg-gray-800"
+                                >
+                                  {attachment.type?.startsWith('image/') ? (
+                                    <div className="aspect-square">
+                                      <img
+                                        src={fileUrl}
+                                        alt={attachment.name}
+                                        className="w-full h-full object-cover"
+                                        onLoad={() => URL.revokeObjectURL(fileUrl)}
+                                      />
+                                      <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-50 transition-opacity flex items-center justify-center">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setInvoiceAttachments(invoiceAttachments.filter(a => a.id !== attachment.id));
+                                          }}
+                                          className="opacity-0 group-hover:opacity-100 text-white bg-red-600 hover:bg-red-700 rounded-full p-2 transition-opacity"
+                                          title="Remove"
+                                        >
+                                          <X className="h-4 w-4" />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="p-4 flex flex-col items-center justify-center min-h-[100px]">
+                                      {attachment.name.toLowerCase().endsWith('.pdf') ? (
+                                        <FileText className="h-8 w-8 text-red-600 mb-2" />
+                                      ) : (
+                                        <File className="h-8 w-8 text-gray-600 mb-2" />
+                                      )}
+                                      <p className="text-xs text-center text-gray-700 dark:text-gray-300 truncate w-full px-2" title={attachment.name}>
+                                        {attachment.name}
+                                      </p>
+                                      <p className="text-xs text-gray-500 mt-1">
+                                        {(attachment.file.size / 1024).toFixed(1)} KB
+                                      </p>
                                       <button
                                         type="button"
                                         onClick={() => {
                                           setInvoiceAttachments(invoiceAttachments.filter(a => a.id !== attachment.id));
                                         }}
-                                        className="opacity-0 group-hover:opacity-100 text-white bg-red-600 hover:bg-red-700 rounded-full p-2 transition-opacity"
+                                        className="mt-2 text-red-600 hover:text-red-800"
                                         title="Remove"
                                       >
                                         <X className="h-4 w-4" />
                                       </button>
                                     </div>
-                                  </div>
-                                ) : (
-                                  <div className="p-4 flex flex-col items-center justify-center min-h-[100px]">
-                                    {attachment.name.toLowerCase().endsWith('.pdf') ? (
-                                      <FileText className="h-8 w-8 text-red-600 mb-2" />
-                                    ) : (
-                                      <File className="h-8 w-8 text-gray-600 mb-2" />
-                                    )}
-                                    <p className="text-xs text-center text-gray-700 dark:text-gray-300 truncate w-full px-2" title={attachment.name}>
-                                      {attachment.name}
-                                    </p>
-                                    <p className="text-xs text-gray-500 mt-1">
-                                      {(attachment.file.size / 1024).toFixed(1)} KB
-                                    </p>
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setInvoiceAttachments(invoiceAttachments.filter(a => a.id !== attachment.id));
-                                      }}
-                                      className="mt-2 text-red-600 hover:text-red-800"
-                                      title="Remove"
-                                    >
-                                      <X className="h-4 w-4" />
-                                    </button>
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
-                      </div>
-                    )}
-                    
-                    {/* File Input - Files will be uploaded when invoice is saved */}
-                    <div>
-                      <input
-                        type="file"
-                        id="file-upload"
-                        multiple
-                        accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"
-                        className="hidden"
-                        onChange={(e) => {
-                          const files = Array.from(e.target.files || []);
-                          if (files.length > 0) {
-                            const newAttachments = files.map((file) => ({
-                              id: `attachment-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-                              file: file,
-                              name: file.name,
-                              type: file.type,
-                            }));
-                            setInvoiceAttachments((prev) => [...prev, ...newAttachments]);
-                            toast({
-                              title: "Files Selected",
-                              description: `${files.length} file(s) selected. They will be uploaded when you save the invoice.`,
-                            });
-                            // Reset input
-                            e.target.value = '';
-                          }
-                        }}
-                      />
-                      <Button
-                        type="button"
-                        onClick={() => {
-                          document.getElementById('file-upload')?.click();
-                        }}
-                        className="bg-cyan-600 hover:bg-cyan-700 text-white text-sm"
-                      >
-                        <Paperclip className="h-4 w-4 mr-2" />
-                        Select Files ({invoiceAttachments.length})
-                      </Button>
-                      {invoiceAttachments.length > 0 && (
-                        <p className="text-xs text-gray-500 mt-2">
-                          {invoiceAttachments.length} file(s) selected. Files will be uploaded when you save the invoice.
-                        </p>
                       )}
-                    </div>
-                  </div>
 
-                  {/* Internal Attachments - Same row */}
-                  <div>
-                    <Label className="text-base sm:text-lg font-semibold mb-3 block">
-                      Internal Attachments
-                    </Label>
-                    <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-4">
-                      Upload files for internal reference only. These are not sent with invoice emails.
-                    </p>
-                    
-                    {uploadedInternalAttachments.length > 0 && (
-                      <div className="mb-4">
-                        <Label className="text-sm font-medium mb-2 block">Previously Uploaded</Label>
-                        <div className="flex flex-wrap gap-2">
-                          {uploadedInternalAttachments.map((attachment) => (
-                            <a
-                              key={attachment.id}
-                              href={attachment.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-2 px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-sm"
-                            >
-                              {attachment.type?.startsWith('image/') ? (
-                                <ImageIcon className="h-4 w-4" />
-                              ) : attachment.name.toLowerCase().endsWith('.pdf') ? (
-                                <FileText className="h-4 w-4" />
-                              ) : (
-                                <File className="h-4 w-4" />
-                              )}
-                              <span className="truncate max-w-[200px]">{attachment.name}</span>
-                            </a>
-                          ))}
-                        </div>
+                      {/* File Input - Files will be uploaded when invoice is saved */}
+                      <div>
+                        <input
+                          type="file"
+                          id="file-upload"
+                          multiple
+                          accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"
+                          className="hidden"
+                          onChange={(e) => {
+                            const files = Array.from(e.target.files || []);
+                            if (files.length > 0) {
+                              const newAttachments = files.map((file) => ({
+                                id: `attachment-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                                file: file,
+                                name: file.name,
+                                type: file.type,
+                              }));
+                              setInvoiceAttachments((prev) => [...prev, ...newAttachments]);
+                              toast({
+                                title: "Files Selected",
+                                description: `${files.length} file(s) selected. They will be uploaded when you save the invoice.`,
+                              });
+                              // Reset input
+                              e.target.value = '';
+                            }
+                          }}
+                        />
+                        <Button
+                          type="button"
+                          onClick={() => {
+                            document.getElementById('file-upload')?.click();
+                          }}
+                          className="bg-cyan-600 hover:bg-cyan-700 text-white text-sm"
+                        >
+                          <Paperclip className="h-4 w-4 mr-2" />
+                          Select Files ({invoiceAttachments.length})
+                        </Button>
+                        {invoiceAttachments.length > 0 && (
+                          <p className="text-xs text-gray-500 mt-2">
+                            {invoiceAttachments.length} file(s) selected. Files will be uploaded when you save the invoice.
+                          </p>
+                        )}
                       </div>
-                    )}
-                    
-                    {internalAttachments.length > 0 && (
-                      <div className="mb-4">
-                        <Label className="text-sm font-medium mb-2 block">Selected Files (will be uploaded on save)</Label>
-                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                          {internalAttachments.map((attachment) => {
-                            const fileUrl = URL.createObjectURL(attachment.file);
-                            return (
-                              <div
+                    </div>
+
+                    {/* Internal Attachments - Same row */}
+                    <div>
+                      <Label className="text-base sm:text-lg font-semibold mb-3 block">
+                        Internal Attachments
+                      </Label>
+                      <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-4">
+                        Upload files for internal reference only. These are not sent with invoice emails.
+                      </p>
+
+                      {uploadedInternalAttachments.length > 0 && (
+                        <div className="mb-4">
+                          <Label className="text-sm font-medium mb-2 block">Previously Uploaded</Label>
+                          <div className="flex flex-wrap gap-2">
+                            {uploadedInternalAttachments.map((attachment) => (
+                              <a
                                 key={attachment.id}
-                                className="relative group border rounded-lg overflow-hidden bg-gray-50 dark:bg-gray-800"
+                                href={attachment.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-2 px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-sm"
                               >
                                 {attachment.type?.startsWith('image/') ? (
-                                  <div className="aspect-square">
-                                    <img
-                                      src={fileUrl}
-                                      alt={attachment.name}
-                                      className="w-full h-full object-cover"
-                                      onLoad={() => URL.revokeObjectURL(fileUrl)}
-                                    />
-                                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-50 transition-opacity flex items-center justify-center">
+                                  <ImageIcon className="h-4 w-4" />
+                                ) : attachment.name.toLowerCase().endsWith('.pdf') ? (
+                                  <FileText className="h-4 w-4" />
+                                ) : (
+                                  <File className="h-4 w-4" />
+                                )}
+                                <span className="truncate max-w-[200px]">{attachment.name}</span>
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {internalAttachments.length > 0 && (
+                        <div className="mb-4">
+                          <Label className="text-sm font-medium mb-2 block">Selected Files (will be uploaded on save)</Label>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                            {internalAttachments.map((attachment) => {
+                              const fileUrl = URL.createObjectURL(attachment.file);
+                              return (
+                                <div
+                                  key={attachment.id}
+                                  className="relative group border rounded-lg overflow-hidden bg-gray-50 dark:bg-gray-800"
+                                >
+                                  {attachment.type?.startsWith('image/') ? (
+                                    <div className="aspect-square">
+                                      <img
+                                        src={fileUrl}
+                                        alt={attachment.name}
+                                        className="w-full h-full object-cover"
+                                        onLoad={() => URL.revokeObjectURL(fileUrl)}
+                                      />
+                                      <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-50 transition-opacity flex items-center justify-center">
+                                        <button
+                                          type="button"
+                                          onClick={() => setInternalAttachments(internalAttachments.filter(a => a.id !== attachment.id))}
+                                          className="opacity-0 group-hover:opacity-100 text-white bg-red-600 hover:bg-red-700 rounded-full p-2 transition-opacity"
+                                          title="Remove"
+                                        >
+                                          <X className="h-4 w-4" />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="p-4 flex flex-col items-center justify-center min-h-[100px]">
+                                      {attachment.name.toLowerCase().endsWith('.pdf') ? (
+                                        <FileText className="h-8 w-8 text-red-600 mb-2" />
+                                      ) : (
+                                        <File className="h-8 w-8 text-gray-600 mb-2" />
+                                      )}
+                                      <p className="text-xs text-center text-gray-700 dark:text-gray-300 truncate w-full px-2" title={attachment.name}>
+                                        {attachment.name}
+                                      </p>
+                                      <p className="text-xs text-gray-500 mt-1">
+                                        {(attachment.file.size / 1024).toFixed(1)} KB
+                                      </p>
                                       <button
                                         type="button"
                                         onClick={() => setInternalAttachments(internalAttachments.filter(a => a.id !== attachment.id))}
-                                        className="opacity-0 group-hover:opacity-100 text-white bg-red-600 hover:bg-red-700 rounded-full p-2 transition-opacity"
+                                        className="mt-2 text-red-600 hover:text-red-800"
                                         title="Remove"
                                       >
                                         <X className="h-4 w-4" />
                                       </button>
                                     </div>
-                                  </div>
-                                ) : (
-                                  <div className="p-4 flex flex-col items-center justify-center min-h-[100px]">
-                                    {attachment.name.toLowerCase().endsWith('.pdf') ? (
-                                      <FileText className="h-8 w-8 text-red-600 mb-2" />
-                                    ) : (
-                                      <File className="h-8 w-8 text-gray-600 mb-2" />
-                                    )}
-                                    <p className="text-xs text-center text-gray-700 dark:text-gray-300 truncate w-full px-2" title={attachment.name}>
-                                      {attachment.name}
-                                    </p>
-                                    <p className="text-xs text-gray-500 mt-1">
-                                      {(attachment.file.size / 1024).toFixed(1)} KB
-                                    </p>
-                                    <button
-                                      type="button"
-                                      onClick={() => setInternalAttachments(internalAttachments.filter(a => a.id !== attachment.id))}
-                                      className="mt-2 text-red-600 hover:text-red-800"
-                                      title="Remove"
-                                    >
-                                      <X className="h-4 w-4" />
-                                    </button>
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
-                      </div>
-                    )}
-                    
-                    <div>
-                      <input
-                        type="file"
-                        id="internal-file-upload"
-                        multiple
-                        accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"
-                        className="hidden"
-                        onChange={(e) => {
-                          const files = Array.from(e.target.files || []);
-                          if (files.length > 0) {
-                            const newAttachments = files.map((file) => ({
-                              id: `internal-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-                              file: file,
-                              name: file.name,
-                              type: file.type,
-                            }));
-                            setInternalAttachments((prev) => [...prev, ...newAttachments]);
-                            e.target.value = '';
-                          }
-                        }}
-                      />
-                      <Button
-                        type="button"
-                        onClick={() => document.getElementById('internal-file-upload')?.click()}
-                        className="bg-cyan-600 hover:bg-cyan-700 text-white text-sm"
-                      >
-                        <Paperclip className="h-4 w-4 mr-2" />
-                        Select Internal Files ({internalAttachments.length})
-                      </Button>
-                      {internalAttachments.length > 0 && (
-                        <p className="text-xs text-gray-500 mt-2">
-                          {internalAttachments.length} file(s) selected. Internal files are not sent with invoice emails.
-                        </p>
                       )}
+
+                      <div>
+                        <input
+                          type="file"
+                          id="internal-file-upload"
+                          multiple
+                          accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"
+                          className="hidden"
+                          onChange={(e) => {
+                            const files = Array.from(e.target.files || []);
+                            if (files.length > 0) {
+                              const newAttachments = files.map((file) => ({
+                                id: `internal-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                                file: file,
+                                name: file.name,
+                                type: file.type,
+                              }));
+                              setInternalAttachments((prev) => [...prev, ...newAttachments]);
+                              e.target.value = '';
+                            }
+                          }}
+                        />
+                        <Button
+                          type="button"
+                          onClick={() => document.getElementById('internal-file-upload')?.click()}
+                          className="bg-cyan-600 hover:bg-cyan-700 text-white text-sm"
+                        >
+                          <Paperclip className="h-4 w-4 mr-2" />
+                          Select Internal Files ({internalAttachments.length})
+                        </Button>
+                        {internalAttachments.length > 0 && (
+                          <p className="text-xs text-gray-500 mt-2">
+                            {internalAttachments.length} file(s) selected. Internal files are not sent with invoice emails.
+                          </p>
+                        )}
+                      </div>
                     </div>
-                  </div>
                   </div>
                 </div>
               )}
@@ -4194,7 +4444,7 @@ export default function InvoiceEdit() {
                 const newExpensesFromLineItems = getNewAutoGeneratedExpenses();
                 const allExpenses = getAllExpenses();
                 const hasExpenses = allExpenses.length > 0;
-                
+
                 console.log("🔍 Expense section check:", {
                   existingExpensesFromAPI: existingExpensesFromAPI.length,
                   newExpensesFromLineItems: newExpensesFromLineItems.length,
@@ -4204,41 +4454,39 @@ export default function InvoiceEdit() {
                   groupedExpensesSize: groupedExpenses.size,
                   existingExpensesCount: existingExpenses?.length || 0
                 });
-                
+
                 return hasExpenses;
               })() && (
-                <div className="pt-6 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Receipt className="h-5 w-5 text-gray-900 dark:text-white" />
-                      <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                        Expenses ({getAllExpenses().length})
-                      </h3>
+                  <div className="pt-6 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Receipt className="h-5 w-5 text-gray-900 dark:text-white" />
+                        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                          Expenses ({getAllExpenses().length})
+                        </h3>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={addManualExpense}
+                        data-testid="button-add-manual-expense"
+                      >
+                        <Plus className="h-4 w-4 mr-2" />
+                        Add Manual Expense
+                      </Button>
                     </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={addManualExpense}
-                      data-testid="button-add-manual-expense"
-                    >
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add Manual Expense
-                    </Button>
-                  </div>
-                  {/* Unified Expenses Table - Shows all expenses in one table */}
-                  <div className="border rounded-lg overflow-hidden">
+                    {/* Unified Expenses Table - Shows all expenses in one table */}
+                    <div className="border rounded-lg overflow-hidden">
                       <div className="overflow-x-auto">
                         <div className="min-w-[2200px]">
                           {/* Table Header */}
-                          <div 
+                          <div
                             className="grid gap-2 border-b p-3 font-medium text-sm bg-gray-50 dark:bg-gray-800"
                             style={{ gridTemplateColumns: expenseGridTemplate }}
                           >
-                            <div className="text-center flex items-center justify-center">#</div>
+                            <div className="flex items-center justify-center text-center">#</div>
                             <div className="flex items-center">Title</div>
-                            <div className="flex items-center">Category</div>
-                            <div className="flex items-center">Vendor</div>
                             <div className="flex items-center">Qty</div>
                             <div className="flex items-center">Purchase Price ({currencySymbol})</div>
                             <div className="flex items-center">Amount ({currencySymbol})</div>
@@ -4251,7 +4499,7 @@ export default function InvoiceEdit() {
                               if (expense.isFromAPI && expense.isExisting && expense.id) {
                                 const editedData = editedExpenseLineItems.get(expense.id) || expense;
                                 const displayItem = { ...expense, ...editedData };
-                                
+
                                 return (
                                   <div
                                     key={`existing-${expense.id}`}
@@ -4276,46 +4524,7 @@ export default function InvoiceEdit() {
                                         className="text-sm"
                                       />
                                     </div>
-                                    <div className="flex items-center">
-                                      <AutocompleteInput
-                                        suggestions={getTravelCategories().filter((cat) => cat.value !== "create_new")}
-                                        value={displayItem.category || ""}
-                                        onValueChange={(value) => {
-                                          // Find lead type by name to get its ID
-                                          const selectedLeadType = leadTypes.find((lt: any) => 
-                                            (lt.name || lt.type_name || lt.typeName) === value
-                                          );
-                                          const packageId = selectedLeadType ? selectedLeadType.id.toString() : "";
-                                          const updated = { 
-                                            ...displayItem, 
-                                            category: value,
-                                            packageId: packageId,
-                                            leadTypeId: selectedLeadType ? selectedLeadType.id : null
-                                          };
-                                          setEditedExpenseLineItems((prev) => {
-                                            const newMap = new Map(prev);
-                                            newMap.set(expense.id, updated);
-                                            return newMap;
-                                          });
-                                        }}
-                                        placeholder="Category"
-                                      />
-                                    </div>
-                                    <div className="flex items-center">
-                                      <AutocompleteInput
-                                        suggestions={getVendorOptions().filter((v) => v.value !== "create_new")}
-                                        value={displayItem.vendorId || ""}
-                                        onValueChange={(value) => {
-                                          const updated = { ...displayItem, vendorId: value };
-                                          setEditedExpenseLineItems((prev) => {
-                                            const newMap = new Map(prev);
-                                            newMap.set(expense.id, updated);
-                                            return newMap;
-                                          });
-                                        }}
-                                        placeholder="Vendor"
-                                      />
-                                    </div>
+
                                     <div className="flex items-center">
                                       <Input
                                         value={displayItem.quantity}
@@ -4323,8 +4532,8 @@ export default function InvoiceEdit() {
                                           const quantity = e.target.value;
                                           const purchasePrice = parseFloat(displayItem.purchasePrice || "0");
                                           const amount = (purchasePrice * parseFloat(quantity || "1")).toFixed(2);
-                                          const updated = { 
-                                            ...displayItem, 
+                                          const updated = {
+                                            ...displayItem,
                                             quantity,
                                             amount
                                           };
@@ -4346,8 +4555,8 @@ export default function InvoiceEdit() {
                                           const purchasePrice = e.target.value;
                                           const quantity = parseFloat(displayItem.quantity || "1");
                                           const amount = (parseFloat(purchasePrice || "0") * quantity).toFixed(2);
-                                          const updated = { 
-                                            ...displayItem, 
+                                          const updated = {
+                                            ...displayItem,
                                             purchasePrice,
                                             amount
                                           };
@@ -4386,20 +4595,20 @@ export default function InvoiceEdit() {
                                   </div>
                                 );
                               }
-                              
+
                               // Handle new expenses (auto-generated or manual)
                               // Find the index in manualExpenses if it's a manual expense
-                              const manualExpenseIdx = manualExpenses.findIndex((m: any) => 
+                              const manualExpenseIdx = manualExpenses.findIndex((m: any) =>
                                 !m.isFromAPI && m.title === expense.title && parseFloat(m.purchasePrice || "0") === parseFloat(expense.purchasePrice || "0")
                               );
-                              
+
                               // Check if it's a new auto-generated expense (starts with "A-")
                               const isNewAutoGenerated = expense.itemIndex?.startsWith("A-");
-                              
+
                               // For new auto-generated expenses, we need to track them separately
                               // They will be included in the save but we can't edit them directly via manualExpenses
                               // So we'll make them editable but they'll be saved as part of autoExpenses
-                              
+
                               return (
                                 <div
                                   key={`new-${expense.itemIndex || idx}`}
@@ -4417,8 +4626,8 @@ export default function InvoiceEdit() {
                                           updateManualExpense(manualExpenseIdx, "title", e.target.value);
                                         } else if (isNewAutoGenerated) {
                                           // For auto-generated, update the line item directly
-                                          const lineItemIdx = lineItems.findIndex((li: any) => 
-                                            li.itemTitle === expense.title || 
+                                          const lineItemIdx = lineItems.findIndex((li: any) =>
+                                            li.itemTitle === expense.title ||
                                             (li.purchasePrice && parseFloat(li.purchasePrice) === parseFloat(expense.purchasePrice || "0"))
                                           );
                                           if (lineItemIdx >= 0) {
@@ -4430,46 +4639,7 @@ export default function InvoiceEdit() {
                                       className="text-sm"
                                     />
                                   </div>
-                                  <div className="flex items-center">
-                                    <AutocompleteInput
-                                      suggestions={getTravelCategories().filter((cat) => cat.value !== "create_new")}
-                                      value={expense.category}
-                                      onValueChange={(value) => {
-                                        if (manualExpenseIdx >= 0) {
-                                          updateManualExpense(manualExpenseIdx, "category", value);
-                                        } else if (isNewAutoGenerated) {
-                                          const lineItemIdx = lineItems.findIndex((li: any) => 
-                                            li.itemTitle === expense.title || 
-                                            (li.purchasePrice && parseFloat(li.purchasePrice) === parseFloat(expense.purchasePrice || "0"))
-                                          );
-                                          if (lineItemIdx >= 0) {
-                                            updateLineItem(lineItemIdx, "travelCategory", value);
-                                          }
-                                        }
-                                      }}
-                                      placeholder="Category"
-                                    />
-                                  </div>
-                                  <div className="flex items-center">
-                                    <AutocompleteInput
-                                      suggestions={getVendorOptions().filter((v) => v.value !== "create_new")}
-                                      value={expense.vendorId || ""}
-                                      onValueChange={(value) => {
-                                        if (manualExpenseIdx >= 0) {
-                                          updateManualExpense(manualExpenseIdx, "vendorId", value);
-                                        } else if (isNewAutoGenerated) {
-                                          const lineItemIdx = lineItems.findIndex((li: any) => 
-                                            li.itemTitle === expense.title || 
-                                            (li.purchasePrice && parseFloat(li.purchasePrice) === parseFloat(expense.purchasePrice || "0"))
-                                          );
-                                          if (lineItemIdx >= 0) {
-                                            updateLineItem(lineItemIdx, "vendor", value);
-                                          }
-                                        }
-                                      }}
-                                      placeholder="Vendor"
-                                    />
-                                  </div>
+
                                   <div className="flex items-center">
                                     <Input
                                       value={expense.quantity}
@@ -4477,8 +4647,8 @@ export default function InvoiceEdit() {
                                         if (manualExpenseIdx >= 0) {
                                           updateManualExpense(manualExpenseIdx, "quantity", e.target.value);
                                         } else if (isNewAutoGenerated) {
-                                          const lineItemIdx = lineItems.findIndex((li: any) => 
-                                            li.itemTitle === expense.title || 
+                                          const lineItemIdx = lineItems.findIndex((li: any) =>
+                                            li.itemTitle === expense.title ||
                                             (li.purchasePrice && parseFloat(li.purchasePrice) === parseFloat(expense.purchasePrice || "0"))
                                           );
                                           if (lineItemIdx >= 0) {
@@ -4498,8 +4668,8 @@ export default function InvoiceEdit() {
                                         if (manualExpenseIdx >= 0) {
                                           updateManualExpense(manualExpenseIdx, "purchasePrice", e.target.value);
                                         } else if (isNewAutoGenerated) {
-                                          const lineItemIdx = lineItems.findIndex((li: any) => 
-                                            li.itemTitle === expense.title || 
+                                          const lineItemIdx = lineItems.findIndex((li: any) =>
+                                            li.itemTitle === expense.title ||
                                             (li.purchasePrice && parseFloat(li.purchasePrice) === parseFloat(expense.purchasePrice || "0"))
                                           );
                                           if (lineItemIdx >= 0) {
@@ -4527,8 +4697,8 @@ export default function InvoiceEdit() {
                                           removeManualExpense(manualExpenseIdx);
                                         } else if (isNewAutoGenerated) {
                                           // Remove purchase price from line item to remove it from expenses
-                                          const lineItemIdx = lineItems.findIndex((li: any) => 
-                                            li.itemTitle === expense.title || 
+                                          const lineItemIdx = lineItems.findIndex((li: any) =>
+                                            li.itemTitle === expense.title ||
                                             (li.purchasePrice && parseFloat(li.purchasePrice) === parseFloat(expense.purchasePrice || "0"))
                                           );
                                           if (lineItemIdx >= 0) {
@@ -4543,24 +4713,24 @@ export default function InvoiceEdit() {
                                 </div>
                               );
                             })}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Total Row */}
+                      <div className="border rounded-lg p-4 bg-gray-50 dark:bg-gray-800">
+                        <div className="flex justify-end items-center gap-4">
+                          <span className="text-sm font-medium">Total Expenses:</span>
+                          <span className="text-lg font-semibold">
+                            {currencySymbol}{getAllExpenses()
+                              .reduce((sum, exp) => sum + (parseFloat(exp.amount) || 0), 0)
+                              .toFixed(2)}
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </div>
-
-                  {/* Total Row */}
-                  <div className="border rounded-lg p-4 bg-gray-50 dark:bg-gray-800">
-                    <div className="flex justify-end items-center gap-4">
-                      <span className="text-sm font-medium">Total Expenses:</span>
-                      <span className="text-lg font-semibold">
-                        {currencySymbol}{getAllExpenses()
-                          .reduce((sum, exp) => sum + (parseFloat(exp.amount) || 0), 0)
-                          .toFixed(2)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              )}
+                )}
 
               {/* Profit Calculation Section */}
               <div className="mt-6 pt-4">
@@ -4624,25 +4794,26 @@ export default function InvoiceEdit() {
                 </div>
               </div>
 
-                <div className="flex flex-col sm:flex-row justify-end gap-2 sm:space-x-2 pt-4">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={navigateToInvoices}
-                    data-testid="button-cancel"
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    type="submit"
-                    disabled={updateInvoiceMutation.isPending}
-                    data-testid="button-update-invoice"
-                  >
-                    {updateInvoiceMutation.isPending
-                      ? "Updating..."
-                      : "Update Invoice"}
-                  </Button>
-                </div>
+              <div className="flex flex-col sm:flex-row justify-end gap-2 sm:space-x-2 pt-4">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={navigateToInvoices}
+                  data-testid="button-cancel"
+                >
+                  Cancel
+                </Button>
+
+                <Button
+                  type="submit"
+                  disabled={updateInvoiceMutation.isPending}
+                  data-testid="button-update-invoice"
+                >
+                  {updateInvoiceMutation.isPending
+                    ? "Updating..."
+                    : "Update Invoice"}
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </form>
@@ -4662,7 +4833,7 @@ export default function InvoiceEdit() {
               <>
                 {/* Use actual invoice template */}
                 <ModernTemplate data={previewInvoiceData} />
-                
+
               </>
             )}
           </div>
@@ -4724,9 +4895,9 @@ export default function InvoiceEdit() {
                 queryClient.invalidateQueries({ queryKey: ["/api/vendors"] });
                 // Update vendor if we're in the expense table
                 if (currentItemIndex >= 0) {
-                   if (manualExpenses[currentItemIndex]) {
-                     updateManualExpense(currentItemIndex, "vendorId", vendor.id?.toString() || "");
-                   }
+                  if (manualExpenses[currentItemIndex]) {
+                    updateManualExpense(currentItemIndex, "vendorId", vendor.id?.toString() || "");
+                  }
                 }
                 setIsVendorPanelOpen(false);
                 toast({

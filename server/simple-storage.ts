@@ -7282,7 +7282,7 @@ async getAllLeadsByTenant(
             const productId = item.productId || null;
             const requested = parseInt(item.quantity?.toString() || "1");
             
-            if (productId && !isNaN(parseInt(productId.toString()))) {
+            if (productId && !isNaN(parseInt(productId.toString())) && !item.isUnfulfilled) {
               console.log(`📦 Updating stock for product ${productId}...`);
               try {
                 const fulfilled = await this.updateProductStock(
@@ -7302,6 +7302,9 @@ async getAllLeadsByTenant(
                 // Given "Stock Guard", we should probably assume 0 if we can't verify stock.
                 isPartial = true;
               }
+            } else if (item.isUnfulfilled) {
+              fulfilledMap.set(i, 0);
+              isPartial = true;
             } else {
               // Non-product item (service, manual description, etc.) - always fulfilled
               fulfilledMap.set(i, requested);
@@ -8633,11 +8636,72 @@ async getAllLeadsByTenant(
 
       // Also update invoice_items table if line items are provided
       if (invoiceData.lineItems && Array.isArray(invoiceData.lineItems)) {
-        // Delete existing items
+        const tenantId = invoiceData.tenantId || updatedInvoice.tenant_id;
+        
+        // 1. Get existing items to revert stock before deleting them
+        // We need variant info which might only be in the JSON
+        const oldLineItems = Array.isArray(updatedInvoice.line_items) ? updatedInvoice.line_items : [];
+        const existingItems = await sql`SELECT id, product_id, fulfilled_quantity FROM invoice_items WHERE invoice_id = ${invoiceId}`;
+        
+        for (let i = 0; i < existingItems.length; i++) {
+          const item = existingItems[i];
+          if (item.product_id && item.fulfilled_quantity > 0) {
+            // Find variant ID from the old JSON if possible
+            const oldJsonItem = oldLineItems[i];
+            const variantId = oldJsonItem?.variantId || oldJsonItem?.variant_id;
+            await this.updateProductStock(tenantId, item.product_id, -item.fulfilled_quantity, variantId);
+          }
+        }
+
+        // 2. Delete existing items
         await sql`DELETE FROM invoice_items WHERE invoice_id = ${invoiceId}`;
 
-        // Insert new items
-        for (const item of invoiceData.lineItems) {
+        // 3. Process new items and update stock (similar to createInvoice)
+        const fulfilledMap = new Map<number, number>();
+        let isPartialFlag = false;
+        const lineItems = invoiceData.lineItems;
+
+        // Check if stock updates are enabled
+        const settings = await this.getTenantSettings(tenantId);
+        const stockUpdatesEnabled = settings?.enableInventoryManagement ?? true;
+
+        if (stockUpdatesEnabled) {
+          for (let i = 0; i < lineItems.length; i++) {
+            const item = lineItems[i];
+            const productId = item.productId || item.product_id;
+            const requested = parseInt(item.quantity?.toString() || "1");
+
+            if (productId && !item.isUnfulfilled) {
+              try {
+                const variantId = item.variantId || item.variant_id;
+                const fulfilled = await this.updateProductStock(tenantId, parseInt(productId.toString()), requested, variantId);
+                fulfilledMap.set(i, fulfilled);
+                if (fulfilled < requested) isPartialFlag = true;
+              } catch (stockError) {
+                console.error(`⚠️ Failed to update stock for product ${productId}:`, stockError);
+                fulfilledMap.set(i, 0);
+                isPartialFlag = true;
+              }
+            } else if (item.isUnfulfilled) {
+              fulfilledMap.set(i, 0);
+              isPartialFlag = true;
+            } else {
+              fulfilledMap.set(i, requested);
+            }
+          }
+        } else {
+          for (let i = 0; i < lineItems.length; i++) {
+            fulfilledMap.set(i, parseInt(lineItems[i].quantity?.toString() || "1"));
+          }
+        }
+
+        // 4. Insert new items and update local JSON structure
+        const updatedLineItemsJson = [...lineItems];
+        for (let i = 0; i < lineItems.length; i++) {
+          const item = lineItems[i];
+          const fulfilled = fulfilledMap.get(i) ?? 0;
+          updatedLineItemsJson[i] = { ...item, fulfilledQuantity: fulfilled };
+
           const description = item.itemTitle || item.description || item.travelCategory || "Item";
           const unitPrice = parseFloat(item.sellingPrice?.toString() || item.unitPrice?.toString() || "0");
           const quantity = parseInt(item.quantity?.toString() || "1");
@@ -8646,7 +8710,7 @@ async getAllLeadsByTenant(
 
           await sql`
             INSERT INTO invoice_items (
-              invoice_id, description, quantity, unit_price, total_price, package_id, product_id
+              invoice_id, description, quantity, unit_price, total_price, package_id, product_id, fulfilled_quantity
             ) VALUES (
               ${invoiceId},
               ${description},
@@ -8654,10 +8718,19 @@ async getAllLeadsByTenant(
               ${unitPrice},
               ${totalPrice},
               ${item.packageId || null},
-              ${item.productId || null}
+              ${item.productId || null},
+              ${fulfilled}
             )
           `;
         }
+
+        // Update the invoice record with the final line items JSON and partial status
+        await sql`
+          UPDATE invoices SET 
+            line_items = ${JSON.stringify(updatedLineItemsJson)}::jsonb,
+            is_partial = ${isPartialFlag}
+          WHERE id = ${invoiceId}
+        `;
       }
 
       // Update payment installments if provided
@@ -18899,7 +18972,10 @@ async getDashboardMetrics(
     }
 
     if (filters.jsonFilters) {
+      const skipFilters = ['includeVariants', 'allTypes'];
       for (const key of Object.keys(filters.jsonFilters)) {
+        if (skipFilters.includes(key)) continue;
+        
         const val = filters.jsonFilters[key];
         if (val !== undefined && val !== null && val !== '') {
           whereClause = sql`${whereClause} AND dd.data->>${key} = ${val}`;
@@ -18983,8 +19059,18 @@ async getDashboardMetrics(
         }, {} as Record<number, any[]>);
 
         invData.forEach(inv => {
-          const vList = variantsByInv[inv.id] || [];
+          let vList = variantsByInv[inv.id] || [];
           if (vList.length > 0) {
+            // Post-process variants: spread 'data' and preserve 'id'
+            vList = vList.map((v: any) => {
+              const { id: dataId, ...dataFields } = v.data || {};
+              return {
+                ...v,
+                ...dataFields,
+                id: v.id,
+                images: processImages(v.image)
+              };
+            });
             const currentData = specializedDataMap.get(inv.dynamic_data_id);
             specializedDataMap.set(inv.dynamic_data_id, { ...currentData, variants: vList });
           }
@@ -19089,10 +19175,15 @@ async getDashboardMetrics(
         specialized.images = processImages(specialized.image);
       }
       if (specialized.variants) {
-        specialized.variants = specialized.variants.map((v: any) => ({
-          ...v,
-          images: processImages(v.image)
-        }));
+        specialized.variants = specialized.variants.map((v: any) => {
+          const { id: dataId, ...dataFields } = v.data || {};
+          return {
+            ...v,
+            ...dataFields,
+            id: v.id, // Explicitly keep the database ID
+            images: processImages(v.image)
+          };
+        });
       }
 
       // Ensure we keep price mapping for non-inv/service
@@ -19433,10 +19524,14 @@ async getDashboardMetrics(
         const [stockRecord] = await sql`SELECT quantity FROM stocks WHERE id = ${stockId} AND tenant_id = ${tenantId}`;
         const currentStock = parseFloat(stockRecord?.quantity?.toString() || "0");
         
-        const amountToFulfill = Math.max(0, Math.min(quantityDelta, currentStock));
+        // If delta is negative, we are incrementing stock (no guard needed)
+        // If delta is positive, we are decrementing stock (apply zero-floor guard)
+        const amountToFulfill = quantityDelta > 0 
+          ? Math.min(quantityDelta, currentStock)
+          : quantityDelta;
         
-        if (amountToFulfill > 0) {
-          console.log(`📦 Updating specialized stock (stock_id: ${stockId}): Fulfilling ${amountToFulfill} / ${quantityDelta}`);
+        if (amountToFulfill !== 0) {
+          console.log(`📦 Updating specialized stock (stock_id: ${stockId}): Delta ${-amountToFulfill}`);
           await sql`
             UPDATE stocks SET 
               quantity = quantity - ${amountToFulfill},
@@ -19444,7 +19539,9 @@ async getDashboardMetrics(
             WHERE id = ${stockId} AND tenant_id = ${tenantId}
           `;
         } else {
-          console.warn(`⚠️ Insufficient stock for product ${productId} (requested ${quantityDelta}, available ${currentStock})`);
+          if (quantityDelta > 0) {
+            console.warn(`⚠️ Insufficient stock for product ${productId} (requested ${quantityDelta}, available ${currentStock})`);
+          }
         }
         
         return amountToFulfill;
