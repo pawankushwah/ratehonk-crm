@@ -7332,7 +7332,7 @@ async getAllLeadsByTenant(
 
           await sql`
             INSERT INTO invoice_items (
-              invoice_id, description, quantity, unit_price, total_price, package_id, product_id, fulfilled_quantity
+              invoice_id, description, quantity, unit_price, total_price, package_id, product_id, fulfilled_quantity, is_unfulfilled, pending_quantity
             ) VALUES (
               ${newInvoiceId},
               ${description},
@@ -7341,7 +7341,9 @@ async getAllLeadsByTenant(
               ${totalPrice},
               ${item.packageId || null},
               ${item.productId || null},
-              ${fulfilled}
+              ${fulfilled},
+              ${item.isUnfulfilled || false},
+              ${parseInt(item.pendingQuantity?.toString() || "0")}
             )
           `;
         }
@@ -7891,14 +7893,18 @@ async getAllLeadsByTenant(
         for (const item of originalItems) {
           await sql`
             INSERT INTO invoice_items (
-              invoice_id, description, quantity, unit_price, total_price, package_id
+              invoice_id, description, quantity, unit_price, total_price, package_id, product_id, fulfilled_quantity, is_unfulfilled, pending_quantity
             ) VALUES (
               ${newInvoiceId},
               ${item.description},
               ${item.quantity},
               ${item.unit_price},
               ${item.total_price},
-              ${item.package_id}
+              ${item.package_id || null},
+              ${item.product_id || null},
+              ${item.fulfilled_quantity || 0},
+              ${item.is_unfulfilled || false},
+              ${item.pending_quantity || 0}
             )
           `;
         }
@@ -8710,7 +8716,7 @@ async getAllLeadsByTenant(
 
           await sql`
             INSERT INTO invoice_items (
-              invoice_id, description, quantity, unit_price, total_price, package_id, product_id, fulfilled_quantity
+              invoice_id, description, quantity, unit_price, total_price, package_id, product_id, fulfilled_quantity, is_unfulfilled, pending_quantity
             ) VALUES (
               ${invoiceId},
               ${description},
@@ -8719,7 +8725,9 @@ async getAllLeadsByTenant(
               ${totalPrice},
               ${item.packageId || null},
               ${item.productId || null},
-              ${fulfilled}
+              ${fulfilled},
+              ${item.isUnfulfilled || false},
+              ${parseInt(item.pendingQuantity?.toString() || "0")}
             )
           `;
         }

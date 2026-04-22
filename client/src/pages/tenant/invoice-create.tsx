@@ -178,13 +178,13 @@ export default function InvoiceCreate() {
 
   // Manual expenses state
   const [manualExpenses, setManualExpenses] = useState<any[]>([]);
-  
+
   // Store expenses grouped by expense ID for display
   const [groupedExpenses, setGroupedExpenses] = useState<Map<number, any>>(new Map());
-  
+
   // Store edited expense line items (from API) - keyed by lineItem.id
   const [editedExpenseLineItems, setEditedExpenseLineItems] = useState<Map<number, any>>(new Map());
-  
+
   // Store deleted expense line item IDs (to exclude from save)
   const [deletedExpenseLineItemIds, setDeletedExpenseLineItemIds] = useState<Set<number>>(new Set());
 
@@ -226,7 +226,7 @@ export default function InvoiceCreate() {
 
 
   // Fetch invoice settings
-  const { data: invoiceSettings = { 
+  const { data: invoiceSettings = {
     invoiceNumberStart: 1,
     invoiceNumberPrefix: "INV",
     showTax: true,
@@ -292,13 +292,13 @@ export default function InvoiceCreate() {
     const params = new URLSearchParams(window.location.search);
     const customerIdParam = params.get("customerId");
     const redirectToParam = params.get("redirectTo");
-    
+
     // In create mode, auto-select customer from URL
     if (!isEditMode && customerIdParam) {
       console.log("🔍 Auto-selecting customer from URL:", customerIdParam);
       setSelectedCustomerId(customerIdParam);
     }
-    
+
     // Always read redirectTo from URL (for both create and edit mode)
     if (redirectToParam) {
       console.log("🔍 Storing redirect URL:", redirectToParam);
@@ -330,7 +330,7 @@ export default function InvoiceCreate() {
   const invoicesLength = invoices?.length ?? 0;
   const invoiceNumberStart = invoiceSettings?.invoiceNumberStart ?? 1;
   const invoiceNumberPrefix = invoiceSettings?.invoiceNumberPrefix ?? "INV";
-  
+
   // Create a stable reference to invoices array by serializing invoice numbers
   // This prevents the useMemo from recalculating when the invoices array reference changes
   // but the actual invoice numbers haven't changed
@@ -342,12 +342,12 @@ export default function InvoiceCreate() {
   const generateNextInvoiceNumber = useMemo(() => {
     const startNumber = invoiceNumberStart;
     const prefix = invoiceNumberPrefix;
-    
+
     // Only log in development mode and limit logging to first run
     if (import.meta.env.DEV && !hasInitialized.current) {
       console.log("🔢 Generating invoice number - invoices count:", invoicesLength, "startNumber:", startNumber, "prefix:", prefix);
     }
-    
+
     if (!invoices || invoices.length === 0) {
       // No existing invoices, use starting number from settings
       const generated = `${prefix}${String(startNumber).padStart(3, '0')}`;
@@ -363,33 +363,33 @@ export default function InvoiceCreate() {
       .map((inv: any) => {
         const invNum = inv.invoiceNumber || "";
         if (!invNum) return 0;
-        
+
         // Try to extract number - handle multiple formats
         // Pattern 1: PREFIX-NUMBER (e.g., INV-001, BILL-123)
         const matchWithDash = invNum.match(/^[A-Za-z0-9]+[\s-]+(\d+)/);
         if (matchWithDash) {
           return parseInt(matchWithDash[1], 10);
         }
-        
+
         // Pattern 2: PREFIXNUMBER (e.g., INV001, BILL123)
         const matchNoDash = invNum.match(/^[A-Za-z]+(\d+)/);
         if (matchNoDash) {
           return parseInt(matchNoDash[1], 10);
         }
-        
+
         // Pattern 3: Just numbers (extract first number sequence)
         const matchNumbers = invNum.match(/(\d+)/);
         if (matchNumbers) {
           return parseInt(matchNumbers[1], 10);
         }
-        
+
         return 0;
       })
       .filter((num: number) => num > 0);
 
     // Find the highest number from existing invoices
-    const maxNumber = invoiceNumbers.length > 0 
-      ? Math.max(...invoiceNumbers) 
+    const maxNumber = invoiceNumbers.length > 0
+      ? Math.max(...invoiceNumbers)
       : 0;
 
     // If we have existing invoices, increment from the highest
@@ -404,7 +404,7 @@ export default function InvoiceCreate() {
       // But ensure we don't go below the start number
       nextNumber = Math.max(maxNumber + 1, startNumber);
     }
-    
+
     // Return without dash: INV001 instead of INV-001
     const generated = `${prefix}${String(nextNumber).padStart(3, '0')}`;
     if (import.meta.env.DEV && !hasInitialized.current) {
@@ -430,10 +430,10 @@ export default function InvoiceCreate() {
   // Auto-generate invoice number when invoices/settings are loaded
   useEffect(() => {
     if (isEditMode) return; // Don't auto-generate in edit mode
-    
+
     const currentStartNumber = invoiceNumberStart;
     const prefix = invoiceNumberPrefix;
-    
+
     // Wait for both invoices and settings to be loaded
     if (generateNextInvoiceNumber && invoiceSettings && (invoices !== undefined)) {
       // Check if the generated number has actually changed
@@ -441,17 +441,17 @@ export default function InvoiceCreate() {
         // Number hasn't changed, don't update
         return;
       }
-      
+
       // Check if starting number changed
-      const startingNumberChanged = lastStartingNumber.current !== null && 
-                                    lastStartingNumber.current !== currentStartNumber;
-      
+      const startingNumberChanged = lastStartingNumber.current !== null &&
+        lastStartingNumber.current !== currentStartNumber;
+
       // On first initialization, always update (even if field has a value)
       // After that, update if field is empty OR starting number changed
-      const shouldUpdate = !hasInitialized.current || 
-                          !invoiceNumber || 
-                          startingNumberChanged;
-      
+      const shouldUpdate = !hasInitialized.current ||
+        !invoiceNumber ||
+        startingNumberChanged;
+
       if (shouldUpdate) {
         lastStartingNumber.current = currentStartNumber;
         lastGeneratedNumber.current = generateNextInvoiceNumber;
@@ -497,17 +497,17 @@ export default function InvoiceCreate() {
           search: debouncedCustomerSearch || undefined,
           limit: debouncedCustomerSearch ? 50 : 20, // Limit initial results, more when searching
         });
-        
+
         // Handle paginated response
         if (result && typeof result === "object" && "data" in result) {
           return result.data;
         }
-        
+
         // Handle direct array response
         if (Array.isArray(result)) {
           return result;
         }
-        
+
         return [];
       } catch (error) {
         console.error("Error fetching customers:", error);
@@ -657,20 +657,20 @@ export default function InvoiceCreate() {
       // Add timestamp to URL to prevent 304 cached responses
       const url = `/api/tenants/${tenant?.id}/invoices/${invoiceId}?t=${Date.now()}`;
       const response = await fetch(url, {
-        headers: { 
+        headers: {
           Authorization: `Bearer ${token}`,
           'Cache-Control': 'no-cache',
           'Pragma': 'no-cache',
         },
         cache: 'no-store', // Bypass browser cache completely
       });
-      
+
       // Handle 304 Not Modified - force a fresh request (fallback)
       if (response.status === 304) {
         console.warn("Received 304, forcing fresh fetch with new timestamp...");
         const freshUrl = `/api/tenants/${tenant?.id}/invoices/${invoiceId}?t=${Date.now()}`;
         const freshResponse = await fetch(freshUrl, {
-          headers: { 
+          headers: {
             Authorization: `Bearer ${token}`,
             'Cache-Control': 'no-cache',
             'Pragma': 'no-cache',
@@ -685,7 +685,7 @@ export default function InvoiceCreate() {
         console.log("Invoice data fetched (raw, after 304 retry):", result);
         return result.invoice || result.data || result;
       }
-      
+
       if (!response.ok) throw new Error("Failed to fetch invoice");
       const result = await response.json();
       console.log("Invoice data fetched (raw):", result);
@@ -709,7 +709,7 @@ export default function InvoiceCreate() {
       const token = auth.getToken();
       const url = `/api/expenses?invoiceId=${invoiceId}&limit=1000&page=1`;
       const response = await fetch(url, {
-        headers: { 
+        headers: {
           Authorization: `Bearer ${token}`,
         },
       });
@@ -722,7 +722,7 @@ export default function InvoiceCreate() {
       } else if (Array.isArray(result)) {
         expenses = result;
       }
-      
+
       // Filter to show only auto-generated expenses (auto_generated = true/1)
       return expenses.filter((exp: any) => exp.auto_generated === true || exp.auto_generated === 1 || exp.autoGenerated === true);
     },
@@ -737,7 +737,7 @@ export default function InvoiceCreate() {
       const token = auth.getToken();
       const url = `/api/expenses?invoiceId=${invoiceId}&limit=1000&page=1`;
       const response = await fetch(url, {
-        headers: { 
+        headers: {
           Authorization: `Bearer ${token}`,
         },
       });
@@ -750,7 +750,7 @@ export default function InvoiceCreate() {
       } else if (Array.isArray(result)) {
         expenses = result;
       }
-      
+
       // Return ALL expenses (both auto-generated and from expense page) for profit calculation
       return expenses;
     },
@@ -781,24 +781,24 @@ export default function InvoiceCreate() {
   useEffect(() => {
     // Validate that we have valid invoice data
     const invoice = existingInvoice as any;
-    const hasValidData = invoice && 
-                        typeof invoice === 'object' && 
-                        Object.keys(invoice).length > 0 &&
-                        (invoice.id || invoice.invoiceNumber || invoice.totalAmount !== undefined);
-    
+    const hasValidData = invoice &&
+      typeof invoice === 'object' &&
+      Object.keys(invoice).length > 0 &&
+      (invoice.id || invoice.invoiceNumber || invoice.totalAmount !== undefined);
+
     // Check if lineItems are empty or don't have the expected data
-    const lineItemsEmpty = !invoice?.lineItems || 
-                          (Array.isArray(invoice.lineItems) && invoice.lineItems.length === 0) ||
-                          (lineItems.length === 0 && invoice?.lineItems?.length > 0);
-    
+    const lineItemsEmpty = !invoice?.lineItems ||
+      (Array.isArray(invoice.lineItems) && invoice.lineItems.length === 0) ||
+      (lineItems.length === 0 && invoice?.lineItems?.length > 0);
+
     // Only load if we have valid data, not loading, and either:
     // 1. Haven't loaded this invoice yet (ref doesn't match), OR
     // 2. Line items are empty even though we have data (fallback case)
-    const shouldLoad = isEditMode && 
-                      hasValidData && 
-                      !isLoadingInvoice && 
-                      (invoiceDataLoadedRef.current !== invoiceId || lineItemsEmpty);
-    
+    const shouldLoad = isEditMode &&
+      hasValidData &&
+      !isLoadingInvoice &&
+      (invoiceDataLoadedRef.current !== invoiceId || lineItemsEmpty);
+
     console.log("🔍 Invoice data loading check:", {
       isEditMode,
       hasValidData,
@@ -812,11 +812,11 @@ export default function InvoiceCreate() {
       formLineItemsLength: lineItems.length,
       dataLineItemsLength: invoice?.lineItems?.length || 0,
     });
-    
+
     if (shouldLoad) {
       invoiceDataLoadedRef.current = invoiceId; // Mark as loaded BEFORE setting data
       console.log("🔄 Loading invoice data into form:", invoice);
-      
+
       // Set basic fields
       setSelectedCustomerId(invoice.customerId?.toString() || "");
       setSelectedBookingId(invoice.bookingId?.toString() || "none");
@@ -832,11 +832,11 @@ export default function InvoiceCreate() {
       const hasCharge = invoice.hasCancellationCharge || invoice.has_cancellation_charge || false;
       const chargeAmount = invoice.cancellationChargeAmount || invoice.cancellation_charge_amount || 0;
       const chargeNotes = invoice.cancellationChargeNotes || invoice.cancellation_charge_notes || "";
-      
+
       // Auto-enable if there's a charge amount > 0
       const chargeAmountNum = parseFloat(chargeAmount?.toString() || "0");
       const shouldEnable = hasCharge || chargeAmountNum > 0;
-      
+
       console.log("🔍 Loading cancellation charge data:", {
         hasCharge,
         chargeAmount,
@@ -845,7 +845,7 @@ export default function InvoiceCreate() {
         shouldEnable,
         invoiceKeys: Object.keys(invoice).filter(k => k.toLowerCase().includes('cancel')),
       });
-      
+
       setHasCancellationCharge(shouldEnable);
       setCancellationChargeAmount(chargeAmountNum > 0 ? chargeAmountNum.toString() : "0");
       setCancellationChargeNotes(chargeNotes);
@@ -879,7 +879,7 @@ export default function InvoiceCreate() {
         return '';
       }).trim();
       setNotesContent(notesWithoutAttachments);
-      
+
       // Parse additional notes and extract attachments
       const additionalNotesHtml = invoice.additionalNotes || "";
       const additionalNotesAttachmentsFound: Array<{ id: string; name: string; url: string }> = [];
@@ -892,37 +892,37 @@ export default function InvoiceCreate() {
         return '';
       }).trim();
       setAdditionalNotesContent(additionalNotesWithoutAttachments);
-      
+
       // Load attachments from invoice data (if exists) - these are already uploaded URLs
       const invoiceAttachmentsData = invoice.attachments || [];
-      const invoiceAttachmentsParsed = Array.isArray(invoiceAttachmentsData) 
+      const invoiceAttachmentsParsed = Array.isArray(invoiceAttachmentsData)
         ? invoiceAttachmentsData.map((att: any, index: number) => ({
-            id: att.id || `invoice-${index}`,
-            name: att.name || 'Unknown file',
-            url: att.url || '',
-            type: att.type || 'application/octet-stream',
-          }))
+          id: att.id || `invoice-${index}`,
+          name: att.name || 'Unknown file',
+          url: att.url || '',
+          type: att.type || 'application/octet-stream',
+        }))
         : [];
-      
+
       // Store uploaded attachments separately (for display - these are already uploaded)
       setUploadedAttachments([...notesAttachmentsFound, ...additionalNotesAttachmentsFound, ...invoiceAttachmentsParsed]);
-      
+
       // Load internal attachments from invoice data (if exists)
       const internalAttachmentsData = (invoice as any).internalAttachments || (invoice as any).internal_attachments || [];
       const internalAttachmentsParsed = Array.isArray(internalAttachmentsData)
         ? internalAttachmentsData.map((att: any, index: number) => ({
-            id: att.id || `internal-${index}`,
-            name: att.name || 'Unknown file',
-            url: att.url || '',
-            type: att.type || 'application/octet-stream',
-          }))
+          id: att.id || `internal-${index}`,
+          name: att.name || 'Unknown file',
+          url: att.url || '',
+          type: att.type || 'application/octet-stream',
+        }))
         : [];
       setUploadedInternalAttachments(internalAttachmentsParsed);
-      
+
       // Clear file attachments (these are for new files to be uploaded when invoice is saved)
       setInvoiceAttachments([]);
       setInternalAttachments([]);
-      
+
       setEnableReminder(invoice.enableReminder || false);
       setReminderFrequency(invoice.reminderFrequency || "weekly");
       setReminderSpecificDate(invoice.reminderSpecificDate || "");
@@ -982,10 +982,12 @@ export default function InvoiceCreate() {
           additionalCommission: item.additionalCommission?.toString() || "",
           productId: item.productId?.toString() || item.product_id?.toString() || "",
           productTypeFilter: "all",
+          isUnfulfilled: item.isUnfulfilled || item.is_unfulfilled || false,
+          pendingQuantity: item.pendingQuantity || item.pending_quantity || 0,
           totalAmount: parseFloat(item.totalAmount?.toString() || item.totalPrice?.toString() || "0"),
         })));
       }
-      
+
       console.log("✅ Invoice data loaded successfully");
       console.log("✅ Line items count:", lineItems.length);
     } else {
@@ -1000,7 +1002,7 @@ export default function InvoiceCreate() {
         invoiceDataKeys: existingInvoice ? Object.keys(existingInvoice).length : 0,
       };
       console.log("⏭️ Skipping invoice data load:", skipReason);
-      
+
       // If we're in edit mode but data isn't loading and we don't have data, try to refetch
       if (isEditMode && !isLoadingInvoice && !existingInvoice && invoiceId && invoiceDataLoadedRef.current !== invoiceId) {
         console.log("🔄 No data available, attempting to refetch...");
@@ -1010,7 +1012,7 @@ export default function InvoiceCreate() {
           }
         }, 500);
       }
-      
+
       // If we have data but lineItems are empty, force reload
       if (isEditMode && existingInvoice && !isLoadingInvoice && lineItems.length === 0 && (existingInvoice as any).lineItems?.length > 0) {
         console.log("⚠️ Line items are empty but data exists, forcing reload...");
@@ -1030,20 +1032,20 @@ export default function InvoiceCreate() {
     if (isEditMode && existingExpenses && existingExpenses.length > 0 && !isLoadingExpenses) {
       // Group expenses by expense ID
       const expensesMap = new Map<number, any>();
-      
+
       existingExpenses.forEach((exp: any) => {
         // Only process auto-generated expenses (already filtered in query, but double-check)
         const isAutoGenerated = exp.auto_generated === true || exp.auto_generated === 1 || exp.autoGenerated === true;
         if (!isAutoGenerated) return; // Skip non-auto-generated expenses
-        
+
         const lineItems = exp.lineItems || [];
-        
+
         // Process line items
         const processedLineItems = lineItems.map((lineItem: any) => {
           const amount = parseFloat(lineItem.total_amount || lineItem.amount || "0");
           const quantity = parseInt(lineItem.quantity || "1");
           const purchasePrice = quantity > 0 ? (parseFloat(lineItem.amount || "0") / quantity).toFixed(2) : amount.toFixed(2);
-          
+
           const lineItemData = {
             id: lineItem.id,
             expenseId: exp.id,
@@ -1057,7 +1059,7 @@ export default function InvoiceCreate() {
             isFromAPI: true,
             isLineItem: true,
           };
-          
+
           // Initialize edited line items map with original data
           setEditedExpenseLineItems((prev) => {
             const newMap = new Map(prev);
@@ -1066,16 +1068,16 @@ export default function InvoiceCreate() {
             }
             return newMap;
           });
-          
+
           return lineItemData;
         });
-        
+
         // If no line items, create one from the expense itself
         if (processedLineItems.length === 0) {
           const amount = parseFloat(exp.amount || "0");
           const quantity = parseInt(exp.quantity || "1");
           const purchasePrice = quantity > 0 ? (amount / quantity).toFixed(2) : amount.toFixed(2);
-          
+
           processedLineItems.push({
             id: exp.id,
             expenseId: exp.id,
@@ -1090,7 +1092,7 @@ export default function InvoiceCreate() {
             isLineItem: false,
           });
         }
-        
+
         expensesMap.set(exp.id, {
           id: exp.id,
           title: exp.title || "Expense",
@@ -1099,7 +1101,7 @@ export default function InvoiceCreate() {
           lineItems: processedLineItems,
         });
       });
-      
+
       console.log("✅ Loading auto-generated expenses from API:", expensesMap);
       setGroupedExpenses(expensesMap);
     } else if (isEditMode && !isLoadingExpenses && existingExpenses.length === 0) {
@@ -1128,7 +1130,7 @@ export default function InvoiceCreate() {
       // No need to create them separately here
       toast({
         title: "Invoice Created",
-        description: enableInstallments 
+        description: enableInstallments
           ? "Invoice and payment installments created successfully."
           : "Invoice has been created successfully.",
       });
@@ -1142,7 +1144,7 @@ export default function InvoiceCreate() {
       if (data.invoice?.id && selectedCustomer) {
         try {
           const token = auth.getToken();
-          
+
           // Send via email if enabled
           if (invoiceSettings?.sendInvoiceViaEmail && selectedCustomer.email) {
             try {
@@ -1351,16 +1353,16 @@ export default function InvoiceCreate() {
       { value: "cancelled", label: "Cancelled" },
       { value: "void", label: "Void" },
     ];
-    
+
     // When creating new invoice, hide cancelled, void, and overdue
     if (!isEditMode) {
-      return allOptions.filter(option => 
-        option.value !== "overdue" && 
-        option.value !== "cancelled" && 
+      return allOptions.filter(option =>
+        option.value !== "overdue" &&
+        option.value !== "cancelled" &&
         option.value !== "void"
       );
     }
-    
+
     // When editing, show all options
     return allOptions;
   };
@@ -1410,8 +1412,10 @@ export default function InvoiceCreate() {
     if (activeRate) {
       const ratePercentage = parseFloat(activeRate.ratePercentage) || 0;
       if (isTaxInclusive) {
-        // When tax is inclusive, tax is already in the price, so show 0
-        taxAmount = 0;
+        // When tax is inclusive, calculate the tax component from the price
+        // Price = Base + (Base * Rate) => Base = Price / (1 + Rate)
+        // Tax = Price - Base
+        taxAmount = subtotal - (subtotal / (1 + (ratePercentage / 100)));
         totalAmount = subtotal; // Total is the selling price (tax already included)
       } else {
         // When tax is exclusive, calculate tax and add it
@@ -1465,7 +1469,7 @@ export default function InvoiceCreate() {
       const name = product.name || "Unnamed Product";
       const fKey = product.FormTemplate?.formKey || 'inventory';
       const category = product.category || fKey;
-      
+
       return {
         value: product.id.toString(),
         label: `${name} (${category})`,
@@ -1481,7 +1485,7 @@ export default function InvoiceCreate() {
     // Get variants directly from the product object
     const variantsData = selectedProduct.variants || [];
     const availableVariants = variantsData.map((v: any, i: number) => {
-      const label = v.label || v.title || v.name || v.color || v.size || (v.options && Object.values(v.options).join(' ')) || `Variant ${i+1}`;
+      const label = v.label || v.title || v.name || v.color || v.size || (v.options && Object.values(v.options).join(' ')) || `Variant ${i + 1}`;
       const value = v.id?.toString() || v.value || label;
       return { ...v, label, value };
     });
@@ -1511,7 +1515,7 @@ export default function InvoiceCreate() {
   const handleVariantSelection = (variantId: string, index: number) => {
     const item = lineItems[index];
     if (!item.productId) return;
-    
+
     const selectedProduct = products.find((p: any) => p.id.toString() === item.productId);
     if (!selectedProduct) return;
 
@@ -1564,23 +1568,23 @@ export default function InvoiceCreate() {
   const getAvailableStock = (productId: string, variantId: any, currentIndex: number) => {
     const product = products.find((p: any) => p.id?.toString() === productId?.toString());
     if (!product) return 0;
-    
+
     let totalStock = parseInt(product.stock || "0");
     if (variantId && product.variants) {
       const variant = product.variants.find((v: any) => v.id?.toString() === variantId?.toString());
       if (variant) totalStock = parseInt(variant.variant_stock || "0");
     }
-    
+
     // Subtract already allocated quantities in previous fulfilled rows
     const allocated = lineItems.slice(0, currentIndex).reduce((sum, item) => {
-      if (item.productId?.toString() === productId?.toString() && 
-          item.variantId?.toString() === variantId?.toString() &&
-          !item.isUnfulfilled) {
+      if (item.productId?.toString() === productId?.toString() &&
+        item.variantId?.toString() === variantId?.toString() &&
+        !item.isUnfulfilled) {
         return sum + parseInt(item.quantity || "0");
       }
       return sum;
     }, 0);
-    
+
     return Math.max(0, totalStock - allocated);
   };
 
@@ -1633,807 +1637,848 @@ export default function InvoiceCreate() {
         totalAmount: price,
       },
     ]);
+    sortLineItems();
   };
 
-  // Add line item
-  const addLineItem = () => {
-    const newItem = {
-        travelCategory: "other",
-        vendor: "",
-        serviceProviderId: "",
-        packageId: "",
-        itineraryId: "",
-        date: formatLocalDateTime(new Date()),
-        itemTitle: "",
-        invoiceNumber: "",
-        voucherNumber: "",
-        quantity: "1",
-        unitPrice: "",
-        sellingPrice: "",
-        purchasePrice: "",
-        tax: "",
-        taxRateId: "",
-        additionalCommissionPercentage: "",
-        additionalCommission: "",
-        productId: "",
-        variantId: "",
-        availableVariants: [] as any[],
-        productTypeFilter: "all",
-        isUnfulfilled: false,
-        pendingQuantity: 0,
-        totalAmount: 0,
-      };
+// Add line item
+const addLineItem = () => {
+  const newItem = {
+    travelCategory: "other",
+    vendor: "",
+    serviceProviderId: "",
+    packageId: "",
+    itineraryId: "",
+    date: formatLocalDateTime(new Date()),
+    itemTitle: "",
+    invoiceNumber: "",
+    voucherNumber: "",
+    quantity: "1",
+    unitPrice: "",
+    sellingPrice: "",
+    purchasePrice: "",
+    tax: "",
+    taxRateId: "",
+    additionalCommissionPercentage: "",
+    additionalCommission: "",
+    productId: "",
+    variantId: "",
+    availableVariants: [] as any[],
+    productTypeFilter: "all",
+    isUnfulfilled: false,
+    pendingQuantity: 0,
+    totalAmount: 0,
+  };
 
-    const newItems = [...lineItems, newItem];
-    newItems.sort((a, b) => {
-      const dateA = new Date(a.date || "").getTime();
-      const dateB = new Date(b.date || "").getTime();
-      return dateA - dateB;
+  const newItems = [...lineItems, newItem];
+  newItems.sort((a, b) => {
+    const dateA = new Date(a.date || "").getTime();
+    const dateB = new Date(b.date || "").getTime();
+    return dateA - dateB;
+  });
+  setLineItems(newItems);
+};
+
+// Attempt to fulfill an unfulfilled row
+const fulfillUnfulfilledRow = (index: number) => {
+  const updatedItems = [...lineItems];
+  const item = { ...updatedItems[index] };
+
+  if (!item.productId) return;
+
+  const qtyToFulfill = parseInt(item.quantity || "0");
+  if (qtyToFulfill <= 0) {
+    toast({
+      title: "Invalid Quantity",
+      description: "Please enter a quantity greater than zero to fulfill.",
+      variant: "destructive"
     });
-    setLineItems(newItems);
-  };
+    return;
+  }
 
-  // Attempt to fulfill an unfulfilled row
-  const fulfillUnfulfilledRow = (index: number) => {
-    const updatedItems = [...lineItems];
-    const item = { ...updatedItems[index] };
-    
-    if (!item.productId) return;
+  const stock = getAvailableStock(item.productId, item.variantId, index);
 
-    const qtyToFulfill = parseInt(item.quantity || "0");
-    if (qtyToFulfill <= 0) {
-      toast({
-        title: "Invalid Quantity",
-        description: "Please enter a quantity greater than zero to fulfill.",
-        variant: "destructive"
-      });
-      return;
-    }
+  if (stock < qtyToFulfill) {
+    toast({
+      title: "Insufficient Stock",
+      description: `Only ${stock} items available, but you requested ${qtyToFulfill}.`,
+      variant: "destructive"
+    });
+    return;
+  }
 
-    const stock = getAvailableStock(item.productId, item.variantId, index);
+  const totalUnfulfilled = item.pendingQuantity || parseInt(item.quantity || "0");
+  const remainingUnfulfilled = totalUnfulfilled - qtyToFulfill;
 
-    if (stock < qtyToFulfill) {
-      toast({
-        title: "Insufficient Stock",
-        description: `Only ${stock} items available, but you requested ${qtyToFulfill}.`,
-        variant: "destructive"
-      });
-      return;
-    }
+  // Update current row to fulfilled
+  updatedItems[index] = calculateLineItemTotals({
+    ...updatedItems[index],
+    quantity: qtyToFulfill.toString(),
+    isUnfulfilled: false,
+    pendingQuantity: 0
+  });
 
-    const totalUnfulfilled = item.pendingQuantity || parseInt(item.quantity || "0");
-    const remainingUnfulfilled = totalUnfulfilled - qtyToFulfill;
+  if (remainingUnfulfilled > 0) {
+    // Create new row for remaining unfulfilled
+    const newItem = calculateLineItemTotals({
+      ...item,
+      clientId: Math.random().toString(36).substring(7),
+      quantity: remainingUnfulfilled.toString(),
+      isUnfulfilled: true,
+      fulfilledQuantity: 0,
+      pendingQuantity: remainingUnfulfilled
+    });
+    updatedItems.splice(index + 1, 0, newItem);
+  }
 
-    // Update current row to fulfilled
+  const sorted = [...updatedItems].sort((a, b) => {
+    const dateA = new Date(a.date || "").getTime();
+    const dateB = new Date(b.date || "").getTime();
+    return dateA - dateB;
+  });
+  setLineItems(sorted);
+  setPaymentStatus("partial");
+
+  toast({
+    title: "Row Fulfilled",
+    description: `Fulfilled ${qtyToFulfill} items. Invoice marked as partial.`,
+  });
+};
+
+// Split row into fulfilled and unfulfilled based on stock
+const splitRemainingStock = (index: number) => {
+  const updatedItems = [...lineItems];
+  const item = { ...updatedItems[index] };
+
+  if (!item.productId) {
+    toast({
+      title: "Cannot Split",
+      description: "Please select a product first.",
+      variant: "destructive"
+    });
+    return;
+  }
+
+  const stock = getAvailableStock(item.productId, item.variantId, index);
+  const qty = parseInt(item.quantity || "0");
+
+  if (qty > stock && stock > 0) {
+    // Set current row to available stock
     updatedItems[index] = calculateLineItemTotals({
       ...updatedItems[index],
-      quantity: qtyToFulfill.toString(),
+      quantity: stock.toString(),
       isUnfulfilled: false,
       pendingQuantity: 0
     });
 
-    if (remainingUnfulfilled > 0) {
-      // Create new row for remaining unfulfilled
-      const newItem = calculateLineItemTotals({
-        ...item,
-        clientId: Math.random().toString(36).substring(7),
-        quantity: remainingUnfulfilled.toString(),
-        isUnfulfilled: true,
-        fulfilledQuantity: 0,
-        pendingQuantity: remainingUnfulfilled
-      });
-      updatedItems.splice(index + 1, 0, newItem);
-    }
-
-    const sorted = [...updatedItems].sort((a, b) => {
-      const dateA = new Date(a.date || "").getTime();
-      const dateB = new Date(b.date || "").getTime();
-      return dateA - dateB;
-    });
-    setLineItems(sorted);
-    setPaymentStatus("partial");
-    
-    toast({
-      title: "Row Fulfilled",
-      description: `Fulfilled ${qtyToFulfill} items. Invoice marked as partial.`,
-    });
-  };
-
-  // Split row into fulfilled and unfulfilled based on stock
-  const splitRemainingStock = (index: number) => {
-    const updatedItems = [...lineItems];
-    const item = { ...updatedItems[index] };
-    
-    if (!item.productId) {
-      toast({
-        title: "Cannot Split",
-        description: "Please select a product first.",
-        variant: "destructive"
-      });
-      return;
-    }
-
-    const stock = getAvailableStock(item.productId, item.variantId, index);
-    const qty = parseInt(item.quantity || "0");
-
-    if (qty > stock && stock > 0) {
-      // Set current row to available stock
-      updatedItems[index] = calculateLineItemTotals({
-        ...updatedItems[index],
-        quantity: stock.toString(),
-        isUnfulfilled: false,
-        pendingQuantity: 0
-      });
-      
-      // Create new row for remaining
-      const remainingQty = qty - stock;
-      const newItem = calculateLineItemTotals({
-        ...item,
-        clientId: Math.random().toString(36).substring(7),
-        quantity: remainingQty.toString(),
-        isUnfulfilled: true,
-        fulfilledQuantity: 0,
-        pendingQuantity: remainingQty
-      });
-      
-      updatedItems.splice(index + 1, 0, newItem);
-      
-      const sorted = [...updatedItems].sort((a, b) => {
-        const dateA = new Date(a.date || "").getTime();
-        const dateB = new Date(b.date || "").getTime();
-        return dateA - dateB;
-      });
-      setLineItems(sorted);
-      setPaymentStatus("partial");
-      
-      toast({
-        title: "Row Split",
-        description: `Split into ${stock} fulfilled and ${remainingQty} unfulfilled items. Invoice marked as partial.`,
-      });
-    } else if (qty > 0 && stock <= 0) {
-       // Mark whole row as unfulfilled if no stock
-       updatedItems[index] = calculateLineItemTotals({
-         ...updatedItems[index],
-         isUnfulfilled: true,
-         pendingQuantity: qty
-       });
-       
-       const sorted = [...updatedItems].sort((a, b) => {
-         const dateA = new Date(a.date || "").getTime();
-         const dateB = new Date(b.date || "").getTime();
-         return dateA - dateB;
-       });
-       setLineItems(sorted);
-       setPaymentStatus("partial");
-       toast({
-        title: "Row Marked Unfulfilled",
-        description: `No stock available. Row marked as unfulfilled. Invoice marked as partial.`,
-      });
-    } else {
-        toast({
-            title: "Cannot Split",
-            description: qty <= stock ? "Quantity does not exceed available stock." : "Invalid quantity.",
-            variant: "destructive"
-        });
-    }
-  };
-
-  // Remove line item
-  const removeLineItem = (index: number) => {
-    if (lineItems.length > 1) {
-      setLineItems(lineItems.filter((_, i) => i !== index));
-    }
-  };
-
-  // Duplicate line item
-  const duplicateLineItem = (index: number) => {
-    const itemToDuplicate = lineItems[index];
-    const duplicatedItem = {
-      ...itemToDuplicate,
-      date: formatLocalDateTime(new Date()),
-      quantity: "", // Clear quantity for the duplicated item
-      // Reset fulfillment status for duplicated items
-      isUnfulfilled: false,
-      fulfilledQuantity: 0,
-      pendingQuantity: 0,
-      clientId: Math.random().toString(36).substring(7),
-    };
-    
-    const updatedItems = [...lineItems];
-    updatedItems.splice(index + 1, 0, duplicatedItem);
-    
-    // Sort items by date
-    updatedItems.sort((a, b) => {
-      const dateA = new Date(a.date || "").getTime();
-      const dateB = new Date(b.date || "").getTime();
-      return dateA - dateB;
-    });
-    
-    setLineItems(updatedItems);
-  };
-
-  // Calculate subtotal (without tax)
-  const calculateSubtotal = () => {
-    return lineItems.reduce(
-      (total, item) => {
-        const sellingPrice = parseFloat(item.sellingPrice || "0");
-        const quantity = parseInt(item.quantity || "1");
-        return total + (sellingPrice * quantity);
-      },
-      0,
-    );
-  };
-
-  // Calculate total tax
-  const calculateTotalTax = () => {
-    return lineItems.reduce(
-      (total, item) => total + parseFloat(item.tax || "0"),
-      0,
-    );
-  };
-
-  // Calculate total additional commission
-  const calculateTotalAdditionalCommission = () => {
-    return lineItems.reduce(
-      (total, item) => total + parseFloat(item.additionalCommission || "0"),
-      0,
-    );
-  };
-
-  // Calculate grand total (subtotal + tax - discount) - commission is NOT included
-  const calculateGrandTotal = () => {
-    const subtotal = calculateSubtotal();
-    const tax = calculateTotalTax();
-    const discount = parseFloat(discountAmount || "0");
-    return subtotal + tax - discount;
-  };
-
-  // Calculate payment installments
-  const calculateInstallments = () => {
-    if (!enableInstallments) return [];
-
-    const totalAmount = calculateGrandTotal();
-    const paidAmount = paymentStatus === "paid"
-      ? totalAmount // Full payment when status is "paid"
-      : isEditMode 
-        ? existingPaidAmount + parseFloat(amountPaid || "0") // Add new payment to existing
-        : parseFloat(amountPaid || "0");
-    const pendingAmount = totalAmount - paidAmount;
-
-    if (pendingAmount <= 0) return [];
-
-    const numInstallments = parseInt(numberOfInstallments);
-    if (numInstallments <= 0) return [];
-
-    const amountPerInstallment = pendingAmount / numInstallments;
-    const installments = [];
-
-    let currentDate = new Date(dueDate);
-
-    for (let i = 0; i < numInstallments; i++) {
-      installments.push({
-        installmentNumber: i + 1,
-        amount: amountPerInstallment.toFixed(2),
-        dueDate: formatLocalDate(currentDate),
-      });
-
-      // Calculate next date based on frequency
-      switch (installmentFrequency) {
-        case "daily":
-          currentDate.setDate(currentDate.getDate() + 1);
-          break;
-        case "weekly":
-          currentDate.setDate(currentDate.getDate() + 7);
-          break;
-        case "monthly":
-          currentDate.setMonth(currentDate.getMonth() + 1);
-          break;
-        case "yearly":
-          currentDate.setFullYear(currentDate.getFullYear() + 1);
-          break;
-      }
-    }
-
-    return installments;
-  };
-
-  // Generate expenses from line items
-  const generateExpenses = () => {
-    return lineItems
-      .filter(
-        (item) => item.purchasePrice && parseFloat(item.purchasePrice) > 0,
-      )
-      .map((item, index) => {
-        const leadType = leadTypes.find(
-          (lt: any) =>
-            (lt.name || lt.type_name || lt.typeName) === item.travelCategory,
-        );
-
-        const vendor = vendors.find(
-          (v: any) => v.id.toString() === item.vendor,
-        );
-
-        const purchasePrice = parseFloat(item.purchasePrice || "0");
-        const quantity = parseInt(item.quantity || "1");
-        
-        // Get lead type ID from packageId (packageId is the lead_type_id)
-        const leadTypeId = item.packageId && item.packageId !== "" ? parseInt(item.packageId) : null;
-        const selectedLeadType = leadTypes.find((lt: any) => lt.id === leadTypeId);
-        // Use lead type name as category, or travelCategory if available, or "other" as fallback
-        const categoryValue = selectedLeadType 
-          ? (selectedLeadType.name || selectedLeadType.type_name || selectedLeadType.typeName || "other")
-          : (item.travelCategory || "other");
-        
-        return {
-          itemIndex: index,
-          title: item.itemTitle || `Expense for ${item.travelCategory || "other"}`,
-          purchasePrice: purchasePrice, // Purchase price per unit
-          amount: purchasePrice * quantity, // Multiply purchase price by quantity
-          category: categoryValue, // Use lead type name from packageId, or travelCategory, or "other"
-          vendorId: item.vendor !== "none" ? parseInt(item.vendor) : null,
-          vendorName: vendor
-            ? vendor.companyName || vendor.name
-            : "Not specified",
-          leadTypeId: leadTypeId, // Use packageId as lead_type_id
-          leadTypeName: selectedLeadType?.name || selectedLeadType?.type_name || selectedLeadType?.typeName || "Not specified",
-          expenseType: "purchase",
-          quantity: quantity,
-          invoiceNumber: item.invoiceNumber,
-          voucherNumber: item.voucherNumber,
-        };
-      });
-  };
-
-  // Add manual expense
-  const addManualExpense = () => {
-    setManualExpenses([
-      ...manualExpenses,
-      {
-        title: "",
-        purchasePrice: "",
-        amount: "",
-        category: "",
-        vendorId: "",
-        quantity: "1",
-        expenseType: "manual",
-      },
-    ]);
-  };
-
-  // Update manual expense
-  const updateManualExpense = (index: number, field: string, value: any) => {
-    const updated = [...manualExpenses];
-    updated[index] = { ...updated[index], [field]: value };
-    
-    // Calculate amount when purchasePrice or quantity changes
-    if (field === "purchasePrice" || field === "quantity") {
-      const purchasePrice = parseFloat(updated[index].purchasePrice || "0");
-      const quantity = parseInt(updated[index].quantity || "1");
-      updated[index].amount = (purchasePrice * quantity).toFixed(2);
-    }
-    
-    setManualExpenses(updated);
-  };
-
-  // Remove manual expense
-  const removeManualExpense = (index: number) => {
-    setManualExpenses(manualExpenses.filter((_, i) => i !== index));
-  };
-
-  // Get all expense line items from API (flattened)
-  const getExistingExpenseLineItems = () => {
-    const allLineItems: any[] = [];
-    groupedExpenses.forEach((expenseGroup) => {
-      expenseGroup.lineItems.forEach((lineItem: any) => {
-        if (!deletedExpenseLineItemIds.has(lineItem.id)) {
-          const editedData = editedExpenseLineItems.get(lineItem.id) || lineItem;
-          allLineItems.push({
-            ...lineItem,
-            ...editedData,
-            isFromAPI: true,
-            isExisting: true,
-          });
-        }
-      });
-    });
-    return allLineItems;
-  };
-
-  // Get auto-generated expenses from line items (only NEW ones, not already in API)
-  const getNewAutoGeneratedExpenses = () => {
-    const existingLineItems = getExistingExpenseLineItems();
-    const autoExpenses = generateExpenses();
-    
-    // Filter out expenses that already exist in API
-    // Match by title and purchase price to avoid duplicates
-    return autoExpenses.filter((autoExp: any) => {
-      // Check if this expense already exists in API expenses
-      const exists = existingLineItems.some((existing: any) => {
-        // Match by title and purchase price (with some tolerance for floating point)
-        const titleMatch = existing.title === autoExp.title || 
-                          (existing.title && autoExp.title && 
-                           existing.title.toLowerCase().includes(autoExp.title.toLowerCase()));
-        const priceMatch = Math.abs(parseFloat(existing.purchasePrice || "0") - parseFloat(autoExp.purchasePrice || "0")) < 0.01;
-        return titleMatch && priceMatch;
-      });
-      return !exists; // Only return if it doesn't exist
-    });
-  };
-
-  // Combine all expenses for display in ONE unified table
-  const getAllExpenses = () => {
-    // 1. Existing expense line items from API (editable)
-    const existingLineItems = getExistingExpenseLineItems().map((item, idx) => ({
+    // Create new row for remaining
+    const remainingQty = qty - stock;
+    const newItem = calculateLineItemTotals({
       ...item,
-      itemIndex: `E-${idx + 1}`,
-      vendorName: item.vendorId
-        ? vendors.find((v: any) => v.id.toString() === item.vendorId)?.companyName || "N/A"
-        : "N/A",
-    }));
+      clientId: Math.random().toString(36).substring(7),
+      quantity: remainingQty.toString(),
+      isUnfulfilled: true,
+      fulfilledQuantity: 0,
+      pendingQuantity: remainingQty
+    });
 
-    // 2. New auto-generated expenses from line items (only NEW ones)
-    const newAutoExpenses = getNewAutoGeneratedExpenses().map((exp, idx) => ({
-      ...exp,
-      itemIndex: `A-${idx + 1}`,
-      isFromAPI: false,
-      isExisting: false,
-      vendorName: exp.vendorId
-        ? vendors.find((v: any) => v.id.toString() === exp.vendorId)?.companyName || "Not specified"
-        : "Not specified",
-    }));
+    updatedItems.splice(index + 1, 0, newItem);
 
-    // 3. New manual expenses
-    const manualExpensesFormatted = manualExpenses
-      .filter((exp: any) => !exp.isFromAPI)
-      .map((exp, idx) => {
-        const purchasePrice = parseFloat(exp.purchasePrice || "0");
-        const quantity = parseInt(exp.quantity || "1");
-        const amount = purchasePrice * quantity;
-        
-        return {
-          ...exp,
-          itemIndex: `M-${idx + 1}`,
-          purchasePrice: purchasePrice,
-          amount: amount,
-          quantity: quantity,
-          isFromAPI: false,
-          isExisting: false,
-          vendorName: exp.vendorId
-            ? vendors.find((v: any) => v.id.toString() === exp.vendorId)
-              ?.companyName || "Unknown"
-            : "Not specified",
-        };
-      });
+    setLineItems(updatedItems);
+    sortLineItems();
+    setPaymentStatus("partial");
 
-    // Combine all into one array
-    return [...existingLineItems, ...newAutoExpenses, ...manualExpensesFormatted];
+    toast({
+      title: "Row Split",
+      description: `Split into ${stock} fulfilled and ${remainingQty} unfulfilled items. Invoice marked as partial.`,
+    });
+  } else if (qty > 0 && stock <= 0) {
+    // Mark whole row as unfulfilled if no stock
+    updatedItems[index] = calculateLineItemTotals({
+      ...updatedItems[index],
+      isUnfulfilled: true,
+      pendingQuantity: qty
+    });
+
+    setLineItems(updatedItems);
+    sortLineItems();
+    setPaymentStatus("partial");
+    toast({
+      title: "Row Marked Unfulfilled",
+      description: `No stock available. Row marked as unfulfilled. Invoice marked as partial.`,
+    });
+  } else {
+    toast({
+      title: "Cannot Split",
+      description: qty <= stock ? "Quantity does not exceed available stock." : "Invalid quantity.",
+      variant: "destructive"
+    });
+  }
+};
+
+// Remove line item
+const removeLineItem = (index: number) => {
+  if (lineItems.length > 1) {
+    setLineItems(lineItems.filter((_, i) => i !== index));
+  }
+};
+
+// Duplicate line item
+const duplicateLineItem = (index: number) => {
+  const itemToDuplicate = lineItems[index];
+  const duplicatedItem = {
+    ...itemToDuplicate,
+    date: formatLocalDateTime(new Date()),
+    quantity: "", // Clear quantity for the duplicated item
+    // Reset fulfillment status for duplicated items
+    isUnfulfilled: false,
+    fulfilledQuantity: 0,
+    pendingQuantity: 0,
+    clientId: Math.random().toString(36).substring(7),
   };
 
-  // Calculate total expenses for profit calculation (includes ALL expenses: auto-generated + from expense page)
-  const getTotalExpensesForProfit = () => {
-    if (isEditMode && allExpensesForProfit.length > 0) {
-      // In edit mode, use all expenses from API (auto-generated + from expense page) for profit calculation
-      return allExpensesForProfit.reduce((sum: number, exp: any) => {
-        // Sum up all line items if they exist, otherwise use expense amount
-        if (exp.lineItems && exp.lineItems.length > 0) {
-          const lineItemsTotal = exp.lineItems.reduce((lineSum: number, lineItem: any) => {
-            return lineSum + parseFloat(lineItem.total_amount || lineItem.amount || "0");
-          }, 0);
-          return sum + lineItemsTotal;
+  const updatedItems = [...lineItems];
+  updatedItems.splice(index + 1, 0, duplicatedItem);
+
+  setLineItems(updatedItems);
+  sortLineItems();
+};
+
+// Sort line items by date and time
+const sortLineItems = () => {
+  setLineItems((prev) => {
+    return [...prev].sort((a, b) => {
+      const dateA = new Date(a.date).getTime();
+      const dateB = new Date(b.date).getTime();
+      if (isNaN(dateA)) return 1;
+      if (isNaN(dateB)) return -1;
+      return dateA - dateB;
+    });
+  });
+};
+
+// Calculate subtotal (without tax)
+const calculateSubtotal = () => {
+  return lineItems.reduce(
+    (total, item) => {
+      const sellingPrice = parseFloat(item.sellingPrice || "0");
+      const quantity = parseInt(item.quantity || "1");
+      const itemSubtotal = sellingPrice * quantity;
+
+      if (isTaxInclusive && item.taxRateId) {
+        const activeRate = gstRates.find((rate: any) => rate.id?.toString() === item.taxRateId);
+        if (activeRate) {
+          const ratePercentage = parseFloat(activeRate.ratePercentage) || 0;
+          const baseAmount = itemSubtotal / (1 + (ratePercentage / 100));
+          return total + baseAmount;
         }
-        return sum + parseFloat(exp.amount || "0");
-      }, 0);
-    } else {
-      // In create mode or no expenses, use expenses from form
-      return getAllExpenses().reduce((sum, exp) => sum + (parseFloat(exp.amount) || 0), 0);
+      }
+
+      return total + itemSubtotal;
+    },
+    0,
+  );
+};
+
+// Calculate total tax
+const calculateTotalTax = () => {
+  return lineItems.reduce(
+    (total, item) => total + parseFloat(item.tax || "0"),
+    0,
+  );
+};
+
+// Calculate total additional commission
+const calculateTotalAdditionalCommission = () => {
+  return lineItems.reduce(
+    (total, item) => total + parseFloat(item.additionalCommission || "0"),
+    0,
+  );
+};
+
+// Calculate grand total (subtotal + tax - discount) - commission is NOT included
+const calculateGrandTotal = () => {
+  const subtotal = calculateSubtotal();
+  const tax = calculateTotalTax();
+  const discount = parseFloat(discountAmount || "0");
+  return subtotal + tax - discount;
+};
+
+// Calculate payment installments
+const calculateInstallments = () => {
+  if (!enableInstallments) return [];
+
+  const totalAmount = calculateGrandTotal();
+  const paidAmount = paymentStatus === "paid"
+    ? totalAmount // Full payment when status is "paid"
+    : isEditMode
+      ? existingPaidAmount + parseFloat(amountPaid || "0") // Add new payment to existing
+      : parseFloat(amountPaid || "0");
+  const pendingAmount = totalAmount - paidAmount;
+
+  if (pendingAmount <= 0) return [];
+
+  const numInstallments = parseInt(numberOfInstallments);
+  if (numInstallments <= 0) return [];
+
+  const amountPerInstallment = pendingAmount / numInstallments;
+  const installments = [];
+
+  let currentDate = new Date(dueDate);
+
+  for (let i = 0; i < numInstallments; i++) {
+    installments.push({
+      installmentNumber: i + 1,
+      amount: amountPerInstallment.toFixed(2),
+      dueDate: formatLocalDate(currentDate),
+    });
+
+    // Calculate next date based on frequency
+    switch (installmentFrequency) {
+      case "daily":
+        currentDate.setDate(currentDate.getDate() + 1);
+        break;
+      case "weekly":
+        currentDate.setDate(currentDate.getDate() + 7);
+        break;
+      case "monthly":
+        currentDate.setMonth(currentDate.getMonth() + 1);
+        break;
+      case "yearly":
+        currentDate.setFullYear(currentDate.getFullYear() + 1);
+        break;
     }
-  };
+  }
 
-  // Handle customer selection
-  const handleCustomerSelection = (customerId: string | null) => {
-    if (!customerId) return;
-    
-    if (customerId === "create_new") {
-      setIsCustomerPanelOpen(true);
-    } else {
-      setSelectedCustomerId(customerId);
-    }
-  };
+  return installments;
+};
 
-
-  // Handle booking selection
-  const handleBookingSelection = (bookingId: string) => {
-    setSelectedBookingId(bookingId);
-
-    if (bookingId && bookingId !== "none") {
-      const selectedBooking = bookings.find(
-        (b: any) => b.id.toString() === bookingId,
+// Generate expenses from line items
+const generateExpenses = () => {
+  return lineItems
+    .filter(
+      (item) => item.purchasePrice && parseFloat(item.purchasePrice) > 0,
+    )
+    .map((item, index) => {
+      const leadType = leadTypes.find(
+        (lt: any) =>
+          (lt.name || lt.type_name || lt.typeName) === item.travelCategory,
       );
 
-      if (selectedBooking) {
-        setSelectedCustomerId(selectedBooking.customerId?.toString() || "");
+      const vendor = vendors.find(
+        (v: any) => v.id.toString() === item.vendor,
+      );
 
-        const bookingAmount =
-          selectedBooking.totalAmount ||
-          selectedBooking.total_amount ||
-          selectedBooking.amount ||
-          0;
-        const bookingPassengers =
-          selectedBooking.passengers || selectedBooking.passenger_count || 1;
-        const bookingPackage =
-          selectedBooking.packageName ||
-          selectedBooking.package_name ||
-          selectedBooking.travelPackage;
+      const purchasePrice = parseFloat(item.purchasePrice || "0");
+      const quantity = parseInt(item.quantity || "1");
 
-        const totalAmount = parseFloat(bookingAmount.toString()) || 0;
-        const unitPrice = totalAmount / bookingPassengers || 0;
-        const purchasePrice = unitPrice * 0.8;
-        const taxAmount = totalAmount * 0.18;
+      // Get lead type ID from packageId (packageId is the lead_type_id)
+      const leadTypeId = item.packageId && item.packageId !== "" ? parseInt(item.packageId) : null;
+      const selectedLeadType = leadTypes.find((lt: any) => lt.id === leadTypeId);
+      // Use lead type name as category, or travelCategory if available, or "other" as fallback
+      const categoryValue = selectedLeadType
+        ? (selectedLeadType.name || selectedLeadType.type_name || selectedLeadType.typeName || "other")
+        : (item.travelCategory || "other");
 
-        const newLineItems = [...lineItems];
-        newLineItems[0] = {
-          ...newLineItems[0],
-          itemTitle:
-            bookingPackage ||
-            `Booking ${selectedBooking.bookingNumber || selectedBooking.booking_number || selectedBooking.id}`,
-          quantity: bookingPassengers.toString(),
-          unitPrice: unitPrice.toString(),
-          sellingPrice: unitPrice.toString(),
-          purchasePrice: purchasePrice.toString(),
-          invoiceNumber:
-            selectedBooking.bookingNumber ||
-            selectedBooking.booking_number ||
-            `BK-${selectedBooking.id}`,
-          tax: taxAmount.toString(),
-          totalAmount: totalAmount,
-        };
-
-        setLineItems(newLineItems);
-
-        const bookingPaidAmount =
-          selectedBooking.paidAmount || selectedBooking.paid_amount || 0;
-        const bookingDiscount =
-          selectedBooking.discountAmount ||
-          selectedBooking.discount_amount ||
-          0;
-
-        setAmountPaid(bookingPaidAmount.toString());
-        setDiscountAmount(bookingDiscount.toString());
-      }
-    }
-  };
-
-
-  // Calculate due date based on invoice date and payment terms
-  const calculateDueDate = (date: string, terms: string, custom: string = "") => {
-    // Parse the date as local date to prevent timezone issues
-    const baseDate = parseLocalDate(date);
-    let daysToAdd = 0;
-
-    if (terms === "custom") {
-      daysToAdd = parseInt(custom) || 0;
-    } else {
-      daysToAdd = parseInt(terms) || 0;
-    }
-
-    // Add days using local date to prevent timezone shifts
-    const newDueDate = new Date(baseDate);
-    newDueDate.setDate(newDueDate.getDate() + daysToAdd);
-    return formatLocalDate(newDueDate);
-  };
-
-  // Handle invoice date change
-  const handleInvoiceDateChange = (date: string) => {
-    setInvoiceDate(date);
-    const newDueDate = calculateDueDate(date, paymentTerms, customDays);
-    setDueDate(newDueDate);
-  };
-
-  // Handle payment terms change
-  const handlePaymentTermsChange = (terms: string) => {
-    setPaymentTerms(terms);
-    const newDueDate = calculateDueDate(invoiceDate, terms, customDays);
-    setDueDate(newDueDate);
-  };
-
-  // Handle custom days change
-  const handleCustomDaysChange = (days: string) => {
-    setCustomDays(days);
-    if (paymentTerms === "custom") {
-      const newDueDate = calculateDueDate(invoiceDate, "custom", days);
-      setDueDate(newDueDate);
-    }
-  };
-
-  // Prepare invoice data for preview
-  const prepareInvoiceData = (forPreview = false): InvoiceData | null => {
-    const form = document.querySelector('form') as HTMLFormElement;
-    if (!form) return null;
-    
-    const formData = new FormData(form);
-    const selectedCustomer = customers.find((c: any) => c.id.toString() === selectedCustomerId);
-    
-    if (!selectedCustomer) {
-      toast({
-        title: "Error",
-        description: "Please select a customer",
-        variant: "destructive",
-      });
-      return null;
-    }
-
-    const grandTotal = calculateGrandTotal();
-    const discount = parseFloat(discountAmount || "0");
-    const subtotal = calculateSubtotal();
-    const tax = calculateTotalTax();
-    const finalAmount = grandTotal;
-
-    // Get company info from tenant or use defaults
-    const companyName = tenant?.companyName || "Company Name";
-    const companyEmail = tenant?.contactEmail || "company@example.com";
-    const companyPhone = tenant?.contactPhone || "";
-
-    const invoiceData: InvoiceData = {
-      invoiceNumber: invoiceNumber || (() => {
-        const prefix = invoiceSettings?.invoiceNumberPrefix || "INV";
-        const numberPart = invoiceNumberOnly || formData.get("invoiceNumber") as string || "001";
-        return numberPart ? `${prefix}${numberPart}` : `${prefix}001`;
-      })(),
-      issueDate: invoiceDate,
-      dueDate: dueDate,
-      customerName: selectedCustomer.name || selectedCustomer.customerName || "Customer",
-      customerEmail: selectedCustomer.email || selectedCustomer.customerEmail || "",
-      customerPhone: selectedCustomer.phone || selectedCustomer.customerPhone || "",
-      customerAddress: selectedCustomer.address || selectedCustomer.customerAddress || "",
-      companyName: companyName,
-      companyEmail: companyEmail,
-      companyPhone: companyPhone,
-      companyAddress: tenant?.address || "",
-      companyLogo: (tenant as any)?.logo && typeof (tenant as any).logo === "string" && (tenant as any).logo.trim() !== "" ? (tenant as any).logo : undefined,
-      items: lineItems
-        .filter(item => !forPreview || !item.isUnfulfilled) // Filter out unfulfilled items for preview
-        .map((item, originalIndex) => {
-          const sellingPrice = parseFloat(item.sellingPrice || "0");
-          const quantity = parseInt(item.quantity || "1");
-          const totalAmount = parseFloat(item.totalAmount?.toString() || "0");
-          const hasTitle = item.itemTitle && item.itemTitle.trim() !== "";
-          const hasPrice = sellingPrice > 0;
-          const hasTotal = totalAmount > 0;
-          const hasLeadType = item.packageId && item.packageId.trim() !== "";
-          
-          // Include items that have any meaningful data (title, price, total, or lead_type_id)
-          if (!hasTitle && !hasPrice && !hasTotal && !hasLeadType) {
-            return null;
-          }
-          
-          // Build description from available data
-          let description = item.itemTitle?.trim();
-          if (!description && hasLeadType) {
-            // Try to get lead type name from packageId
-            const leadTypeId = item.packageId ? parseInt(item.packageId) : null;
-            const leadType = leadTypes.find((lt: any) => lt.id === leadTypeId);
-            description = leadType ? (leadType.name || leadType.type_name || leadType.typeName) : `Item ${originalIndex + 1}`;
-          }
-          if (!description) {
-            description = `Item ${originalIndex + 1}`;
-          }
-          
-          return {
-            description: description,
-            quantity: quantity || 1,
-            unitPrice: sellingPrice,
-            totalPrice: totalAmount > 0 ? totalAmount : (sellingPrice * quantity),
-            date: item.date,
-          };
-        })
-        .filter((item) => item !== null) as { description: string; quantity: number; unitPrice: number; totalPrice: number; date?: string; }[],
-      subtotal: subtotal,
-      taxAmount: tax,
-      discountAmount: discount,
-      cancellationChargeAmount: paymentStatus === "cancelled" && hasCancellationCharge ? parseFloat(cancellationChargeAmount || "0") : undefined,
-      cancellationChargeNotes: paymentStatus === "cancelled" && hasCancellationCharge ? cancellationChargeNotes : undefined,
-      totalAmount: finalAmount,
-      currency: currencySymbol,
-      notes: notesContent || undefined,
-      paymentTerms: paymentTerms || undefined,
-      paymentStatus: paymentStatus,
-      paidAmount: paymentStatus === "paid"
-        ? calculateGrandTotal() // Full payment when status is "paid"
-        : isEditMode 
-          ? existingPaidAmount + parseFloat(amountPaid || "0") // Add new payment to existing
-          : parseFloat(amountPaid || "0"),
-      installments: enableInstallments ? calculateInstallments().map(inst => ({
-        installmentNumber: inst.installmentNumber,
-        dueDate: inst.dueDate,
-        amount: inst.amount,
-      })) : undefined,
-    };
-
-    return invoiceData;
-  };
-
-  // Handle save directly
-  const handleCreateInvoice = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    handlePreview();
-  };
-
-  // Handle preview button click
-  const handlePreview = () => {
-    const invoiceData = prepareInvoiceData(true); // Flag to exclude unfulfilled items from preview
-    if (invoiceData) {
-      setPreviewInvoiceData(invoiceData);
-      setShowPreview(true);
-    }
-  };
-
-  // Handle actual save from preview
-  const handleSaveFromPreview = async () => {
-    if (!previewInvoiceData) return;
-
-    const form = document.querySelector('form') as HTMLFormElement;
-    if (!form) return;
-    
-    const formData = new FormData(form);
-
-    const grandTotal = calculateGrandTotal();
-    const discount = parseFloat(discountAmount || "0");
-    const finalAmount = grandTotal;
-
-    // Combine auto-generated and manual expenses
-    // Separate expenses into:
-    // 1. New expenses (to be consolidated into invoice expense)
-    // 2. Existing expenses from expense create page (to be kept as separate expenses)
-    const invoiceNumber = formData.get("invoiceNumber") as string;
-    
-    // Auto-generated expenses from line items
-    const autoExpenses = generateExpenses().map((expense, index) => {
-      const totalAmount = expense.amount || 0;
-      const expenseNumber = expense.invoiceNumber || expense.voucherNumber || `${invoiceNumber}-EXP-${index + 1}`;
-      
       return {
-        title: expense.title,
-        amount: totalAmount,
-        quantity: expense.quantity || 1,
-        category: "other", // Always set category to "other"
-        subcategory: "other", // Always set subcategory to "other"
-        vendorId: expense.vendorId,
-        leadTypeId: expense.leadTypeId, // Already set from packageId
-        expenseType: expense.expenseType,
-        expenseDate: formData.get("issueDate") as string,
-        expenseNumber: expenseNumber,
-        paymentMethod: "bank_transfer",
-        currency: invoiceSettings?.defaultCurrency || "USD",
-        taxAmount: 0,
-        taxRate: 0,
-        amountPaid: 0,
-        amountDue: totalAmount,
-        status: "pending",
-        notes: `Auto-generated from invoice ${invoiceNumber} - ${expense.invoiceNumber || expense.voucherNumber || ""}`,
+        itemIndex: index,
+        title: item.itemTitle || `Expense for ${item.travelCategory || "other"}`,
+        purchasePrice: purchasePrice, // Purchase price per unit
+        amount: purchasePrice * quantity, // Multiply purchase price by quantity
+        category: categoryValue, // Use lead type name from packageId, or travelCategory, or "other"
+        vendorId: item.vendor !== "none" ? parseInt(item.vendor) : null,
+        vendorName: vendor
+          ? vendor.companyName || vendor.name
+          : "Not specified",
+        leadTypeId: leadTypeId, // Use packageId as lead_type_id
+        leadTypeName: selectedLeadType?.name || selectedLeadType?.type_name || selectedLeadType?.typeName || "Not specified",
+        expenseType: "purchase",
+        quantity: quantity,
+        invoiceNumber: item.invoiceNumber,
+        voucherNumber: item.voucherNumber,
+      };
+    });
+};
+
+// Add manual expense
+const addManualExpense = () => {
+  setManualExpenses([
+    ...manualExpenses,
+    {
+      title: "",
+      purchasePrice: "",
+      amount: "",
+      category: "",
+      vendorId: "",
+      quantity: "1",
+      expenseType: "manual",
+    },
+  ]);
+};
+
+// Update manual expense
+const updateManualExpense = (index: number, field: string, value: any) => {
+  const updated = [...manualExpenses];
+  updated[index] = { ...updated[index], [field]: value };
+
+  // Calculate amount when purchasePrice or quantity changes
+  if (field === "purchasePrice" || field === "quantity") {
+    const purchasePrice = parseFloat(updated[index].purchasePrice || "0");
+    const quantity = parseInt(updated[index].quantity || "1");
+    updated[index].amount = (purchasePrice * quantity).toFixed(2);
+  }
+
+  setManualExpenses(updated);
+};
+
+// Remove manual expense
+const removeManualExpense = (index: number) => {
+  setManualExpenses(manualExpenses.filter((_, i) => i !== index));
+};
+
+// Get all expense line items from API (flattened)
+const getExistingExpenseLineItems = () => {
+  const allLineItems: any[] = [];
+  groupedExpenses.forEach((expenseGroup) => {
+    expenseGroup.lineItems.forEach((lineItem: any) => {
+      if (!deletedExpenseLineItemIds.has(lineItem.id)) {
+        const editedData = editedExpenseLineItems.get(lineItem.id) || lineItem;
+        allLineItems.push({
+          ...lineItem,
+          ...editedData,
+          isFromAPI: true,
+          isExisting: true,
+        });
+      }
+    });
+  });
+  return allLineItems;
+};
+
+// Get auto-generated expenses from line items (only NEW ones, not already in API)
+const getNewAutoGeneratedExpenses = () => {
+  const existingLineItems = getExistingExpenseLineItems();
+  const autoExpenses = generateExpenses();
+
+  // Filter out expenses that already exist in API
+  // Match by title and purchase price to avoid duplicates
+  return autoExpenses.filter((autoExp: any) => {
+    // Check if this expense already exists in API expenses
+    const exists = existingLineItems.some((existing: any) => {
+      // Match by title and purchase price (with some tolerance for floating point)
+      const titleMatch = existing.title === autoExp.title ||
+        (existing.title && autoExp.title &&
+          existing.title.toLowerCase().includes(autoExp.title.toLowerCase()));
+      const priceMatch = Math.abs(parseFloat(existing.purchasePrice || "0") - parseFloat(autoExp.purchasePrice || "0")) < 0.01;
+      return titleMatch && priceMatch;
+    });
+    return !exists; // Only return if it doesn't exist
+  });
+};
+
+// Combine all expenses for display in ONE unified table
+const getAllExpenses = () => {
+  // 1. Existing expense line items from API (editable)
+  const existingLineItems = getExistingExpenseLineItems().map((item, idx) => ({
+    ...item,
+    itemIndex: `E-${idx + 1}`,
+    vendorName: item.vendorId
+      ? vendors.find((v: any) => v.id.toString() === item.vendorId)?.companyName || "N/A"
+      : "N/A",
+  }));
+
+  // 2. New auto-generated expenses from line items (only NEW ones)
+  const newAutoExpenses = getNewAutoGeneratedExpenses().map((exp, idx) => ({
+    ...exp,
+    itemIndex: `A-${idx + 1}`,
+    isFromAPI: false,
+    isExisting: false,
+    vendorName: exp.vendorId
+      ? vendors.find((v: any) => v.id.toString() === exp.vendorId)?.companyName || "Not specified"
+      : "Not specified",
+  }));
+
+  // 3. New manual expenses
+  const manualExpensesFormatted = manualExpenses
+    .filter((exp: any) => !exp.isFromAPI)
+    .map((exp, idx) => {
+      const purchasePrice = parseFloat(exp.purchasePrice || "0");
+      const quantity = parseInt(exp.quantity || "1");
+      const amount = purchasePrice * quantity;
+
+      return {
+        ...exp,
+        itemIndex: `M-${idx + 1}`,
+        purchasePrice: purchasePrice,
+        amount: amount,
+        quantity: quantity,
+        isFromAPI: false,
+        isExisting: false,
+        vendorName: exp.vendorId
+          ? vendors.find((v: any) => v.id.toString() === exp.vendorId)
+            ?.companyName || "Unknown"
+          : "Not specified",
       };
     });
 
-    // Manual expenses - all new expenses (from line items or manually added) should be added to auto-generated expense
-    // In edit mode, all expenses (auto-generated from line items + manual) are consolidated into the auto-generated expense
-    const newManualExpenses: any[] = [];
-    
-    // Only include expenses that are NOT from API (new expenses being added)
-    manualExpenses.filter((expense) => !expense.isFromAPI).forEach((expense) => {
-      const purchasePrice = parseFloat(expense.purchasePrice || "0");
-      const quantity = parseInt(expense.quantity || "1");
+  // Combine all into one array
+  return [...existingLineItems, ...newAutoExpenses, ...manualExpensesFormatted];
+};
+
+// Calculate total expenses for profit calculation (includes ALL expenses: auto-generated + from expense page)
+const getTotalExpensesForProfit = () => {
+  if (isEditMode && allExpensesForProfit.length > 0) {
+    // In edit mode, use all expenses from API (auto-generated + from expense page) for profit calculation
+    return allExpensesForProfit.reduce((sum: number, exp: any) => {
+      // Sum up all line items if they exist, otherwise use expense amount
+      if (exp.lineItems && exp.lineItems.length > 0) {
+        const lineItemsTotal = exp.lineItems.reduce((lineSum: number, lineItem: any) => {
+          return lineSum + parseFloat(lineItem.total_amount || lineItem.amount || "0");
+        }, 0);
+        return sum + lineItemsTotal;
+      }
+      return sum + parseFloat(exp.amount || "0");
+    }, 0);
+  } else {
+    // In create mode or no expenses, use expenses from form
+    return getAllExpenses().reduce((sum, exp) => sum + (parseFloat(exp.amount) || 0), 0);
+  }
+};
+
+// Handle customer selection
+const handleCustomerSelection = (customerId: string | null) => {
+  if (!customerId) return;
+
+  if (customerId === "create_new") {
+    setIsCustomerPanelOpen(true);
+  } else {
+    setSelectedCustomerId(customerId);
+  }
+};
+
+
+// Handle booking selection
+const handleBookingSelection = (bookingId: string) => {
+  setSelectedBookingId(bookingId);
+
+  if (bookingId && bookingId !== "none") {
+    const selectedBooking = bookings.find(
+      (b: any) => b.id.toString() === bookingId,
+    );
+
+    if (selectedBooking) {
+      setSelectedCustomerId(selectedBooking.customerId?.toString() || "");
+
+      const bookingAmount =
+        selectedBooking.totalAmount ||
+        selectedBooking.total_amount ||
+        selectedBooking.amount ||
+        0;
+      const bookingPassengers =
+        selectedBooking.passengers || selectedBooking.passenger_count || 1;
+      const bookingPackage =
+        selectedBooking.packageName ||
+        selectedBooking.package_name ||
+        selectedBooking.travelPackage;
+
+      const totalAmount = parseFloat(bookingAmount.toString()) || 0;
+      const unitPrice = totalAmount / bookingPassengers || 0;
+      const purchasePrice = unitPrice * 0.8;
+      const taxAmount = totalAmount * 0.18;
+
+      const newLineItems = [...lineItems];
+      newLineItems[0] = {
+        ...newLineItems[0],
+        itemTitle:
+          bookingPackage ||
+          `Booking ${selectedBooking.bookingNumber || selectedBooking.booking_number || selectedBooking.id}`,
+        quantity: bookingPassengers.toString(),
+        unitPrice: unitPrice.toString(),
+        sellingPrice: unitPrice.toString(),
+        purchasePrice: purchasePrice.toString(),
+        invoiceNumber:
+          selectedBooking.bookingNumber ||
+          selectedBooking.booking_number ||
+          `BK-${selectedBooking.id}`,
+        tax: taxAmount.toString(),
+        totalAmount: totalAmount,
+      };
+
+      setLineItems(newLineItems);
+
+      const bookingPaidAmount =
+        selectedBooking.paidAmount || selectedBooking.paid_amount || 0;
+      const bookingDiscount =
+        selectedBooking.discountAmount ||
+        selectedBooking.discount_amount ||
+        0;
+
+      setAmountPaid(bookingPaidAmount.toString());
+      setDiscountAmount(bookingDiscount.toString());
+    }
+  }
+};
+
+
+// Calculate due date based on invoice date and payment terms
+const calculateDueDate = (date: string, terms: string, custom: string = "") => {
+  // Parse the date as local date to prevent timezone issues
+  const baseDate = parseLocalDate(date);
+  let daysToAdd = 0;
+
+  if (terms === "custom") {
+    daysToAdd = parseInt(custom) || 0;
+  } else {
+    daysToAdd = parseInt(terms) || 0;
+  }
+
+  // Add days using local date to prevent timezone shifts
+  const newDueDate = new Date(baseDate);
+  newDueDate.setDate(newDueDate.getDate() + daysToAdd);
+  return formatLocalDate(newDueDate);
+};
+
+// Handle invoice date change
+const handleInvoiceDateChange = (date: string) => {
+  setInvoiceDate(date);
+  const newDueDate = calculateDueDate(date, paymentTerms, customDays);
+  setDueDate(newDueDate);
+};
+
+// Handle payment terms change
+const handlePaymentTermsChange = (terms: string) => {
+  setPaymentTerms(terms);
+  const newDueDate = calculateDueDate(invoiceDate, terms, customDays);
+  setDueDate(newDueDate);
+};
+
+// Handle custom days change
+const handleCustomDaysChange = (days: string) => {
+  setCustomDays(days);
+  if (paymentTerms === "custom") {
+    const newDueDate = calculateDueDate(invoiceDate, "custom", days);
+    setDueDate(newDueDate);
+  }
+};
+
+// Prepare invoice data for preview
+const prepareInvoiceData = (forPreview = false): InvoiceData | null => {
+  const form = document.querySelector('form') as HTMLFormElement;
+  if (!form) return null;
+
+  const formData = new FormData(form);
+  const selectedCustomer = customers.find((c: any) => c.id.toString() === selectedCustomerId);
+
+  if (!selectedCustomer) {
+    toast({
+      title: "Error",
+      description: "Please select a customer",
+      variant: "destructive",
+    });
+    return null;
+  }
+
+  const grandTotal = calculateGrandTotal();
+  const discount = parseFloat(discountAmount || "0");
+  const subtotal = calculateSubtotal();
+  const tax = calculateTotalTax();
+  const finalAmount = grandTotal;
+
+  // Get company info from tenant or use defaults
+  const companyName = tenant?.companyName || "Company Name";
+  const companyEmail = tenant?.contactEmail || "company@example.com";
+  const companyPhone = tenant?.contactPhone || "";
+
+  const invoiceData: InvoiceData = {
+    invoiceNumber: invoiceNumber || (() => {
+      const prefix = invoiceSettings?.invoiceNumberPrefix || "INV";
+      const numberPart = invoiceNumberOnly || formData.get("invoiceNumber") as string || "001";
+      return numberPart ? `${prefix}${numberPart}` : `${prefix}001`;
+    })(),
+    issueDate: invoiceDate,
+    dueDate: dueDate,
+    customerName: selectedCustomer.name || selectedCustomer.customerName || "Customer",
+    customerEmail: selectedCustomer.email || selectedCustomer.customerEmail || "",
+    customerPhone: selectedCustomer.phone || selectedCustomer.customerPhone || "",
+    customerAddress: selectedCustomer.address || selectedCustomer.customerAddress || "",
+    companyName: companyName,
+    companyEmail: companyEmail,
+    companyPhone: companyPhone,
+    companyAddress: tenant?.address || "",
+    companyLogo: (tenant as any)?.logo && typeof (tenant as any).logo === "string" && (tenant as any).logo.trim() !== "" ? (tenant as any).logo : undefined,
+    items: lineItems
+      .map((item, originalIndex) => {
+        const sellingPrice = parseFloat(item.sellingPrice || "0");
+        const quantity = parseInt(item.quantity || "1");
+        const totalAmount = parseFloat(item.totalAmount?.toString() || "0");
+        const hasTitle = item.itemTitle && item.itemTitle.trim() !== "";
+        const hasPrice = sellingPrice > 0;
+        const hasTotal = totalAmount > 0;
+        const hasLeadType = item.packageId && item.packageId.trim() !== "";
+
+        // Include items that have any meaningful data (title, price, total, or lead_type_id)
+        if (!hasTitle && !hasPrice && !hasTotal && !hasLeadType) {
+          return null;
+        }
+
+        // Build description from available data
+        let description = item.itemTitle?.trim();
+        if (!description && hasLeadType) {
+          // Try to get lead type name from packageId
+          const leadTypeId = item.packageId ? parseInt(item.packageId) : null;
+          const leadType = leadTypes.find((lt: any) => lt.id === leadTypeId);
+          description = leadType ? (leadType.name || leadType.type_name || leadType.typeName) : `Item ${originalIndex + 1}`;
+        }
+        if (!description) {
+          description = `Item ${originalIndex + 1}`;
+        }
+
+        return {
+          description: description,
+          quantity: quantity || 1,
+          unitPrice: sellingPrice,
+          totalPrice: totalAmount > 0 ? totalAmount : (sellingPrice * quantity),
+          date: item.date,
+          isUnfulfilled: item.isUnfulfilled,
+        };
+      })
+      .filter((item) => item !== null) as { description: string; quantity: number; unitPrice: number; totalPrice: number; date?: string; }[],
+    subtotal: subtotal,
+    taxAmount: tax,
+    discountAmount: discount,
+    cancellationChargeAmount: paymentStatus === "cancelled" && hasCancellationCharge ? parseFloat(cancellationChargeAmount || "0") : undefined,
+    cancellationChargeNotes: paymentStatus === "cancelled" && hasCancellationCharge ? cancellationChargeNotes : undefined,
+    totalAmount: finalAmount,
+    currency: currencySymbol,
+    notes: notesContent || undefined,
+    paymentTerms: paymentTerms || undefined,
+    paymentStatus: paymentStatus,
+    paidAmount: paymentStatus === "paid"
+      ? calculateGrandTotal() // Full payment when status is "paid"
+      : isEditMode
+        ? existingPaidAmount + parseFloat(amountPaid || "0") // Add new payment to existing
+        : parseFloat(amountPaid || "0"),
+    installments: enableInstallments ? calculateInstallments().map(inst => ({
+      installmentNumber: inst.installmentNumber,
+      dueDate: inst.dueDate,
+      amount: inst.amount,
+    })) : undefined,
+  };
+
+  return invoiceData;
+};
+
+// Handle save directly
+const handleCreateInvoice = async (e: React.FormEvent<HTMLFormElement>) => {
+  e.preventDefault();
+  handlePreview();
+};
+
+// Handle preview button click
+const handlePreview = () => {
+  const invoiceData = prepareInvoiceData(true); // Flag to exclude unfulfilled items from preview
+  if (invoiceData) {
+    setPreviewInvoiceData(invoiceData);
+    setShowPreview(true);
+  }
+};
+
+// Handle actual save from preview
+const handleSaveFromPreview = async () => {
+  if (!previewInvoiceData) return;
+
+  const form = document.querySelector('form') as HTMLFormElement;
+  if (!form) return;
+
+  const formData = new FormData(form);
+
+  const grandTotal = calculateGrandTotal();
+  const discount = parseFloat(discountAmount || "0");
+  const finalAmount = grandTotal;
+
+  // Combine auto-generated and manual expenses
+  // Separate expenses into:
+  // 1. New expenses (to be consolidated into invoice expense)
+  // 2. Existing expenses from expense create page (to be kept as separate expenses)
+  const invoiceNumber = formData.get("invoiceNumber") as string;
+
+  // Auto-generated expenses from line items
+  const autoExpenses = generateExpenses().map((expense, index) => {
+    const totalAmount = expense.amount || 0;
+    const expenseNumber = expense.invoiceNumber || expense.voucherNumber || `${invoiceNumber}-EXP-${index + 1}`;
+
+    return {
+      title: expense.title,
+      amount: totalAmount,
+      quantity: expense.quantity || 1,
+      category: "other", // Always set category to "other"
+      subcategory: "other", // Always set subcategory to "other"
+      vendorId: expense.vendorId,
+      leadTypeId: expense.leadTypeId, // Already set from packageId
+      expenseType: expense.expenseType,
+      expenseDate: formData.get("issueDate") as string,
+      expenseNumber: expenseNumber,
+      paymentMethod: "bank_transfer",
+      currency: invoiceSettings?.defaultCurrency || "USD",
+      taxAmount: 0,
+      taxRate: 0,
+      amountPaid: 0,
+      amountDue: totalAmount,
+      status: "pending",
+      notes: `Auto-generated from invoice ${invoiceNumber} - ${expense.invoiceNumber || expense.voucherNumber || ""}`,
+    };
+  });
+
+  // Manual expenses - all new expenses (from line items or manually added) should be added to auto-generated expense
+  // In edit mode, all expenses (auto-generated from line items + manual) are consolidated into the auto-generated expense
+  const newManualExpenses: any[] = [];
+
+  // Only include expenses that are NOT from API (new expenses being added)
+  manualExpenses.filter((expense) => !expense.isFromAPI).forEach((expense) => {
+    const purchasePrice = parseFloat(expense.purchasePrice || "0");
+    const quantity = parseInt(expense.quantity || "1");
+    const amount = purchasePrice * quantity;
+
+    newManualExpenses.push({
+      title: expense.title || "Manual Expense",
+      amount: amount,
+      quantity: quantity,
+      category: "other", // Always set category to "other"
+      subcategory: "other", // Always set subcategory to "other"
+      vendorId: expense.vendorId && expense.vendorId !== "none" ? parseInt(expense.vendorId) : null,
+      leadTypeId: expense.leadTypeId || expense.packageId && expense.packageId !== "" ? parseInt(expense.packageId) : null,
+      expenseType: "manual",
+      expenseDate: formData.get("issueDate") as string,
+      expenseNumber: expense.expenseNumber || `${invoiceNumber}-MAN-${newManualExpenses.length + 1}`,
+      paymentMethod: "bank_transfer",
+      currency: invoiceSettings?.defaultCurrency || "USD",
+      taxAmount: 0,
+      taxRate: 0,
+      amountPaid: 0,
+      amountDue: amount,
+      status: "pending",
+      notes: `Manual expense from invoice ${invoiceNumber}`,
+    });
+  });
+
+  // Include edited expense line items from API (excluding deleted ones)
+  const editedExpensesFromAPI: any[] = [];
+  editedExpenseLineItems.forEach((editedItem, lineItemId) => {
+    if (!deletedExpenseLineItemIds.has(lineItemId)) {
+      const purchasePrice = parseFloat(editedItem.purchasePrice || "0");
+      const quantity = parseInt(editedItem.quantity || "1");
       const amount = purchasePrice * quantity;
-      
-      newManualExpenses.push({
-        title: expense.title || "Manual Expense",
+
+      editedExpensesFromAPI.push({
+        title: editedItem.title || "Expense",
         amount: amount,
         quantity: quantity,
         category: "other", // Always set category to "other"
         subcategory: "other", // Always set subcategory to "other"
-        vendorId: expense.vendorId && expense.vendorId !== "none" ? parseInt(expense.vendorId) : null,
-        leadTypeId: expense.leadTypeId || expense.packageId && expense.packageId !== "" ? parseInt(expense.packageId) : null,
-        expenseType: "manual",
+        vendorId: editedItem.vendorId && editedItem.vendorId !== "none" ? parseInt(editedItem.vendorId) : null,
+        leadTypeId: editedItem.leadTypeId || editedItem.packageId && editedItem.packageId !== "" ? parseInt(editedItem.packageId) : null,
+        expenseType: "purchase",
         expenseDate: formData.get("issueDate") as string,
-        expenseNumber: expense.expenseNumber || `${invoiceNumber}-MAN-${newManualExpenses.length + 1}`,
+        expenseNumber: `${invoiceNumber}-EDT-${editedExpensesFromAPI.length + 1}`,
         paymentMethod: "bank_transfer",
         currency: invoiceSettings?.defaultCurrency || "USD",
         taxAmount: 0,
@@ -2441,348 +2486,318 @@ export default function InvoiceCreate() {
         amountPaid: 0,
         amountDue: amount,
         status: "pending",
-        notes: `Manual expense from invoice ${invoiceNumber}`,
+        notes: editedItem.notes || `Edited expense from invoice ${invoiceNumber}`,
       });
-    });
-
-    // Include edited expense line items from API (excluding deleted ones)
-    const editedExpensesFromAPI: any[] = [];
-    editedExpenseLineItems.forEach((editedItem, lineItemId) => {
-      if (!deletedExpenseLineItemIds.has(lineItemId)) {
-        const purchasePrice = parseFloat(editedItem.purchasePrice || "0");
-        const quantity = parseInt(editedItem.quantity || "1");
-        const amount = purchasePrice * quantity;
-        
-        editedExpensesFromAPI.push({
-          title: editedItem.title || "Expense",
-          amount: amount,
-          quantity: quantity,
-          category: "other", // Always set category to "other"
-          subcategory: "other", // Always set subcategory to "other"
-          vendorId: editedItem.vendorId && editedItem.vendorId !== "none" ? parseInt(editedItem.vendorId) : null,
-          leadTypeId: editedItem.leadTypeId || editedItem.packageId && editedItem.packageId !== "" ? parseInt(editedItem.packageId) : null,
-          expenseType: "purchase",
-          expenseDate: formData.get("issueDate") as string,
-          expenseNumber: `${invoiceNumber}-EDT-${editedExpensesFromAPI.length + 1}`,
-          paymentMethod: "bank_transfer",
-          currency: invoiceSettings?.defaultCurrency || "USD",
-          taxAmount: 0,
-          taxRate: 0,
-          amountPaid: 0,
-          amountDue: amount,
-          status: "pending",
-          notes: editedItem.notes || `Edited expense from invoice ${invoiceNumber}`,
-        });
-      }
-    });
-
-    // All expenses (auto-generated from line items + new manual + edited from API) will be consolidated into the auto-generated expense
-    // The backend will update the existing auto-generated expense or create a new one
-    const expenses = [...autoExpenses, ...newManualExpenses, ...editedExpensesFromAPI];
-
-    const invoiceData = {
-      invoiceNumber: formData.get("invoiceNumber") as string,
-      customerId: parseInt(selectedCustomerId),
-      bookingId:
-        selectedBookingId && selectedBookingId !== "none"
-          ? parseInt(selectedBookingId)
-          : null,
-      issueDate: formData.get("issueDate") as string,
-      dueDate: formData.get("dueDate") as string,
-      totalAmount: finalAmount,
-      paidAmount: paymentStatus === "paid"
-        ? calculateGrandTotal() // Full payment when status is "paid"
-        : isEditMode 
-          ? existingPaidAmount + parseFloat(amountPaid || "0") // Add new payment to existing
-          : parseFloat(amountPaid || "0"),
-      subtotal: grandTotal,
-      taxAmount: lineItems.reduce(
-        (total, item) => total + parseFloat(item.tax || "0"),
-        0,
-      ),
-      discountAmount: discount,
-      status: paymentStatus,
-      currency: invoiceSettings?.defaultCurrency || "USD",
-      hasCancellationCharge: paymentStatus === "cancelled" ? hasCancellationCharge : false,
-      cancellationChargeAmount: paymentStatus === "cancelled" && hasCancellationCharge ? parseFloat(cancellationChargeAmount || "0") : 0,
-      cancellationChargeNotes: paymentStatus === "cancelled" && hasCancellationCharge ? cancellationChargeNotes : "",
-      notes: notesContent || undefined,
-      additionalNotes: additionalNotesContent || undefined,
-      // Attachments will be uploaded before invoice creation
-      attachments: undefined, // Will be set after files are uploaded
-      paymentTerms: paymentTerms || undefined,
-      paymentMethod: paymentMethod.length > 0 ? paymentMethod : ["credit_card"],
-      isTaxInclusive: isTaxInclusive,
-      enableReminder,
-      reminderFrequency: enableReminder ? reminderFrequency : null,
-      reminderSpecificDate: enableReminder && reminderFrequency === "specific_date" ? reminderSpecificDate : null,
-      lineItems: lineItems.map((item) => ({
-        ...item,
-        quantity: parseInt(item.quantity || "1"),
-        unitPrice: parseFloat(item.unitPrice || "0"),
-        sellingPrice: parseFloat(item.sellingPrice || "0"),
-        purchasePrice: parseFloat(item.purchasePrice || "0"),
-        tax: parseFloat(item.tax || "0"),
-        additionalCommission: parseFloat(item.additionalCommission || "0"),
-        productId: item.productId ? parseInt(item.productId) : null,
-      })),
-      expenses, // Include auto-generated expenses
-      installments: enableInstallments ? calculateInstallments().map(inst => ({
-        installmentNumber: inst.installmentNumber,
-        dueDate: inst.dueDate,
-        amount: inst.amount,
-        status: "pending",
-        paidAmount: 0,
-      })) : undefined,
-    };
-
-    // Upload files first if there are any attachments
-    if (invoiceAttachments.length > 0) {
-      try {
-        const uploadedUrls: Array<{ name: string; url: string; type?: string }> = [];
-        
-        for (const attachment of invoiceAttachments) {
-          const token = auth.getToken();
-          // Encode filename to handle special characters (non-ISO-8859-1)
-          // Use encodeURIComponent to safely encode the filename
-          const encodedFilename = encodeURIComponent(attachment.name);
-          
-          const uploadResponse = await fetch('/api/objects/store', {
-            method: 'PUT',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'X-Filename': encodedFilename,
-              'Content-Type': attachment.type || 'application/octet-stream',
-            },
-            body: attachment.file,
-          });
-          
-          if (!uploadResponse.ok) {
-            const errorText = await uploadResponse.text();
-            throw new Error(`Failed to upload ${attachment.name}: ${errorText}`);
-          }
-          
-          const uploadResult = await uploadResponse.json();
-          const fileUrl = uploadResult.publicUrl || uploadResult.objectPath || uploadResult.url || uploadResult.location;
-          
-          if (fileUrl) {
-            uploadedUrls.push({
-              name: attachment.name,
-              url: fileUrl.startsWith('http') ? fileUrl : fileUrl.startsWith('/') ? fileUrl : `/${fileUrl}`,
-              type: attachment.type,
-            });
-          }
-        }
-        
-        // Combine existing uploaded attachments with newly uploaded ones
-        const existingAttachments = uploadedAttachments.map(a => ({ name: a.name, url: a.url, type: a.type }));
-        const allAttachments = [...existingAttachments, ...uploadedUrls];
-        
-        // Update invoice data with all attachments
-        if (allAttachments.length > 0) {
-          (invoiceData as any).attachments = allAttachments;
-        }
-        
-        if (uploadedUrls.length > 0) {
-          toast({
-            title: "Files Uploaded",
-            description: `${uploadedUrls.length} file(s) uploaded successfully`,
-          });
-        }
-      } catch (error: any) {
-        console.error("Error uploading files:", error);
-        toast({
-          title: "Upload Error",
-          description: `Failed to upload some files: ${error.message}`,
-          variant: "destructive",
-        });
-        // Continue with invoice creation even if file upload fails
-      }
     }
+  });
 
-    // Upload internal attachments (for internal use only - not sent with emails)
-    if (internalAttachments.length > 0) {
-      try {
-        const uploadedInternalUrls: Array<{ name: string; url: string; type?: string }> = [];
-        
-        for (const attachment of internalAttachments) {
-          const token = auth.getToken();
-          const encodedFilename = encodeURIComponent(attachment.name);
-          
-          const uploadResponse = await fetch('/api/objects/store', {
-            method: 'PUT',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'X-Filename': encodedFilename,
-              'Content-Type': attachment.type || 'application/octet-stream',
-            },
-            body: attachment.file,
-          });
-          
-          if (!uploadResponse.ok) {
-            const errorText = await uploadResponse.text();
-            throw new Error(`Failed to upload ${attachment.name}: ${errorText}`);
-          }
-          
-          const uploadResult = await uploadResponse.json();
-          const fileUrl = uploadResult.publicUrl || uploadResult.objectPath || uploadResult.url || uploadResult.location;
-          
-          if (fileUrl) {
-            uploadedInternalUrls.push({
-              name: attachment.name,
-              url: fileUrl.startsWith('http') ? fileUrl : fileUrl.startsWith('/') ? fileUrl : `/${fileUrl}`,
-              type: attachment.type,
-            });
-          }
-        }
-        
-        const existingInternal = uploadedInternalAttachments.map(a => ({ name: a.name, url: a.url, type: a.type }));
-        const allInternalAttachments = [...existingInternal, ...uploadedInternalUrls];
-        
-        if (allInternalAttachments.length > 0) {
-          (invoiceData as any).internalAttachments = allInternalAttachments;
-        }
-      } catch (error: any) {
-        console.error("Error uploading internal files:", error);
-        toast({
-          title: "Upload Error",
-          description: `Failed to upload some internal files: ${error.message}`,
-          variant: "destructive",
-        });
-      }
-    } else if (uploadedInternalAttachments.length > 0) {
-      // Use existing internal attachments when no new files to upload
-      (invoiceData as any).internalAttachments = uploadedInternalAttachments.map(a => ({ name: a.name, url: a.url, type: a.type }));
-    }
+  // All expenses (auto-generated from line items + new manual + edited from API) will be consolidated into the auto-generated expense
+  // The backend will update the existing auto-generated expense or create a new one
+  const expenses = [...autoExpenses, ...newManualExpenses, ...editedExpensesFromAPI];
 
-    if (isEditMode && invoiceId) {
-      updateInvoiceMutation.mutate(invoiceData);
-    } else {
-      createInvoiceMutation.mutate(invoiceData);
-    }
+  const invoiceData = {
+    invoiceNumber: formData.get("invoiceNumber") as string,
+    customerId: parseInt(selectedCustomerId),
+    bookingId:
+      selectedBookingId && selectedBookingId !== "none"
+        ? parseInt(selectedBookingId)
+        : null,
+    issueDate: formData.get("issueDate") as string,
+    dueDate: formData.get("dueDate") as string,
+    totalAmount: finalAmount,
+    paidAmount: paymentStatus === "paid"
+      ? calculateGrandTotal() // Full payment when status is "paid"
+      : isEditMode
+        ? existingPaidAmount + parseFloat(amountPaid || "0") // Add new payment to existing
+        : parseFloat(amountPaid || "0"),
+    subtotal: grandTotal,
+    taxAmount: lineItems.reduce(
+      (total, item) => total + parseFloat(item.tax || "0"),
+      0,
+    ),
+    discountAmount: discount,
+    status: paymentStatus,
+    currency: invoiceSettings?.defaultCurrency || "USD",
+    hasCancellationCharge: paymentStatus === "cancelled" ? hasCancellationCharge : false,
+    cancellationChargeAmount: paymentStatus === "cancelled" && hasCancellationCharge ? parseFloat(cancellationChargeAmount || "0") : 0,
+    cancellationChargeNotes: paymentStatus === "cancelled" && hasCancellationCharge ? cancellationChargeNotes : "",
+    notes: notesContent || undefined,
+    additionalNotes: additionalNotesContent || undefined,
+    // Attachments will be uploaded before invoice creation
+    attachments: undefined, // Will be set after files are uploaded
+    paymentTerms: paymentTerms || undefined,
+    paymentMethod: paymentMethod.length > 0 ? paymentMethod : ["credit_card"],
+    isTaxInclusive: isTaxInclusive,
+    enableReminder,
+    reminderFrequency: enableReminder ? reminderFrequency : null,
+    reminderSpecificDate: enableReminder && reminderFrequency === "specific_date" ? reminderSpecificDate : null,
+    lineItems: lineItems.map((item) => ({
+      ...item,
+      quantity: parseInt(item.quantity || "1"),
+      unitPrice: parseFloat(item.unitPrice || "0"),
+      sellingPrice: parseFloat(item.sellingPrice || "0"),
+      purchasePrice: parseFloat(item.purchasePrice || "0"),
+      tax: parseFloat(item.tax || "0"),
+      additionalCommission: parseFloat(item.additionalCommission || "0"),
+      productId: item.productId ? parseInt(item.productId) : null,
+    })),
+    expenses, // Include auto-generated expenses
+    installments: enableInstallments ? calculateInstallments().map(inst => ({
+      installmentNumber: inst.installmentNumber,
+      dueDate: inst.dueDate,
+      amount: inst.amount,
+      status: "pending",
+      paidAmount: 0,
+    })) : undefined,
   };
 
-  const [currency, setCurrency] = useState(invoiceSettings?.defaultCurrency || "USD");
+  // Upload files first if there are any attachments
+  if (invoiceAttachments.length > 0) {
+    try {
+      const uploadedUrls: Array<{ name: string; url: string; type?: string }> = [];
 
-  // Update currency when invoice settings change
-  useEffect(() => {
-    if (invoiceSettings?.defaultCurrency) {
-      setCurrency(invoiceSettings.defaultCurrency);
+      for (const attachment of invoiceAttachments) {
+        const token = auth.getToken();
+        // Encode filename to handle special characters (non-ISO-8859-1)
+        // Use encodeURIComponent to safely encode the filename
+        const encodedFilename = encodeURIComponent(attachment.name);
+
+        const uploadResponse = await fetch('/api/objects/store', {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'X-Filename': encodedFilename,
+            'Content-Type': attachment.type || 'application/octet-stream',
+          },
+          body: attachment.file,
+        });
+
+        if (!uploadResponse.ok) {
+          const errorText = await uploadResponse.text();
+          throw new Error(`Failed to upload ${attachment.name}: ${errorText}`);
+        }
+
+        const uploadResult = await uploadResponse.json();
+        const fileUrl = uploadResult.publicUrl || uploadResult.objectPath || uploadResult.url || uploadResult.location;
+
+        if (fileUrl) {
+          uploadedUrls.push({
+            name: attachment.name,
+            url: fileUrl.startsWith('http') ? fileUrl : fileUrl.startsWith('/') ? fileUrl : `/${fileUrl}`,
+            type: attachment.type,
+          });
+        }
+      }
+
+      // Combine existing uploaded attachments with newly uploaded ones
+      const existingAttachments = uploadedAttachments.map(a => ({ name: a.name, url: a.url, type: a.type }));
+      const allAttachments = [...existingAttachments, ...uploadedUrls];
+
+      // Update invoice data with all attachments
+      if (allAttachments.length > 0) {
+        (invoiceData as any).attachments = allAttachments;
+      }
+
+      if (uploadedUrls.length > 0) {
+        toast({
+          title: "Files Uploaded",
+          description: `${uploadedUrls.length} file(s) uploaded successfully`,
+        });
+      }
+    } catch (error: any) {
+      console.error("Error uploading files:", error);
+      toast({
+        title: "Upload Error",
+        description: `Failed to upload some files: ${error.message}`,
+        variant: "destructive",
+      });
+      // Continue with invoice creation even if file upload fails
     }
-  }, [invoiceSettings?.defaultCurrency]);
-
-  // Payment method options
-  const paymentMethodOptions = [
-    { value: "credit_card", label: "Credit Card" },
-    { value: "debit_card", label: "Debit Card" },
-    { value: "bank_transfer", label: "Bank Transfer" },
-    { value: "wire_transfer", label: "Wire Transfer" },
-    { value: "ach_transfer", label: "ACH Transfer" },
-    { value: "cash", label: "Cash" },
-    { value: "check", label: "Check" },
-    { value: "petty_cash", label: "Petty Cash" },
-    { value: "paypal", label: "PayPal" },
-    { value: "stripe", label: "Stripe" },
-    { value: "venmo", label: "Venmo" },
-    { value: "zelle", label: "Zelle" },
-    { value: "apple_pay", label: "Apple Pay" },
-    { value: "google_pay", label: "Google Pay" },
-    { value: "cryptocurrency", label: "Cryptocurrency" },
-    { value: "mobile_payment", label: "Mobile Payment" },
-    { value: "online_gateway", label: "Online Payment Gateway" },
-    { value: "money_order", label: "Money Order" },
-    { value: "other", label: "Other" },
-  ];
-
-  // Calculate grid template columns dynamically (must be before any conditional returns)
-  const gridTemplate = useMemo(() => {
-    const columns = [
-      '30px', // # column
-      'minmax(250px, 1fr)', // Date
-      'minmax(120px, 1fr)', // Product Type
-      'minmax(250px, 2fr)', // Product
-      'minmax(120px, 1fr)', // Variant
-      'minmax(100px, 1fr)', // Stock
-      'minmax(120px, 1.2fr)', // Qty
-      ...(invoiceSettings?.showUnitPrice ? ['minmax(130px, 1fr)'] : []), // Unit Price
-      'minmax(130px, 1fr)', // Selling Price
-      'minmax(130px, 1fr)', // Purchase Price
-      ...(invoiceSettings?.showTax ? ['minmax(100px, 1fr)'] : []), // Tax
-      'minmax(100px, 1fr)', // Amount
-      ...(invoiceSettings?.showAdditionalCommission ? ['minmax(100px, 1fr)'] : []), // Additional Commission
-      ...(invoiceSettings?.showVoucherInvoice ? ['minmax(100px, 1fr)'] : []), // Invoice/Voucher
-      '80px', // Actions button
-    ];
-    return columns.join(' ');
-  }, [invoiceSettings?.showVendor, invoiceSettings?.showProvider, invoiceSettings?.showUnitPrice, invoiceSettings?.showTax, invoiceSettings?.showAdditionalCommission, invoiceSettings?.showVoucherInvoice]);
-
-  // Grid template for expense table
-  const expenseGridTemplate = useMemo(() => {
-    const columns = [
-      '30px', // # column
-      'minmax(250px, 2fr)', // Title
-      'minmax(100px, 1fr)', // Qty
-      'minmax(150px, 1.2fr)', // Purchase Price
-      'minmax(150px, 1.2fr)', // Amount
-      '80px', // Action column
-    ];
-    return columns.join(' ');
-  }, []);
-
-  // Show loading state when fetching invoice data
-  if (isEditMode && isLoadingInvoice) {
-    return (
-      <Layout initialSidebarCollapsed={true}>
-        <div className="p-6 max-w-[1600px] mx-auto">
-          <div className="bg-white rounded-2xl shadow-sm p-8">
-            <div className="text-center">Loading invoice data...</div>
-          </div>
-        </div>
-      </Layout>
-    );
   }
 
+  // Upload internal attachments (for internal use only - not sent with emails)
+  if (internalAttachments.length > 0) {
+    try {
+      const uploadedInternalUrls: Array<{ name: string; url: string; type?: string }> = [];
+
+      for (const attachment of internalAttachments) {
+        const token = auth.getToken();
+        const encodedFilename = encodeURIComponent(attachment.name);
+
+        const uploadResponse = await fetch('/api/objects/store', {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'X-Filename': encodedFilename,
+            'Content-Type': attachment.type || 'application/octet-stream',
+          },
+          body: attachment.file,
+        });
+
+        if (!uploadResponse.ok) {
+          const errorText = await uploadResponse.text();
+          throw new Error(`Failed to upload ${attachment.name}: ${errorText}`);
+        }
+
+        const uploadResult = await uploadResponse.json();
+        const fileUrl = uploadResult.publicUrl || uploadResult.objectPath || uploadResult.url || uploadResult.location;
+
+        if (fileUrl) {
+          uploadedInternalUrls.push({
+            name: attachment.name,
+            url: fileUrl.startsWith('http') ? fileUrl : fileUrl.startsWith('/') ? fileUrl : `/${fileUrl}`,
+            type: attachment.type,
+          });
+        }
+      }
+
+      const existingInternal = uploadedInternalAttachments.map(a => ({ name: a.name, url: a.url, type: a.type }));
+      const allInternalAttachments = [...existingInternal, ...uploadedInternalUrls];
+
+      if (allInternalAttachments.length > 0) {
+        (invoiceData as any).internalAttachments = allInternalAttachments;
+      }
+    } catch (error: any) {
+      console.error("Error uploading internal files:", error);
+      toast({
+        title: "Upload Error",
+        description: `Failed to upload some internal files: ${error.message}`,
+        variant: "destructive",
+      });
+    }
+  } else if (uploadedInternalAttachments.length > 0) {
+    // Use existing internal attachments when no new files to upload
+    (invoiceData as any).internalAttachments = uploadedInternalAttachments.map(a => ({ name: a.name, url: a.url, type: a.type }));
+  }
+
+  if (isEditMode && invoiceId) {
+    updateInvoiceMutation.mutate(invoiceData);
+  } else {
+    createInvoiceMutation.mutate(invoiceData);
+  }
+};
+
+const [currency, setCurrency] = useState(invoiceSettings?.defaultCurrency || "USD");
+
+// Update currency when invoice settings change
+useEffect(() => {
+  if (invoiceSettings?.defaultCurrency) {
+    setCurrency(invoiceSettings.defaultCurrency);
+  }
+}, [invoiceSettings?.defaultCurrency]);
+
+// Payment method options
+const paymentMethodOptions = [
+  { value: "credit_card", label: "Credit Card" },
+  { value: "debit_card", label: "Debit Card" },
+  { value: "bank_transfer", label: "Bank Transfer" },
+  { value: "wire_transfer", label: "Wire Transfer" },
+  { value: "ach_transfer", label: "ACH Transfer" },
+  { value: "cash", label: "Cash" },
+  { value: "check", label: "Check" },
+  { value: "petty_cash", label: "Petty Cash" },
+  { value: "paypal", label: "PayPal" },
+  { value: "stripe", label: "Stripe" },
+  { value: "venmo", label: "Venmo" },
+  { value: "zelle", label: "Zelle" },
+  { value: "apple_pay", label: "Apple Pay" },
+  { value: "google_pay", label: "Google Pay" },
+  { value: "cryptocurrency", label: "Cryptocurrency" },
+  { value: "mobile_payment", label: "Mobile Payment" },
+  { value: "online_gateway", label: "Online Payment Gateway" },
+  { value: "money_order", label: "Money Order" },
+  { value: "other", label: "Other" },
+];
+
+// Calculate grid template columns dynamically (must be before any conditional returns)
+const gridTemplate = useMemo(() => {
+  const columns = [
+    '30px', // # column
+    'minmax(250px, 1fr)', // Date
+    'minmax(120px, 1fr)', // Product Type
+    'minmax(250px, 2fr)', // Product
+    'minmax(120px, 1fr)', // Variant
+    'minmax(100px, 1fr)', // Stock
+    'minmax(120px, 1.2fr)', // Qty
+    ...(invoiceSettings?.showUnitPrice ? ['minmax(130px, 1fr)'] : []), // Unit Price
+    'minmax(130px, 1fr)', // Selling Price
+    'minmax(130px, 1fr)', // Purchase Price
+    ...(invoiceSettings?.showTax ? ['minmax(100px, 1fr)'] : []), // Tax
+    'minmax(100px, 1fr)', // Amount
+    ...(invoiceSettings?.showAdditionalCommission ? ['minmax(100px, 1fr)'] : []), // Additional Commission
+    ...(invoiceSettings?.showVoucherInvoice ? ['minmax(100px, 1fr)'] : []), // Invoice/Voucher
+    '80px', // Actions button
+  ];
+  return columns.join(' ');
+}, [invoiceSettings?.showVendor, invoiceSettings?.showProvider, invoiceSettings?.showUnitPrice, invoiceSettings?.showTax, invoiceSettings?.showAdditionalCommission, invoiceSettings?.showVoucherInvoice]);
+
+// Grid template for expense table
+const expenseGridTemplate = useMemo(() => {
+  const columns = [
+    '30px', // # column
+    'minmax(250px, 2fr)', // Title
+    'minmax(100px, 1fr)', // Qty
+    'minmax(150px, 1.2fr)', // Purchase Price
+    'minmax(150px, 1.2fr)', // Amount
+    '80px', // Action column
+  ];
+  return columns.join(' ');
+}, []);
+
+// Show loading state when fetching invoice data
+if (isEditMode && isLoadingInvoice) {
   return (
     <Layout initialSidebarCollapsed={true}>
-      <div className="p-3 sm:p-4 md:p-6 mx-auto">
-        <div className="bg-white rounded-2xl shadow-sm">
-          <div className="">
-            <div className="w-full min-h-[72px] flex flex-col sm:flex-row items-start sm:items-center bg-white px-3 sm:px-4 md:px-[18px] py-3 sm:py-4 rounded-t-xl border-b border-[#E3E8EF] shadow-[0px_1px_6px_0px_rgba(0,0,0,0.05)] gap-3 sm:gap-0">
-              <div className="flex items-center gap-2 sm:gap-0">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => navigate("/invoices")}
-                  data-testid="button-back"
-                  className="flex-shrink-0"
-                >
-                  <ArrowLeft className="h-4 w-4 sm:mr-2" />
-                  <span className="hidden sm:inline">Back</span>
-                </Button>
-                {isEditMode && (
-                  <h1 className="ml-2 sm:ml-4 font-inter font-medium text-base sm:text-[20px] leading-[24px] text-[#121926] truncate">
-                    Edit Invoice
-                  </h1>
-                )}
-              </div>
-              {/* <h1 className="font-inter font-medium text-[20px] leading-[24px] text-[#121926]">
+      <div className="p-6 max-w-[1600px] mx-auto">
+        <div className="bg-white rounded-2xl shadow-sm p-8">
+          <div className="text-center">Loading invoice data...</div>
+        </div>
+      </div>
+    </Layout>
+  );
+}
+
+return (
+  <Layout initialSidebarCollapsed={true}>
+    <div className="p-3 sm:p-4 md:p-6 mx-auto">
+      <div className="bg-white rounded-2xl shadow-sm">
+        <div className="">
+          <div className="w-full min-h-[72px] flex flex-col sm:flex-row items-start sm:items-center bg-white px-3 sm:px-4 md:px-[18px] py-3 sm:py-4 rounded-t-xl border-b border-[#E3E8EF] shadow-[0px_1px_6px_0px_rgba(0,0,0,0.05)] gap-3 sm:gap-0">
+            <div className="flex items-center gap-2 sm:gap-0">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate("/invoices")}
+                data-testid="button-back"
+                className="flex-shrink-0"
+              >
+                <ArrowLeft className="h-4 w-4 sm:mr-2" />
+                <span className="hidden sm:inline">Back</span>
+              </Button>
+              {isEditMode && (
+                <h1 className="ml-2 sm:ml-4 font-inter font-medium text-base sm:text-[20px] leading-[24px] text-[#121926] truncate">
+                  Edit Invoice
+                </h1>
+              )}
+            </div>
+            {/* <h1 className="font-inter font-medium text-[20px] leading-[24px] text-[#121926]">
                   Leads
                 </h1> */}
 
-              <div className="flex gap-2 sm:gap-3 ml-auto">
-                {" "}
-                {tenant?.id && <InvoiceSettingsPanel tenantId={tenant.id} />}
-                <div className="w-10 h-10 flex items-center justify-center rounded-lg border border-gray-200 bg-white shadow-sm">
-                  <HelpCircle className="h-5 w-5 text-gray-600" />
-                </div>
-                {/* <div
+            <div className="flex gap-2 sm:gap-3 ml-auto">
+              {" "}
+              {tenant?.id && <InvoiceSettingsPanel tenantId={tenant.id} />}
+              <div className="w-10 h-10 flex items-center justify-center rounded-lg border border-gray-200 bg-white shadow-sm">
+                <HelpCircle className="h-5 w-5 text-gray-600" />
+              </div>
+              {/* <div
                   style={{ width: "8rem" }}
                   className="h-10 flex items-center justify-center rounded-lg border border-gray-200 bg-white shadow-sm"
                 > */}
-                  {/* <Bell className="h-5 w-5 text-gray-600" /> */}
+              {/* <Bell className="h-5 w-5 text-gray-600" /> */}
 
-                  {/* <Label htmlFor="currency">Currency *</Label> */}
-                  {/* <AutocompleteInput
+              {/* <Label htmlFor="currency">Currency *</Label> */}
+              {/* <AutocompleteInput
                     data-testid="autocomplete-currency"
                     suggestions={getCurrencyOptions()}
                     value={currency}
@@ -2790,1043 +2805,1043 @@ export default function InvoiceCreate() {
                     placeholder="Select currency..."
                     emptyText="No currency found"
                   /> */}
-                  <input type="hidden" name="currency" value={currency} />
-                {/* </div> */}
-              </div>
+              <input type="hidden" name="currency" value={currency} />
+              {/* </div> */}
             </div>
           </div>
         </div>
+      </div>
 
-        <form onSubmit={handleCreateInvoice}>
-          <Card>
-            <CardContent className="p-3 sm:p-4 md:p-6 space-y-4 sm:space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
-                <div>
-                  <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">
-                    Invoice
-                  </h1>
-                  {/* <p className="text-gray-600 dark:text-gray-400">
+      <form onSubmit={handleCreateInvoice}>
+        <Card>
+          <CardContent className="p-3 sm:p-4 md:p-6 space-y-4 sm:space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
+              <div>
+                <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">
+                  Invoice
+                </h1>
+                {/* <p className="text-gray-600 dark:text-gray-400">
               Fill in the details to create a new invoice
             </p> */}
-                </div>
-                <div></div>
-                <div></div>
-                <div></div>
-                  <div className="flex items-center gap-2 h-full">
-                  </div>
-                <div>
-                  <Label htmlFor="invoiceNumber">Invoice Number *</Label>
-                  <div className="flex items-center gap-2">
-                    <span className="inline-flex items-center px-3 py-2 rounded-md border border-gray-300 bg-gray-50 dark:bg-gray-800 dark:border-gray-700 text-sm font-medium text-gray-700 dark:text-gray-300 whitespace-nowrap">
-                      {invoiceSettings?.invoiceNumberPrefix || "INV"}
-                    </span>
-                    <Input
-                      data-testid="input-invoice-number"
-                      id="invoiceNumber"
-                      name="invoiceNumber"
-                      value={invoiceNumberOnly}
-                      onChange={(e) => {
-                        const numberPart = e.target.value;
-                        setInvoiceNumberOnly(numberPart);
-                        const prefix = invoiceSettings?.invoiceNumberPrefix || "INV";
-                        setInvoiceNumber(numberPart ? `${prefix}${numberPart}` : "");
-                      }}
-                      placeholder="001"
-                      required
-                      className="flex-1"
-                    />
-                  </div>
+              </div>
+              <div></div>
+              <div></div>
+              <div></div>
+              <div className="flex items-center gap-2 h-full">
+              </div>
+              <div>
+                <Label htmlFor="invoiceNumber">Invoice Number *</Label>
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center px-3 py-2 rounded-md border border-gray-300 bg-gray-50 dark:bg-gray-800 dark:border-gray-700 text-sm font-medium text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                    {invoiceSettings?.invoiceNumberPrefix || "INV"}
+                  </span>
+                  <Input
+                    data-testid="input-invoice-number"
+                    id="invoiceNumber"
+                    name="invoiceNumber"
+                    value={invoiceNumberOnly}
+                    onChange={(e) => {
+                      const numberPart = e.target.value;
+                      setInvoiceNumberOnly(numberPart);
+                      const prefix = invoiceSettings?.invoiceNumberPrefix || "INV";
+                      setInvoiceNumber(numberPart ? `${prefix}${numberPart}` : "");
+                    }}
+                    placeholder="001"
+                    required
+                    className="flex-1"
+                  />
                 </div>
               </div>
+            </div>
 
-              {/* Customer and Invoice Date Row */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="lg:col-span-2">
-                  <Label htmlFor="customerId">Customer *</Label>
-                  <AutocompleteInput
-                    data-testid="autocomplete-customer"
-                    suggestions={getCustomerOptions()}
-                    value={selectedCustomerId}
-                    onValueChange={handleCustomerSelection}
-                    onSearch={setCustomerSearch}
-                    placeholder="Search customer..."
-                    emptyText="No customers found"
+            {/* Customer and Invoice Date Row */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="lg:col-span-2">
+                <Label htmlFor="customerId">Customer *</Label>
+                <AutocompleteInput
+                  data-testid="autocomplete-customer"
+                  suggestions={getCustomerOptions()}
+                  value={selectedCustomerId}
+                  onValueChange={handleCustomerSelection}
+                  onSearch={setCustomerSearch}
+                  placeholder="Search customer..."
+                  emptyText="No customers found"
+                  required
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="issueDate">Invoice Date *</Label>
+                <DatePicker
+                  value={invoiceDate}
+                  onChange={handleInvoiceDateChange}
+                  placeholder="Select invoice date"
+                  className="w-full"
+                />
+                <input type="hidden" name="issueDate" value={invoiceDate} />
+              </div>
+            </div>
+
+            {/* Payment Terms and Due Date Row */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+              <div>
+                <TooltipProvider>
+                  <Tooltip>
+                    <div className="flex items-center gap-1 mb-1.5">
+                      <Label htmlFor="paymentTerms">Terms *</Label>
+                      <TooltipTrigger asChild>
+                        <HelpCircle className="h-4 w-4 text-gray-900 dark:text-white cursor-help" />
+                      </TooltipTrigger>
+                    </div>
+                    <TooltipContent>
+                      <p className="max-w-xs">
+                        Payment terms specify when payment is due. For example, "30 Days" means
+                        payment is due 30 days after the invoice date. "Due on Receipt" means
+                        immediate payment is expected.
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+                <Select
+                  value={paymentTerms}
+                  onValueChange={handlePaymentTermsChange}
+                >
+                  <SelectTrigger data-testid="select-payment-terms">
+                    <SelectValue placeholder="Select terms..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0">Due on Receipt</SelectItem>
+                    <SelectItem value="15">15 Days</SelectItem>
+                    <SelectItem value="30">30 Days</SelectItem>
+                    <SelectItem value="60">60 Days</SelectItem>
+                    <SelectItem value="custom">Custom</SelectItem>
+                  </SelectContent>
+                </Select>
+                <input type="hidden" name="paymentTerms" value={paymentTerms === "custom" ? `${customDays} days` : `${paymentTerms} days`} />
+              </div>
+
+              {paymentTerms === "custom" && (
+                <div>
+                  <Label htmlFor="customDays">Custom Days *</Label>
+                  <Input
+                    data-testid="input-custom-days"
+                    type="number"
+                    value={customDays}
+                    onChange={(e) => handleCustomDaysChange(e.target.value)}
+                    placeholder="Enter number of days"
+                    min="0"
                     required
                   />
                 </div>
+              )}
 
-                <div>
-                  <Label htmlFor="issueDate">Invoice Date *</Label>
-                  <DatePicker
-                    value={invoiceDate}
-                    onChange={handleInvoiceDateChange}
-                    placeholder="Select invoice date"
-                    className="w-full"
-                  />
-                  <input type="hidden" name="issueDate" value={invoiceDate} />
-                </div>
+              <div>
+                <Label htmlFor="dueDate">Due Date *</Label>
+                <DatePicker
+                  value={dueDate}
+                  onChange={setDueDate}
+                  placeholder="Select due date"
+                  className="w-full"
+                />
+                <input type="hidden" name="dueDate" value={dueDate} />
               </div>
+            </div>
 
-              {/* Payment Terms and Due Date Row */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-                <div>
-                  <TooltipProvider>
-                    <Tooltip>
-                      <div className="flex items-center gap-1 mb-1.5">
-                        <Label htmlFor="paymentTerms">Terms *</Label>
-                        <TooltipTrigger asChild>
-                          <HelpCircle className="h-4 w-4 text-gray-900 dark:text-white cursor-help" />
-                        </TooltipTrigger>
-                      </div>
-                      <TooltipContent>
-                        <p className="max-w-xs">
-                          Payment terms specify when payment is due. For example, "30 Days" means
-                          payment is due 30 days after the invoice date. "Due on Receipt" means
-                          immediate payment is expected.
-                        </p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                  <Select
-                    value={paymentTerms}
-                    onValueChange={handlePaymentTermsChange}
-                  >
-                    <SelectTrigger data-testid="select-payment-terms">
-                      <SelectValue placeholder="Select terms..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="0">Due on Receipt</SelectItem>
-                      <SelectItem value="15">15 Days</SelectItem>
-                      <SelectItem value="30">30 Days</SelectItem>
-                      <SelectItem value="60">60 Days</SelectItem>
-                      <SelectItem value="custom">Custom</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <input type="hidden" name="paymentTerms" value={paymentTerms === "custom" ? `${customDays} days` : `${paymentTerms} days`} />
-                </div>
-
-                {paymentTerms === "custom" && (
-                  <div>
-                    <Label htmlFor="customDays">Custom Days *</Label>
-                    <Input
-                      data-testid="input-custom-days"
-                      type="number"
-                      value={customDays}
-                      onChange={(e) => handleCustomDaysChange(e.target.value)}
-                      placeholder="Enter number of days"
-                      min="0"
-                      required
-                    />
-                  </div>
-                )}
-
-                <div>
-                  <Label htmlFor="dueDate">Due Date *</Label>
-                  <DatePicker
-                    value={dueDate}
-                    onChange={setDueDate}
-                    placeholder="Select due date"
-                    className="w-full"
-                  />
-                  <input type="hidden" name="dueDate" value={dueDate} />
-                </div>
-              </div>
-
-              {/* Payment Method, Status, and Travel Dates Row */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-7 gap-4">
-                <div className="lg:col-span-1">
-                  <Label htmlFor="paymentMethod">Payment Method *</Label>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        role="combobox"
-                        className="w-full justify-between h-10"
-                        data-testid="select-payment-method"
-                      >
-                        <span className="truncate">
-                          {paymentMethod.length === 0
-                            ? "Select methods..."
-                            : paymentMethod.length === 1
+            {/* Payment Method, Status, and Travel Dates Row */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-7 gap-4">
+              <div className="lg:col-span-1">
+                <Label htmlFor="paymentMethod">Payment Method *</Label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      role="combobox"
+                      className="w-full justify-between h-10"
+                      data-testid="select-payment-method"
+                    >
+                      <span className="truncate">
+                        {paymentMethod.length === 0
+                          ? "Select methods..."
+                          : paymentMethod.length === 1
                             ? paymentMethodOptions.find((opt) => opt.value === paymentMethod[0])?.label || paymentMethod[0]
                             : `${paymentMethod.length} methods selected`}
-                        </span>
-                        <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-[300px] p-0" align="start">
-                      <div className="max-h-[300px] overflow-y-auto p-2">
-                        {paymentMethodOptions.map((option) => {
-                          const isSelected = paymentMethod.includes(option.value);
-                          return (
-                            <div
-                              key={option.value}
-                              className="flex items-center space-x-2 p-2 rounded-md hover:bg-gray-100 cursor-pointer"
-                              onClick={() => {
-                                if (isSelected) {
-                                  setPaymentMethod(paymentMethod.filter((v) => v !== option.value));
-                                } else {
-                                  setPaymentMethod([...paymentMethod, option.value]);
-                                }
-                              }}
-                            >
-                              <div
-                                className={`flex h-4 w-4 items-center justify-center rounded border ${
-                                  isSelected
-                                    ? "bg-blue-600 border-blue-600"
-                                    : "border-gray-300"
-                                }`}
-                              >
-                                {isSelected && <Check className="h-3 w-3 text-white" />}
-                              </div>
-                              <span className="text-sm">{option.label}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                      {paymentMethod.length > 0 && (
-                        <div className="border-t p-2 flex items-center justify-between">
-                          <span className="text-xs text-gray-500">
-                            {paymentMethod.length} selected
-                          </span>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 text-xs"
-                            onClick={() => setPaymentMethod([])}
+                      </span>
+                      <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[300px] p-0" align="start">
+                    <div className="max-h-[300px] overflow-y-auto p-2">
+                      {paymentMethodOptions.map((option) => {
+                        const isSelected = paymentMethod.includes(option.value);
+                        return (
+                          <div
+                            key={option.value}
+                            className="flex items-center space-x-2 p-2 rounded-md hover:bg-gray-100 cursor-pointer"
+                            onClick={() => {
+                              if (isSelected) {
+                                setPaymentMethod(paymentMethod.filter((v) => v !== option.value));
+                              } else {
+                                setPaymentMethod([...paymentMethod, option.value]);
+                              }
+                            }}
                           >
-                            Clear all
-                          </Button>
-                        </div>
-                      )}
-                    </PopoverContent>
-                  </Popover>
-                </div>
-
-                <div className="lg:col-span-1">
-                  <Label htmlFor="paymentStatus">Payment Status *</Label>
-                  <Select
-                    value={paymentStatus}
-                    onValueChange={setPaymentStatus}
-                  >
-                    <SelectTrigger data-testid="select-payment-status">
-                      <SelectValue placeholder="Select status..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {getPaymentStatusOptions().map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
+                            <div
+                              className={`flex h-4 w-4 items-center justify-center rounded border ${isSelected
+                                  ? "bg-blue-600 border-blue-600"
+                                  : "border-gray-300"
+                                }`}
+                            >
+                              {isSelected && <Check className="h-3 w-3 text-white" />}
+                            </div>
+                            <span className="text-sm">{option.label}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {paymentMethod.length > 0 && (
+                      <div className="border-t p-2 flex items-center justify-between">
+                        <span className="text-xs text-gray-500">
+                          {paymentMethod.length} selected
+                        </span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={() => setPaymentMethod([])}
+                        >
+                          Clear all
+                        </Button>
+                      </div>
+                    )}
+                  </PopoverContent>
+                </Popover>
               </div>
 
-              {/* Line Items */}
-              <div className="border rounded-lg overflow-x-auto">
-                <div className="min-w-[2200px]">
-                  {/* Table Header */}
-                  <div 
-                    className="top-0 z-[100] grid gap-2 border-b p-3 font-medium text-sm bg-gray-50 dark:bg-gray-800"
-                    style={{ 
-                      gridTemplateColumns: gridTemplate,
-                      backgroundColor: 'rgb(249, 250, 251)',
-                      // position: 'sticky',
-                      top: 0,
-                      zIndex: 100,
-                      minWidth: '2200px',
-                      width: '100%',
-                      willChange: 'transform'
-                    }}
+              <div className="lg:col-span-1">
+                <Label htmlFor="paymentStatus">Payment Status *</Label>
+                <Select
+                  value={paymentStatus}
+                  onValueChange={setPaymentStatus}
+                >
+                  <SelectTrigger data-testid="select-payment-status">
+                    <SelectValue placeholder="Select status..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {getPaymentStatusOptions().map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+            </div>
+
+            {/* Line Items */}
+            <div className="border rounded-lg overflow-x-auto">
+              <div className="min-w-[2200px]">
+                {/* Table Header */}
+                <div
+                  className="top-0 z-[100] grid gap-2 border-b p-3 font-medium text-sm bg-gray-50 dark:bg-gray-800"
+                  style={{
+                    gridTemplateColumns: gridTemplate,
+                    backgroundColor: 'rgb(249, 250, 251)',
+                    // position: 'sticky',
+                    top: 0,
+                    zIndex: 100,
+                    minWidth: '2200px',
+                    width: '100%',
+                    willChange: 'transform'
+                  }}
+                >
+                  <div className="text-center flex items-center justify-center">#</div>
+                  <div className="flex items-center">Date</div>
+                  <div className="flex items-center">Product Type</div>
+                  <div className="flex items-center">Product</div>
+                  <div className="flex items-center">Variant</div>
+                  <div className="flex items-center">Stock</div>
+                  <div className="flex items-center">Qty *</div>
+
+                  {invoiceSettings?.showUnitPrice && <div className="flex items-center">Unit Price ({currencySymbol}) *</div>}
+                  <div className="flex items-center">Selling Price ({currencySymbol}) *</div>
+                  <div className="flex items-center">Purchase Price ({currencySymbol}) *</div>
+                  {invoiceSettings?.showTax && <div className="flex items-center">Tax ({currencySymbol})</div>}
+                  <div className="flex items-center">Amount ({currencySymbol})</div>
+                  {invoiceSettings?.showAdditionalCommission && <div className="flex items-center">Commission ({currencySymbol})</div>}
+                  {invoiceSettings?.showVoucherInvoice && <div className="flex items-center">Invoice/Voucher</div>}
+                  <div className="flex items-center"></div>
+                </div>
+
+                {/* Table Body */}
+                {lineItems.map((item, index) => (
+                  <div
+                    key={index}
+                    className={`grid gap-2 p-4 items-start border-b last:border-b-0 ${item.isUnfulfilled ? "bg-amber-50/50 dark:bg-amber-900/10" : ""}`}
+                    style={{ gridTemplateColumns: gridTemplate }}
                   >
-                    <div className="text-center flex items-center justify-center">#</div>
-                    <div className="flex items-center">Date</div>
-                    <div className="flex items-center">Product Type</div>
-                    <div className="flex items-center">Product</div>
-                    <div className="flex items-center">Variant</div>
-                    <div className="flex items-center">Stock</div>
-                    <div className="flex items-center">Qty *</div>
+                    <div className="flex items-start justify-center pt-2">
+                      <span className="font-medium text-sm">{index + 1}</span>
+                    </div>
 
-                    {invoiceSettings?.showUnitPrice && <div className="flex items-center">Unit Price ({currencySymbol}) *</div>}
-                    <div className="flex items-center">Selling Price ({currencySymbol}) *</div>
-                    <div className="flex items-center">Purchase Price ({currencySymbol}) *</div>
-                    {invoiceSettings?.showTax && <div className="flex items-center">Tax ({currencySymbol})</div>}
-                    <div className="flex items-center">Amount ({currencySymbol})</div>
-                    {invoiceSettings?.showAdditionalCommission && <div className="flex items-center">Commission ({currencySymbol})</div>}
-                    {invoiceSettings?.showVoucherInvoice && <div className="flex items-center">Invoice/Voucher</div>}
-                    <div className="flex items-center"></div>
-                  </div>
+                    <div className="flex items-center justify-center">
+                      <Input
+                        type="datetime-local"
+                        value={item.date}
+                        onChange={(e) => updateLineItem(index, "date", e.target.value)}
+                        onBlur={() => sortLineItems()}
+                        className="w-full h-10 text-xs"
+                      />
+                    </div>
 
-                  {/* Table Body */}
-                  {lineItems.map((item, index) => (
-                    <div
-                      key={index}
-                      className={`grid gap-2 p-3 border-b last:border-b-0 ${item.isUnfulfilled ? "bg-amber-50/50 dark:bg-amber-900/10" : ""}`}
-                      style={{ gridTemplateColumns: gridTemplate }}
-                    >
-                      <div className="flex items-center justify-center">
-                        <span className="font-medium text-sm">{index + 1}</span>
-                      </div>
+                    <div className="flex items-start justify-center">
+                      <Select
+                        value={item.productTypeFilter}
+                        onValueChange={(value) => {
+                          updateLineItem(index, "productTypeFilter", value);
+                          // Clear product if it doesn't match the new filter (unless "all")
+                          if (value !== "all") {
+                            const product = products.find((p: any) => p.id.toString() === item.productId);
+                            if (product && product.FormTemplate?.formKey !== value) {
+                              handleProductSelection("", index);
+                            }
+                          }
+                        }}
+                      >
+                        <SelectTrigger className="w-full h-10">
+                          <SelectValue placeholder="All" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All</SelectItem>
+                          <SelectItem value="inventory">Inventory</SelectItem>
+                          <SelectItem value="non-inventory">Non-Inventory</SelectItem>
+                          <SelectItem value="bundle">Bundle</SelectItem>
+                          <SelectItem value="service">Service</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex items-start">
+                      <Select
+                        value={item.productId}
+                        onValueChange={(value) => handleProductSelection(value, index)}
+                      >
+                        <SelectTrigger className="w-full h-10">
+                          <SelectValue placeholder="Select Product..." />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-[300px]">
+                          {products
+                            .filter((p: any) => item.productTypeFilter === "all" || p.FormTemplate?.formKey === item.productTypeFilter)
+                            .map((p: any) => (
+                              <SelectItem key={p.id} value={p.id.toString()}>
+                                {p.name || "Unnamed Product"}
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex items-start justify-center min-h-[36px]">
+                      {(() => {
+                        const product = products.find((p: any) => p.id.toString() === item.productId);
+                        if (!product) return <span className="text-gray-400">-</span>;
 
-                      <div className="flex items-center justify-center">
+                        const fKey = product.FormTemplate?.formKey || "";
+
+                        const canHaveVariants = fKey === 'inventory' || fKey === 'non-inventory';
+
+                        if (!canHaveVariants) return <span className="text-gray-400 text-lg font-medium">-</span>;
+
+                        const selectedVariant = item.availableVariants?.find((v: any) => v.value === item.variantId);
+
+                        return (
+                          <Select
+                            value={item.variantId}
+                            onValueChange={(value) => handleVariantSelection(value, index)}
+                            disabled={!item.productId || !item.availableVariants || item.availableVariants.length === 0}
+                          >
+                            <SelectTrigger className="h-9 border border-[#D9D9D9] focus:ring-1 focus:ring-[#1677FF]">
+                              <div className="flex items-center gap-2">
+                                {selectedVariant?.color && (
+                                  <div
+                                    className="w-3 h-3 rounded-full border border-gray-200"
+                                    style={{ backgroundColor: selectedVariant.color }}
+                                  />
+                                )}
+                                <SelectValue placeholder={(!item.availableVariants || item.availableVariants.length === 0) ? "No variants" : "Variant..."} />
+                              </div>
+                            </SelectTrigger>
+                            <SelectContent>
+                              {item.availableVariants?.map((v: any, i: number) => (
+                                <SelectItem key={i} value={v.value.toString()}>
+                                  <div className="flex items-center gap-2">
+                                    {v.color && (
+                                      <div
+                                        className="w-3 h-3 rounded-full border border-gray-200"
+                                        style={{ backgroundColor: v.color }}
+                                      />
+                                    )}
+                                    <span>{v.label}</span>
+                                  </div>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        );
+                      })()}
+                    </div>
+
+                    <div className="flex flex-col items-start justify-start pt-2.5 h-full px-2">
+                      {(() => {
+                        const stock = getAvailableStock(item.productId, item.variantId, index);
+                        return (
+                          <span className={`text-sm font-medium ${stock <= 0 ? 'text-red-500' : 'text-green-600'}`}>
+                            {parseInt(stock.toString())}
+                          </span>
+                        );
+                      })()}
+                    </div>
+
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-start gap-1">
                         <Input
-                          type="datetime-local"
-                          value={item.date}
-                          onChange={(e) => updateLineItem(index, "date", e.target.value)}
-                          className="w-full h-10 text-xs"
+                          data-testid={`input-quantity-${index}`}
+                          value={item.quantity}
+                          onChange={(e) =>
+                            updateLineItem(index, "quantity", e.target.value)
+                          }
+                          onBlur={(e) => handleQuantityBlur(index, e.target.value)}
+                          onKeyPress={handleNumericKeyPress}
+                          placeholder="1"
+                          className={item.isUnfulfilled ? "border-amber-300 focus-visible:ring-amber-500" : ""}
+                        />
+                        <div className="flex items-start pt-2 gap-0.5 flex-shrink-0">
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            className={`h-6 w-6 text-green-500 hover:text-green-700 hover:bg-green-50 flex-shrink-0 ${!item.isUnfulfilled ? "invisible pointer-events-none" : ""}`}
+                            onClick={() => fulfillUnfulfilledRow(index)}
+                            title="Fulfill Qty"
+                          >
+                            <CheckCircle2 className="h-3 w-3" />
+                          </Button>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            className="h-6 w-6 text-amber-500 hover:text-amber-700 hover:bg-amber-50 flex-shrink-0"
+                            onClick={() => splitRemainingStock(index)}
+                            title="Split Unfulfilled"
+                          >
+                            <Scissors className="h-3 w-3" />
+                          </Button>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            className="h-6 w-6 text-blue-500 hover:text-blue-700 hover:bg-blue-50 flex-shrink-0"
+                            onClick={() => duplicateLineItem(index)}
+                            title="Add More"
+                          >
+                            <Plus className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      </div>
+                      {item.isUnfulfilled && (
+                        <div className="mt-1">
+                          <span className="text-[10px] text-amber-600 font-bold uppercase tracking-wider bg-amber-100 px-1.5 py-0.5 rounded flex items-center gap-1 w-fit">
+                            <Split className="h-2.5 w-2.5" />
+                            Unfulfilled: {item.quantity}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {invoiceSettings?.showUnitPrice && (
+                      <div className="flex items-start">
+                        <Input
+                          data-testid={`input-unit-price-${index}`}
+                          value={item.unitPrice}
+                          onChange={(e) =>
+                            updateLineItem(index, "unitPrice", e.target.value)
+                          }
+                          onKeyPress={handleNumericKeyPress}
+                          placeholder="0"
                         />
                       </div>
+                    )}
 
-                      <div className="flex items-center justify-center">
+                    <div className="flex items-center">
+                      <Input
+                        data-testid={`input-selling-price-${index}`}
+                        value={item.sellingPrice}
+                        onChange={(e) =>
+                          updateLineItem(
+                            index,
+                            "sellingPrice",
+                            e.target.value,
+                          )
+                        }
+                        onKeyPress={handleNumericKeyPress}
+                        placeholder="0"
+                      />
+                    </div>
+
+                    <div className="flex items-center">
+                      <Input
+                        data-testid={`input-purchase-price-${index}`}
+                        value={item.purchasePrice}
+                        onChange={(e) =>
+                          updateLineItem(
+                            index,
+                            "purchasePrice",
+                            e.target.value,
+                          )
+                        }
+                        onKeyPress={handleNumericKeyPress}
+                        placeholder="0"
+                      />
+                    </div>
+
+                    {invoiceSettings?.showTax && (
+                      <div className="flex flex-col items-start">
                         <Select
-                          value={item.productTypeFilter}
-                          onValueChange={(value) => {
-                            updateLineItem(index, "productTypeFilter", value);
-                            // Clear product if it doesn't match the new filter (unless "all")
-                            if (value !== "all") {
-                              const product = products.find((p: any) => p.id.toString() === item.productId);
-                              if (product && product.FormTemplate?.formKey !== value) {
-                                handleProductSelection("", index);
-                              }
-                            }
-                          }}
+                          value={item.taxRateId || "none"}
+                          onValueChange={(value) =>
+                            updateLineItem(index, "taxRateId", value === "none" ? "" : value)
+                          }
+                          disabled={!selectedTaxSettingId || selectedTaxSettingId === "none" || gstRates.length === 0}
                         >
-                          <SelectTrigger className="w-full h-10">
-                            <SelectValue placeholder="All" />
+                          <SelectTrigger data-testid={`select-tax-rate-${index}`}>
+                            <SelectValue placeholder={
+                              !selectedTaxSettingId || selectedTaxSettingId === "none"
+                                ? "Select tax setting first"
+                                : gstRates.length === 0
+                                  ? "No rates available"
+                                  : "Select tax rate"
+                            } />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="all">All</SelectItem>
-                            <SelectItem value="inventory">Inventory</SelectItem>
-                            <SelectItem value="non-inventory">Non-Inventory</SelectItem>
-                            <SelectItem value="bundle">Bundle</SelectItem>
-                            <SelectItem value="service">Service</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="flex items-center">
-                        <Select
-                          value={item.productId}
-                          onValueChange={(value) => handleProductSelection(value, index)}
-                        >
-                          <SelectTrigger className="w-full h-10">
-                            <SelectValue placeholder="Select Product..." />
-                          </SelectTrigger>
-                          <SelectContent className="max-h-[300px]">
-                            {products
-                              .filter((p: any) => item.productTypeFilter === "all" || p.FormTemplate?.formKey === item.productTypeFilter)
-                              .map((p: any) => (
-                                <SelectItem key={p.id} value={p.id.toString()}>
-                                  {p.name || "Unnamed Product"}
+                            <SelectItem value="none">No Tax</SelectItem>
+                            {gstRates
+                              .filter((rate: any) => rate.isActive)
+                              .map((rate: any) => (
+                                <SelectItem key={rate.id} value={rate.id.toString()}>
+                                  {rate.rateName} ({rate.ratePercentage}%)
                                 </SelectItem>
                               ))}
                           </SelectContent>
                         </Select>
-                      </div>
-                      <div className="flex items-center justify-center min-h-[36px]">
-                        {(() => {
-                           const product = products.find((p: any) => p.id.toString() === item.productId);
-                           if (!product) return <span className="text-gray-400">-</span>;
-                           
-                           const fKey = product.FormTemplate?.formKey || "";
-                           
-                           const canHaveVariants = fKey === 'inventory' || fKey === 'non-inventory';
-                           
-                           if (!canHaveVariants) return <span className="text-gray-400 text-lg font-medium">-</span>;
-
-                           const selectedVariant = item.availableVariants?.find((v: any) => v.value === item.variantId);
-
-                           return (
-                             <Select
-                               value={item.variantId}
-                               onValueChange={(value) => handleVariantSelection(value, index)}
-                               disabled={!item.productId || !item.availableVariants || item.availableVariants.length === 0}
-                             >
-                               <SelectTrigger className="h-9 border border-[#D9D9D9] focus:ring-1 focus:ring-[#1677FF]">
-                                 <div className="flex items-center gap-2">
-                                   {selectedVariant?.color && (
-                                     <div 
-                                       className="w-3 h-3 rounded-full border border-gray-200" 
-                                       style={{ backgroundColor: selectedVariant.color }}
-                                     />
-                                   )}
-                                   <SelectValue placeholder={(!item.availableVariants || item.availableVariants.length === 0) ? "No variants" : "Variant..."} />
-                                 </div>
-                               </SelectTrigger>
-                               <SelectContent>
-                                 {item.availableVariants?.map((v: any, i: number) => (
-                                   <SelectItem key={i} value={v.value.toString()}>
-                                     <div className="flex items-center gap-2">
-                                       {v.color && (
-                                         <div 
-                                           className="w-3 h-3 rounded-full border border-gray-200" 
-                                           style={{ backgroundColor: v.color }}
-                                         />
-                                       )}
-                                       <span>{v.label}</span>
-                                     </div>
-                                   </SelectItem>
-                                 ))}
-                               </SelectContent>
-                             </Select>
-                           );
-                        })()}
-                      </div>
-
-                      <div className="flex flex-col items-center justify-center h-full px-2">
-                        {(() => {
-                          const stock = getAvailableStock(item.productId, item.variantId, index);
-                          return (
-                            <span className={`text-sm font-medium ${stock <= 0 ? 'text-red-500' : 'text-green-600'}`}>
-                              {parseInt(stock.toString())}
-                            </span>
-                          );
-                        })()}
-                      </div>
-
-                      <div className="flex flex-col gap-1">
-                        <div className="flex items-center gap-1">
-                          <Input
-                            data-testid={`input-quantity-${index}`}
-                            value={item.quantity}
-                            onChange={(e) =>
-                              updateLineItem(index, "quantity", e.target.value)
-                            }
-                            onBlur={(e) => handleQuantityBlur(index, e.target.value)}
-                            onKeyPress={handleNumericKeyPress}
-                            placeholder="1"
-                            className={item.isUnfulfilled ? "border-amber-300 focus-visible:ring-amber-500" : ""}
-                          />
-                          <div className="flex items-center gap-0.5 flex-shrink-0">
-                            <Button
-                              type="button"
-                              size="icon"
-                              variant="ghost"
-                              className={`h-6 w-6 text-green-500 hover:text-green-700 hover:bg-green-50 flex-shrink-0 ${!item.isUnfulfilled ? "invisible pointer-events-none" : ""}`}
-                              onClick={() => fulfillUnfulfilledRow(index)}
-                              title="Fulfill Qty"
-                            >
-                              <CheckCircle2 className="h-3 w-3" />
-                            </Button>
-                            <Button
-                              type="button"
-                              size="icon"
-                              variant="ghost"
-                              className="h-6 w-6 text-amber-500 hover:text-amber-700 hover:bg-amber-50 flex-shrink-0"
-                              onClick={() => splitRemainingStock(index)}
-                              title="Split Unfulfilled"
-                            >
-                              <Scissors className="h-3 w-3" />
-                            </Button>
-                            <Button
-                              type="button"
-                              size="icon"
-                              variant="ghost"
-                              className="h-6 w-6 text-blue-500 hover:text-blue-700 hover:bg-blue-50 flex-shrink-0"
-                              onClick={() => duplicateLineItem(index)}
-                              title="Add More"
-                            >
-                              <Plus className="h-3 w-3" />
-                            </Button>
-                          </div>
-                        </div>
-                        {item.isUnfulfilled && (
-                          <div className="mt-1">
-                            <span className="text-[10px] text-amber-600 font-bold uppercase tracking-wider bg-amber-100 px-1.5 py-0.5 rounded flex items-center gap-1 w-fit">
-                              <Split className="h-2.5 w-2.5" />
-                              Unfulfilled: {item.quantity}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-
-                      {invoiceSettings?.showUnitPrice && (
-                        <div className="flex items-center">
-                          <Input
-                            data-testid={`input-unit-price-${index}`}
-                            value={item.unitPrice}
-                            onChange={(e) =>
-                              updateLineItem(index, "unitPrice", e.target.value)
-                            }
-                            onKeyPress={handleNumericKeyPress}
-                            placeholder="0"
-                          />
-                        </div>
-                      )}
-
-                      <div className="flex items-center">
-                        <Input
-                          data-testid={`input-selling-price-${index}`}
-                          value={item.sellingPrice}
-                          onChange={(e) =>
-                            updateLineItem(
-                              index,
-                              "sellingPrice",
-                              e.target.value,
-                            )
-                          }
-                          onKeyPress={handleNumericKeyPress}
-                          placeholder="0"
-                        />
-                      </div>
-
-                      <div className="flex items-center">
-                        <Input
-                          data-testid={`input-purchase-price-${index}`}
-                          value={item.purchasePrice}
-                          onChange={(e) =>
-                            updateLineItem(
-                              index,
-                              "purchasePrice",
-                              e.target.value,
-                            )
-                          }
-                          onKeyPress={handleNumericKeyPress}
-                          placeholder="0"
-                        />
-                      </div>
-
-                      {invoiceSettings?.showTax && (
-                        <div className="flex items-center">
-                          <Select
-                            value={item.taxRateId || "none"}
-                            onValueChange={(value) =>
-                              updateLineItem(index, "taxRateId", value === "none" ? "" : value)
-                            }
-                            disabled={!selectedTaxSettingId || selectedTaxSettingId === "none" || gstRates.length === 0}
-                          >
-                            <SelectTrigger data-testid={`select-tax-rate-${index}`}>
-                              <SelectValue placeholder={
-                                !selectedTaxSettingId || selectedTaxSettingId === "none" 
-                                  ? "Select tax setting first" 
-                                  : gstRates.length === 0 
-                                  ? "No rates available"
-                                  : "Select tax rate"
-                              } />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="none">No Tax</SelectItem>
-                              {gstRates
-                                .filter((rate: any) => rate.isActive)
-                                .map((rate: any) => (
-                                  <SelectItem key={rate.id} value={rate.id.toString()}>
-                                    {rate.rateName} ({rate.ratePercentage}%)
-                                  </SelectItem>
-                                ))}
-                            </SelectContent>
-                          </Select>
-                          {item.tax && (
-                            <div className="flex items-center gap-1 mt-1.5 px-2 py-0.5 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-md border border-blue-100 dark:border-blue-800 w-fit">
-                              <span className="text-[10px] font-bold uppercase tracking-wider">Tax</span>
-                              <span className="text-xs font-semibold">{currencySymbol}{parseFloat(item.tax).toFixed(2)}</span>
+                        {item.tax && (
+                           <div className="flex items-center gap-1 mt-1 px-1.5 py-0.5 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded border border-blue-100 dark:border-blue-800 w-fit">
+                              <span className="text-[9px] font-bold uppercase tracking-tighter">Tax</span>
+                              <span className="text-[11px] font-semibold">{currencySymbol}{parseFloat(item.tax || "0").toFixed(2)}</span>
                             </div>
-                          )}
-                        </div>
-                      )}
+                        )}
+                      </div>
+                    )}
 
+                    <div className="flex items-center">
+                      <Input
+                        data-testid={`input-total-amount-${index}`}
+                        value={item.totalAmount.toFixed(2)}
+                        readOnly
+                        className="bg-transparent"
+                      />
+                    </div>
+
+                    {invoiceSettings?.showAdditionalCommission && (
                       <div className="flex items-center">
                         <Input
-                          data-testid={`input-total-amount-${index}`}
-                          value={item.totalAmount.toFixed(2)}
-                          readOnly
-                          className="bg-transparent"
+                          data-testid={`input-additional-commission-${index}`}
+                          value={item.additionalCommission || ""}
+                          onChange={(e) =>
+                            updateLineItem(
+                              index,
+                              "additionalCommission",
+                              e.target.value,
+                            )
+                          }
+                          onKeyPress={handleNumericKeyPress}
+                          placeholder="0"
                         />
                       </div>
+                    )}
 
-                      {invoiceSettings?.showAdditionalCommission && (
-                        <div className="flex items-center">
-                          <Input
-                            data-testid={`input-additional-commission-${index}`}
-                            value={item.additionalCommission || ""}
-                            onChange={(e) =>
-                              updateLineItem(
-                                index,
-                                "additionalCommission",
-                                e.target.value,
-                              )
-                            }
-                            onKeyPress={handleNumericKeyPress}
-                            placeholder="0"
-                          />
-                        </div>
+                    {invoiceSettings?.showVoucherInvoice && (
+                      <div className="flex items-center">
+                        <Input
+                          data-testid={`input-line-invoice-number-${index}`}
+                          value={item.invoiceNumber}
+                          onChange={(e) =>
+                            updateLineItem(
+                              index,
+                              "invoiceNumber",
+                              e.target.value,
+                            )
+                          }
+                          placeholder="#"
+                        />
+                      </div>
+                    )}
+
+                    <div className="flex items-start justify-center pt-2">
+                      {lineItems.length > 1 && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removeLineItem(index)}
+                          className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                          data-testid={`button-remove-item-${index}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
                       )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
 
-                      {invoiceSettings?.showVoucherInvoice && (
-                        <div className="flex items-center">
-                          <Input
-                            data-testid={`input-line-invoice-number-${index}`}
-                            value={item.invoiceNumber}
-                            onChange={(e) =>
-                              updateLineItem(
-                                index,
-                                "invoiceNumber",
-                                e.target.value,
-                              )
-                            }
-                            placeholder="#"
-                          />
-                        </div>
-                      )}
+            <div className="flex justify-center gap-2 flex-wrap">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={addLineItem}
+                data-testid="button-add-item"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Add Line Item
+              </Button>
+              {itineraries.length > 0 && (
+                <Select value="" onValueChange={(v) => { const it = itineraries.find((i: any) => String(i.id) === v); if (it) { addLineItemFromItinerary(it); } }}>
+                  <SelectTrigger className="w-[200px]">
+                    <SelectValue placeholder="Add from Itinerary" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {itineraries.map((it: any) => (
+                      <SelectItem key={it.id} value={String(it.id)}>
+                        {it.title || `Itinerary ${it.id}`} ({(it.clientPrice ?? it.client_price ?? 0).toFixed(0)})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+            {/* Auto-Generated Expenses Preview */}
 
-                      <div className="flex items-center justify-center">
-                        {lineItems.length > 1 && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => removeLineItem(index)}
-                            className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                            data-testid={`button-remove-item-${index}`}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        )}
+            <div className="border-t pt-4">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Left Side - Tax and Discount Inputs */}
+                <div className="space-y-4">
+                  {invoiceSettings?.showTax && (
+                    <div className="flex items-center justify-between p-3 border rounded-lg">
+                      <div className="flex flex-col">
+                        <Label htmlFor="taxInclusive" className="text-sm font-medium">
+                          Tax Type
+                        </Label>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {isTaxInclusive ? "Tax is included in prices" : "Tax will be added to prices"}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-muted-foreground">Exclusive</span>
+                        <Switch
+                          id="taxInclusive"
+                          checked={isTaxInclusive}
+                          onCheckedChange={setIsTaxInclusive}
+                          data-testid="switch-tax-inclusive"
+                        />
+                        <span className="text-sm text-muted-foreground">Inclusive</span>
                       </div>
                     </div>
-                  ))}
-                </div>
-              </div>
+                  )}
 
-              <div className="flex justify-center gap-2 flex-wrap">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={addLineItem}
-                  data-testid="button-add-item"
-                >
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Line Item
-                </Button>
-                {itineraries.length > 0 && (
-                  <Select value="" onValueChange={(v) => { const it = itineraries.find((i: any) => String(i.id) === v); if (it) { addLineItemFromItinerary(it); } }}>
-                    <SelectTrigger className="w-[200px]">
-                      <SelectValue placeholder="Add from Itinerary" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {itineraries.map((it: any) => (
-                        <SelectItem key={it.id} value={String(it.id)}>
-                          {it.title || `Itinerary ${it.id}`} ({(it.clientPrice ?? it.client_price ?? 0).toFixed(0)})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-              </div>
-              {/* Auto-Generated Expenses Preview */}
+                  {invoiceSettings?.showDiscount && (
+                    <div>
+                      <Label htmlFor="discountAmount">Discount Amount ({currencySymbol})</Label>
+                      <Input
+                        data-testid="input-discount-amount"
+                        value={discountAmount}
+                        onChange={(e) => setDiscountAmount(e.target.value)}
+                        onKeyPress={handleNumericKeyPress}
+                        placeholder="0"
+                      />
+                    </div>
+                  )}
 
-              <div className="border-t pt-4">
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* Left Side - Tax and Discount Inputs */}
-                  <div className="space-y-4">
-                    {invoiceSettings?.showTax && (
-                      <div className="flex items-center justify-between p-3 border rounded-lg">
-                        <div className="flex flex-col">
-                          <Label htmlFor="taxInclusive" className="text-sm font-medium">
-                            Tax Type
-                          </Label>
-                          <p className="text-xs text-muted-foreground mt-1">
-                            {isTaxInclusive ? "Tax is included in prices" : "Tax will be added to prices"}
-                          </p>
+                  {/* Cancellation Charge Section - Only show when status is cancelled */}
+                  {paymentStatus === "cancelled" && (
+                    <div className="border rounded-lg p-4 bg-red-50 dark:bg-red-900/10">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-lg font-semibold text-red-900 dark:text-red-100">
+                            Cancellation Charge
+                          </h3>
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className="text-sm text-muted-foreground">Exclusive</span>
+                          <Label htmlFor="hasCancellationCharge" className="text-sm">
+                            Apply Charge
+                          </Label>
                           <Switch
-                            id="taxInclusive"
-                            checked={isTaxInclusive}
-                            onCheckedChange={setIsTaxInclusive}
-                            data-testid="switch-tax-inclusive"
+                            id="hasCancellationCharge"
+                            checked={hasCancellationCharge}
+                            onCheckedChange={setHasCancellationCharge}
                           />
-                          <span className="text-sm text-muted-foreground">Inclusive</span>
                         </div>
                       </div>
-                    )}
 
-                    {invoiceSettings?.showDiscount && (
-                      <div>
-                        <Label htmlFor="discountAmount">Discount Amount ({currencySymbol})</Label>
-                        <Input
-                          data-testid="input-discount-amount"
-                          value={discountAmount}
-                          onChange={(e) => setDiscountAmount(e.target.value)}
-                          onKeyPress={handleNumericKeyPress}
-                          placeholder="0"
-                        />
-                      </div>
-                    )}
-
-                    {/* Cancellation Charge Section - Only show when status is cancelled */}
-                    {paymentStatus === "cancelled" && (
-                      <div className="border rounded-lg p-4 bg-red-50 dark:bg-red-900/10">
-                        <div className="flex items-center justify-between mb-4">
-                          <div className="flex items-center gap-2">
-                            <h3 className="text-lg font-semibold text-red-900 dark:text-red-100">
-                              Cancellation Charge
-                            </h3>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Label htmlFor="hasCancellationCharge" className="text-sm">
-                              Apply Charge
+                      {hasCancellationCharge && (
+                        <div className="space-y-4">
+                          <div>
+                            <Label htmlFor="cancellationChargeAmount">
+                              Cancellation Charge Amount ({currencySymbol})
                             </Label>
-                            <Switch
-                              id="hasCancellationCharge"
-                              checked={hasCancellationCharge}
-                              onCheckedChange={setHasCancellationCharge}
+                            <Input
+                              id="cancellationChargeAmount"
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={cancellationChargeAmount}
+                              onChange={(e) => setCancellationChargeAmount(e.target.value)}
+                              onKeyPress={handleNumericKeyPress}
+                              placeholder="0.00"
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor="cancellationChargeNotes">Notes (Optional)</Label>
+                            <Textarea
+                              id="cancellationChargeNotes"
+                              value={cancellationChargeNotes}
+                              onChange={(e) => setCancellationChargeNotes(e.target.value)}
+                              placeholder="Enter reason or notes for cancellation charge..."
+                              rows={3}
                             />
                           </div>
                         </div>
+                      )}
+                    </div>
+                  )}
 
-                        {hasCancellationCharge && (
-                          <div className="space-y-4">
-                            <div>
-                              <Label htmlFor="cancellationChargeAmount">
-                                Cancellation Charge Amount ({currencySymbol})
-                              </Label>
-                              <Input
-                                id="cancellationChargeAmount"
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                value={cancellationChargeAmount}
-                                onChange={(e) => setCancellationChargeAmount(e.target.value)}
-                                onKeyPress={handleNumericKeyPress}
-                                placeholder="0.00"
-                              />
-                            </div>
-                            <div>
-                              <Label htmlFor="cancellationChargeNotes">Notes (Optional)</Label>
-                              <Textarea
-                                id="cancellationChargeNotes"
-                                value={cancellationChargeNotes}
-                                onChange={(e) => setCancellationChargeNotes(e.target.value)}
-                                placeholder="Enter reason or notes for cancellation charge..."
-                                rows={3}
-                              />
-                            </div>
+                  {/* Payment Reminder Section */}
+                  <div className="border rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <Bell className="h-5 w-5 text-gray-900 dark:text-white" />
+                        <div>
+                          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                            Payment Reminder
+                          </h3>
+                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                            Automatic reminders will be sent until the payment status is paid. When installments are enabled, reminders apply to each installment.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Label htmlFor="enableReminder" className="text-sm">
+                          Enable Reminder
+                        </Label>
+                        <Switch
+                          id="enableReminder"
+                          checked={enableReminder}
+                          onCheckedChange={setEnableReminder}
+                          data-testid="switch-enable-reminder"
+                        />
+                      </div>
+                    </div>
+
+                    {enableReminder && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <Label htmlFor="reminderFrequency">Reminder Frequency *</Label>
+                          <Select
+                            value={reminderFrequency}
+                            onValueChange={setReminderFrequency}
+                          >
+                            <SelectTrigger data-testid="select-reminder-frequency">
+                              <SelectValue placeholder="Select frequency..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="daily">Daily</SelectItem>
+                              <SelectItem value="weekly">Weekly</SelectItem>
+                              <SelectItem value="monthly">Monthly</SelectItem>
+                              <SelectItem value="specific_date">Specific Date</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <input type="hidden" name="reminderFrequency" value={reminderFrequency} />
+                        </div>
+
+                        {reminderFrequency === "specific_date" && (
+                          <div>
+                            <Label htmlFor="reminderSpecificDate">Reminder Date *</Label>
+                            <DatePicker
+                              value={reminderSpecificDate}
+                              onChange={setReminderSpecificDate}
+                              placeholder="Select reminder date"
+                              className="w-full"
+                            />
+                            <input type="hidden" name="reminderSpecificDate" value={reminderSpecificDate} />
                           </div>
                         )}
+
+                        <div className="col-span-full">
+                          <p className="text-sm text-gray-600 dark:text-gray-400">
+                            {reminderFrequency === "daily" && "Automatic payment reminders will be sent every day until the payment status is paid."}
+                            {reminderFrequency === "weekly" && "Automatic payment reminders will be sent every week until the payment status is paid."}
+                            {reminderFrequency === "monthly" && "Automatic payment reminders will be sent every month until the payment status is paid."}
+                            {reminderFrequency === "specific_date" && "A payment reminder will be sent on the selected date."}
+                          </p>
+                        </div>
                       </div>
                     )}
+                    <input type="hidden" name="enableReminder" value={enableReminder.toString()} />
+                  </div>
+                </div>
 
-                    {/* Payment Reminder Section */}
-                    <div className="border rounded-lg p-4">
-                      <div className="flex items-center justify-between mb-4">
-                        <div className="flex items-center gap-2">
-                          <Bell className="h-5 w-5 text-gray-900 dark:text-white" />
-                          <div>
-                            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                              Payment Reminder
-                            </h3>
-                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                              Automatic reminders will be sent until the payment status is paid. When installments are enabled, reminders apply to each installment.
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Label htmlFor="enableReminder" className="text-sm">
-                            Enable Reminder
-                          </Label>
-                          <Switch
-                            id="enableReminder"
-                            checked={enableReminder}
-                            onCheckedChange={setEnableReminder}
-                            data-testid="switch-enable-reminder"
-                          />
-                        </div>
+                {/* Right Side - Calculation Summary */}
+                <div className="border-l pl-6 space-y-3">
+                  <h3 className="font-semibold text-gray-900 dark:text-white mb-4">
+                    Calculation Summary
+                  </h3>
+
+                  <div className="flex justify-between items-center py-2 border-b">
+                    <span className="text-gray-700 dark:text-gray-300">Subtotal:</span>
+                    <span className="font-medium" data-testid="text-subtotal">
+                      {currencySymbol}{calculateSubtotal().toFixed(2)}
+                    </span>
+                  </div>
+
+                  {invoiceSettings?.showTax && (
+                    <div className="flex justify-between items-center py-2 border-b">
+                      <span className="text-gray-700 dark:text-gray-300">Tax:</span>
+                      <span className="font-medium" data-testid="text-tax">
+                        {currencySymbol}{calculateTotalTax().toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+
+                  {invoiceSettings?.showDiscount && (
+                    <div className="flex justify-between items-center py-2 border-b">
+                      <span className="text-gray-700 dark:text-gray-300">Discount:</span>
+                      <span className="font-medium text-gray-900 dark:text-white" data-testid="text-discount">
+                        -{currencySymbol}{parseFloat(discountAmount || "0").toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+
+                  {paymentStatus === "cancelled" && hasCancellationCharge && parseFloat(cancellationChargeAmount || "0") > 0 && (
+                    <div className="flex justify-between items-center py-2 border-b text-red-600 dark:text-red-400">
+                      <span className="text-gray-700 dark:text-gray-300">Cancellation Charge:</span>
+                      <span className="font-medium" data-testid="text-cancellation-charge">
+                        {currencySymbol}{parseFloat(cancellationChargeAmount || "0").toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="flex justify-between items-center py-3 border px-3 rounded-lg">
+                    <span className="text-lg font-semibold text-gray-900 dark:text-white">Total Amount:</span>
+                    <span className="text-lg font-bold text-gray-900 dark:text-white" data-testid="text-total-amount">
+                      {currencySymbol}{calculateGrandTotal().toFixed(2)}
+                    </span>
+                  </div>
+
+                  {/* Show existing paid amount in edit mode */}
+                  {isEditMode && existingPaidAmount > 0 && (
+                    <div className="flex justify-between items-center py-2 px-3 mt-2">
+                      <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Previously Paid:</span>
+                      <span className="text-sm font-semibold text-gray-900 dark:text-white">
+                        {currencySymbol}{existingPaidAmount.toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+
+                  {paymentStatus !== "paid" && (
+                    <div className="pt-2">
+                      <Label htmlFor="amountPaid" className="mb-2 block">
+                        {isEditMode ? "Additional Amount Paid" : "Amount Paid"} ({currencySymbol})
+                      </Label>
+                      <Input
+                        data-testid="input-amount-paid"
+                        value={amountPaid}
+                        onChange={(e) => setAmountPaid(e.target.value)}
+                        onKeyPress={handleNumericKeyPress}
+                        placeholder="0"
+                        className="text-lg font-medium"
+                      />
+                      {isEditMode && (
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                          This will be added to the existing paid amount of {currencySymbol}{existingPaidAmount.toFixed(2)}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Payment Installments Section */}
+                  <div className="pt-4 border-t mt-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <div>
+                        <Label htmlFor="enableInstallments" className="text-sm font-semibold">
+                          Enable Payment Installments
+                        </Label>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                          Split the invoice into multiple payments. Payment reminders will be sent for each installment until the payment status is paid.
+                        </p>
                       </div>
+                      <Switch
+                        id="enableInstallments"
+                        checked={enableInstallments}
+                        onCheckedChange={setEnableInstallments}
+                        data-testid="switch-enable-installments"
+                      />
+                    </div>
 
-                      {enableReminder && (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {enableInstallments && (
+                      <div className="space-y-3 border p-4 rounded-lg">
+                        <div className="grid grid-cols-2 gap-3">
                           <div>
-                            <Label htmlFor="reminderFrequency">Reminder Frequency *</Label>
+                            <Label className="text-sm">Number of Installments</Label>
+                            <Input
+                              type="number"
+                              min="2"
+                              max="12"
+                              value={numberOfInstallments}
+                              onChange={(e) => setNumberOfInstallments(e.target.value)}
+                              data-testid="input-number-installments"
+                              className="mt-1"
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-sm">Frequency</Label>
                             <Select
-                              value={reminderFrequency}
-                              onValueChange={setReminderFrequency}
+                              value={installmentFrequency}
+                              onValueChange={setInstallmentFrequency}
                             >
-                              <SelectTrigger data-testid="select-reminder-frequency">
-                                <SelectValue placeholder="Select frequency..." />
+                              <SelectTrigger data-testid="select-installment-frequency" className="mt-1">
+                                <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="daily">Daily</SelectItem>
                                 <SelectItem value="weekly">Weekly</SelectItem>
                                 <SelectItem value="monthly">Monthly</SelectItem>
-                                <SelectItem value="specific_date">Specific Date</SelectItem>
+                                <SelectItem value="yearly">Yearly</SelectItem>
                               </SelectContent>
                             </Select>
-                            <input type="hidden" name="reminderFrequency" value={reminderFrequency} />
-                          </div>
-
-                          {reminderFrequency === "specific_date" && (
-                            <div>
-                              <Label htmlFor="reminderSpecificDate">Reminder Date *</Label>
-                              <DatePicker
-                                value={reminderSpecificDate}
-                                onChange={setReminderSpecificDate}
-                                placeholder="Select reminder date"
-                                className="w-full"
-                              />
-                              <input type="hidden" name="reminderSpecificDate" value={reminderSpecificDate} />
-                            </div>
-                          )}
-
-                          <div className="col-span-full">
-                            <p className="text-sm text-gray-600 dark:text-gray-400">
-                              {reminderFrequency === "daily" && "Automatic payment reminders will be sent every day until the payment status is paid."}
-                              {reminderFrequency === "weekly" && "Automatic payment reminders will be sent every week until the payment status is paid."}
-                              {reminderFrequency === "monthly" && "Automatic payment reminders will be sent every month until the payment status is paid."}
-                              {reminderFrequency === "specific_date" && "A payment reminder will be sent on the selected date."}
-                            </p>
                           </div>
                         </div>
-                      )}
-                      <input type="hidden" name="enableReminder" value={enableReminder.toString()} />
-                    </div>
-                  </div>
 
-                  {/* Right Side - Calculation Summary */}
-                  <div className="border-l pl-6 space-y-3">
-                    <h3 className="font-semibold text-gray-900 dark:text-white mb-4">
-                      Calculation Summary
-                    </h3>
-
-                    <div className="flex justify-between items-center py-2 border-b">
-                      <span className="text-gray-700 dark:text-gray-300">Subtotal:</span>
-                      <span className="font-medium" data-testid="text-subtotal">
-                        {currencySymbol}{calculateSubtotal().toFixed(2)}
-                      </span>
-                    </div>
-
-                    {invoiceSettings?.showTax && (
-                      <div className="flex justify-between items-center py-2 border-b">
-                        <span className="text-gray-700 dark:text-gray-300">Tax:</span>
-                        <span className="font-medium" data-testid="text-tax">
-                          {currencySymbol}{calculateTotalTax().toFixed(2)}
-                        </span>
-                      </div>
-                    )}
-
-                    {invoiceSettings?.showDiscount && (
-                      <div className="flex justify-between items-center py-2 border-b">
-                        <span className="text-gray-700 dark:text-gray-300">Discount:</span>
-                        <span className="font-medium text-gray-900 dark:text-white" data-testid="text-discount">
-                          -{currencySymbol}{parseFloat(discountAmount || "0").toFixed(2)}
-                        </span>
-                      </div>
-                    )}
-
-                    {paymentStatus === "cancelled" && hasCancellationCharge && parseFloat(cancellationChargeAmount || "0") > 0 && (
-                      <div className="flex justify-between items-center py-2 border-b text-red-600 dark:text-red-400">
-                        <span className="text-gray-700 dark:text-gray-300">Cancellation Charge:</span>
-                        <span className="font-medium" data-testid="text-cancellation-charge">
-                          {currencySymbol}{parseFloat(cancellationChargeAmount || "0").toFixed(2)}
-                        </span>
-                      </div>
-                    )}
-
-                    <div className="flex justify-between items-center py-3 border px-3 rounded-lg">
-                      <span className="text-lg font-semibold text-gray-900 dark:text-white">Total Amount:</span>
-                      <span className="text-lg font-bold text-gray-900 dark:text-white" data-testid="text-total-amount">
-                        {currencySymbol}{calculateGrandTotal().toFixed(2)}
-                      </span>
-                    </div>
-
-                    {/* Show existing paid amount in edit mode */}
-                    {isEditMode && existingPaidAmount > 0 && (
-                      <div className="flex justify-between items-center py-2 px-3 mt-2">
-                        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Previously Paid:</span>
-                        <span className="text-sm font-semibold text-gray-900 dark:text-white">
-                          {currencySymbol}{existingPaidAmount.toFixed(2)}
-                        </span>
-                      </div>
-                    )}
-
-                    {paymentStatus !== "paid" && (
-                      <div className="pt-2">
-                        <Label htmlFor="amountPaid" className="mb-2 block">
-                          {isEditMode ? "Additional Amount Paid" : "Amount Paid"} ({currencySymbol})
-                        </Label>
-                        <Input
-                          data-testid="input-amount-paid"
-                          value={amountPaid}
-                          onChange={(e) => setAmountPaid(e.target.value)}
-                          onKeyPress={handleNumericKeyPress}
-                          placeholder="0"
-                          className="text-lg font-medium"
-                        />
-                        {isEditMode && (
-                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                            This will be added to the existing paid amount of {currencySymbol}{existingPaidAmount.toFixed(2)}
-                          </p>
+                        {/* Installment Preview */}
+                        {calculateInstallments().length > 0 && (
+                          <div className="mt-4">
+                            <div className="bg-white dark:bg-gray-800 rounded-lg p-3 max-h-48 overflow-y-auto">
+                              <table className="w-full text-sm">
+                                <thead>
+                                  <tr className="border-b">
+                                    <th className="text-left pb-2">#</th>
+                                    <th className="text-left pb-2">Due Date</th>
+                                    <th className="text-right pb-2">Amount</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {calculateInstallments().map((inst) => (
+                                    <tr key={inst.installmentNumber} className="border-b last:border-0">
+                                      <td className="py-2">{inst.installmentNumber}</td>
+                                      <td className="py-2">{new Date(inst.dueDate).toLocaleDateString()}</td>
+                                      <td className="py-2 text-right font-medium">{currencySymbol}{inst.amount}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                              <div className="mt-3 pt-2 border-t flex justify-between font-semibold">
+                                <span>Total Pending:</span>
+                                <span className="text-gray-900 dark:text-white">
+                                  {currencySymbol}{(
+                                    calculateGrandTotal() -
+                                    (isEditMode ? existingPaidAmount + parseFloat(amountPaid || "0") : parseFloat(amountPaid || "0"))
+                                  ).toFixed(2)}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
                         )}
                       </div>
                     )}
-
-                    {/* Payment Installments Section */}
-                    <div className="pt-4 border-t mt-4">
-                      <div className="flex items-center justify-between mb-3">
-                        <div>
-                          <Label htmlFor="enableInstallments" className="text-sm font-semibold">
-                            Enable Payment Installments
-                          </Label>
-                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                            Split the invoice into multiple payments. Payment reminders will be sent for each installment until the payment status is paid.
-                          </p>
-                        </div>
-                        <Switch
-                          id="enableInstallments"
-                          checked={enableInstallments}
-                          onCheckedChange={setEnableInstallments}
-                          data-testid="switch-enable-installments"
-                        />
-                      </div>
-
-                      {enableInstallments && (
-                        <div className="space-y-3 border p-4 rounded-lg">
-                          <div className="grid grid-cols-2 gap-3">
-                            <div>
-                              <Label className="text-sm">Number of Installments</Label>
-                              <Input
-                                type="number"
-                                min="2"
-                                max="12"
-                                value={numberOfInstallments}
-                                onChange={(e) => setNumberOfInstallments(e.target.value)}
-                                data-testid="input-number-installments"
-                                className="mt-1"
-                              />
-                            </div>
-                            <div>
-                              <Label className="text-sm">Frequency</Label>
-                              <Select
-                                value={installmentFrequency}
-                                onValueChange={setInstallmentFrequency}
-                              >
-                                <SelectTrigger data-testid="select-installment-frequency" className="mt-1">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="daily">Daily</SelectItem>
-                                  <SelectItem value="weekly">Weekly</SelectItem>
-                                  <SelectItem value="monthly">Monthly</SelectItem>
-                                  <SelectItem value="yearly">Yearly</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          </div>
-
-                          {/* Installment Preview */}
-                          {calculateInstallments().length > 0 && (
-                            <div className="mt-4">
-                              <div className="bg-white dark:bg-gray-800 rounded-lg p-3 max-h-48 overflow-y-auto">
-                                <table className="w-full text-sm">
-                                  <thead>
-                                    <tr className="border-b">
-                                      <th className="text-left pb-2">#</th>
-                                      <th className="text-left pb-2">Due Date</th>
-                                      <th className="text-right pb-2">Amount</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {calculateInstallments().map((inst) => (
-                                      <tr key={inst.installmentNumber} className="border-b last:border-0">
-                                        <td className="py-2">{inst.installmentNumber}</td>
-                                        <td className="py-2">{new Date(inst.dueDate).toLocaleDateString()}</td>
-                                        <td className="py-2 text-right font-medium">{currencySymbol}{inst.amount}</td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                                <div className="mt-3 pt-2 border-t flex justify-between font-semibold">
-                                  <span>Total Pending:</span>
-                                  <span className="text-gray-900 dark:text-white">
-                                    {currencySymbol}{(
-                                      calculateGrandTotal() - 
-                                      (isEditMode ? existingPaidAmount + parseFloat(amountPaid || "0") : parseFloat(amountPaid || "0"))
-                                    ).toFixed(2)}
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
                   </div>
                 </div>
               </div>
+            </div>
 
-              {/* Notes Section with Rich Text Editor - Side by Side */}
-              {invoiceSettings?.showNotes && (
-                <div className="border-t pt-6">
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    <div className="rounded-lg p-2 sm:p-4">
-                      <Label htmlFor="notes" className="text-base sm:text-lg font-semibold mb-2 sm:mb-3 block">
-                        Notes
-                      </Label>
-                      <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-2 sm:mb-3">
-                        Add notes for the invoice.
-                      </p>
-                       <div className="bg-white dark:bg-gray-900 rounded-lg" data-testid="rich-text-editor-notes">
-                         <ReactQuill
-                           theme="snow"
-                           value={notesContent}
-                           onChange={setNotesContent}
-                           className="h-40"
-                          modules={{
-                            toolbar: [
-                              ['bold', 'italic', 'underline'],
-                              [{ 'list': 'ordered' }, { 'list': 'bullet' }],
-                              ['link', 'image'],
-                              ['clean']
-                            ],
-                          }}
-                          formats={[
-                            'bold', 'italic', 'underline',
-                            'list', 'bullet',
-                            'link', 'image'
-                          ]}
-                          placeholder="Type your notes here..."
-                        />
-                      </div>
-                      <input type="hidden" name="notes" value={notesContent} />
+            {/* Notes Section with Rich Text Editor - Side by Side */}
+            {invoiceSettings?.showNotes && (
+              <div className="border-t pt-6">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className="rounded-lg p-2 sm:p-4">
+                    <Label htmlFor="notes" className="text-base sm:text-lg font-semibold mb-2 sm:mb-3 block">
+                      Notes
+                    </Label>
+                    <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-2 sm:mb-3">
+                      Add notes for the invoice.
+                    </p>
+                    <div className="bg-white dark:bg-gray-900 rounded-lg" data-testid="rich-text-editor-notes">
+                      <ReactQuill
+                        theme="snow"
+                        value={notesContent}
+                        onChange={setNotesContent}
+                        className="h-40"
+                        modules={{
+                          toolbar: [
+                            ['bold', 'italic', 'underline'],
+                            [{ 'list': 'ordered' }, { 'list': 'bullet' }],
+                            ['link', 'image'],
+                            ['clean']
+                          ],
+                        }}
+                        formats={[
+                          'bold', 'italic', 'underline',
+                          'list', 'bullet',
+                          'link', 'image'
+                        ]}
+                        placeholder="Type your notes here..."
+                      />
                     </div>
-
-                    <div className="rounded-lg p-2 sm:p-4">
-                      <Label htmlFor="notes" className="text-base sm:text-lg font-semibold mb-2 sm:mb-3 block">
-                        Additional Notes 
-                      </Label>
-                      <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-2 sm:mb-3">
-                         It will be hidden to the invoice .
-                      </p>
-                      <div className="bg-white dark:bg-gray-900 rounded-lg" data-testid="rich-text-editor-additional-notes">
-                        <ReactQuill
-                          theme="snow"
-                          value={additionalNotesContent}
-                          onChange={setAdditionalNotesContent}
-                          className="h-40"
-                          modules={{
-                            toolbar: [
-                              ['bold', 'italic', 'underline'],
-                              [{ 'list': 'ordered' }, { 'list': 'bullet' }],
-                              ['link', 'image'],
-                              ['clean']
-                            ],
-                          }}
-                          formats={[
-                            'bold', 'italic', 'underline',
-                            'list', 'bullet',
-                            'link', 'image'
-                          ]}
-                          placeholder="Type your notes here..."
-                        />
-                      </div>
-                      <input type="hidden" name="notes" value={additionalNotesContent} />
-                    </div>
+                    <input type="hidden" name="notes" value={notesContent} />
                   </div>
-                  
-                  {/* Attachments and Internal Attachments - Same Row */}
-                  <div className="mt-6 pt-6 border-t grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+                  <div className="rounded-lg p-2 sm:p-4">
+                    <Label htmlFor="notes" className="text-base sm:text-lg font-semibold mb-2 sm:mb-3 block">
+                      Additional Notes
+                    </Label>
+                    <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-2 sm:mb-3">
+                      It will be hidden to the invoice .
+                    </p>
+                    <div className="bg-white dark:bg-gray-900 rounded-lg" data-testid="rich-text-editor-additional-notes">
+                      <ReactQuill
+                        theme="snow"
+                        value={additionalNotesContent}
+                        onChange={setAdditionalNotesContent}
+                        className="h-40"
+                        modules={{
+                          toolbar: [
+                            ['bold', 'italic', 'underline'],
+                            [{ 'list': 'ordered' }, { 'list': 'bullet' }],
+                            ['link', 'image'],
+                            ['clean']
+                          ],
+                        }}
+                        formats={[
+                          'bold', 'italic', 'underline',
+                          'list', 'bullet',
+                          'link', 'image'
+                        ]}
+                        placeholder="Type your notes here..."
+                      />
+                    </div>
+                    <input type="hidden" name="notes" value={additionalNotesContent} />
+                  </div>
+                </div>
+
+                {/* Attachments and Internal Attachments - Same Row */}
+                <div className="mt-6 pt-6 border-t grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <div>
                     <Label className="text-base sm:text-lg font-semibold mb-3 block">
                       Attachments
@@ -3834,7 +3849,7 @@ export default function InvoiceCreate() {
                     <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-4">
                       Upload files and images to attach to this invoice.
                     </p>
-                    
+
                     {/* Display selected attachments (not uploaded yet) */}
                     {invoiceAttachments.length > 0 && (
                       <div className="mb-4">
@@ -3898,7 +3913,7 @@ export default function InvoiceCreate() {
                         </div>
                       </div>
                     )}
-                    
+
                     {/* File Input - Files will be uploaded when invoice is created */}
                     <div>
                       <input
@@ -3952,7 +3967,7 @@ export default function InvoiceCreate() {
                     <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-4">
                       Upload files for internal reference only. These are not sent with invoice emails.
                     </p>
-                    
+
                     {uploadedInternalAttachments.length > 0 && (
                       <div className="mb-4">
                         <Label className="text-sm font-medium mb-2 block">Previously Uploaded</Label>
@@ -3972,7 +3987,7 @@ export default function InvoiceCreate() {
                         </div>
                       </div>
                     )}
-                    
+
                     {internalAttachments.length > 0 && (
                       <div className="mb-4">
                         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
@@ -4031,7 +4046,7 @@ export default function InvoiceCreate() {
                         </div>
                       </div>
                     )}
-                    
+
                     <div>
                       <input
                         type="file"
@@ -4068,268 +4083,268 @@ export default function InvoiceCreate() {
                       )}
                     </div>
                   </div>
-                  </div>
                 </div>
-              )}
+              </div>
+            )}
 
-              {/* Show expenses section if we have any expenses */}
-              {getAllExpenses().length > 0 && (
-                <div className="pt-6 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Receipt className="h-5 w-5 text-gray-900 dark:text-white" />
-                      <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                        Expenses ({getAllExpenses().length})
-                      </h3>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={addManualExpense}
-                      data-testid="button-add-manual-expense"
-                    >
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add Manual Expense
-                    </Button>
+            {/* Show expenses section if we have any expenses */}
+            {getAllExpenses().length > 0 && (
+              <div className="pt-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Receipt className="h-5 w-5 text-gray-900 dark:text-white" />
+                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                      Expenses ({getAllExpenses().length})
+                    </h3>
                   </div>
-                  {/* Unified Expenses Table - Shows all expenses in one table */}
-                  <div className="border rounded-lg overflow-hidden">
-                      <div className="overflow-x-auto">
-                        <div className="min-w-[2200px]">
-                          {/* Table Header */}
-                          <div 
-                            className="grid gap-2 border-b p-3 font-medium text-sm bg-gray-50 dark:bg-gray-800"
-                            style={{ gridTemplateColumns: expenseGridTemplate }}
-                          >
-                            <div className="flex items-center justify-center text-center">#</div>
-                            <div className="flex items-center">Title</div>
-                            <div className="flex items-center">Qty</div>
-                            <div className="flex items-center">Purchase Price ({currencySymbol})</div>
-                            <div className="flex items-center">Amount ({currencySymbol})</div>
-                            <div className="flex items-center"></div>
-                          </div>
-                          {/* Table Body - All expenses unified */}
-                          <div>
-                            {getAllExpenses().map((expense: any, idx: number) => {
-                              // Handle existing expense line items from API
-                              if (expense.isFromAPI && expense.isExisting && expense.id) {
-                                const editedData = editedExpenseLineItems.get(expense.id) || expense;
-                                const displayItem = { ...expense, ...editedData };
-                                
-                                return (
-                                  <div
-                                    key={`existing-${expense.id}`}
-                                    className="grid gap-2 p-3 border-b last:border-b-0"
-                                    style={{ gridTemplateColumns: expenseGridTemplate }}
-                                  >
-                                    <div className="flex items-center justify-center">
-                                      <span className="font-medium text-sm">{expense.itemIndex || idx + 1}</span>
-                                    </div>
-                                    <div className="flex items-center">
-                                      <Input
-                                        value={displayItem.title}
-                                        onChange={(e) => {
-                                          const updated = { ...displayItem, title: e.target.value };
-                                          setEditedExpenseLineItems((prev) => {
-                                            const newMap = new Map(prev);
-                                            newMap.set(expense.id, updated);
-                                            return newMap;
-                                          });
-                                        }}
-                                        placeholder="Expense title"
-                                        className="text-sm"
-                                      />
-                                    </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={addManualExpense}
+                    data-testid="button-add-manual-expense"
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add Manual Expense
+                  </Button>
+                </div>
+                {/* Unified Expenses Table - Shows all expenses in one table */}
+                <div className="border rounded-lg overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <div className="min-w-[2200px]">
+                      {/* Table Header */}
+                      <div
+                        className="grid gap-2 border-b p-3 font-medium text-sm bg-gray-50 dark:bg-gray-800"
+                        style={{ gridTemplateColumns: expenseGridTemplate }}
+                      >
+                        <div className="flex items-center justify-center text-center">#</div>
+                        <div className="flex items-center">Title</div>
+                        <div className="flex items-center">Qty</div>
+                        <div className="flex items-center">Purchase Price ({currencySymbol})</div>
+                        <div className="flex items-center">Amount ({currencySymbol})</div>
+                        <div className="flex items-center"></div>
+                      </div>
+                      {/* Table Body - All expenses unified */}
+                      <div>
+                        {getAllExpenses().map((expense: any, idx: number) => {
+                          // Handle existing expense line items from API
+                          if (expense.isFromAPI && expense.isExisting && expense.id) {
+                            const editedData = editedExpenseLineItems.get(expense.id) || expense;
+                            const displayItem = { ...expense, ...editedData };
 
-                                    <div className="flex items-center">
-                                      <Input
-                                        value={displayItem.quantity}
-                                        onChange={(e) => {
-                                          const quantity = e.target.value;
-                                          const purchasePrice = parseFloat(displayItem.purchasePrice || "0");
-                                          const amount = (purchasePrice * parseFloat(quantity || "1")).toFixed(2);
-                                          const updated = { 
-                                            ...displayItem, 
-                                            quantity,
-                                            amount
-                                          };
-                                          setEditedExpenseLineItems((prev) => {
-                                            const newMap = new Map(prev);
-                                            newMap.set(expense.id, updated);
-                                            return newMap;
-                                          });
-                                        }}
-                                        onKeyPress={handleNumericKeyPress}
-                                        placeholder="1"
-                                        className="text-sm"
-                                      />
-                                    </div>
-                                    <div className="flex items-center">
-                                      <Input
-                                        value={displayItem.purchasePrice || ""}
-                                        onChange={(e) => {
-                                          const purchasePrice = e.target.value;
-                                          const quantity = parseFloat(displayItem.quantity || "1");
-                                          const amount = (parseFloat(purchasePrice || "0") * quantity).toFixed(2);
-                                          const updated = { 
-                                            ...displayItem, 
-                                            purchasePrice,
-                                            amount
-                                          };
-                                          setEditedExpenseLineItems((prev) => {
-                                            const newMap = new Map(prev);
-                                            newMap.set(expense.id, updated);
-                                            return newMap;
-                                          });
-                                        }}
-                                        onKeyPress={handleNumericKeyPress}
-                                        placeholder="0.00"
-                                        className="text-sm"
-                                      />
-                                    </div>
-                                    <div className="flex items-center">
-                                      <span className="font-semibold text-sm">
-                                        {currencySymbol}{parseFloat(displayItem.amount || "0").toFixed(2)}
-                                      </span>
-                                    </div>
-                                    <div className="flex items-center justify-center">
-                                      <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => {
-                                          setDeletedExpenseLineItemIds((prev) => {
-                                            const newSet = new Set(prev);
-                                            newSet.add(expense.id);
-                                            return newSet;
-                                          });
-                                        }}
-                                      >
-                                        <Trash2 className="h-4 w-4 text-red-600 dark:text-red-400" />
-                                      </Button>
-                                    </div>
-                                  </div>
-                                );
-                              }
-                              
-                              // Handle new expenses (auto-generated or manual)
-                              // Find the index in manualExpenses if it's a manual expense
-                              const manualExpenseIdx = manualExpenses.findIndex((m: any) => 
-                                !m.isFromAPI && m.title === expense.title && parseFloat(m.purchasePrice || "0") === parseFloat(expense.purchasePrice || "0")
-                              );
-                              
-                              // Check if it's a new auto-generated expense (starts with "A-")
-                              const isNewAutoGenerated = expense.itemIndex?.startsWith("A-");
-                              
-                              // For new auto-generated expenses, we need to track them separately
-                              // They will be included in the save but we can't edit them directly via manualExpenses
-                              // So we'll make them editable but they'll be saved as part of autoExpenses
-                              
-                              return (
-                                <div
-                                  key={`new-${expense.itemIndex || idx}`}
-                                  className="grid gap-2 p-3 border-b last:border-b-0"
-                                  style={{ gridTemplateColumns: expenseGridTemplate }}
-                                >
-                                  <div className="flex items-center justify-center">
-                                    <span className="font-medium text-sm">{expense.itemIndex || idx + 1}</span>
-                                  </div>
-                                  <div className="flex items-center">
-                                    <Input
-                                      value={expense.title}
-                                      onChange={(e) => {
-                                        if (manualExpenseIdx >= 0) {
-                                          updateManualExpense(manualExpenseIdx, "title", e.target.value);
-                                        } else if (isNewAutoGenerated) {
-                                          // For auto-generated, update the line item directly
-                                          const lineItemIdx = lineItems.findIndex((li: any) => 
-                                            li.itemTitle === expense.title || 
-                                            (li.purchasePrice && parseFloat(li.purchasePrice) === parseFloat(expense.purchasePrice || "0"))
-                                          );
-                                          if (lineItemIdx >= 0) {
-                                            updateLineItem(lineItemIdx, "itemTitle", e.target.value);
-                                          }
-                                        }
-                                      }}
-                                      placeholder="Expense title"
-                                      className="text-sm"
-                                    />
-                                  </div>
-
-                                  <div className="flex items-center">
-                                    <Input
-                                      value={expense.quantity}
-                                      onChange={(e) => {
-                                        if (manualExpenseIdx >= 0) {
-                                          updateManualExpense(manualExpenseIdx, "quantity", e.target.value);
-                                        } else if (isNewAutoGenerated) {
-                                          const lineItemIdx = lineItems.findIndex((li: any) => 
-                                            li.itemTitle === expense.title || 
-                                            (li.purchasePrice && parseFloat(li.purchasePrice) === parseFloat(expense.purchasePrice || "0"))
-                                          );
-                                          if (lineItemIdx >= 0) {
-                                            updateLineItem(lineItemIdx, "quantity", e.target.value);
-                                          }
-                                        }
-                                      }}
-                                      onKeyPress={handleNumericKeyPress}
-                                      placeholder="1"
-                                      className="text-sm"
-                                    />
-                                  </div>
-                                  <div className="flex items-center">
-                                    <Input
-                                      value={expense.purchasePrice || ""}
-                                      onChange={(e) => {
-                                        if (manualExpenseIdx >= 0) {
-                                          updateManualExpense(manualExpenseIdx, "purchasePrice", e.target.value);
-                                        } else if (isNewAutoGenerated) {
-                                          const lineItemIdx = lineItems.findIndex((li: any) => 
-                                            li.itemTitle === expense.title || 
-                                            (li.purchasePrice && parseFloat(li.purchasePrice) === parseFloat(expense.purchasePrice || "0"))
-                                          );
-                                          if (lineItemIdx >= 0) {
-                                            updateLineItem(lineItemIdx, "purchasePrice", e.target.value);
-                                          }
-                                        }
-                                      }}
-                                      onKeyPress={handleNumericKeyPress}
-                                      placeholder="0.00"
-                                      className="text-sm"
-                                    />
-                                  </div>
-                                  <div className="flex items-center">
-                                    <span className="font-semibold text-sm">
-                                      {currencySymbol}{parseFloat(expense.amount || "0").toFixed(2)}
-                                    </span>
-                                  </div>
-                                  <div className="flex items-center justify-center">
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => {
-                                        if (manualExpenseIdx >= 0) {
-                                          removeManualExpense(manualExpenseIdx);
-                                        } else if (isNewAutoGenerated) {
-                                          // Remove purchase price from line item to remove it from expenses
-                                          const lineItemIdx = lineItems.findIndex((li: any) => 
-                                            li.itemTitle === expense.title || 
-                                            (li.purchasePrice && parseFloat(li.purchasePrice) === parseFloat(expense.purchasePrice || "0"))
-                                          );
-                                          if (lineItemIdx >= 0) {
-                                            updateLineItem(lineItemIdx, "purchasePrice", "");
-                                          }
-                                        }
-                                      }}
-                                    >
-                                      <Trash2 className="h-4 w-4 text-red-600 dark:text-red-400" />
-                                    </Button>
-                                  </div>
+                            return (
+                              <div
+                                key={`existing-${expense.id}`}
+                                className="grid gap-2 p-3 border-b last:border-b-0"
+                                style={{ gridTemplateColumns: expenseGridTemplate }}
+                              >
+                                <div className="flex items-center justify-center">
+                                  <span className="font-medium text-sm">{expense.itemIndex || idx + 1}</span>
                                 </div>
-                              );
-                            })}
+                                <div className="flex items-center">
+                                  <Input
+                                    value={displayItem.title}
+                                    onChange={(e) => {
+                                      const updated = { ...displayItem, title: e.target.value };
+                                      setEditedExpenseLineItems((prev) => {
+                                        const newMap = new Map(prev);
+                                        newMap.set(expense.id, updated);
+                                        return newMap;
+                                      });
+                                    }}
+                                    placeholder="Expense title"
+                                    className="text-sm"
+                                  />
+                                </div>
+
+                                <div className="flex items-center">
+                                  <Input
+                                    value={displayItem.quantity}
+                                    onChange={(e) => {
+                                      const quantity = e.target.value;
+                                      const purchasePrice = parseFloat(displayItem.purchasePrice || "0");
+                                      const amount = (purchasePrice * parseFloat(quantity || "1")).toFixed(2);
+                                      const updated = {
+                                        ...displayItem,
+                                        quantity,
+                                        amount
+                                      };
+                                      setEditedExpenseLineItems((prev) => {
+                                        const newMap = new Map(prev);
+                                        newMap.set(expense.id, updated);
+                                        return newMap;
+                                      });
+                                    }}
+                                    onKeyPress={handleNumericKeyPress}
+                                    placeholder="1"
+                                    className="text-sm"
+                                  />
+                                </div>
+                                <div className="flex items-center">
+                                  <Input
+                                    value={displayItem.purchasePrice || ""}
+                                    onChange={(e) => {
+                                      const purchasePrice = e.target.value;
+                                      const quantity = parseFloat(displayItem.quantity || "1");
+                                      const amount = (parseFloat(purchasePrice || "0") * quantity).toFixed(2);
+                                      const updated = {
+                                        ...displayItem,
+                                        purchasePrice,
+                                        amount
+                                      };
+                                      setEditedExpenseLineItems((prev) => {
+                                        const newMap = new Map(prev);
+                                        newMap.set(expense.id, updated);
+                                        return newMap;
+                                      });
+                                    }}
+                                    onKeyPress={handleNumericKeyPress}
+                                    placeholder="0.00"
+                                    className="text-sm"
+                                  />
+                                </div>
+                                <div className="flex items-center">
+                                  <span className="font-semibold text-sm">
+                                    {currencySymbol}{parseFloat(displayItem.amount || "0").toFixed(2)}
+                                  </span>
+                                </div>
+                                <div className="flex items-center justify-center">
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => {
+                                      setDeletedExpenseLineItemIds((prev) => {
+                                        const newSet = new Set(prev);
+                                        newSet.add(expense.id);
+                                        return newSet;
+                                      });
+                                    }}
+                                  >
+                                    <Trash2 className="h-4 w-4 text-red-600 dark:text-red-400" />
+                                  </Button>
+                                </div>
+                              </div>
+                            );
+                          }
+
+                          // Handle new expenses (auto-generated or manual)
+                          // Find the index in manualExpenses if it's a manual expense
+                          const manualExpenseIdx = manualExpenses.findIndex((m: any) =>
+                            !m.isFromAPI && m.title === expense.title && parseFloat(m.purchasePrice || "0") === parseFloat(expense.purchasePrice || "0")
+                          );
+
+                          // Check if it's a new auto-generated expense (starts with "A-")
+                          const isNewAutoGenerated = expense.itemIndex?.startsWith("A-");
+
+                          // For new auto-generated expenses, we need to track them separately
+                          // They will be included in the save but we can't edit them directly via manualExpenses
+                          // So we'll make them editable but they'll be saved as part of autoExpenses
+
+                          return (
+                            <div
+                              key={`new-${expense.itemIndex || idx}`}
+                              className="grid gap-2 p-3 border-b last:border-b-0"
+                              style={{ gridTemplateColumns: expenseGridTemplate }}
+                            >
+                              <div className="flex items-center justify-center">
+                                <span className="font-medium text-sm">{expense.itemIndex || idx + 1}</span>
+                              </div>
+                              <div className="flex items-center">
+                                <Input
+                                  value={expense.title}
+                                  onChange={(e) => {
+                                    if (manualExpenseIdx >= 0) {
+                                      updateManualExpense(manualExpenseIdx, "title", e.target.value);
+                                    } else if (isNewAutoGenerated) {
+                                      // For auto-generated, update the line item directly
+                                      const lineItemIdx = lineItems.findIndex((li: any) =>
+                                        li.itemTitle === expense.title ||
+                                        (li.purchasePrice && parseFloat(li.purchasePrice) === parseFloat(expense.purchasePrice || "0"))
+                                      );
+                                      if (lineItemIdx >= 0) {
+                                        updateLineItem(lineItemIdx, "itemTitle", e.target.value);
+                                      }
+                                    }
+                                  }}
+                                  placeholder="Expense title"
+                                  className="text-sm"
+                                />
+                              </div>
+
+                              <div className="flex items-center">
+                                <Input
+                                  value={expense.quantity}
+                                  onChange={(e) => {
+                                    if (manualExpenseIdx >= 0) {
+                                      updateManualExpense(manualExpenseIdx, "quantity", e.target.value);
+                                    } else if (isNewAutoGenerated) {
+                                      const lineItemIdx = lineItems.findIndex((li: any) =>
+                                        li.itemTitle === expense.title ||
+                                        (li.purchasePrice && parseFloat(li.purchasePrice) === parseFloat(expense.purchasePrice || "0"))
+                                      );
+                                      if (lineItemIdx >= 0) {
+                                        updateLineItem(lineItemIdx, "quantity", e.target.value);
+                                      }
+                                    }
+                                  }}
+                                  onKeyPress={handleNumericKeyPress}
+                                  placeholder="1"
+                                  className="text-sm"
+                                />
+                              </div>
+                              <div className="flex items-center">
+                                <Input
+                                  value={expense.purchasePrice || ""}
+                                  onChange={(e) => {
+                                    if (manualExpenseIdx >= 0) {
+                                      updateManualExpense(manualExpenseIdx, "purchasePrice", e.target.value);
+                                    } else if (isNewAutoGenerated) {
+                                      const lineItemIdx = lineItems.findIndex((li: any) =>
+                                        li.itemTitle === expense.title ||
+                                        (li.purchasePrice && parseFloat(li.purchasePrice) === parseFloat(expense.purchasePrice || "0"))
+                                      );
+                                      if (lineItemIdx >= 0) {
+                                        updateLineItem(lineItemIdx, "purchasePrice", e.target.value);
+                                      }
+                                    }
+                                  }}
+                                  onKeyPress={handleNumericKeyPress}
+                                  placeholder="0.00"
+                                  className="text-sm"
+                                />
+                              </div>
+                              <div className="flex items-center">
+                                <span className="font-semibold text-sm">
+                                  {currencySymbol}{parseFloat(expense.amount || "0").toFixed(2)}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-center">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    if (manualExpenseIdx >= 0) {
+                                      removeManualExpense(manualExpenseIdx);
+                                    } else if (isNewAutoGenerated) {
+                                      // Remove purchase price from line item to remove it from expenses
+                                      const lineItemIdx = lineItems.findIndex((li: any) =>
+                                        li.itemTitle === expense.title ||
+                                        (li.purchasePrice && parseFloat(li.purchasePrice) === parseFloat(expense.purchasePrice || "0"))
+                                      );
+                                      if (lineItemIdx >= 0) {
+                                        updateLineItem(lineItemIdx, "purchasePrice", "");
+                                      }
+                                    }
+                                  }}
+                                >
+                                  <Trash2 className="h-4 w-4 text-red-600 dark:text-red-400" />
+                                </Button>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   </div>
@@ -4347,193 +4362,193 @@ export default function InvoiceCreate() {
                   </div>
                 </div>
               </div>
-              )}
+            )}
 
-              {/* Profit Calculation Section */}
-              <div className="mt-6 pt-4">
-                <div className="border rounded-lg p-6">
-                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
-                    <span className="text-gray-900 dark:text-white">💰</span> Profit Analysis
-                  </h3>
+            {/* Profit Calculation Section */}
+            <div className="mt-6 pt-4">
+              <div className="border rounded-lg p-6">
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
+                  <span className="text-gray-900 dark:text-white">💰</span> Profit Analysis
+                </h3>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
-                    {/* Left Side - Values */}
-                    <div className="space-y-3">
-                      <div className="flex justify-between items-center py-2 border-b">
-                        <span className="text-gray-700 dark:text-gray-300 font-medium">Total Invoice Amount:</span>
-                        <span className="font-semibold text-lg">
-                          {currencySymbol}{calculateGrandTotal().toFixed(2)}
-                        </span>
-                      </div>
-
-                      <div className="flex justify-between items-center py-2 border-b">
-                        <span className="text-gray-700 dark:text-gray-300 font-medium">Total Expenses:</span>
-                        <span className="font-semibold text-lg text-gray-900 dark:text-white">
-                          -{currencySymbol}
-                          {getTotalExpensesForProfit().toFixed(2)}
-                        </span>
-                        {isEditMode && allExpensesForProfit.length > 0 && (
-                          <span className="text-xs text-gray-500 ml-2">
-                            (includes expenses from expense page)
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="flex justify-between items-center py-2 border-b">
-                        <span className="text-gray-700 dark:text-gray-300 font-medium">Tax Amount:</span>
-                        <span className="font-semibold text-lg text-gray-900 dark:text-white">
-                          {currencySymbol}
-                          {lineItems.reduce(
-                            (total, item) => total + parseFloat(item.tax || "0"),
-                            0
-                          ).toFixed(2)}
-                        </span>
-                      </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+                  {/* Left Side - Values */}
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center py-2 border-b">
+                      <span className="text-gray-700 dark:text-gray-300 font-medium">Total Invoice Amount:</span>
+                      <span className="font-semibold text-lg">
+                        {currencySymbol}{calculateGrandTotal().toFixed(2)}
+                      </span>
                     </div>
 
-                    {/* Right Side - Profit Display */}
-                    <div className="flex items-center justify-center">
-                      <div className="border rounded-lg p-6 shadow-md w-full">
-                        <p className="text-sm text-gray-600 dark:text-gray-400 mb-2 text-center">Net Profit</p>
-                        <p className="text-3xl font-bold text-center text-gray-900 dark:text-white">
-                          {currencySymbol}{(
-                            calculateGrandTotal() -
-                            getTotalExpensesForProfit() +
-                            calculateTotalAdditionalCommission()
-                          ).toFixed(2)}
-                        </p>
-                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 text-center">
-                          (Invoice Amount - Expenses) + Commission
-                        </p>
-                      </div>
+                    <div className="flex justify-between items-center py-2 border-b">
+                      <span className="text-gray-700 dark:text-gray-300 font-medium">Total Expenses:</span>
+                      <span className="font-semibold text-lg text-gray-900 dark:text-white">
+                        -{currencySymbol}
+                        {getTotalExpensesForProfit().toFixed(2)}
+                      </span>
+                      {isEditMode && allExpensesForProfit.length > 0 && (
+                        <span className="text-xs text-gray-500 ml-2">
+                          (includes expenses from expense page)
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex justify-between items-center py-2 border-b">
+                      <span className="text-gray-700 dark:text-gray-300 font-medium">Tax Amount:</span>
+                      <span className="font-semibold text-lg text-gray-900 dark:text-white">
+                        {currencySymbol}
+                        {lineItems.reduce(
+                          (total, item) => total + parseFloat(item.tax || "0"),
+                          0
+                        ).toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Right Side - Profit Display */}
+                  <div className="flex items-center justify-center">
+                    <div className="border rounded-lg p-6 shadow-md w-full">
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-2 text-center">Net Profit</p>
+                      <p className="text-3xl font-bold text-center text-gray-900 dark:text-white">
+                        {currencySymbol}{(
+                          calculateGrandTotal() -
+                          getTotalExpensesForProfit() +
+                          calculateTotalAdditionalCommission()
+                        ).toFixed(2)}
+                      </p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 text-center">
+                        (Invoice Amount - Expenses) + Commission
+                      </p>
                     </div>
                   </div>
                 </div>
               </div>
+            </div>
 
-              <div className="flex flex-col sm:flex-row justify-end gap-2 sm:space-x-2 pt-4">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => navigate("/invoices")}
-                  data-testid="button-cancel"
-                >
-                  Cancel
-                </Button>
+            <div className="flex flex-col sm:flex-row justify-end gap-2 sm:space-x-2 pt-4">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => navigate("/invoices")}
+                data-testid="button-cancel"
+              >
+                Cancel
+              </Button>
 
-                <Button
-                  type="submit"
-                  disabled={createInvoiceMutation.isPending}
-                  data-testid="button-create-invoice"
-                >
-                  {createInvoiceMutation.isPending
-                    ? "Creating..."
-                    : "Save Invoice"}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </form>
-      </div>
+              <Button
+                type="submit"
+                disabled={createInvoiceMutation.isPending}
+                data-testid="button-create-invoice"
+              >
+                {createInvoiceMutation.isPending
+                  ? "Creating..."
+                  : "Save Invoice"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </form>
+    </div>
 
-      {/* Invoice Preview Dialog */}
-      <Dialog open={showPreview} onOpenChange={setShowPreview}>
-        <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Invoice Preview</DialogTitle>
-            <DialogDescription>
-              Review your invoice before saving. All invoice data will be displayed as shown below.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="mt-4">
-            {previewInvoiceData && (
-              <>
-                {/* Use actual invoice template */}
-                <ModernTemplate data={previewInvoiceData} />
-                
-              </>
-            )}
-          </div>
-          <div className="flex justify-end gap-2 pt-4 border-t mt-4">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setShowPreview(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              onClick={handleSaveFromPreview}
-              disabled={isEditMode ? updateInvoiceMutation.isPending : createInvoiceMutation.isPending}
-              className="bg-gray-900 hover:bg-gray-800 dark:bg-gray-100 dark:hover:bg-gray-200 text-white dark:text-gray-900"
-            >
-              {isEditMode 
-                ? (updateInvoiceMutation.isPending ? "Updating..." : "Update Invoice")
-                : (createInvoiceMutation.isPending ? "Saving..." : "Save Invoice")
+    {/* Invoice Preview Dialog */}
+    <Dialog open={showPreview} onOpenChange={setShowPreview}>
+      <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Invoice Preview</DialogTitle>
+          <DialogDescription>
+            Review your invoice before saving. All invoice data will be displayed as shown below.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="mt-4">
+          {previewInvoiceData && (
+            <>
+              {/* Use actual invoice template */}
+              <ModernTemplate data={previewInvoiceData} />
+
+            </>
+          )}
+        </div>
+        <div className="flex justify-end gap-2 pt-4 border-t mt-4">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setShowPreview(false)}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            onClick={handleSaveFromPreview}
+            disabled={isEditMode ? updateInvoiceMutation.isPending : createInvoiceMutation.isPending}
+            className="bg-gray-900 hover:bg-gray-800 dark:bg-gray-100 dark:hover:bg-gray-200 text-white dark:text-gray-900"
+          >
+            {isEditMode
+              ? (updateInvoiceMutation.isPending ? "Updating..." : "Update Invoice")
+              : (createInvoiceMutation.isPending ? "Saving..." : "Save Invoice")
+            }
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+
+    {/* Customer Create Slide Panel */}
+    <Sheet open={isCustomerPanelOpen} onOpenChange={setIsCustomerPanelOpen}>
+      <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
+        <SheetHeader>
+          <SheetTitle>Create New Customer</SheetTitle>
+          <SheetDescription className="sr-only">
+            Form to create a new customer and automatically select them for the invoice.
+          </SheetDescription>
+        </SheetHeader>
+        <div className="mt-6">
+          <CustomerCreateForm
+            tenantId={tenant?.id?.toString() || ""}
+            onSuccess={(customer) => {
+              queryClient.invalidateQueries({
+                queryKey: [`customers-tenant-${tenant?.id}`],
+              });
+              setSelectedCustomerId(customer.id?.toString() || "");
+              setIsCustomerPanelOpen(false);
+              toast({
+                title: "Success",
+                description: "Customer created and selected",
+              });
+            }}
+            onCancel={() => setIsCustomerPanelOpen(false)}
+          />
+        </div>
+      </SheetContent>
+    </Sheet>
+
+    {/* Vendor Create Slide Panel */}
+    <Sheet open={isVendorPanelOpen} onOpenChange={setIsVendorPanelOpen}>
+      <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
+        <SheetHeader>
+          <SheetTitle>Create New Vendor</SheetTitle>
+          <SheetDescription className="sr-only">
+            Form to create a new vendor for the invoice expenses.
+          </SheetDescription>
+        </SheetHeader>
+        <div className="mt-6">
+          <VendorCreateForm
+            onSuccess={(vendor) => {
+              queryClient.invalidateQueries({ queryKey: ["/api/vendors"] });
+              // If we're updating a manual expense, update it there
+              if (currentItemIndex >= 0 && manualExpenses[currentItemIndex]) {
+                updateManualExpense(currentItemIndex, "vendorId", vendor.id?.toString() || "");
               }
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Customer Create Slide Panel */}
-      <Sheet open={isCustomerPanelOpen} onOpenChange={setIsCustomerPanelOpen}>
-        <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
-          <SheetHeader>
-            <SheetTitle>Create New Customer</SheetTitle>
-            <SheetDescription className="sr-only">
-              Form to create a new customer and automatically select them for the invoice.
-            </SheetDescription>
-          </SheetHeader>
-          <div className="mt-6">
-            <CustomerCreateForm
-              tenantId={tenant?.id?.toString() || ""}
-              onSuccess={(customer) => {
-                queryClient.invalidateQueries({
-                  queryKey: [`customers-tenant-${tenant?.id}`],
-                });
-                setSelectedCustomerId(customer.id?.toString() || "");
-                setIsCustomerPanelOpen(false);
-                toast({
-                  title: "Success",
-                  description: "Customer created and selected",
-                });
-              }}
-              onCancel={() => setIsCustomerPanelOpen(false)}
-            />
-          </div>
-        </SheetContent>
-      </Sheet>
-
-      {/* Vendor Create Slide Panel */}
-      <Sheet open={isVendorPanelOpen} onOpenChange={setIsVendorPanelOpen}>
-        <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
-          <SheetHeader>
-            <SheetTitle>Create New Vendor</SheetTitle>
-            <SheetDescription className="sr-only">
-              Form to create a new vendor for the invoice expenses.
-            </SheetDescription>
-          </SheetHeader>
-          <div className="mt-6">
-            <VendorCreateForm
-              onSuccess={(vendor) => {
-                queryClient.invalidateQueries({ queryKey: ["/api/vendors"] });
-                // If we're updating a manual expense, update it there
-                if (currentItemIndex >= 0 && manualExpenses[currentItemIndex]) {
-                  updateManualExpense(currentItemIndex, "vendorId", vendor.id?.toString() || "");
-                }
-                setIsVendorPanelOpen(false);
-                toast({
-                  title: "Success",
-                  description: "Vendor created and selected",
-                });
-              }}
-              onCancel={() => setIsVendorPanelOpen(false)}
-            />
-          </div>
-        </SheetContent>
-      </Sheet>
-    </Layout>
-  );
+              setIsVendorPanelOpen(false);
+              toast({
+                title: "Success",
+                description: "Vendor created and selected",
+              });
+            }}
+            onCancel={() => setIsVendorPanelOpen(false)}
+          />
+        </div>
+      </SheetContent>
+    </Sheet>
+  </Layout>
+);
 }

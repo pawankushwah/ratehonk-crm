@@ -1015,6 +1015,8 @@ export default function InvoiceEdit() {
             variantId: item.variantId?.toString() || item.variant_id?.toString() || "",
             availableVariants: availableVariants,
             productTypeFilter: "all",
+            isUnfulfilled: item.isUnfulfilled || item.is_unfulfilled || false,
+            pendingQuantity: item.pendingQuantity || item.pending_quantity || 0,
             totalAmount: parseFloat(item.totalAmount?.toString() || item.totalPrice?.toString() || "0"),
             isPersisted: true,
             clientId: item.id?.toString() || Math.random().toString(36).substring(7),
@@ -1397,8 +1399,10 @@ export default function InvoiceEdit() {
     if (activeRate) {
       const ratePercentage = parseFloat(activeRate.ratePercentage) || 0;
       if (isTaxInclusive) {
-        // When tax is inclusive, tax is already in the price, so show 0
-        taxAmount = 0;
+        // When tax is inclusive, calculate the tax component from the price
+        // Price = Base + (Base * Rate) => Base = Price / (1 + Rate)
+        // Tax = Price - Base
+        taxAmount = subtotal - (subtotal / (1 + (ratePercentage / 100)));
         totalAmount = subtotal; // Total is the selling price (tax already included)
       } else {
         // When tax is exclusive, calculate tax and add it
@@ -1626,12 +1630,8 @@ export default function InvoiceEdit() {
       };
 
     const newItems = [...lineItems, newItem];
-    newItems.sort((a, b) => {
-      const dateA = new Date(a.date || "").getTime();
-      const dateB = new Date(b.date || "").getTime();
-      return dateA - dateB;
-    });
     setLineItems(newItems);
+    sortLineItems();
   };
 
   // Remove line item
@@ -1694,13 +1694,8 @@ export default function InvoiceEdit() {
       updatedItems.splice(index + 1, 0, newItem);
     }
 
-    const finalItems = [...updatedItems].sort((a, b) => {
-      const dateA = new Date(a.date || "").getTime();
-      const dateB = new Date(b.date || "").getTime();
-      return dateA - dateB;
-    });
-
-    setLineItems(finalItems);
+    setLineItems(updatedItems);
+    sortLineItems();
     setPaymentStatus("partial");
     
     toast({
@@ -1749,13 +1744,8 @@ export default function InvoiceEdit() {
       
       updatedItems.splice(index + 1, 0, newItem);
       
-      const finalItems = [...updatedItems].sort((a, b) => {
-        const dateA = new Date(a.date || "").getTime();
-        const dateB = new Date(b.date || "").getTime();
-        return dateA - dateB;
-      });
-
-      setLineItems(finalItems);
+      setLineItems(updatedItems);
+      sortLineItems();
       setPaymentStatus("partial");
       
       toast({
@@ -1769,12 +1759,8 @@ export default function InvoiceEdit() {
          isUnfulfilled: true,
          pendingQuantity: qty
        });
-       const finalItems = [...updatedItems].sort((a, b) => {
-         const dateA = new Date(a.date || "").getTime();
-         const dateB = new Date(b.date || "").getTime();
-         return dateA - dateB;
-       });
-       setLineItems(finalItems);
+       setLineItems(updatedItems);
+       sortLineItems();
        setPaymentStatus("partial");
        toast({
         title: "Row Marked Unfulfilled",
@@ -1807,13 +1793,8 @@ export default function InvoiceEdit() {
     const updatedItems = [...lineItems];
     updatedItems.splice(index + 1, 0, duplicatedItem);
     
-    updatedItems.sort((a, b) => {
-      const dateA = new Date(a.date || "").getTime();
-      const dateB = new Date(b.date || "").getTime();
-      return dateA - dateB;
-    });
-
     setLineItems(updatedItems);
+    sortLineItems();
   };
 
   // Sort line items by date and time
@@ -1835,7 +1816,18 @@ export default function InvoiceEdit() {
       (total, item) => {
         const sellingPrice = parseFloat(item.sellingPrice || "0");
         const quantity = parseInt(item.quantity || "1");
-        return total + (sellingPrice * quantity);
+        const itemSubtotal = sellingPrice * quantity;
+
+        if (isTaxInclusive && item.taxRateId) {
+          const activeRate = gstRates.find((rate: any) => rate.id?.toString() === item.taxRateId);
+          if (activeRate) {
+            const ratePercentage = parseFloat(activeRate.ratePercentage) || 0;
+            const baseAmount = itemSubtotal / (1 + (ratePercentage / 100));
+            return total + baseAmount;
+          }
+        }
+
+        return total + itemSubtotal;
       },
       0,
     );
@@ -2286,7 +2278,6 @@ export default function InvoiceEdit() {
       companyAddress: tenant?.address || "",
       companyLogo: (tenant as any)?.logo && typeof (tenant as any).logo === "string" && (tenant as any).logo.trim() !== "" ? (tenant as any).logo : undefined,
       items: lineItems
-        .filter(item => !forPreview || !item.isUnfulfilled) // Filter out unfulfilled items for preview
         .map((item, originalIndex) => {
           const sellingPrice = parseFloat(item.sellingPrice || "0");
           const quantity = parseInt(item.quantity || "1");
@@ -2319,6 +2310,7 @@ export default function InvoiceEdit() {
             unitPrice: sellingPrice,
             totalPrice: totalAmount > 0 ? totalAmount : (sellingPrice * quantity),
             date: item.date,
+            isUnfulfilled: item.isUnfulfilled,
           };
         })
         .filter((item) => item !== null) as { description: string; quantity: number; unitPrice: number; totalPrice: number; date?: string; }[],
@@ -3365,10 +3357,10 @@ export default function InvoiceEdit() {
                   {lineItems.map((item, index) => (
                     <div
                       key={index}
-                      className={`grid gap-2 p-3 border-b last:border-b-0 ${item.isUnfulfilled ? "bg-amber-50/50 dark:bg-amber-900/10" : ""}`}
+                      className={`grid gap-2 p-4 items-start border-b last:border-b-0 ${item.isUnfulfilled ? "bg-amber-50/50 dark:bg-amber-900/10" : ""}`}
                       style={{ gridTemplateColumns: gridTemplate }}
                     >
-                      <div className="flex items-center justify-center">
+                      <div className="flex items-start justify-center pt-2">
                         <span className="font-medium text-sm">{index + 1}</span>
                       </div>
 
@@ -3434,7 +3426,7 @@ export default function InvoiceEdit() {
                               </Select>
                             </div>
 
-                            <div className="flex items-center justify-center min-h-[36px]">
+                            <div className="flex items-start justify-center min-h-[36px]">
                               {(() => {
                                 const product = products.find((p: any) => p.id.toString() === item.productId);
                                 if (!product) return <span className="text-gray-400">-</span>;
@@ -3484,7 +3476,7 @@ export default function InvoiceEdit() {
                               })()}
                             </div>
 
-                            <div className="flex flex-col items-center justify-center h-full px-2">
+                            <div className="flex flex-col items-center pt-3 h-full px-2">
                               {(() => {
                                 const stock = getAvailableStock(item.productId, item.variantId, index);
                                 return (
@@ -3553,7 +3545,7 @@ export default function InvoiceEdit() {
                             </div>
 
                             {invoiceSettings?.showUnitPrice && (
-                              <div className="flex items-center">
+                              <div className="flex items-start">
                                 <Input
                                   data-testid={`input-unit-price-${index}`}
                                   value={item.unitPrice}
@@ -3602,7 +3594,7 @@ export default function InvoiceEdit() {
                             </div>
 
                             {invoiceSettings?.showTax && (
-                              <div className="flex items-center">
+                              <div className="flex flex-col items-start">
                                 <Select
                                   value={item.taxRateId || "none"}
                                   onValueChange={(value) =>
@@ -3631,9 +3623,9 @@ export default function InvoiceEdit() {
                                   </SelectContent>
                                   </Select>
                                   {item.tax && (
-                                    <div className="flex items-center gap-1 mt-1.5 px-2 py-0.5 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-md border border-blue-100 dark:border-blue-800 w-fit">
-                                      <span className="text-[10px] font-bold uppercase tracking-wider">Tax</span>
-                                      <span className="text-xs font-semibold">{currencySymbol}{parseFloat(item.tax || "0").toFixed(2)}</span>
+                                     <div className="flex items-center gap-1 mt-1 px-1.5 py-0.5 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded border border-blue-100 dark:border-blue-800 w-fit">
+                                      <span className="text-[9px] font-bold uppercase tracking-tighter">Tax</span>
+                                      <span className="text-[11px] font-semibold">{currencySymbol}{parseFloat(item.tax || "0").toFixed(2)}</span>
                                     </div>
                                   )}
                                 </div>
@@ -3649,7 +3641,7 @@ export default function InvoiceEdit() {
                             </div>
 
                             {invoiceSettings?.showAdditionalCommission && (
-                              <div className="flex items-center">
+                              <div className="flex items-start">
                                 <Input
                                   data-testid={`input-additional-commission-${index}`}
                                   type="text"
@@ -3674,7 +3666,7 @@ export default function InvoiceEdit() {
                             )}
 
                             {invoiceSettings?.showVoucherInvoice && (
-                              <div className="flex items-center">
+                              <div className="flex items-start">
                                 <Input
                                   data-testid={`input-line-invoice-number-${index}`}
                                   value={item.invoiceNumber}
@@ -3691,7 +3683,7 @@ export default function InvoiceEdit() {
                               </div>
                             )}
 
-                            <div className="flex items-center justify-center gap-1">
+                            <div className="flex items-start justify-center gap-1 pt-1">
                               {isEditMode && item.isPersisted && (
                                 <Button
                                   type="button"
@@ -4506,10 +4498,10 @@ export default function InvoiceEdit() {
                                     className="grid gap-2 p-3 border-b last:border-b-0"
                                     style={{ gridTemplateColumns: expenseGridTemplate }}
                                   >
-                                    <div className="flex items-center justify-center">
+                                    <div className="flex items-start justify-center">
                                       <span className="font-medium text-sm">{expense.itemIndex || idx + 1}</span>
                                     </div>
-                                    <div className="flex items-center">
+                                    <div className="flex items-start">
                                       <Input
                                         value={displayItem.title}
                                         onChange={(e) => {
@@ -4525,7 +4517,7 @@ export default function InvoiceEdit() {
                                       />
                                     </div>
 
-                                    <div className="flex items-center">
+                                    <div className="flex items-start">
                                       <Input
                                         value={displayItem.quantity}
                                         onChange={(e) => {
@@ -4548,7 +4540,7 @@ export default function InvoiceEdit() {
                                         className="text-sm"
                                       />
                                     </div>
-                                    <div className="flex items-center">
+                                    <div className="flex items-start">
                                       <Input
                                         value={displayItem.purchasePrice || ""}
                                         onChange={(e) => {
@@ -4571,12 +4563,12 @@ export default function InvoiceEdit() {
                                         className="text-sm"
                                       />
                                     </div>
-                                    <div className="flex items-center">
+                                    <div className="flex items-start">
                                       <span className="font-semibold text-sm">
                                         {currencySymbol}{parseFloat(displayItem.amount || "0").toFixed(2)}
                                       </span>
                                     </div>
-                                    <div className="flex items-center justify-center">
+                                    <div className="flex items-start justify-center">
                                       <Button
                                         type="button"
                                         variant="ghost"
@@ -4615,10 +4607,10 @@ export default function InvoiceEdit() {
                                   className="grid gap-2 p-3 border-b last:border-b-0"
                                   style={{ gridTemplateColumns: expenseGridTemplate }}
                                 >
-                                  <div className="flex items-center justify-center">
+                                  <div className="flex items-start justify-center">
                                     <span className="font-medium text-sm">{expense.itemIndex || idx + 1}</span>
                                   </div>
-                                  <div className="flex items-center">
+                                  <div className="flex items-start">
                                     <Input
                                       value={expense.title}
                                       onChange={(e) => {
@@ -4640,7 +4632,7 @@ export default function InvoiceEdit() {
                                     />
                                   </div>
 
-                                  <div className="flex items-center">
+                                  <div className="flex items-start">
                                     <Input
                                       value={expense.quantity}
                                       onChange={(e) => {
@@ -4661,7 +4653,7 @@ export default function InvoiceEdit() {
                                       className="text-sm"
                                     />
                                   </div>
-                                  <div className="flex items-center">
+                                  <div className="flex items-start">
                                     <Input
                                       value={expense.purchasePrice || ""}
                                       onChange={(e) => {
@@ -4682,12 +4674,12 @@ export default function InvoiceEdit() {
                                       className="text-sm"
                                     />
                                   </div>
-                                  <div className="flex items-center">
+                                  <div className="flex items-start">
                                     <span className="font-semibold text-sm">
                                       {currencySymbol}{parseFloat(expense.amount || "0").toFixed(2)}
                                     </span>
                                   </div>
-                                  <div className="flex items-center justify-center">
+                                  <div className="flex items-start justify-center">
                                     <Button
                                       type="button"
                                       variant="ghost"

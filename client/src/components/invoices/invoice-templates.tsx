@@ -22,6 +22,7 @@ export interface InvoiceData {
     invoiceNumber?: string;
     voucherNumber?: string;
     date?: string;
+    isUnfulfilled?: boolean;
   }[];
   subtotal: number;
   taxAmount: number;
@@ -107,7 +108,14 @@ export const ModernTemplate: React.FC<InvoiceTemplateProps> = ({ data }) => (
           {data.items.map((item, index) => (
             <tr key={index} className="border-b border-gray-200">
               <td className="p-3">
-                <div>{item.description}</div>
+                <div className="flex items-center gap-2">
+                  <span>{item.description}</span>
+                  {item.isUnfulfilled && (
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-800 border border-orange-200 uppercase tracking-wider">
+                      Unfulfilled
+                    </span>
+                  )}
+                </div>
                 {item.date && (
                   <div className="text-xs text-gray-500 mt-1">
                     Date: {format(new Date(item.date), 'MMM dd, yyyy HH:mm')}
@@ -340,7 +348,14 @@ export const CorporateTemplate: React.FC<InvoiceTemplateProps> = ({ data }) => (
           {data.items.map((item, index) => (
             <tr key={index} className={index % 2 === 0 ? "bg-gray-50" : "bg-white"}>
               <td className="p-4 border-b">
-                <div>{item.description}</div>
+                <div className="flex items-center gap-2">
+                  <span>{item.description}</span>
+                  {item.isUnfulfilled && (
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-800 border border-orange-200 uppercase tracking-wider">
+                      Unfulfilled
+                    </span>
+                  )}
+                </div>
                 {item.date && (
                   <div className="text-xs text-gray-500 mt-1 italic">
                     {format(new Date(item.date), 'MMMM dd, yyyy HH:mm')}
@@ -458,7 +473,14 @@ export const CreativeTemplate: React.FC<InvoiceTemplateProps> = ({ data }) => (
           <div key={index} className={`p-4 ${index % 2 === 0 ? 'bg-white' : 'bg-purple-25'} border-b border-purple-100`}>
             <div className="flex justify-between items-center">
               <div className="flex-1">
-                <p className="font-medium">{item.description}</p>
+                <div className="flex items-center gap-2">
+                  <p className="font-medium">{item.description}</p>
+                  {item.isUnfulfilled && (
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-800 border border-orange-200 uppercase tracking-wider">
+                      Unfulfilled
+                    </span>
+                  )}
+                </div>
                 {item.date && (
                   <p className="text-xs text-gray-500 mt-1 italic">
                     {format(new Date(item.date), 'MMM dd, yyyy HH:mm')}
@@ -581,7 +603,14 @@ export const ClassicTemplate: React.FC<InvoiceTemplateProps> = ({ data }) => (
           {data.items.map((item, index) => (
             <tr key={index}>
               <td className="border border-gray-400 p-3">
-                <div>{item.description}</div>
+                <div className="flex items-center gap-2">
+                  <span>{item.description}</span>
+                  {item.isUnfulfilled && (
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-800 border border-orange-200 uppercase tracking-wider">
+                      Unfulfilled
+                    </span>
+                  )}
+                </div>
                 {item.date && (
                   <div className="text-xs text-gray-500 mt-1 italic font-serif">
                     {format(new Date(item.date), 'MMMM dd, yyyy HH:mm')}
