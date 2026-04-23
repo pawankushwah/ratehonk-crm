@@ -1025,6 +1025,16 @@ export default function InvoiceEdit() {
 
         setLineItems(loadedLineItems);
 
+        // Auto-enable unfulfilled rows by default
+        const unfulfilledClientIds = loadedLineItems
+          .filter((item: any) => item.isUnfulfilled)
+          .map((item: any) => item.clientId);
+        
+        if (unfulfilledClientIds.length > 0) {
+          console.log("🔓 Auto-enabling unfulfilled rows:", unfulfilledClientIds);
+          setEditableRows(new Set(unfulfilledClientIds));
+        }
+
         // Mark the count of previously created line items (code level only, not shown on frontend)
         // All items at indices < this count are previously created
         setPreviouslyCreatedLineItemCount(loadedLineItems.length);
@@ -1696,11 +1706,9 @@ export default function InvoiceEdit() {
 
     setLineItems(updatedItems);
     sortLineItems();
-    setPaymentStatus("partial");
-    
     toast({
       title: "Row Fulfilled",
-      description: `Fulfilled ${qtyToFulfill} items. Invoice marked as partial.`,
+      description: `Fulfilled ${qtyToFulfill} items.`,
     });
   };
 
@@ -1746,11 +1754,10 @@ export default function InvoiceEdit() {
       
       setLineItems(updatedItems);
       sortLineItems();
-      setPaymentStatus("partial");
       
       toast({
         title: "Row Split",
-        description: `Split into ${stock} fulfilled and ${remainingQty} unfulfilled items. Invoice marked as partial.`,
+        description: `Split into ${stock} fulfilled and ${remainingQty} unfulfilled items.`,
       });
     } else if (qty > 0 && stock <= 0) {
        // Mark whole row as unfulfilled if no stock
@@ -1761,10 +1768,9 @@ export default function InvoiceEdit() {
        });
        setLineItems(updatedItems);
        sortLineItems();
-       setPaymentStatus("partial");
        toast({
         title: "Row Marked Unfulfilled",
-        description: `No stock available. Row marked as unfulfilled. Invoice marked as partial.`,
+        description: `No stock available. Row marked as unfulfilled.`,
       });
     } else {
         toast({
@@ -3365,7 +3371,7 @@ export default function InvoiceEdit() {
                       </div>
 
                       {(() => {
-                        const isRowDisabled = isEditMode && item.isPersisted && !editableRows.has(item.clientId);
+                        const isRowDisabled = isEditMode && item.isPersisted && !item.isUnfulfilled && !editableRows.has(item.clientId);
                         return (
                           <>
                             <div className="flex items-center justify-center">

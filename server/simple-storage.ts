@@ -15830,11 +15830,16 @@ async getDashboardMetrics(
 
   try {
   
-    // DATE FILTER LOGIC
-  
-    let dateFilter = sql`1=1`;
+    // Prepare table-specific date filters
+    let invoiceDateFilter = sql`1=1`;
+    let generalDateFilter = sql`1=1`; // For created_at
+
     if (startDate && endDate) {
-      dateFilter = sql`i.issue_date BETWEEN ${startDate} AND ${endDate}`;
+      // Normalize dates to YYYY-MM-DD
+      const start = startDate.split('T')[0];
+      const end = endDate.split('T')[0];
+      invoiceDateFilter = sql`issue_date BETWEEN ${start} AND ${end}`;
+      generalDateFilter = sql`created_at BETWEEN ${start} AND ${end}`;
     } else if (period) {
       const now = new Date();
       let filterDate = new Date();
@@ -15852,20 +15857,20 @@ async getDashboardMetrics(
         default:
           filterDate.setMonth(now.getMonth() - 1);
       }
-
-      dateFilter = sql`i.issue_date >= ${filterDate.toISOString()}`;
+      
+      const filterDateStr = filterDate.toISOString().split('T')[0];
+      invoiceDateFilter = sql`issue_date >= ${filterDateStr}`;
+      generalDateFilter = sql`created_at >= ${filterDateStr}`;
     }
 
-    // REVENUE (SUM OF INVOICE.total_amount)
-
+    // REVENUE (SUM OF INVOICE.total_amount) - Using total_amount for "Total Invoice" KPI
     const [revenueResult] = await sql`
-      SELECT COALESCE(SUM(i.paid_amount), 0) AS revenue
-      FROM invoices i
+      SELECT COALESCE(SUM(total_amount), 0) AS revenue
+      FROM invoices
       WHERE 
-        i.tenant_id = ${tenantId}
-        AND i.status NOT IN ('void', 'cancelled')
-        AND i.deleted_at IS NULL
-        AND ${dateFilter}
+        tenant_id = ${tenantId}
+        AND status NOT IN ('void', 'cancelled')
+        AND ${invoiceDateFilter}
     `;
 
     // OTHER METRICS
@@ -15884,7 +15889,7 @@ async getDashboardMetrics(
     const [invoicesResult] = await sql`
       SELECT COUNT(*) as total_invoices
       FROM invoices 
-      WHERE ${invoicesFilter} AND ${dateFilter} AND status NOT IN ('void', 'cancelled') AND deleted_at IS NULL
+      WHERE ${invoicesFilter} AND ${invoiceDateFilter} AND status NOT IN ('void', 'cancelled')
     `;
 
     // Customers - filter by team if provided
@@ -15899,7 +15904,7 @@ async getDashboardMetrics(
     const [customersResult] = await sql`
       SELECT COUNT(*) as customers
       FROM customers 
-      WHERE ${customersFilter} AND ${dateFilter}
+      WHERE ${customersFilter} AND ${generalDateFilter}
     `;
 
     // Leads - filter by team if provided (role-based hierarchy filtering)
@@ -15914,7 +15919,7 @@ async getDashboardMetrics(
     const [leadsResult] = await sql`
       SELECT COUNT(*) as leads
       FROM leads 
-      WHERE ${leadsFilter} AND ${dateFilter}
+      WHERE ${leadsFilter} AND ${generalDateFilter}
     `;
 
     // LOW STOCK KPI
@@ -15936,15 +15941,14 @@ async getDashboardMetrics(
     const topSellingProducts = await sql`
       SELECT 
         ii.product_id, 
-        ii.product_name,
+        ii.description as product_name,
         SUM(ii.quantity) as total_sold
       FROM invoice_items ii
       JOIN invoices i ON ii.invoice_id = i.id
       WHERE i.tenant_id = ${tenantId} 
         AND i.status NOT IN ('void', 'cancelled')
-        AND i.deleted_at IS NULL
-        AND ${dateFilter}
-      GROUP BY ii.product_id, ii.product_name
+        AND ${invoiceDateFilter}
+      GROUP BY ii.product_id, ii.description
       ORDER BY total_sold DESC
       LIMIT 5
     `;
@@ -16607,10 +16611,20 @@ async getDashboardMetrics(
         throw new Error("Invalid tenantId provided");
       }
 
-      // Simplified query without complex date filtering to avoid SQL template issues
-      console.log(
-        `📊 STORAGE: Executing simplified query for tenant ${tenantId}`,
-      );
+      let dateFilter = sql`1=1`;
+      if (startDate && endDate) {
+        dateFilter = sql`i.issue_date BETWEEN ${startDate.split('T')[0]} AND ${endDate.split('T')[0]}`;
+      } else if (period) {
+        const now = new Date();
+        let filterDate = new Date();
+        switch (period) {
+          case "week": filterDate.setDate(now.getDate() - 7); break;
+          case "month": filterDate.setMonth(now.getMonth() - 1); break;
+          case "year": filterDate.setFullYear(now.getFullYear() - 1); break;
+          default: filterDate.setMonth(now.getMonth() - 1);
+        }
+        dateFilter = sql`i.issue_date >= ${filterDate.toISOString().split('T')[0]}`;
+      }
 
       // Use invoices instead of bookings for revenue calculation
       // Only count invoices with status "paid" or "partial" and sum paidAmount
@@ -16624,6 +16638,7 @@ async getDashboardMetrics(
         LEFT JOIN leads l ON lt.id = l.lead_type_id AND l.tenant_id = ${tenantId}
         LEFT JOIN invoices i ON l.id = i.lead_id AND i.tenant_id = ${tenantId}
           AND i.status IN ('paid', 'partial')
+          AND ${dateFilter}
         WHERE lt.tenant_id = ${tenantId}
         GROUP BY lt.id, lt.name
         ORDER BY SUM(i.paid_amount) DESC NULLS LAST
@@ -16668,15 +16683,22 @@ async getDashboardMetrics(
         throw new Error("Invalid tenantId provided");
       }
 
-      // Simplified query without complex date filtering to avoid SQL template issues
-      console.log(
-        `📊 STORAGE: Executing simplified vendor query for tenant ${tenantId}`,
-      );
+      let dateFilter = sql`1=1`;
+      if (startDate && endDate) {
+        dateFilter = sql`b.created_at BETWEEN ${startDate.split('T')[0]} AND ${endDate.split('T')[0]}`;
+      } else if (period) {
+        const now = new Date();
+        let filterDate = new Date();
+        switch (period) {
+          case "week": filterDate.setDate(now.getDate() - 7); break;
+          case "month": filterDate.setMonth(now.getMonth() - 1); break;
+          case "year": filterDate.setFullYear(now.getFullYear() - 1); break;
+          default: filterDate.setMonth(now.getMonth() - 1);
+        }
+        dateFilter = sql`b.created_at >= ${filterDate.toISOString().split('T')[0]}`;
+      }
 
       // Note: Bookings represent service bookings, not invoices
-      // For revenue calculation consistency, we should ideally use invoices with paidAmount
-      // However, bookings don't have payment status, so we keep the original structure
-      // The frontend charts (ServiceProviderChart, ConsolidatedVendorBookingChart) use invoices directly
       const bookingsByVendor = await sql`
         SELECT 
           v.name as vendor_name,
@@ -16686,6 +16708,7 @@ async getDashboardMetrics(
           COALESCE(v.rating, 0) as vendor_rating
         FROM vendors v
         LEFT JOIN bookings b ON v.id = b.vendor_id AND b.tenant_id = ${tenantId}
+          AND ${dateFilter}
         WHERE v.tenant_id = ${tenantId}
         GROUP BY v.id, v.name, v.rating
         ORDER BY COUNT(b.id) DESC NULLS LAST

@@ -30825,7 +30825,10 @@ ${args.tenantName}`;
       res.json(dashboardData);
     } catch (error) {
       console.error("❌ Dashboard metrics error:", error);
-      res.status(500).json({ message: "Failed to fetch dashboard metrics" });
+      res.status(500).json({ 
+        message: "Failed to fetch dashboard metrics",
+        error: error instanceof Error ? error.message : String(error)
+      });
     }
   });
 

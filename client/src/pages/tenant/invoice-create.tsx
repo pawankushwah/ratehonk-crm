@@ -1736,11 +1736,10 @@ const fulfillUnfulfilledRow = (index: number) => {
     return dateA - dateB;
   });
   setLineItems(sorted);
-  setPaymentStatus("partial");
 
   toast({
     title: "Row Fulfilled",
-    description: `Fulfilled ${qtyToFulfill} items. Invoice marked as partial.`,
+    description: `Fulfilled ${qtyToFulfill} items.`,
   });
 };
 
@@ -1785,11 +1784,10 @@ const splitRemainingStock = (index: number) => {
 
     setLineItems(updatedItems);
     sortLineItems();
-    setPaymentStatus("partial");
 
     toast({
       title: "Row Split",
-      description: `Split into ${stock} fulfilled and ${remainingQty} unfulfilled items. Invoice marked as partial.`,
+      description: `Split into ${stock} fulfilled and ${remainingQty} unfulfilled items.`,
     });
   } else if (qty > 0 && stock <= 0) {
     // Mark whole row as unfulfilled if no stock
@@ -1801,10 +1799,9 @@ const splitRemainingStock = (index: number) => {
 
     setLineItems(updatedItems);
     sortLineItems();
-    setPaymentStatus("partial");
     toast({
       title: "Row Marked Unfulfilled",
-      description: `No stock available. Row marked as unfulfilled. Invoice marked as partial.`,
+      description: `No stock available. Row marked as unfulfilled.`,
     });
   } else {
     toast({

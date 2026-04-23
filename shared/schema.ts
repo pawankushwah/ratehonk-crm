@@ -493,6 +493,8 @@ export const invoiceItems = pgTable("invoice_items", {
   packageId: integer("package_id"),
   productId: integer("product_id"),
   fulfilledQuantity: integer("fulfilled_quantity").notNull().default(0),
+  isUnfulfilled: boolean("is_unfulfilled").default(false),
+  pendingQuantity: integer("pending_quantity").default(0),
 });
 
 // Payment Installments - For splitting invoice payments
