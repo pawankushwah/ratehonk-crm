@@ -33,6 +33,7 @@ import { buildDateFilters } from "@/lib/date-filter-helpers";
 import { MetricCard } from "@/components/dashboard/MetricCard";
 import { RevenueChart } from "@/components/dashboard/RevenueChart";
 import { ProfitLossCard } from "@/components/dashboard/ProfitLossCard";
+import { TopItemsCard } from "@/components/dashboard/TopItemsCard";
 import { ExpensePieChart } from "@/components/dashboard/ExpensePieChart";
 import { ServiceBookingScatter } from "@/components/dashboard/ServiceBookingScatter";
 import { InvoiceStatusBar } from "@/components/dashboard/InvoiceStatusBar";
@@ -800,40 +801,15 @@ export default function TenantDashboard() {
                   data-testid="dashboard-main-content"
                 >
                   {canViewComponent("dashboard.revenue-chart") && <RevenueChart />}
-                  {canViewComponent("dashboard.profit-loss") && <ProfitLossCard />}
+                  <div className="lg:col-span-5 flex flex-col gap-6 lg:gap-8">
+                    {canViewComponent("dashboard.profit-loss") && <ProfitLossCard />}
+                    {canViewComponent("dashboard", "top-selling") && (
+                      <TopItemsCard products={metrics.topSellingProducts} />
+                    )}
+                  </div>
                 </div>
               )}
 
-              {/* Top Selling Products - New Section */}
-              {canViewComponent("dashboard", "top-selling") && metrics.topSellingProducts.length > 0 && (
-                <div className="mt-6 lg:mt-10 bg-white dark:bg-gray-800 rounded-2xl p-6 shadow-sm border border-gray-100 dark:border-gray-700">
-                  <div className="flex items-center justify-between mb-6">
-                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Top Selling Products</h3>
-                    <Link href="/products">
-                      <button className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1">
-                        View All <ChevronRight className="h-4 w-4" />
-                      </button>
-                    </Link>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-                    {metrics.topSellingProducts.map((product, index) => (
-                      <div key={product.id} className="p-4 rounded-xl border border-gray-50 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/50 hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors">
-                        <div className="flex flex-col gap-1">
-                          <span className="text-xs font-semibold text-blue-600 dark:text-blue-400">Rank #{index + 1}</span>
-                          <span className="text-sm font-medium text-gray-900 dark:text-white truncate" title={product.name}>
-                            {product.name}
-                          </span>
-                          <div className="flex items-center justify-between mt-2">
-                            <span className="text-xs text-gray-500 dark:text-gray-400">Units Sold</span>
-                            <span className="text-sm font-bold text-gray-900 dark:text-white">{product.sold}</span>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              
               {/* Expense Chart and Service Booking - grouped together */}
               {(canViewComponent("dashboard.expense-chart") || canViewComponent("dashboard.service-booking")) && (
                 <div
