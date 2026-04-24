@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Facebook Login Integration</title>
+    <script src="https://connect.facebook.net/en_US/sdk.js"></script>
+    <script>
+      window.fbAsyncInit = function() {
+        FB.init({
+      appId      : '1371288528354319',
+          cookie     : true,
+          xfbml      : true,
+          version    : 'v19.0'
+        });
+        console.log('FB SDK Initialized');
+      };
+
+      function handleLogin() {
+        FB.login(function(response) {
+          console.log('Login Response:', response);
+          if (response.authResponse) {
+            // This will return an authorization 'code' instead of a 'token'
+            console.log('Authorization code received:', response.authResponse.code);
+            alert('Success! Check console for Authorization Code.');
+          } else {
+            console.log('User cancelled login or did not fully authorize.');
+            alert('Login failed or cancelled.');
+          }
+        }, {
+          config_id: '24760315386893718', // Updated to match .env
+          response_type: 'code',
+          override_default_response_type: true
+        });
+      }
+    </script>
+</head>
+<body style="margin: 0; background: #f0f2f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+    <div style="display: flex; justify-content: center; align-items: center; height: 100vh; flex-direction: column; gap: 24px; text-align: center;">
+        <div style="background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); width: 100%; max-width: 400px;">
+            <h2 style="margin-top: 0; color: #1c1e21;">Facebook Business Login</h2>
+            <p style="color: #606770; margin-bottom: 30px;">Direct integration for Lead Ads and Business Suite.</p>
+            
+            <button onclick="handleLogin()" style="background: #1877f2; border: none; border-radius: 6px; color: white; cursor: pointer; display: block; font-size: 16px; font-weight: 600; padding: 12px 24px; width: 100%; transition: background 0.2s;">
+                Log In with Facebook
+            </button>
+            
+            <p style="margin-top: 20px; color: #8a8d91; font-size: 12px;">
+                Note: This uses the Authorization Code flow as required for Business Login.
+            </p>
+        </div>
+    </div>
+
+
+    <div style="overflow: auto; padding: 0 100px 0 100px;">
+    <div style="height: 100vh; display: flex; align-items: center; padding: 20px;margin: auto; width: fit-content;">
+      <div class="circle-label">
+        <div class="circle">1</div>
+        <span>Introduction: Start of the Topic</span>
+      </div>
+      <div class="line"></div>
+      
+      <div class="circle-label">
+        <div class="circle">2</div>
+        <span>Body: Content of the Topic</span>
+      </div>
+      <div class="line"></div>
+
+      <div class="circle-label">
+        <div class="circle">2</div>
+        <span>Body: Content of the Topic</span>
+      </div>
+      <div class="line"></div>
+
+      <div class="circle-label">
+        <div class="circle">3</div>
+        <span>Body: Content of the Topic</span>
+      </div>
+      <div class="line"></div>
+
+      <div class="circle-label">
+        <div class="circle">4</div>
+        <span>Body: Content of the Topic</span>
+      </div>
+      <div class="line"></div>
+
+      <div class="circle-label">
+        <div class="circle">5</div>
+        <span>Body: Content of the Topic</span>
+      </div>
+      <div class="line"></div>
+
+      <div class="circle-label">
+        <div class="circle">6</div>
+        <span>Body: Content of the Topic</span>
+      </div>
+      <div class="line"></div>
+
+      <div class="circle-label">
+        <div class="circle">2</div>
+        <span>Body: Content of the Topic</span>
+      </div>
+      <div class="line"></div>
+
+      <div class="circle-label">
+        <div class="circle">3</div>
+        <span>Conclusion: End of the Topic</span>
+      </div>
+    </div>
+    </div>
+</body>
+<style>
+  .line {
+    border: 0.2px solid black;
+    width: 100px;
+    position: relative;
+  }
+
+  .circle {
+    width: 20px;
+    height: 20px;
+    margin: 5px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    border-radius: 100%;
+    background-color: orange;
+    color: white;
+    font-size: 10px;
+  }
+
+  .circle-label {
+    font-size: 10px;
+    position: relative;
+  }
+
+  .circle-label > span {
+    position: absolute;
+    top: 30px;
+    right: 50%;
+    width: 70px;
+    text-align: center;
+    transform: translateX(50%);
+  }
+
+</style>
+</body>
+</html>
