@@ -62,9 +62,9 @@ export function ProfitLossList({
   const currentCurrency = invoiceSettingsData?.defaultCurrency || "USD";
   const currencySymbol = getCurrencySymbol(currentCurrency);
 
-// Use UTC to get the current year consistently across timezones
-const currentYear = new Date().getUTCFullYear();
-const currentMonth = new Date().getUTCMonth();
+// Use local methods to get the current year consistently with the user's timezone
+const currentYear = new Date().getFullYear();
+const currentMonth = new Date().getMonth();
 
 // For "this_quarter", we want to show months from the current quarter
 // Calculate which quarter we're in (0-3)
@@ -75,6 +75,7 @@ const quarterEndMonth = quarterStartMonth + 2;
 // Filter data to only show months from the current quarter of the current year
 const filtered = Array.isArray(profitLossData)
   ? profitLossData.filter((m) => {
+      if (!m.month) return false;
       const [year, month] = m.month.split("-").map(Number);
       const monthIndex = month - 1; // Convert to 0-based month index
       
@@ -87,12 +88,15 @@ const filtered = Array.isArray(profitLossData)
   : [];
 
 // Sort by month number (ascending) to show Jan, Feb, Mar in order
-const sortedProfitLossData = [...filtered].sort((a, b) => {
-  const [, monthA] = a.month.split("-").map(Number);
-  const [, monthB] = b.month.split("-").map(Number);
+const sortedProfitLossData = Array.isArray(filtered) 
+  ? [...filtered].sort((a, b) => {
+      if (!a.month || !b.month) return 0;
+      const [, monthA] = a.month.split("-").map(Number);
+      const [, monthB] = b.month.split("-").map(Number);
 
-  return monthA - monthB;
-});
+      return monthA - monthB;
+    })
+  : [];
 
 
 
@@ -136,6 +140,7 @@ const sortedProfitLossData = [...filtered].sort((a, b) => {
             >
               <span className="text-gray-500 w-6 sm:w-8">
                 {(() => {
+                  if (!item.month) return "Unknown";
                   // Parse the month string (YYYY-MM) directly to avoid timezone conversion issues
                   const [, month] = item.month.split("-").map(Number);
                   const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];

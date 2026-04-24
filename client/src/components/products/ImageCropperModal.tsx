@@ -1,7 +1,12 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import ReactCrop, { type PixelCrop, centerCrop, makeAspectCrop, type Crop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
-import { X, Check, ArrowRight, Loader2, Scissors } from 'lucide-react';
+import { X, Check, ArrowRight, Loader2, Scissors, Plus, Minus, ZoomIn } from 'lucide-react';
 import Button from './Button';
 import getCroppedImg from '@/utils/getCroppedImg';
 import { cn } from '@/utils/cn';
@@ -26,6 +31,7 @@ const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
   const [crop, setCrop] = useState<Crop>();
   const [completedCrop, setCompletedCrop] = useState<PixelCrop>();
   const [results, setResults] = useState<{ cropped: File, original: File }[]>([]);
+  const [zoom, setZoom] = useState(1);
   const [isProcessing, setIsProcessing] = useState(false);
   const [originalRatio, setOriginalRatio] = useState<number | undefined>(undefined);
   const [isCustom, setIsCustom] = useState(false);
@@ -134,6 +140,29 @@ const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
     if (isCustom) handleCustomRatioChange();
   }, [handleCustomRatioChange, isCustom]);
 
+  const handleSelectAll = useCallback(() => {
+    setIsCustom(false);
+    setCurrentRatio(undefined);
+    
+    if (imgRef.current) {
+      const { width, height } = imgRef.current;
+      setCrop({
+        unit: '%',
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100
+      });
+      setCompletedCrop({
+        unit: 'px',
+        x: 0,
+        y: 0,
+        width: width,
+        height: height
+      });
+    }
+  }, []);
+
   // Sync crop when currentRatio changes (e.g. via prop or quick-toggle)
   useEffect(() => {
     if (imgRef.current) {
@@ -186,6 +215,7 @@ const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
   const handleClose = () => {
     setCurrentIndex(0);
     setResults([]);
+    setZoom(1);
     setOriginalRatio(undefined);
     setIsCustom(false);
     onClose();
@@ -209,52 +239,111 @@ const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
   if (!isOpen || files.length === 0) return null;
 
   return (
-    <div className="fixed inset-0 z-60 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-md" onClick={handleClose} />
-      
-      <div className="relative w-full max-w-2xl bg-white dark:bg-slate-900 rounded-3xl shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-800 animate-in zoom-in-95 duration-300">
-        {/* Header */}
-        <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-xl bg-primary/10 text-primary">
-              <Scissors size={20} />
+    <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
+      <DialogContent className="max-w-2xl p-0 border-none bg-transparent shadow-none z-[9999]">
+        <DialogTitle className="sr-only">Crop Image</DialogTitle>
+        <div className="relative w-full bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 animate-in zoom-in-95 duration-300 flex flex-col max-h-[90vh] overflow-hidden">
+          {/* Header */}
+          <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-white dark:bg-slate-900 sticky top-0 z-20">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-xl bg-primary/10 text-primary">
+                <Scissors size={18} />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">Crop Image</h3>
+                <p className="text-[10px] text-slate-500 font-medium tracking-tight">Image {currentIndex + 1} of {files.length}</p>
+              </div>
             </div>
-            <div>
-              <h3 className="text-xl font-bold text-slate-900 dark:text-white">Crop Image</h3>
-              <p className="text-xs text-slate-500 font-medium tracking-tight">Image {currentIndex + 1} of {files.length} • Mode: {aspectRatio}</p>
+            
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 px-4 text-[10px] font-bold border-transparent hover:bg-slate-100 dark:hover:bg-slate-800"
+                onClick={handleClose}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                className="h-9 px-6 text-[10px] font-bold shadow-lg shadow-primary/20"
+                icon={isProcessing ? Loader2 : (currentIndex === files.length - 1 ? Check : ArrowRight)}
+                onClick={handleNext}
+                disabled={isProcessing || !crop}
+              >
+                {isProcessing ? 'Saving...' : (currentIndex === files.length - 1 ? 'Finish & Upload' : 'Next')}
+              </Button>
             </div>
           </div>
-          <button onClick={handleClose} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all">
-            <X size={20} className="text-slate-400" />
-          </button>
-        </div>
 
-        {/* Cropper Container */}
-        <div className="relative min-h-[400px] max-h-[60vh] bg-slate-100 dark:bg-slate-950 overflow-auto p-4 flex justify-center items-start">
-          <ReactCrop
-            crop={crop}
-            onChange={(c: any) => setCrop(c)}
-            onComplete={(c: any) => setCompletedCrop(c)}
-            aspect={aspectRatio === "Free" ? (isCustom ? currentRatio : undefined) : currentRatio}
-            className="max-w-full"
-          >
-            <img 
-              ref={imgRef}
-              src={currentImageUrl} 
-              className="max-w-full h-auto block"
-              onLoad={onImageLoad}
-              alt="Crop source"
-            />
-          </ReactCrop>
-        </div>
+          {/* Cropper Container */}
+          <div className="relative flex-1 bg-slate-100 dark:bg-slate-950 flex overflow-hidden min-h-[400px]">
+            {/* Zoom Slider Sidebar */}
+            <div className="flex flex-col items-center gap-4 p-4 border-r border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm z-10">
+              <button 
+                onClick={() => setZoom(z => Math.min(3, z + 0.2))}
+                className="p-2 rounded-xl bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:text-primary transition-all active:scale-90"
+                title="Zoom In"
+              >
+                <Plus size={16} />
+              </button>
+              
+              <div className="flex-1 w-12 relative flex items-center justify-center py-2">
+                <input 
+                  type="range"
+                  min="1"
+                  max="3"
+                  step="0.1"
+                  value={zoom}
+                  onChange={(e) => setZoom(parseFloat(e.target.value))}
+                  className="h-full w-1 accent-primary cursor-ns-resize"
+                  style={{ 
+                    writingMode: 'bt-lr',
+                    WebkitAppearance: 'slider-vertical',
+                    height: '100%'
+                  } as any}
+                />
+              </div>
 
-        {/* Controls */}
-        <div className="p-8 space-y-8">
-          <div className="flex flex-col gap-6">
-            {aspectRatio === "Free" && (
+              <button 
+                onClick={() => setZoom(z => Math.max(1, z - 0.2))}
+                className="p-2 rounded-xl bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:text-primary transition-all active:scale-90"
+                title="Zoom Out"
+              >
+                <Minus size={16} />
+              </button>
+              
+              <div className="flex flex-col items-center gap-1">
+                <ZoomIn size={14} className="text-slate-400" />
+                <span className="text-[10px] font-black text-slate-500">{Math.round(zoom * 100)}%</span>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-auto p-8 flex justify-center items-start custom-scrollbar">
+              <ReactCrop
+                crop={crop}
+                onChange={(c: any) => setCrop(c)}
+                onComplete={(c: any) => setCompletedCrop(c)}
+                aspect={aspectRatio === "Free" ? (isCustom ? currentRatio : undefined) : currentRatio}
+                className="max-w-full"
+              >
+                <img 
+                  ref={imgRef}
+                  src={currentImageUrl} 
+                  className="max-w-full h-auto block transition-transform duration-200 ease-out origin-top-left"
+                  style={{ transform: `scale(${zoom})` }}
+                  onLoad={onImageLoad}
+                  alt="Crop source"
+                />
+              </ReactCrop>
+            </div>
+          </div>
+
+          {/* Controls - only show if there are ratio controls */}
+          {aspectRatio === "Free" && (
+            <div className="p-6 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800">
               <div className="space-y-4">
-                <div className="text-xs font-black uppercase tracking-widest text-slate-400 flex justify-between items-center">
-                  <span>Aspect Ratio</span>
+                <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex justify-between items-center">
                   {isCustom && (
                     <div className="flex items-center gap-2 animate-in fade-in slide-in-from-right-2 duration-300">
                       <input 
@@ -303,6 +392,12 @@ const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
                     Free
                   </button>
                   <button
+                    onClick={handleSelectAll}
+                    className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-700"
+                  >
+                    Whole Image
+                  </button>
+                  <button
                     onClick={() => setIsCustom(true)}
                     className={cn(
                       "px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all",
@@ -315,29 +410,11 @@ const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
                   </button>
                 </div>
               </div>
-            )}
-
-            <div className="flex gap-4 pt-2">
-              <Button
-                variant="outline"
-                className="flex-1 h-14 bg-slate-50 dark:bg-slate-800 border-transparent hover:bg-slate-100 dark:hover:bg-slate-700"
-                onClick={handleClose}
-              >
-                Cancel
-              </Button>
-              <Button
-                className="flex-1 h-14 shadow-xl shadow-primary/20"
-                icon={isProcessing ? Loader2 : (currentIndex === files.length - 1 ? Check : ArrowRight)}
-                onClick={handleNext}
-                disabled={isProcessing || !crop}
-              >
-                {isProcessing ? 'Processing...' : (currentIndex === files.length - 1 ? 'Finish & Upload' : 'Next Image')}
-              </Button>
             </div>
-          </div>
+          )}
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 };
 

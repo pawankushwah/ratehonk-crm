@@ -12,8 +12,8 @@ export function Layout({ children, initialSidebarCollapsed = true }: LayoutProps
     <div className="min-h-screen bg-gray-50">
       <CompleteSidebar initialCollapsed={initialSidebarCollapsed} />
       <div
-        className="main-content-wrapper flex flex-col min-w-0 transition-all duration-300"
-        style={{ marginLeft: "4rem" }}
+        className="main-content-wrapper flex flex-col min-w-0 transition-all duration-300 w-full"
+        style={{ paddingLeft: "4rem" }}
       >
         <Header />
         <main className="flex-1 bg-gray-50 min-h-[calc(100vh-4rem)]">

@@ -19,6 +19,7 @@ import {
   DialogTitle,
   DialogTrigger,
   DialogDescription,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -137,6 +138,7 @@ const invoiceStatuses = [
     label: "Cancelled",
     color: "bg-gray-100 text-gray-800",
   },
+  { value: "void", label: "Void", color: "bg-gray-100 text-gray-800" },
 ];
 
 export default function Invoices() {
@@ -149,10 +151,7 @@ export default function Invoices() {
   const [localSearchTerm, setLocalSearchTerm] = useState("");
   const [localStatusFilter, setLocalStatusFilter] = useState("all");
   const [localCustomerFilter, setLocalCustomerFilter] = useState<string[]>([]);
-  const [localVendorFilter, setLocalVendorFilter] = useState<string>("all");
-  const [localProviderFilter, setLocalProviderFilter] = useState<string>("all");
-  const [localLeadTypeFilter, setLocalLeadTypeFilter] = useState<string>("all");
-  const [localDateFilter, setLocalDateFilter] = useState("all");
+  const [localDateFilter, setLocalDateFilter] = useState("this_month");
   const [localCustomDateFrom, setLocalCustomDateFrom] = useState<Date | null>(
     null
   );
@@ -162,8 +161,6 @@ export default function Invoices() {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [customerFilter, setCustomerFilter] = useState<string[]>([]);
-  const [vendorFilter, setVendorFilter] = useState<string>("all");
-  const [providerFilter, setProviderFilter] = useState<string>("all");
   const [leadTypeFilter, setLeadTypeFilter] = useState<string>("all");
   const [dateFilter, setDateFilter] = useState("all");
   const [customDateFrom, setCustomDateFrom] = useState<Date | null>(null);
@@ -213,6 +210,9 @@ export default function Invoices() {
   const [cancellationChargeNotes, setCancellationChargeNotes] = useState("");
   const [showCancellationChargeFields, setShowCancellationChargeFields] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [isPartialPaymentDialogOpen, setIsPartialPaymentDialogOpen] = useState(false);
+  const [partialPaymentAmount, setPartialPaymentAmount] = useState("");
+  const [pendingPartialPaymentInvoice, setPendingPartialPaymentInvoice] = useState<any>(null);
   const [isDuplicateDialogOpen, setIsDuplicateDialogOpen] = useState(false);
   const [invoiceToDuplicate, setInvoiceToDuplicate] = useState<any>(null);
   const [duplicateCustomerId, setDuplicateCustomerId] = useState<string>("");
@@ -1285,6 +1285,11 @@ export default function Invoices() {
           label: "Cancelled",
           color: "bg-gray-100 text-gray-800 border-gray-200",
         };
+      case "void":
+        return {
+          label: "Void",
+          color: "bg-gray-100 text-gray-800 border-gray-200",
+        };
       default:
         return {
           label: status || "Unknown",
@@ -1426,9 +1431,6 @@ export default function Invoices() {
       pageSize,
       statusFilter,
       customerFilter,
-      vendorFilter,
-      providerFilter,
-      leadTypeFilter,
       searchTerm,
       dateFilter,
       customDateFrom,
@@ -1453,15 +1455,6 @@ export default function Invoices() {
         customerFilter.forEach((customerId) => {
           params.append("customerId", customerId);
         });
-      }
-      if (vendorFilter && vendorFilter !== "all") {
-        params.append("vendorId", vendorFilter);
-      }
-      if (providerFilter && providerFilter !== "all") {
-        params.append("providerId", providerFilter);
-      }
-      if (leadTypeFilter && leadTypeFilter !== "all") {
-        params.append("leadTypeId", leadTypeFilter);
       }
       if (searchTerm) {
         params.append("search", searchTerm);
@@ -2210,16 +2203,13 @@ export default function Invoices() {
           invoiceData.totalAmount?.toString() || "0"
         );
 
-        // Only auto-detect if status is missing/null/undefined, not when explicitly set
+        // Auto-detect status if it's missing or inconsistent with payment
         let displayStatus = status;
-        if (!displayStatus) {
-          // Auto-detect status only when status is not set at all
+        if (!displayStatus || displayStatus === "pending") {
           if (paidAmount > 0 && paidAmount < totalAmount) {
             displayStatus = "partial";
           } else if (paidAmount >= totalAmount && totalAmount > 0) {
             displayStatus = "paid";
-          } else {
-            displayStatus = "pending";
           }
         }
 
@@ -2235,6 +2225,10 @@ export default function Invoices() {
                 setCancellationChargeAmount("");
                 setCancellationChargeNotes("");
                 setShowCancellationChargeFields(false);
+              } else if (newStatus === "partial") {
+                setPendingPartialPaymentInvoice(invoice);
+                setPartialPaymentAmount(invoice.paidAmount?.toString() || "");
+                setIsPartialPaymentDialogOpen(true);
               } else {
                 // Determine if we should update paidAmount based on status change
                 const invoiceData = invoice as any;
@@ -2244,7 +2238,7 @@ export default function Invoices() {
                 
                 if (newStatus === "paid") {
                   updatedPaidAmount = totalAmount;
-                } else if (newStatus === "pending" || newStatus === "draft") {
+                } else if (newStatus === "pending" || newStatus === "draft" || newStatus === "void") {
                   updatedPaidAmount = 0;
                 }
                 
@@ -2427,9 +2421,6 @@ export default function Invoices() {
   }, [
     statusFilter,
     customerFilter,
-    vendorFilter,
-    providerFilter,
-    leadTypeFilter,
     searchTerm,
   ]);
 
@@ -2499,9 +2490,6 @@ export default function Invoices() {
     setSearchTerm(localSearchTerm);
     setStatusFilter(localStatusFilter);
     setCustomerFilter([...localCustomerFilter]);
-    setVendorFilter(localVendorFilter);
-    setProviderFilter(localProviderFilter);
-    setLeadTypeFilter(localLeadTypeFilter);
     setDateFilter(localDateFilter);
     setCustomDateFrom(localCustomDateFrom);
     setCustomDateTo(localCustomDateTo);
@@ -2513,18 +2501,12 @@ export default function Invoices() {
     setLocalSearchTerm("");
     setLocalStatusFilter("all");
     setLocalCustomerFilter([]);
-    setLocalVendorFilter("all");
-    setLocalProviderFilter("all");
-    setLocalLeadTypeFilter("all");
     setLocalDateFilter("all");
     setLocalCustomDateFrom(null);
     setLocalCustomDateTo(null);
     setSearchTerm("");
     setStatusFilter("all");
     setCustomerFilter([]);
-    setVendorFilter("all");
-    setProviderFilter("all");
-    setLeadTypeFilter("all");
     setDateFilter("all");
     setCustomDateFrom(null);
     setCustomDateTo(null);
@@ -3162,8 +3144,8 @@ export default function Invoices() {
                   />
                 </div>
 
-                {/* Second Row: Status, Customer, Services, Vendor, Provider */}
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+                {/* Second Row: Status, Customer */}
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                   <Select
                     value={localStatusFilter}
                     onValueChange={(value) => {
@@ -3195,75 +3177,6 @@ export default function Invoices() {
                       }}
                     />
                   </div>
-                  <Select
-                    value={localLeadTypeFilter}
-                    onValueChange={(value) => {
-                      setLocalLeadTypeFilter(value);
-                      setLeadTypeFilter(value);
-                      resetToPageOne();
-                    }}
-                  >
-                    <SelectTrigger className="h-9 text-sm">
-                      <SelectValue placeholder="Services" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Services</SelectItem>
-                      {leadTypes.map((leadType) => (
-                        <SelectItem
-                          key={leadType.id}
-                          value={leadType.id.toString()}
-                        >
-                          {leadType.name || leadType.leadTypeName || "Unknown"}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Select
-                    value={localVendorFilter}
-                    onValueChange={(value) => {
-                      setLocalVendorFilter(value);
-                      setVendorFilter(value);
-                      resetToPageOne();
-                    }}
-                  >
-                    <SelectTrigger className="h-9 text-sm">
-                      <SelectValue placeholder="Vendor" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Vendors</SelectItem>
-                      {vendors.map((vendor) => (
-                        <SelectItem
-                          key={vendor.id}
-                          value={vendor.id.toString()}
-                        >
-                          {vendor.name || vendor.vendorName || "Unknown"}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Select
-                    value={localProviderFilter}
-                    onValueChange={(value) => {
-                      setLocalProviderFilter(value);
-                      setProviderFilter(value);
-                      resetToPageOne();
-                    }}
-                  >
-                    <SelectTrigger className="h-9 text-sm">
-                      <SelectValue placeholder="Provider" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Providers</SelectItem>
-                      {serviceProviders.map((provider) => (
-                        <SelectItem
-                          key={provider.id}
-                          value={provider.id.toString()}
-                        >
-                          {provider.name || provider.providerName || "Unknown"}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
                 </div>
               </div>
               <div className="flex items-center justify-between mt-3 pt-3 border-t">
@@ -4936,6 +4849,61 @@ export default function Invoices() {
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+      
+      {/* Partial Payment Dialog */}
+      <Dialog open={isPartialPaymentDialogOpen} onOpenChange={setIsPartialPaymentDialogOpen}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>Partial Payment</DialogTitle>
+            <DialogDescription>
+              Enter the amount that has been paid for this invoice.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="paidAmount" className="text-right">
+                Amount Paid
+              </Label>
+              <Input
+                id="paidAmount"
+                type="number"
+                step="0.01"
+                className="col-span-3"
+                value={partialPaymentAmount}
+                onChange={(e) => setPartialPaymentAmount(e.target.value)}
+                placeholder="0.00"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsPartialPaymentDialogOpen(false);
+                setPendingPartialPaymentInvoice(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (pendingPartialPaymentInvoice) {
+                  updateStatusMutation.mutate({
+                    invoiceId: pendingPartialPaymentInvoice.id,
+                    status: "partial",
+                    paidAmount: parseFloat(partialPaymentAmount) || 0,
+                  });
+                  setIsPartialPaymentDialogOpen(false);
+                  setPendingPartialPaymentInvoice(null);
+                }
+              }}
+              disabled={updateStatusMutation.isPending}
+            >
+              {updateStatusMutation.isPending ? "Updating..." : "Update Status"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

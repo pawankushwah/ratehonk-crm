@@ -662,10 +662,10 @@ export function CompleteSidebar({
     if (mainContent) {
       if (!isCollapsed) {
         // Will be collapsed, so set margin for collapsed state
-        (mainContent as HTMLElement).style.marginLeft = "4rem"; // 64px
+        (mainContent as HTMLElement).style.paddingLeft = "4rem"; // 64px
       } else {
         // Will be expanded, so set margin for expanded state
-        (mainContent as HTMLElement).style.marginLeft = "16rem"; // 256px
+        (mainContent as HTMLElement).style.paddingLeft = "16rem"; // 256px
       }
     }
   };
@@ -706,7 +706,7 @@ export function CompleteSidebar({
           // Update the main content margin for expanded state
           const mainContent = document.querySelector(".main-content-wrapper");
           if (mainContent) {
-            (mainContent as HTMLElement).style.marginLeft = "16rem"; // 256px
+            (mainContent as HTMLElement).style.paddingLeft = "16rem"; // 256px
           }
         }
       }}
@@ -717,7 +717,7 @@ export function CompleteSidebar({
           // Update the main content margin for collapsed state
           const mainContent = document.querySelector(".main-content-wrapper");
           if (mainContent) {
-            (mainContent as HTMLElement).style.marginLeft = "4rem"; // 64px
+            (mainContent as HTMLElement).style.paddingLeft = "4rem"; // 64px
           }
         } else {
           setExpandedGroups([]); // Close all popovers when mouse leaves sidebar

@@ -643,7 +643,10 @@ export default function InvoiceEdit() {
   const { data: productsData } = useQuery({
     queryKey: ["/api/resources/data/all", { includeVariants: true }],
     enabled: !!tenant?.id,
-    queryFn: () => getAllDynamicData({ includeVariants: true, limit: 1000 })
+    queryFn: () => getAllDynamicData({ includeVariants: true, limit: 1000 }),
+    staleTime: 0,
+    gcTime: 0,
+    refetchOnMount: "always",
   });
 
   const products = useMemo(() => {
@@ -1077,7 +1080,35 @@ export default function InvoiceEdit() {
         }, 100);
       }
     }
-  }, [existingInvoice, isEditMode, isLoadingInvoice, invoiceId, tenant?.id, refetchInvoice, lineItems.length, products]);
+  }, [existingInvoice, isEditMode, isLoadingInvoice, invoiceId, tenant?.id, refetchInvoice, products]);
+
+  // Handle case where products load after invoice data, ensuring variants are available
+  useEffect(() => {
+    if (isEditMode && products.length > 0 && lineItems.length > 0) {
+      const itemsWithMissingVariants = lineItems.some(item => 
+        item.productId && (!item.availableVariants || item.availableVariants.length === 0)
+      );
+
+      if (itemsWithMissingVariants) {
+        console.log("🔄 Products loaded after invoice, updating line item variants...");
+        setLineItems(prev => prev.map(item => {
+          if (item.productId && (!item.availableVariants || item.availableVariants.length === 0)) {
+            const selectedProduct = products.find((p: any) => p.id.toString() === item.productId.toString());
+            if (selectedProduct) {
+              const variantsData = selectedProduct.variants || [];
+              const availableVariants = variantsData.map((v: any, i: number) => {
+                const label = v.label || v.title || v.name || v.color || v.size || (v.options && Object.values(v.options).join(' ')) || `Variant ${i + 1}`;
+                const value = v.id?.toString() || v.value || label;
+                return { ...v, label, value };
+              });
+              return { ...item, availableVariants };
+            }
+          }
+          return item;
+        }));
+      }
+    }
+  }, [products, isEditMode, lineItems.length]);
 
   // Load existing auto-generated expenses linked to this invoice from API
   // Only auto-generated expenses (auto_generated = 1) are shown on invoice update page
@@ -1229,6 +1260,9 @@ export default function InvoiceEdit() {
       // Invalidate all related queries to ensure fresh data
       queryClient.invalidateQueries({
         queryKey: [`/api/tenants/${tenant?.id}/invoices`],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/resources/data/all"],
       });
       queryClient.invalidateQueries({
         queryKey: [`/api/tenants/${tenant?.id}/invoices/${invoiceId}`],
@@ -1560,7 +1594,7 @@ export default function InvoiceEdit() {
   };
 
   const handleQuantityBlur = (index: number, value: string) => {
-    // No automatic splitting as per user request to remove fulfillment UI
+    splitRemainingStock(index);
   };
 
   const getAvailableStock = (productId: string, variantId: any, currentIndex: number) => {
@@ -1599,19 +1633,41 @@ export default function InvoiceEdit() {
     setLineItems((prev) => prev.map((item) => calculateLineItemTotals(item)));
   }, [isTaxInclusive, gstRates]);
 
-  // Auto-set amount paid to full total when payment status is "paid"
+  // Sync payment status and amount paid
   useEffect(() => {
-    if (paymentStatus === "paid") {
-      const grandTotal = calculateGrandTotal();
-      // In edit mode, set to the difference needed to make it fully paid
+    const grandTotal = calculateGrandTotal();
+    const paid = parseFloat(amountPaid || "0");
+    const totalPaid = isEditMode ? existingPaidAmount + paid : paid;
+
+    // 1. If status is "paid", ensure amount paid is full (existing logic)
+    if (paymentStatus === "paid" && Math.abs(totalPaid - grandTotal) > 0.01) {
       if (isEditMode) {
         const totalNeeded = grandTotal - existingPaidAmount;
         setAmountPaid(totalNeeded > 0 ? totalNeeded.toFixed(2) : "0");
       } else {
         setAmountPaid(grandTotal.toFixed(2));
       }
+      return;
     }
-  }, [paymentStatus, lineItems, discountAmount, isTaxInclusive, gstRates, isEditMode, existingPaidAmount]);
+
+    // 2. Auto-update status based on amount paid (excluding terminal statuses)
+    const terminalStatuses = ["cancelled", "void", "draft"];
+    if (terminalStatuses.includes(paymentStatus)) return;
+
+    if (totalPaid > 0 && totalPaid < grandTotal - 0.01) {
+      if (paymentStatus !== "partial") {
+        setPaymentStatus("partial");
+      }
+    } else if (totalPaid >= grandTotal - 0.01 && grandTotal > 0) {
+      if (paymentStatus !== "paid") {
+        setPaymentStatus("paid");
+      }
+    } else if (totalPaid === 0 && (paymentStatus === "partial" || paymentStatus === "paid")) {
+      if (paymentStatus !== "pending") {
+        setPaymentStatus("pending");
+      }
+    }
+  }, [paymentStatus, amountPaid, lineItems, discountAmount, isTaxInclusive, gstRates, isEditMode, existingPaidAmount]);
 
   // Add line item
   const addLineItem = () => {
@@ -3518,17 +3574,7 @@ export default function InvoiceEdit() {
                                     >
                                       <CheckCircle2 className="h-3 w-3" />
                                     </Button>
-                                   <Button
-                                      type="button"
-                                      size="icon"
-                                      variant="ghost"
-                                      className="h-6 w-6 text-amber-500 hover:text-amber-700 hover:bg-amber-50 flex-shrink-0"
-                                      onClick={() => splitRemainingStock(index)}
-                                      title="Split Unfulfilled"
-                                    >
-                                      <Scissors className="h-3 w-3" />
-                                    </Button>
-                                   <Button
+                                    <Button
                                       type="button"
                                       size="icon"
                                       variant="ghost"

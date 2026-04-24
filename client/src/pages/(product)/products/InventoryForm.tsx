@@ -6,7 +6,7 @@ import {
   X,
   Settings
 } from 'lucide-react';
-import { getTemplates, uploadImage, submitFormData, updateDynamicData } from '@/lib/forms';
+import { getTemplates, uploadImage, submitFormData, updateDynamicData, getTemplate } from '@/lib/forms';
 import { compressImage } from '@/utils/imageCompressor';
 import Button from '@/components/products/Button';
 import { DynamicForm } from '@/components/products/DynamicForm';

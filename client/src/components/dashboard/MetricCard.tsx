@@ -31,21 +31,21 @@ export function MetricCard({
   };
   const content = (
     <Card
-      className="relative w-auto  h-[112px] rounded-2xl p-4 shadow-sm hover:shadow-md transition-all duration-300 cursor-pointer"
+      className={`relative w-auto min-h-[112px] h-auto rounded-2xl p-4 shadow-sm hover:shadow-md transition-all duration-300 cursor-pointer ${isHovered ? "z-30" : "z-0"}`}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       style={cardStyle}
     >
-      <CardContent className="p-0 relative z-10">
+      <CardContent className="p-0 relative">
         <div>
           <p className="text-md font-medium text-[#000000]">{title}</p>
-          <div className="flex items-center justify-between gap-2 mt-2">
-            <p className="text-4xl font-bold text-gray-900">
+          <div className="flex items-center justify-between gap-2 mt-2 flex-wrap">
+            <p className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900 truncate">
               {typeof value === "number" ? value.toLocaleString() : value}
             </p>
             <div
-              className={`flex items-center text-sm font-semibold ${
-                isPositive ? "text-[#000000]" : "text-[#000000"
+              className={`flex items-center text-xs sm:text-sm font-semibold ${
+                isPositive ? "text-[#000000]" : "text-[#000000]"
               }`}
             >
               <span className="mr-1">
@@ -60,7 +60,7 @@ export function MetricCard({
           </div>
         </div>
         {isHovered && (
-          <div className="absolute top-full left-0 right-0 bg-white border border-gray-100 rounded-lg shadow-lg p-3 z-20 mt-2">
+          <div className="absolute top-full left-0 right-0 bg-white border border-gray-100 rounded-lg shadow-lg p-3 z-50 mt-2">
             <div className="text-xs space-y-2">
               <div className="flex justify-between items-center">
                 <span className="text-gray-600 font-medium">

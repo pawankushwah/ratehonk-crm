@@ -765,7 +765,7 @@ export default function TenantDashboard() {
                 )}
                 {canViewComponent("dashboard", "inventory") && (
                   <div data-testid="metric-card-low-stock">
-                    <Link href={`/inventory`}>
+                    <Link href={`/inventory?stock_status=out_of_stock`}>
                       <MetricCard
                         title="Low Stock Items"
                         value={metrics.lowStock}
@@ -810,27 +810,6 @@ export default function TenantDashboard() {
                 </div>
               )}
 
-              {/* Expense Chart and Service Booking - grouped together */}
-              {(canViewComponent("dashboard.expense-chart") || canViewComponent("dashboard.service-booking")) && (
-                <div
-                  className="grid grid-cols-1 lg:grid-cols-12 gap-6 sm:gap-8 mt-6 sm:mt-10"
-                  data-testid="dashboard-main-content"
-                >
-                  {canViewComponent("dashboard.expense-chart") && <ExpensePieChart />}
-                  {canViewComponent("dashboard.service-booking") && <ServiceBookingScatter />}
-                </div>
-              )}
-              
-              {/* Service Provider and Vendor Booking - grouped together */}
-              {(canViewComponent("dashboard.service-provider") || canViewComponent("dashboard.vendor-booking")) && (
-                <div
-                  className="grid grid-cols-1 lg:grid-cols-12 gap-6 sm:gap-8 mt-6 sm:mt-10"
-                  data-testid="dashboard-main-content"
-                >
-                  {canViewComponent("dashboard.service-provider") && <ServiceProviderChart />}
-                  {canViewComponent("dashboard.vendor-booking") && <ConsolidatedVendorBookingChart />}
-                </div>
-              )}
 
               {/* Invoice Status Bar */}
               {canViewComponent("dashboard.invoice-status") && (

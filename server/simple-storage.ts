@@ -6832,6 +6832,10 @@ async getAllLeadsByTenant(
     const invoices = await sql`
       SELECT 
         *,
+        issue_date AS "issueDate",
+        paid_amount AS "paidAmount",
+        total_amount AS "totalAmount",
+        created_at AS "createdAt",
         ${hasTagsColumn ? sql`tags` : sql`NULL::jsonb as tags`}
       FROM invoices
       WHERE tenant_id = ${tenantId}
@@ -13557,13 +13561,28 @@ RateHonk CRM Team`,
         throw new Error("Invoice not found or unauthorized");
       }
 
-      // 1. Delete expense_line_items for expenses linked to this invoice (CASCADE would do this, but explicit for clarity)
-      await sql`
-        DELETE FROM expense_line_items 
-        WHERE expense_id IN (
-          SELECT id FROM expenses WHERE invoice_id = ${invoiceId} AND tenant_id = ${tenantId}
-        )
-      `;
+      // 1. Delete expense_line_items and linked forms for expenses linked to this invoice
+      try {
+        await sql`
+          DELETE FROM expense_line_items 
+          WHERE expense_id IN (
+            SELECT id FROM expenses WHERE invoice_id = ${invoiceId} AND tenant_id = ${tenantId}
+          )
+        `;
+      } catch (err: any) {
+        console.log("⚠️ Non-critical error deleting expense_line_items:", err.message);
+      }
+
+      try {
+        await sql`
+          DELETE FROM consulation_form_submissions
+          WHERE expense_id IN (
+            SELECT id FROM expenses WHERE invoice_id = ${invoiceId} AND tenant_id = ${tenantId}
+          )
+        `;
+      } catch (err: any) {
+        console.log("⚠️ Non-critical error deleting consulation_form_submissions:", err.message);
+      }
 
       // 2. Permanently delete linked expenses
       await sql`
@@ -19003,13 +19022,32 @@ async getDashboardMetrics(
     }
 
     if (filters.jsonFilters) {
-      const skipFilters = ['includeVariants', 'allTypes'];
+      const skipFilters = ['includeVariants', 'allTypes', 'stock_status'];
       for (const key of Object.keys(filters.jsonFilters)) {
         if (skipFilters.includes(key)) continue;
         
         const val = filters.jsonFilters[key];
         if (val !== undefined && val !== null && val !== '') {
           whereClause = sql`${whereClause} AND dd.data->>${key} = ${val}`;
+        }
+      }
+
+      if (filters.jsonFilters.stock_status) {
+        const status = filters.jsonFilters.stock_status;
+        const stockExpr = sql`(
+          CASE 
+            WHEN ft.form_key = 'inventory' THEN 
+              COALESCE((SELECT SUM(st.quantity) FROM inventory_variants iv JOIN stocks st ON iv.stock_id = st.id WHERE iv.inventory_id = inv.id), 0)
+            WHEN ft.form_key = 'non-inventory' THEN COALESCE(s_ninv.quantity, 0)
+            WHEN ft.form_key = 'bundle' THEN COALESCE(s_pb.quantity, 0)
+            WHEN ft.form_key = 'service' THEN COALESCE(s_srv.quantity, 0)
+            ELSE 0
+          END
+        )`;
+        if (status === 'in_stock') {
+          whereClause = sql`${whereClause} AND ${stockExpr} > 0`;
+        } else if (status === 'out_of_stock') {
+          whereClause = sql`${whereClause} AND ${stockExpr} <= 0`;
         }
       }
     }
@@ -19027,6 +19065,9 @@ async getDashboardMetrics(
       LEFT JOIN non_inventory ninv ON dd.id = ninv.dynamic_data_id
       LEFT JOIN product_bundles pb ON dd.id = pb.dynamic_data_id
       LEFT JOIN services srv ON dd.id = srv.dynamic_data_id
+      LEFT JOIN stocks s_ninv ON ninv.stock_id = s_ninv.id
+      LEFT JOIN stocks s_pb ON pb.stock_id = s_pb.id
+      LEFT JOIN stocks s_srv ON srv.stock_id = s_srv.id
       WHERE ${whereClause}
       ORDER BY dd.created_at DESC 
       LIMIT ${limit} OFFSET ${offset}
@@ -19041,6 +19082,9 @@ async getDashboardMetrics(
       LEFT JOIN non_inventory ninv ON dd.id = ninv.dynamic_data_id
       LEFT JOIN product_bundles pb ON dd.id = pb.dynamic_data_id
       LEFT JOIN services srv ON dd.id = srv.dynamic_data_id
+      LEFT JOIN stocks s_ninv ON ninv.stock_id = s_ninv.id
+      LEFT JOIN stocks s_pb ON pb.stock_id = s_pb.id
+      LEFT JOIN stocks s_srv ON srv.stock_id = s_srv.id
       WHERE ${whereClause}
     `;
 

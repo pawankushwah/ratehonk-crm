@@ -31623,9 +31623,9 @@ ${args.tenantName}`;
         endDate: endDate as string,
       });
       res.json(data);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Chart data error:", error);
-      res.status(500).json({ message: "Internal server error" });
+      res.status(500).json({ message: "Internal server error", error: error.message });
     }
   });
 
@@ -31640,7 +31640,7 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
     let { startDate = "", endDate = "" } = req.query;
 
 
-    const normalize = (v) => {
+    const normalize = (v: any) => {
       if (typeof v !== "string") return v;
       // Extract just the date part (YYYY-MM-DD) before any space, time, or timezone offset
       const datePart = v.split(' ')[0].split('+')[0].split('T')[0];
@@ -31812,7 +31812,8 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
     });
 
     expensesByMonth.forEach((row) => {
-      if (!monthsMap.has(row.month)) {
+      const monthData = monthsMap.get(row.month);
+      if (!monthData) {
         monthsMap.set(row.month, {
           month: row.month,
           revenue: 0,
@@ -31820,13 +31821,14 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
           profit: 0,
         });
       } else {
-        monthsMap.get(row.month).expenses += Number(row.total);
+        monthData.expenses += Number(row.total);
       }
     });
 
   
-    Object.entries(invoiceMonthData).forEach(([month, data]) => {
-      if (!monthsMap.has(month)) {
+    Object.entries(invoiceMonthData).forEach(([month, data]: [string, any]) => {
+      const monthData = monthsMap.get(month);
+      if (!monthData) {
         monthsMap.set(month, {
           month,
           revenue: data.revenue,
@@ -31834,7 +31836,7 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
           profit: 0,
         });
       } else {
-        monthsMap.get(month).revenue += data.revenue;
+        monthData.revenue += data.revenue;
       }
     });
 
@@ -31849,10 +31851,10 @@ app.get("/api/dashboard/profit-loss", authenticateToken, async (req, res) => {
       monthly,
     });
 
-  } catch (error) {
-    console.error("❌ Profit & Loss Error:", error);
-    res.status(500).json({ error: error.message });
-  }
+    } catch (error: any) {
+      console.error("❌ Profit & Loss Error Stack:", error.stack);
+      res.status(500).json({ error: error.message, stack: error.stack });
+    }
   });
 
   // Get expenses by category for dashboard chart

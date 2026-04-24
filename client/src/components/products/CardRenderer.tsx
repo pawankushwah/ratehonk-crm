@@ -113,14 +113,13 @@ const CardRenderer: React.FC<CardRendererProps> = ({
   if (fKey === 'inventory') {
     title = wholeData?.name || '—';
     category = wholeData?.category || '—';
+    sku = wholeData?.sku || '—';
     if (activeVariant) {
       price = activeVariant.sales_price ?? '—';
-      sku = activeVariant.model_number || activeVariant.sku || '—';
       stock = activeVariant.variant_stock ?? '—';
       images = activeVariant.images || [];
     } else {
       price = wholeData?.sales_price ?? '—';
-      sku = wholeData?.sku || '—';
       stock = wholeData?.stock ?? '—';
       images = wholeData?.images || [];
     }

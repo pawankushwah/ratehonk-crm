@@ -49,8 +49,8 @@ const getCurrencySymbol = (currencyCode: string): string => {
 
 function formatYMDLocal(d: Date) {
   // Use UTC methods to ensure consistent date formatting across timezones
-  const year = d.getUTCFullYear();
-  const month = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
@@ -78,14 +78,14 @@ const formatShort = (num: number) => {
 function groupInvoicesByDate(invoices: any[]) {
   const map: Record<string, number> = {};
   invoices.forEach((inv) => {
-    const rawDate = inv.issueDate ?? inv.createdAt;
+    // Check for both snake_case (raw SQL) and camelCase (mapped) property names
+    const rawDate = inv.issue_date ?? inv.issueDate ?? inv.created_at ?? inv.createdAt;
     const d = parseInvoiceDate(rawDate);
     if (!d) return;
 
     const key = formatYMDLocal(d);
-    // Sum invoice totalAmount (total invoiced) for the selected period.
-    // The API already filters out void/cancelled invoices.
-    const totalAmount = Number(inv.paidAmount ?? inv.paid_amount ?? 0);
+    // Sum invoice paid amount (collected) for the selected period.
+    const totalAmount = Number(inv.paid_amount ?? inv.paidAmount ?? 0);
     map[key] = (map[key] || 0) + totalAmount;
   });
   return map;

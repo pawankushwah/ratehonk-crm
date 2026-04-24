@@ -479,6 +479,7 @@ export const invoices = pgTable("invoices", {
   
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  deletedAt: timestamp("deleted_at"),
   isPartial: boolean("is_partial").default(false),
 });
 
@@ -1088,8 +1089,8 @@ export const expenses = pgTable("expenses", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
-// Expense line items table for storing multiple items per expense
-export const expenseLineItems = pgTable("expense_line_items", {
+// Consultation form templates table (e.g. consultation form configuration)
+export const consulationFormTemplates = pgTable("consulation_form_templates", {
   id: serial("id").primaryKey(),
   tenantId: integer("tenant_id").notNull().references(() => tenants.id),
   fields: json("fields").$type<Array<{
@@ -1100,6 +1101,33 @@ export const expenseLineItems = pgTable("expense_line_items", {
   }>>().notNull(),
   defaultValues: json("default_values").$type<Record<string, string>>().default({}),
   formType: varchar("form_type", { length: 50 }).default("consulation").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Expense line items table for storing multiple items per expense
+export const expenseLineItems = pgTable("expense_line_items", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+  expenseId: integer("expense_id").notNull().references(() => expenses.id, { onDelete: "cascade" }),
+  category: text("category").notNull(),
+  title: text("title").notNull(),
+  description: text("description"),
+  quantity: integer("quantity").default(1),
+  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
+  taxRateId: integer("tax_rate_id"), // Reference to tax rate if applicable
+  taxAmount: decimal("tax_amount", { precision: 10, scale: 2 }).default("0"),
+  taxRate: decimal("tax_rate", { precision: 5, scale: 2 }).default("0"),
+  totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
+  vendorId: integer("vendor_id").references(() => vendors.id),
+  leadTypeId: integer("lead_type_id").references(() => leadTypes.id),
+  paymentMethod: text("payment_method").notNull().default("credit_card"),
+  paymentStatus: text("payment_status").notNull().default("paid"), // paid, credit, due
+  amountPaid: decimal("amount_paid", { precision: 10, scale: 2 }).default("0"),
+  amountDue: decimal("amount_due", { precision: 10, scale: 2 }).default("0"),
+  receiptUrl: text("receipt_url"), // URL to receipt image/document for this line item
+  notes: text("notes"),
+  displayOrder: integer("display_order").default(0), // Order in which items should be displayed
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
